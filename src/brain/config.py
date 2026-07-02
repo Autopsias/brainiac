@@ -65,6 +65,35 @@ def ensure_index_dir() -> Path:
     return d
 
 
+# --------------------------------------------------------------------------
+# file permission policy (hardening pass)
+# --------------------------------------------------------------------------
+# The derived SQLite index and the published read-only snapshot can carry note
+# bodies up to and including Secret-tier content (the classification gate is an
+# egress *decision*, not containment -- see docs/operations/egress-provider-
+# posture.md §2). Neither must ever be left world-readable. The snapshot was
+# previously chmod'd 0o444 (read-only, but readable by every local account on a
+# shared/multi-user machine); the index inherited whatever the process umask
+# happened to be (often 0o644 on a typical single-user default). Both are now
+# tightened to owner-only immediately after creation, regardless of umask.
+SECURE_FILE_MODE = 0o600  # owner rw only; use 0o640 if a deployment intentionally
+                           # shares index/snapshot files with a trusted local group
+
+
+def secure_file_permissions(path: "os.PathLike[str] | str", mode: int = SECURE_FILE_MODE) -> None:
+    """Best-effort tighten ``path`` to ``mode`` (default owner-only 0600).
+
+    Never raises: a chmod call that fails (unsupported filesystem, Windows ACL
+    semantics where POSIX mode bits are only partially honored, a race where the
+    file vanished) must not break index/snapshot creation -- it degrades to
+    "as restrictive as the platform default allowed", not a crash.
+    """
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        pass
+
+
 def vault_root(explicit: str | os.PathLike[str] | None = None) -> Path:
     """Resolve the vault root: explicit arg > ``$BRAIN_VAULT`` > CWD/vault."""
     if explicit:

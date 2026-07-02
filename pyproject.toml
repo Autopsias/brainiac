@@ -33,6 +33,13 @@ eval = ["ranx>=0.3.20", "numpy>=1.24"]
 # (src/brain/mcp_adapter.py). MCP is never the foundation — every other harness
 # calls the `brain` CLI directly. `pip install -e .[mcp]` then `brain-mcp`.
 mcp = ["mcp>=1.0"]
+# Timeout-bounded regex engine (mrab-regex) used by BrainIndex.grep's --regex
+# path (RET-04 hardening) as a ReDoS guard: regex.search(text, timeout=...)
+# genuinely bounds catastrophic backtracking, unlike stdlib `re`. Absent ->
+# grep falls back to stdlib re with a pattern-length cap as the sole
+# mitigation (documented residual risk: docs/SECURITY_NOTES.md).
+# NOTE: added without a lockfile update; a follow-up lockfile PR will pin it.
+index = ["regex>=2023.0.0"]
 
 [project.scripts]
 brain = "brain.cli:main"

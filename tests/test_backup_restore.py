@@ -1,6 +1,9 @@
 """SEC-03 — encrypted off-device backup + restore round-trip (byte-identity)."""
 from __future__ import annotations
 
+import tarfile
+from pathlib import Path
+
 import pytest
 
 from brain import backup, encryption as enc
@@ -64,3 +67,51 @@ def test_tampered_encrypted_backup_refuses_restore(sample_vault, tmp_path, enc_k
     archive.write_bytes(bytes(data))
     with pytest.raises(enc.EncryptionError):
         backup.restore_backup(archive, tmp_path / "restored")
+
+
+# --------------------------------------------------------------------------
+# tar-extraction hardening: a crafted archive with a symlink member pointing
+# outside dest_dir must be REJECTED (raises), never followed/extracted.
+# --------------------------------------------------------------------------
+def _make_symlink_escape_archive(tmp_path: Path) -> tuple[Path, Path]:
+    """Build a plain (unencrypted) tar.gz whose single member is a symlink
+    named ``evil`` that points at a file OUTSIDE the eventual dest_dir."""
+    outside = tmp_path / "outside"
+    outside.mkdir(exist_ok=True)
+    victim = outside / "victim.txt"
+    victim.write_text("should never be reachable through the restore\n", encoding="utf-8")
+
+    archive_path = tmp_path / "malicious.tar.gz"  # NOT .enc -> restore_backup treats as plaintext
+    with tarfile.open(archive_path, "w:gz") as tar:
+        info = tarfile.TarInfo(name="evil")
+        info.type = tarfile.SYMTYPE
+        info.linkname = "../outside/victim.txt"
+        tar.addfile(info)
+    return archive_path, victim
+
+
+def test_restore_rejects_symlink_member_escaping_dest(tmp_path):
+    archive_path, victim = _make_symlink_escape_archive(tmp_path)
+    dest = tmp_path / "restored"
+
+    with pytest.raises(Exception):
+        backup.restore_backup(archive_path, dest)
+
+    # nothing from the malicious member was ever materialised in dest, and the
+    # victim file outside dest was never touched/linked-to.
+    assert not (dest / "evil").exists()
+    assert victim.read_text(encoding="utf-8") == "should never be reachable through the restore\n"
+
+
+def test_restore_rejects_symlink_member_escaping_dest_pre312_fallback(tmp_path, monkeypatch):
+    """Force the manual (pre-3.12 / no tarfile.data_filter) validation path and
+    confirm it independently rejects the same crafted archive."""
+    archive_path, victim = _make_symlink_escape_archive(tmp_path)
+    dest = tmp_path / "restored-fallback"
+
+    monkeypatch.setattr(backup, "_HAS_TAR_DATA_FILTER", False)
+    with pytest.raises(ValueError, match="not a regular file or directory"):
+        backup.restore_backup(archive_path, dest)
+
+    assert not (dest / "evil").exists()
+    assert victim.read_text(encoding="utf-8") == "should never be reachable through the restore\n"

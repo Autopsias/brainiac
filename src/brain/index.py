@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +31,42 @@ from .chunk import chunk_text
 from .embed import Embedder, get_embedder
 from .notes import Note, load_note, scan_vault
 from .vectors import SqliteVecBackend, VectorBackend, get_backend
+
+# Optional 3rd-party regex engine (mrab-regex) with a REAL per-call match
+# timeout -- unlike stdlib `re`, `regex.search(text, timeout=...)` genuinely
+# bounds catastrophic backtracking (confirmed: stdlib re on r'(a+)+$' vs 30
+# 'a's takes ~47s; the `regex` module's timeout on the identical input returns
+# in well under a millisecond). Declared as the optional `index` extra in
+# pyproject.toml; falls back to stdlib `re` when not installed, in which case
+# the pattern-length cap below is the sole ReDoS mitigation (documented
+# residual risk: docs/SECURITY_NOTES.md).
+try:
+    import regex as _grep_engine
+    _GREP_HAS_TIMEOUT = True
+except ImportError:  # pragma: no cover - exercised only when `regex` is absent
+    _grep_engine = re
+    _GREP_HAS_TIMEOUT = False
+
+# ReDoS / resource-exhaustion guard for BrainIndex.grep (RET-04 hardening).
+MAX_GREP_PATTERN_LEN = 200      # absurdly long patterns are the abuse surface, not legitimate use
+GREP_REGEX_TIMEOUT_S = 2.0      # per-match wall-clock budget (only enforced with the `regex` engine)
+
+
+class GrepPatternError(ValueError):
+    """A user-supplied grep pattern was rejected before compilation."""
+
+
+def _grep_bounded_search(compiled, text: str):
+    """``compiled.search(text)`` with a wall-clock budget when the `regex`
+    engine is available. A pathological pattern degrades to "no match on this
+    line" (never raises out of `grep`) rather than hanging the whole call."""
+    if _GREP_HAS_TIMEOUT:
+        try:
+            return compiled.search(text, timeout=GREP_REGEX_TIMEOUT_S)
+        except TimeoutError:
+            return None
+    return compiled.search(text)
+
 
 SCHEMA_VERSION = 2
 
@@ -123,9 +160,18 @@ class BrainIndex:
                 except sqlite3.OperationalError:
                     pass
                 return self._conn
-            if self.db_path != Path(":memory:"):
+            is_file_backed = self.db_path != Path(":memory:")
+            if is_file_backed:
                 self.db_path.parent.mkdir(parents=True, exist_ok=True)
             self._conn = sqlite3.connect(str(self.db_path))
+            if is_file_backed and self.db_path.exists():
+                # sqlite3.connect() creates the file (when absent) with the
+                # process umask -- often 0o644 / world-readable on a typical
+                # single-user default. The index can hold note bodies up to and
+                # including Secret-tier content (the classification gate is an
+                # egress *decision*, not containment), so tighten to owner-only
+                # immediately, regardless of umask.
+                config.secure_file_permissions(self.db_path)
             # sqlite-vec needs its extension loaded on EVERY connection.
             if isinstance(self.backend, SqliteVecBackend):
                 try:
@@ -133,6 +179,14 @@ class BrainIndex:
                 except Exception:
                     pass
             self._conn.execute("PRAGMA journal_mode=WAL")
+            if is_file_backed:
+                # WAL mode creates -wal/-shm sidecars on first write; make sure
+                # those inherit the same owner-only posture too (they can carry
+                # the same sensitive content as the main DB file).
+                for suffix in ("-wal", "-shm"):
+                    side = Path(str(self.db_path) + suffix)
+                    if side.exists():
+                        config.secure_file_permissions(side)
         return self._conn
 
     def close(self) -> None:
@@ -194,7 +248,11 @@ class BrainIndex:
 
     # -- insertion --------------------------------------------------------
     def _next_rowid(self, table: str) -> int:
-        r = self.conn.execute(f"SELECT COALESCE(MAX(rowid), 0) FROM {table}").fetchone()
+        # FALSE POSITIVE (scanner: string-built SQL / hardcoded_sql_expressions):
+        # `table` is never user input -- it is a hardcoded literal ("chunks" /
+        # "notes") at both call sites below, never derived from a request
+        # argument. See docs/SECURITY_NOTES.md.
+        r = self.conn.execute(f"SELECT COALESCE(MAX(rowid), 0) FROM {table}").fetchone()  # nosec B608
         return int(r[0]) + 1
 
     def _plan_note(self, note: Note, note_rowid: int) -> _NotePlan:
@@ -215,7 +273,12 @@ class BrainIndex:
         seen = getattr(self, "_seen_ids", None)
         if seen is not None:
             if row["id"] in seen:
-                row["id"] = f"{row['id']}__{hashlib.sha1(row['path'].encode()).hexdigest()[:8]}"
+                # FALSE POSITIVE (scanner: weak-hash / hashlib-insecure-functions):
+                # SHA1 here is a non-security content-addressed de-dup suffix (a
+                # short, stable disambiguator for a colliding synthetic id), not a
+                # security boundary -- collision resistance / preimage resistance
+                # don't matter for this use. See docs/SECURITY_NOTES.md.
+                row["id"] = f"{row['id']}__{hashlib.sha1(row['path'].encode()).hexdigest()[:8]}"  # nosec B303 B324
             seen.add(row["id"])
         chunks = chunk_text(note.body)
         if not chunks:
@@ -558,11 +621,16 @@ class BrainIndex:
         # semantic_only). Evidence: docs/operations/s10-pt-rootcause-and-fix.md.
         if scores:
             rids = tuple(scores)
+            # FALSE POSITIVE (scanner: string-built SQL / hardcoded_sql_expressions):
+            # `qmarks` interpolates only literal "?" placeholder characters (one
+            # per element of `rids`) -- the VALUES themselves are bound as query
+            # params (`rids`, passed separately below), never string-formatted
+            # into the SQL text. See docs/SECURITY_NOTES.md.
             qmarks = ",".join("?" * len(rids))
             zmap = {
                 int(r): (z or "")
                 for r, z in self.conn.execute(
-                    f"SELECT rowid, zone FROM notes WHERE rowid IN ({qmarks})", rids
+                    f"SELECT rowid, zone FROM notes WHERE rowid IN ({qmarks})", rids  # nosec B608
                 )
             }
             scope = os.environ.get("BRAIN_ZONE_SCOPE", "semantic_only").strip().lower()
@@ -658,8 +726,21 @@ class BrainIndex:
         The agent's lexical-first entry point: it never embeds the query, so it
         is the cheap first probe before escalating to :meth:`hybrid_search`.
         Returns note-shaped dicts (filterable by the CLI egress gate) with the
-        first matching line as the snippet and a match count."""
-        import re as _re
+        first matching line as the snippet and a match count.
+
+        Bounded against ReDoS / resource exhaustion (RET-04 hardening):
+        ``pattern`` is length-capped (:data:`MAX_GREP_PATTERN_LEN`) before
+        compilation, and every match is wall-clock-bounded
+        (:data:`GREP_REGEX_TIMEOUT_S`) when the optional `regex` engine is
+        installed — see :func:`_grep_bounded_search`.
+        """
+        if len(pattern) > MAX_GREP_PATTERN_LEN:
+            raise GrepPatternError(
+                f"grep pattern too long ({len(pattern)} chars; max "
+                f"{MAX_GREP_PATTERN_LEN}) — refusing to compile "
+                "(ReDoS / resource-exhaustion guard)"
+            )
+        _re = _grep_engine  # the timeout-capable `regex` engine when available, else stdlib re
 
         flags = _re.IGNORECASE if ignore_case else 0
         # Multi-word NATURAL-LANGUAGE handling: a literal full-question pattern
@@ -691,11 +772,13 @@ class BrainIndex:
         out: list[dict[str, Any]] = []
         for r in rows:
             body = r[5] or ""
-            matches = [ln for ln in body.splitlines() if any(x.search(ln) for x in rxs)]
+            matches = [ln for ln in body.splitlines()
+                       if any(_grep_bounded_search(x, ln) for x in rxs)]
             if not matches:
                 continue
             distinct = (
-                sum(1 for x in rxs if any(x.search(ln) for ln in matches)) if multi else 1
+                sum(1 for x in rxs if any(_grep_bounded_search(x, ln) for ln in matches))
+                if multi else 1
             )
             out.append({
                 "id": r[0], "title": r[1], "classification": r[2],
@@ -723,15 +806,21 @@ class BrainIndex:
                 "created", "updated"}
         filters = filters or {}
         where, params = [], []
+        # FALSE POSITIVE (scanner: string-built SQL / hardcoded_sql_expressions):
+        # `key` / `order_col` are only ever interpolated after an explicit
+        # `in cols` allowlist check against the fixed column set above -- an
+        # unrecognised key/order_by is dropped/defaulted, never reaches the SQL
+        # text. Every VALUE (`val`, `k`) is a bound param, never interpolated.
+        # See docs/SECURITY_NOTES.md.
         for key, val in filters.items():
             if key in cols:
-                where.append(f"{key} = ?")
+                where.append(f"{key} = ?")  # nosec B608 - key is allowlisted above
                 params.append(val)
         order_col = order_by if order_by in cols else "updated"
         sql = (
             "SELECT id,title,classification,zone,path,type,updated FROM notes"
             + (" WHERE " + " AND ".join(where) if where else "")
-            + f" ORDER BY {order_col} DESC, id ASC LIMIT ?"
+            + f" ORDER BY {order_col} DESC, id ASC LIMIT ?"  # nosec B608 - order_col is allowlisted above
         )
         params.append(k)
         rows = self.conn.execute(sql, params).fetchall()

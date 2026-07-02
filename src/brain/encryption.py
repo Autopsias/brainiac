@@ -140,6 +140,12 @@ def resolve_encryption_key() -> tuple[bytes, str]:
     cmd = os.environ.get("BRAIN_ENCRYPTION_KEY_CMD")
     if cmd:
         try:
+            # `cmd` is an OPERATOR-controlled env var (BRAIN_ENCRYPTION_KEY_CMD),
+            # not untrusted input -- mirrors audit._pem_from_cmd's BRAIN_AUDIT_
+            # KEY_CMD rationale. shell=True is intentional so custody backends
+            # can use a pipeline (e.g. `age -d -i id key.pem.age`); anyone able
+            # to set this env var already has code execution, so shell=True adds
+            # no attack surface. nosec B602 - see docs/SECURITY_NOTES.md.
             out = subprocess.run(cmd, shell=True, capture_output=True, timeout=20)  # noqa: S602
         except (OSError, subprocess.SubprocessError) as exc:
             raise EncryptionKeyUnavailable(f"BRAIN_ENCRYPTION_KEY_CMD failed: {exc}") from exc

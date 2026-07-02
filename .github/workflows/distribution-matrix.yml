@@ -44,10 +44,10 @@ jobs:
       PYTHONUNBUFFERED: "1"
       PYTHONDONTWRITEBYTECODE: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
 
@@ -88,9 +88,34 @@ jobs:
             assert isinstance(d['results'], list), d; \
             print('SMOKE OK:', len(d['results']), 'results, egress=', d['egress'])"
 
+      - name: Generate SHA-256 manifest of built artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import pathlib
+
+          dist_dir = pathlib.Path("dist/brain")
+          manifest_path = dist_dir / "SHA256SUMS"
+          lines = []
+          for path in sorted(dist_dir.rglob("*")):
+              if path.is_file() and path.name != "SHA256SUMS":
+                  digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                  rel = path.relative_to(dist_dir).as_posix()
+                  lines.append(f"{digest}  {rel}")
+          manifest_path.write_text("\n".join(lines) + "\n")
+          print(f"wrote {len(lines)} entries to {manifest_path}")
+          PY
+          cat dist/brain/SHA256SUMS
+
+      # Only publish build artifacts for trusted events (push to master,
+      # workflow_dispatch) — never for pull_request, where the workflow may
+      # run against a fork's untrusted code and the artifact could otherwise
+      # be used as an exfiltration or supply-chain vector.
       - name: Upload built distribution
-        if: always()
-        uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: brain-${{ runner.os }}
           path: dist/brain/

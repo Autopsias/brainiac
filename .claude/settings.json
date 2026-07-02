@@ -1,0 +1,10 @@
+{
+  "extraKnownMarketplaces": {
+    "profile-a-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "Autopsias/profile-a-brain"
+      }
+    }
+  }
+}

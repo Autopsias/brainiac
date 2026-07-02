@@ -1,0 +1,1360 @@
+{
+  "bomFormat": "CycloneDX",
+  "components": [
+    {
+      "bom-ref": "pkg:pypi/annotated-doc@0.0.4",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "name": "annotated-doc",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/annotated-doc@0.0.4",
+      "type": "library",
+      "version": "0.0.4"
+    },
+    {
+      "bom-ref": "pkg:pypi/anyio@4.14.1",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "anyio",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/anyio@4.14.1",
+      "type": "library",
+      "version": "4.14.1"
+    },
+    {
+      "bom-ref": "pkg:pypi/cbor2@6.1.2",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "cbor2",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/cbor2@6.1.2",
+      "type": "library",
+      "version": "6.1.2"
+    },
+    {
+      "bom-ref": "pkg:pypi/certifi@2026.6.17",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "MPL-2.0"
+          }
+        }
+      ],
+      "name": "certifi",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/certifi@2026.6.17",
+      "type": "library",
+      "version": "2026.6.17"
+    },
+    {
+      "bom-ref": "pkg:pypi/cffi@2.0.0",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "cffi",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/cffi@2.0.0",
+      "type": "library",
+      "version": "2.0.0"
+    },
+    {
+      "bom-ref": "pkg:pypi/charset-normalizer@3.4.7",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "charset-normalizer",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/charset-normalizer@3.4.7",
+      "type": "library",
+      "version": "3.4.7"
+    },
+    {
+      "bom-ref": "pkg:pypi/click@8.4.2",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "name": "click",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/click@8.4.2",
+      "type": "library",
+      "version": "8.4.2"
+    },
+    {
+      "bom-ref": "pkg:pypi/contourpy@1.3.3",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD License"
+          }
+        }
+      ],
+      "name": "contourpy",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/contourpy@1.3.3",
+      "type": "library",
+      "version": "1.3.3"
+    },
+    {
+      "bom-ref": "pkg:pypi/cramjam@2.11.0",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "cramjam",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/cramjam@2.11.0",
+      "type": "library",
+      "version": "2.11.0"
+    },
+    {
+      "bom-ref": "pkg:pypi/cryptography@49.0.0",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/pyca/cryptography"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "(Apache-2.0 OR BSD-3-Clause)"
+          }
+        }
+      ],
+      "name": "cryptography",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "runtime"
+        }
+      ],
+      "purl": "pkg:pypi/cryptography@49.0.0",
+      "type": "library",
+      "version": "49.0.0"
+    },
+    {
+      "bom-ref": "pkg:pypi/cycler@0.12.1",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD License"
+          }
+        }
+      ],
+      "name": "cycler",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/cycler@0.12.1",
+      "type": "library",
+      "version": "0.12.1"
+    },
+    {
+      "bom-ref": "pkg:pypi/fastparquet@2026.5.0",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache License 2.0"
+          }
+        }
+      ],
+      "name": "fastparquet",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/fastparquet@2026.5.0",
+      "type": "library",
+      "version": "2026.5.0"
+    },
+    {
+      "bom-ref": "pkg:pypi/filelock@3.29.4",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "Unlicense"
+          }
+        }
+      ],
+      "name": "filelock",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/filelock@3.29.4",
+      "type": "library",
+      "version": "3.29.4"
+    },
+    {
+      "bom-ref": "pkg:pypi/flatbuffers@25.12.19",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "name": "flatbuffers",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/flatbuffers@25.12.19",
+      "type": "library",
+      "version": "25.12.19"
+    },
+    {
+      "bom-ref": "pkg:pypi/fonttools@4.63.0",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "fonttools",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/fonttools@4.63.0",
+      "type": "library",
+      "version": "4.63.0"
+    },
+    {
+      "bom-ref": "pkg:pypi/fsspec@2026.6.0",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "name": "fsspec",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/fsspec@2026.6.0",
+      "type": "library",
+      "version": "2026.6.0"
+    },
+    {
+      "bom-ref": "pkg:pypi/h11@0.16.0",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "h11",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/h11@0.16.0",
+      "type": "library",
+      "version": "0.16.0"
+    },
+    {
+      "bom-ref": "pkg:pypi/hf-xet@1.5.1",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "name": "hf-xet",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/hf-xet@1.5.1",
+      "type": "library",
+      "version": "1.5.1"
+    },
+    {
+      "bom-ref": "pkg:pypi/httpcore@1.0.9",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "name": "httpcore",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/httpcore@1.0.9",
+      "type": "library",
+      "version": "1.0.9"
+    },
+    {
+      "bom-ref": "pkg:pypi/httpx@0.28.1",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "name": "httpx",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/httpx@0.28.1",
+      "type": "library",
+      "version": "0.28.1"
+    },
+    {
+      "bom-ref": "pkg:pypi/huggingface-hub@1.21.0",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "name": "huggingface_hub",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "runtime"
+        }
+      ],
+      "purl": "pkg:pypi/huggingface-hub@1.21.0",
+      "type": "library",
+      "version": "1.21.0"
+    },
+    {
+      "bom-ref": "pkg:pypi/idna@3.18",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "name": "idna",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/idna@3.18",
+      "type": "library",
+      "version": "3.18"
+    },
+    {
+      "bom-ref": "pkg:pypi/iniconfig@2.3.0",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "iniconfig",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/iniconfig@2.3.0",
+      "type": "library",
+      "version": "2.3.0"
+    },
+    {
+      "bom-ref": "pkg:pypi/ir-datasets@0.6.1",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT License"
+          }
+        }
+      ],
+      "name": "ir_datasets",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/ir-datasets@0.6.1",
+      "type": "library",
+      "version": "0.6.1"
+    },
+    {
+      "bom-ref": "pkg:pypi/kiwisolver@1.5.0",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD License"
+          }
+        }
+      ],
+      "name": "kiwisolver",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/kiwisolver@1.5.0",
+      "type": "library",
+      "version": "1.5.0"
+    },
+    {
+      "bom-ref": "pkg:pypi/llvmlite@0.47.0",
+      "externalReferences": [],
+      "licenses": [],
+      "name": "llvmlite",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/llvmlite@0.47.0",
+      "type": "library",
+      "version": "0.47.0"
+    },
+    {
+      "bom-ref": "pkg:pypi/lxml@6.1.1",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "name": "lxml",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/lxml@6.1.1",
+      "type": "library",
+      "version": "6.1.1"
+    },
+    {
+      "bom-ref": "pkg:pypi/lz4@4.4.5",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD License"
+          }
+        }
+      ],
+      "name": "lz4",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/lz4@4.4.5",
+      "type": "library",
+      "version": "4.4.5"
+    },
+    {
+      "bom-ref": "pkg:pypi/markdown-it-py@4.2.0",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "markdown-it-py",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/markdown-it-py@4.2.0",
+      "type": "library",
+      "version": "4.2.0"
+    },
+    {
+      "bom-ref": "pkg:pypi/matplotlib@3.11.0",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "Python Software Foundation License"
+          }
+        }
+      ],
+      "name": "matplotlib",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/matplotlib@3.11.0",
+      "type": "library",
+      "version": "3.11.0"
+    },
+    {
+      "bom-ref": "pkg:pypi/mdurl@0.1.2",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "mdurl",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/mdurl@0.1.2",
+      "type": "library",
+      "version": "0.1.2"
+    },
+    {
+      "bom-ref": "pkg:pypi/numba@0.65.1",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD"
+          }
+        }
+      ],
+      "name": "numba",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/numba@0.65.1",
+      "type": "library",
+      "version": "0.65.1"
+    },
+    {
+      "bom-ref": "pkg:pypi/numpy@2.4.6",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://numpy.org"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "name": "numpy",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "runtime"
+        }
+      ],
+      "purl": "pkg:pypi/numpy@2.4.6",
+      "type": "library",
+      "version": "2.4.6"
+    },
+    {
+      "bom-ref": "pkg:pypi/onnxruntime@1.27.0",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://onnxruntime.ai"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "onnxruntime",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "runtime"
+        }
+      ],
+      "purl": "pkg:pypi/onnxruntime@1.27.0",
+      "type": "library",
+      "version": "1.27.0"
+    },
+    {
+      "bom-ref": "pkg:pypi/orjson@3.11.9",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "(Apache-2.0 OR MIT)"
+          }
+        }
+      ],
+      "name": "orjson",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/orjson@3.11.9",
+      "type": "library",
+      "version": "3.11.9"
+    },
+    {
+      "bom-ref": "pkg:pypi/packaging@26.2",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "(Apache-2.0 OR BSD-3-Clause)"
+          }
+        }
+      ],
+      "name": "packaging",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/packaging@26.2",
+      "type": "library",
+      "version": "26.2"
+    },
+    {
+      "bom-ref": "pkg:pypi/pandas@3.0.3",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD License"
+          }
+        }
+      ],
+      "name": "pandas",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/pandas@3.0.3",
+      "type": "library",
+      "version": "3.0.3"
+    },
+    {
+      "bom-ref": "pkg:pypi/pillow@12.2.0",
+      "externalReferences": [],
+      "licenses": [],
+      "name": "pillow",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/pillow@12.2.0",
+      "type": "library",
+      "version": "12.2.0"
+    },
+    {
+      "bom-ref": "pkg:pypi/pip@26.1.2",
+      "externalReferences": [],
+      "licenses": [],
+      "name": "pip",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/pip@26.1.2",
+      "type": "library",
+      "version": "26.1.2"
+    },
+    {
+      "bom-ref": "pkg:pypi/pluggy@1.6.0",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "pluggy",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/pluggy@1.6.0",
+      "type": "library",
+      "version": "1.6.0"
+    },
+    {
+      "bom-ref": "pkg:pypi/protobuf@7.35.1",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "name": "protobuf",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/protobuf@7.35.1",
+      "type": "library",
+      "version": "7.35.1"
+    },
+    {
+      "bom-ref": "pkg:pypi/pycparser@3.0",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "name": "pycparser",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/pycparser@3.0",
+      "type": "library",
+      "version": "3.0"
+    },
+    {
+      "bom-ref": "pkg:pypi/pygments@2.20.0",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-2-Clause"
+          }
+        }
+      ],
+      "name": "Pygments",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/pygments@2.20.0",
+      "type": "library",
+      "version": "2.20.0"
+    },
+    {
+      "bom-ref": "pkg:pypi/pyparsing@3.3.2",
+      "externalReferences": [],
+      "licenses": [],
+      "name": "pyparsing",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/pyparsing@3.3.2",
+      "type": "library",
+      "version": "3.3.2"
+    },
+    {
+      "bom-ref": "pkg:pypi/pytest@9.1.1",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/pytest-dev/pytest"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "pytest",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "eval-test"
+        }
+      ],
+      "purl": "pkg:pypi/pytest@9.1.1",
+      "type": "library",
+      "version": "9.1.1"
+    },
+    {
+      "bom-ref": "pkg:pypi/python-dateutil@2.9.0.post0",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "Dual License"
+          }
+        }
+      ],
+      "name": "python-dateutil",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/python-dateutil@2.9.0.post0",
+      "type": "library",
+      "version": "2.9.0.post0"
+    },
+    {
+      "bom-ref": "pkg:pypi/pyyaml@6.0.3",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/yaml/pyyaml"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "PyYAML",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "runtime"
+        }
+      ],
+      "purl": "pkg:pypi/pyyaml@6.0.3",
+      "type": "library",
+      "version": "6.0.3"
+    },
+    {
+      "bom-ref": "pkg:pypi/ranx@0.3.21",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/AmenRa/ranx"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "ranx",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "eval-test"
+        }
+      ],
+      "purl": "pkg:pypi/ranx@0.3.21",
+      "type": "library",
+      "version": "0.3.21"
+    },
+    {
+      "bom-ref": "pkg:pypi/requests@2.34.2",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "name": "requests",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/requests@2.34.2",
+      "type": "library",
+      "version": "2.34.2"
+    },
+    {
+      "bom-ref": "pkg:pypi/rich@15.0.0",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "rich",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/rich@15.0.0",
+      "type": "library",
+      "version": "15.0.0"
+    },
+    {
+      "bom-ref": "pkg:pypi/scipy@1.18.0",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD License"
+          }
+        }
+      ],
+      "name": "scipy",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/scipy@1.18.0",
+      "type": "library",
+      "version": "1.18.0"
+    },
+    {
+      "bom-ref": "pkg:pypi/seaborn@0.13.2",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD License"
+          }
+        }
+      ],
+      "name": "seaborn",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/seaborn@0.13.2",
+      "type": "library",
+      "version": "0.13.2"
+    },
+    {
+      "bom-ref": "pkg:pypi/shellingham@1.5.4",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "name": "shellingham",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/shellingham@1.5.4",
+      "type": "library",
+      "version": "1.5.4"
+    },
+    {
+      "bom-ref": "pkg:pypi/six@1.17.0",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "six",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/six@1.17.0",
+      "type": "library",
+      "version": "1.17.0"
+    },
+    {
+      "bom-ref": "pkg:pypi/sqlite-vec@0.1.9",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/asg017/sqlite-vec"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT OR Apache-2.0"
+          }
+        }
+      ],
+      "name": "sqlite-vec",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "runtime"
+        }
+      ],
+      "purl": "pkg:pypi/sqlite-vec@0.1.9",
+      "type": "library",
+      "version": "0.1.9"
+    },
+    {
+      "bom-ref": "pkg:pypi/tabulate@0.10.0",
+      "externalReferences": [],
+      "licenses": [],
+      "name": "tabulate",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/tabulate@0.10.0",
+      "type": "library",
+      "version": "0.10.0"
+    },
+    {
+      "bom-ref": "pkg:pypi/tokenizers@0.23.1",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/huggingface/tokenizers"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "name": "tokenizers",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "runtime"
+        }
+      ],
+      "purl": "pkg:pypi/tokenizers@0.23.1",
+      "type": "library",
+      "version": "0.23.1"
+    },
+    {
+      "bom-ref": "pkg:pypi/tqdm@4.68.3",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "MPL-2.0 OR MIT"
+          }
+        }
+      ],
+      "name": "tqdm",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/tqdm@4.68.3",
+      "type": "library",
+      "version": "4.68.3"
+    },
+    {
+      "bom-ref": "pkg:pypi/typer@0.25.1",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "typer",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/typer@0.25.1",
+      "type": "library",
+      "version": "0.25.1"
+    },
+    {
+      "bom-ref": "pkg:pypi/typing-extensions@4.15.0",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "PSF-2.0"
+          }
+        }
+      ],
+      "name": "typing_extensions",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/typing-extensions@4.15.0",
+      "type": "library",
+      "version": "4.15.0"
+    },
+    {
+      "bom-ref": "pkg:pypi/urllib3@2.7.0",
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "urllib3",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "transitive"
+        }
+      ],
+      "purl": "pkg:pypi/urllib3@2.7.0",
+      "type": "library",
+      "version": "2.7.0"
+    },
+    {
+      "bom-ref": "model:intfloat/multilingual-e5-small",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "name": "intfloat/multilingual-e5-small (ONNX)",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "runtime (bundled inline, offline-first)"
+        },
+        {
+          "name": "brain:model_role",
+          "value": "embedder"
+        }
+      ],
+      "type": "data",
+      "version": "Xenova/multilingual-e5-small snapshot"
+    },
+    {
+      "bom-ref": "model:Alibaba-NLP/gte-multilingual-reranker-base",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "name": "Alibaba-NLP/gte-multilingual-reranker-base (ONNX)",
+      "properties": [
+        {
+          "name": "brain:scope",
+          "value": "optional (default OFF; not bundled \u2014 opt-in via pre-seed/vendor/HF-allowlist)"
+        },
+        {
+          "name": "brain:model_role",
+          "value": "reranker"
+        }
+      ],
+      "type": "data",
+      "version": "onnx-community/gte-multilingual-reranker-base snapshot"
+    }
+  ],
+  "metadata": {
+    "component": {
+      "name": "profile-a-brain",
+      "type": "application",
+      "version": "0.2.0"
+    },
+    "timestamp": "2026-06-30T18:29:19Z",
+    "tools": [
+      {
+        "name": "s12_generate_sbom.py",
+        "vendor": "brain",
+        "version": "1.0"
+      }
+    ]
+  },
+  "serialNumber": "urn:uuid:48aef140-f145-421d-8867-3da20d18f12e",
+  "specVersion": "1.5",
+  "version": 1
+}

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "profile-a-marketplace",
+  "description": "Plugin marketplace for the Profile A brain-substrate second-brain — kernel skills (kb-curator, promote, vault-ingestion, vault-eval, save-conversation) plus an optional extras plugin (curation, improve, task-registrar). The kernel skills also auto-load from .claude/skills/ on a repo clone; this marketplace is the install path for a Claude Code user who is NOT working inside this repo, or who wants extras one command away.",
+  "owner": {
+    "name": "Profile A maintainers"
+  },
+  "metadata": {
+    "pluginRoot": "./plugins"
+  },
+  "plugins": [
+    {
+      "name": "profile-a-kernel",
+      "source": "profile-a-kernel",
+      "description": "Core brain-substrate skills for daily second-brain use: kb-curator, promote, vault-ingestion, vault-eval, save-conversation.",
+      "category": "productivity"
+    },
+    {
+      "name": "profile-a-extras",
+      "source": "profile-a-extras",
+      "description": "Optional maintenance/admin skills: curation (stale-link + revisit-queue lint), improve (session retrospective), task-registrar (scheduled-task registration).",
+      "category": "productivity"
+    }
+  ]
+}

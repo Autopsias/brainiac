@@ -1,0 +1,45 @@
+{
+  "schema_version": "harness-allowlist-v1",
+  "updated": "2026-06-27",
+  "doc": "docs/operations/egress-provider-posture.md",
+  "policy": "Openness != 'any app'. A harness is ALLOWED (may run against the full vault) only when its vendor's no-train/ZDR scope is contractually VERIFIED to cover tool-call/API egress of vault content AND MNPI. PENDING/REJECTED => default-deny: that harness runs ONLY against a projected, sensitive-tier-free workspace (brain project). val-03's cross-harness test set MUST equal the VERIFIED subset of this register. We hold NO model API keys; egress rides the desktop app vendor's enterprise agreement, so each vendor is a DISTINCT contract that must be verified separately.",
+  "bar": [
+    "no-train: vendor contractually excludes our content from model training",
+    "ZDR (zero data retention) or bounded retention compatible with MNPI handling",
+    "scope explicitly covers tool-call / API egress of vault content, not just chat UI",
+    "scope explicitly names MNPI / material-non-public handling, or the tenant's DPA does"
+  ],
+  "harnesses": [
+    {
+      "id": "claude-desktop",
+      "vendor": "Anthropic",
+      "surface": "Claude Desktop Chat + Code tab (the actual egress; we hold no keys)",
+      "posture_status": "PENDING",
+      "claimed_terms": "Enterprise/Team no-train; ZDR available on enterprise agreements (NOT verified against the signed Acme contract here)",
+      "verification_step": "Acme Legal/Procurement to confirm the signed Anthropic enterprise agreement's no-train + ZDR clauses explicitly cover tool-call/API egress of vault content AND MNPI; attach clause references.",
+      "owner": "the maintainer (accountable) + Acme Legal/Procurement (executes)",
+      "lead_time_days": 21
+    },
+    {
+      "id": "codex-cli",
+      "vendor": "OpenAI",
+      "surface": "Codex CLI (reads AGENTS.md, shells the brain CLI)",
+      "posture_status": "PENDING",
+      "claimed_terms": "OpenAI API/Enterprise no-train default; ZDR by request (NOT verified for this tenant)",
+      "verification_step": "Confirm the OpenAI tenant agreement's no-train default applies to Codex CLI tool-call egress AND a ZDR endorsement covers MNPI; attach the tenant DPA reference.",
+      "owner": "the maintainer (accountable) + Acme Cyber/CISO team (executes)",
+      "lead_time_days": 21
+    },
+    {
+      "id": "gemini-cli",
+      "vendor": "Google",
+      "surface": "Gemini CLI (contextFileName=AGENTS.md, shells the brain CLI)",
+      "posture_status": "PENDING",
+      "claimed_terms": "Gemini for Workspace/Vertex no-train on paid tiers; consumer Gemini DOES train (must be excluded)",
+      "verification_step": "Confirm the Google Workspace/Vertex tier in use is a no-train paid tier (NOT consumer Gemini) and its DPA covers tool-call egress of vault content AND MNPI; attach the tier + DPA reference.",
+      "owner": "the maintainer (accountable) + Acme Cyber/CISO team (executes)",
+      "lead_time_days": 21
+    }
+  ],
+  "default_posture": "Until a harness is VERIFIED, it is treated as PENDING and may run ONLY against `brain project --dest <dir> --max-tier Internal` (a projection that physically omits Confidential/Restricted/MNPI + all unlabelled notes). The full-vault path is gated on VERIFIED posture."
+}

@@ -1,0 +1,12 @@
+{
+  "name": "profile-a-extras",
+  "displayName": "Profile A — Extras",
+  "description": "Optional maintenance and admin skills for a brain-substrate second-brain: curation (stale-wikilink + revisit-queue lint), improve (session retrospective against AGENTS.md/CLAUDE.md/installed skills), task-registrar (idempotent scheduled-task registration).",
+  "version": "1.0.0",
+  "author": {
+    "name": "Profile A maintainers"
+  },
+  "license": "MIT",
+  "keywords": ["second-brain", "brain-cli", "maintenance", "scheduled-tasks"],
+  "category": "productivity"
+}

@@ -25,7 +25,7 @@ READ_TOOLS = ("search", "get", "recent")
 
 # Server-side egress ceiling (SEC-01 hardening). A caller-supplied ``max_tier``
 # was previously honored unbounded — an MCP client could simply ASK for
-# ``max_tier="Secret"`` and receive it. That is a human-gated elevation on the
+# ``max_tier="MNPI"`` and receive it. That is a human-gated elevation on the
 # CLI (an explicit ``--max-tier`` flag someone typed), but the MCP transport has
 # no equivalent "a person is watching this" signal, so the adapter now clamps
 # EVERY request to a ceiling the operator configures out-of-band. A caller may

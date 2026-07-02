@@ -173,7 +173,7 @@ class BrainIndex:
                 # sqlite3.connect() creates the file (when absent) with the
                 # process umask -- often 0o644 / world-readable on a typical
                 # single-user default. The index can hold note bodies up to and
-                # including Secret-tier content (the classification gate is an
+                # including MNPI-tier content (the classification gate is an
                 # egress *decision*, not containment), so tighten to owner-only
                 # immediately, regardless of umask.
                 config.secure_file_permissions(self.db_path)

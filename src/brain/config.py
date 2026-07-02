@@ -69,7 +69,7 @@ def ensure_index_dir() -> Path:
 # file permission policy (hardening pass)
 # --------------------------------------------------------------------------
 # The derived SQLite index and the published read-only snapshot can carry note
-# bodies up to and including Secret-tier content (the classification gate is an
+# bodies up to and including MNPI-tier content (the classification gate is an
 # egress *decision*, not containment -- see docs/operations/egress-provider-
 # posture.md §2). Neither must ever be left world-readable. The snapshot was
 # previously chmod'd 0o444 (read-only, but readable by every local account on a

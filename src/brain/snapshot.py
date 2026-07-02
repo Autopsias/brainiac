@@ -163,7 +163,7 @@ def publish_snapshot(source_db: Path, dest_dir: Path) -> SnapshotManifest:
     # its permissions, so a VM read-only open needs no -wal/-shm sidecars.
     _finalize_readonly(final_db)
     # Owner-only (0600), NOT the previous world-readable 0444 -- the snapshot
-    # can carry note bodies up to and including Secret-tier content, and a
+    # can carry note bodies up to and including MNPI-tier content, and a
     # shared/multi-user machine is exactly the case the classification gate
     # cannot protect against (it is an egress *decision*, not containment; see
     # docs/operations/egress-provider-posture.md §2). Real read-only

@@ -277,12 +277,12 @@ def test_mcp_adapter_egress_ceiling_clamps_requested_max_tier(sample_vault, tmp_
     core = BrainCore(vault=sample_vault, index=idx)
     core.rebuild()
 
-    # default ceiling (no env var set) -> "Internal"; a request for "Secret"
+    # default ceiling (no env var set) -> "Internal"; a request for "MNPI"
     # is clamped down and the Restricted note stays withheld.
     monkeypatch.delenv("BRAIN_MAX_EGRESS_TIER", raising=False)
     assert mcp_adapter._egress_ceiling_tier() == "Internal"
-    assert mcp_adapter._clamp_max_tier("Secret") == "Internal"
-    out = mcp_adapter.dispatch("get", {"id": "restricted-deal", "max_tier": "Secret"}, core=core)
+    assert mcp_adapter._clamp_max_tier("MNPI") == "Internal"
+    out = mcp_adapter.dispatch("get", {"id": "restricted-deal", "max_tier": "MNPI"}, core=core)
     assert out["result"] is None
 
     # a NARROWER request than the ceiling is always honored unchanged.
@@ -290,7 +290,7 @@ def test_mcp_adapter_egress_ceiling_clamps_requested_max_tier(sample_vault, tmp_
 
     # operator raises the ceiling explicitly -> the same request now surfaces.
     monkeypatch.setenv("BRAIN_MAX_EGRESS_TIER", "Restricted")
-    assert mcp_adapter._clamp_max_tier("Secret") == "Restricted"
+    assert mcp_adapter._clamp_max_tier("MNPI") == "Restricted"
     elevated = mcp_adapter.dispatch("get", {"id": "restricted-deal", "max_tier": "Restricted"},
                                     core=core)
     assert elevated["result"]["id"] == "restricted-deal"

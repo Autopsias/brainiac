@@ -1,0 +1,36 @@
+# Runtime artifacts — derived cache, rebuildable from vault/ at any time.
+vault/.brain/
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+.venv-embed/
+.fastembed_cache/
+.pytest_cache/
+*.egg-info/
+# Frozen brain binaries (built per-arch into the workspace, never committed).
+dist/
+build/
+# PyInstaller writes a stray *.spec at the repo root when invoked without one;
+# ignore those, but KEEP the authored, version-controlled specs under packaging/.
+/*.spec
+!packaging/**/*.spec
+# The derived SQLite index lives under app-data, never in-repo, but ignore any
+# stray local index/snapshot just in case.
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# S10 derived real-corpus index (369M, regenerable) — never commit
+_evidence/s10/brain-index/
+_models/
+.venv-export/
+
+# Session build evidence + eval gold/run data — derived, regenerable, kept LOCAL.
+# (Removed from the public repo; do not re-commit.)
+_evidence/
+eval/_expand/
+eval/golden_set*.json
+eval/qrels/
+eval/reformulations.json
+eval/runs/

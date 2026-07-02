@@ -1,0 +1,17 @@
+# Dockerfile.build — freeze the `brain` one-dir ELF inside a platform container.
+# Driven by packaging/linux/build_linux.sh with --platform per arch.
+# python:3.12-slim is multi-arch (amd64 + arm64), so buildx selects the right base.
+FROM python:3.12-slim AS build
+RUN apt-get update && apt-get install -y --no-install-recommends binutils && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY pyproject.toml README.md ./
+COPY src ./src
+COPY packaging ./packaging
+RUN python -m pip install --quiet --upgrade pip pyinstaller \
+ && python -m pip install --quiet -e ".[vec,audit,yaml]"
+# Freeze (one-dir, no UPX) using the shared spec.
+RUN pyinstaller --clean --noconfirm \
+      --distpath /out --workpath /tmp/build \
+      packaging/linux/brain-linux.spec
+# Prove the frozen binary runs in-container.
+RUN /out/brain/brain --help >/dev/null && echo "smoke OK"

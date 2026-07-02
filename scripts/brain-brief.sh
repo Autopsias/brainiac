@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# brain-daily-brief — daily brain sync + morning brief (UX-02)
+#
+# Invoked by macOS launchd (brain-brief-mac.plist) or Windows Task Scheduler
+# (install-brief-windows.ps1). This script is the ONE sanctioned automated
+# brain invocation and the guaranteed daily capture-drain FLOOR.
+#
+# Task name:    brain-daily-brief
+# User context: current user (LaunchAgent / Task Scheduler user-level)
+# Schedule:     daily 07:00 (see installer scripts)
+# Logs:         $BRAIN_LOG_DIR/brief-YYYY-MM-DD.log  (30-day rotation)
+# Uninstall:    see scripts/install-brief-mac.sh or install-brief-windows.ps1
+#
+# Security note: BRAIN_AUDIT_KEY_PEM must be injected from the OS keychain
+# or env before this script runs. The key is NEVER stored in this file.
+# macOS: the launchd plist carries the env var, populated at install time
+#        from the macOS Keychain via security(1) or from BRAIN_AUDIT_KEY_PEM.
+# Windows: the task action sets $env:BRAIN_AUDIT_KEY_PEM before invoking brain.
+#
+# Threat model: see docs/operations/s09-evidence.md § Scheduled-task threat model.
+set -euo pipefail
+
+LOGDIR="${BRAIN_LOG_DIR:-$HOME/.brain/logs}"
+mkdir -p "$LOGDIR"
+LOG="$LOGDIR/brief-$(date +%Y-%m-%d).log"
+
+{
+  echo "=== brain-daily-brief $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+  # sync --publish: drain pending captures (drain-on-invoke) + reconcile index
+  # + republish snapshot so the VM snapshot is current after any drain.
+  brain sync --publish --json
+  echo "---"
+  # brief --json: emit the morning brief with tripwire line if drain stalled.
+  brain brief --json
+} >> "$LOG" 2>&1
+
+# Rotate logs older than 30 days.
+find "$LOGDIR" -name 'brief-*.log' -mtime +30 -delete 2>/dev/null || true

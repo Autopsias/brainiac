@@ -1,0 +1,91 @@
+name: distribution-matrix
+
+# Proves the `brain` distribution BUILDS + RUNS on Windows and macOS — Layer 1
+# ("does it work on both OSes"). This is INDEPENDENT of the corporate
+# sign/Intune layer (Track-B: Azure Trusted Signing PW-2, WDAC PW-3, Intune
+# device PW-4), which stays multi-week and is gated in the plan, not here.
+#
+# Each OS job:
+#   1. Builds the one-dir PyInstaller bundle via the platform build script
+#      (packaging/macos/build_macos.sh · packaging/windows/build_windows.ps1),
+#      which itself runs a `--help` launch smoke (the S07 "frozen binary runs" bar).
+#   2. Runs an OFFLINE retrieval smoke over the fixture vault/ with
+#      BRAIN_EMBEDDER=hash (deterministic HashEmbedder — NO model download, NO
+#      network): `brain rebuild` then `brain search --json`, asserting the JSON
+#      carries `results` + `egress`. Proves the frozen binary does real retrieval.
+#   3. Uploads the built one-dir folder as a downloadable artifact per OS.
+#
+# PyInstaller is NOT a cross-compiler — a Windows .exe can only be produced on
+# Windows, a macOS bundle only on macOS — so the matrix IS the proof that both
+# native distributions build and run.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dist-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-smoke:
+    name: build + smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    env:
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build one-dir bundle + launch smoke (macOS)
+        if: runner.os == 'macOS'
+        run: PYTHON=python packaging/macos/build_macos.sh
+
+      - name: Build one-dir bundle + launch smoke (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: packaging/windows/build_windows.ps1
+
+      - name: Offline retrieval smoke (HashEmbedder, no network)
+        env:
+          BRAIN_EMBEDDER: hash
+          BRAIN_VAULT: ${{ github.workspace }}/vault
+          BRAIN_INDEX_DIR: ${{ runner.temp }}/brain-idx
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="dist/brain/brain"
+          if [ "${RUNNER_OS}" = "Windows" ]; then BIN="dist/brain/brain.exe"; fi
+          echo "== rebuild index over fixture vault (offline HashEmbedder) =="
+          "$BIN" rebuild
+          echo "== search + assert sourced JSON =="
+          out=$("$BIN" search "arctic embed retrieval benchmark" --json -k 5)
+          printf '%s\n' "$out"
+          printf '%s' "$out" | python -c "import sys,json; \
+            d=json.load(sys.stdin); \
+            assert 'results' in d and 'egress' in d, d; \
+            assert isinstance(d['results'], list), d; \
+            print('SMOKE OK:', len(d['results']), 'results, egress=', d['egress'])"
+
+      - name: Upload built distribution
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: brain-${{ runner.os }}
+          path: dist/brain/
+          if-no-files-found: error
+          retention-days: 14

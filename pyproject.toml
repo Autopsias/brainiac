@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "profile-a-brain"
+version = "0.2.0"
+description = "Local any-LLM second-brain core engine + brain CLI (Markdown truth, derived SQLite index)."
+readme = "README.md"
+requires-python = ">=3.9"
+# Runtime deps are intentionally minimal; the core runs stdlib-only with
+# graceful degradation. Optional accelerators are extras.
+dependencies = []
+
+[project.optional-dependencies]
+# Dense-vector ANN backend. When absent the core falls back to the pure-Python
+# brute-force VectorBackend (see src/brain/vectors.py) — the adapter interface
+# guarantees retrieval works either way.
+vec = ["sqlite-vec>=0.1.6"]
+# Ed25519 audit chain (CORE-03). Without it the audit hook is unavailable and
+# write_note fails closed rather than writing an unsigned record.
+audit = ["cryptography>=41"]
+# Real Arctic-embed embedder (wired in a later session). Until then the core
+# uses the deterministic HashEmbedder fallback (offline, test-safe).
+embed = ["fastembed>=0.3"]
+# YAML frontmatter (optional; a stdlib mini-parser is the fallback).
+yaml = ["PyYAML>=6"]
+dev = ["pytest>=7"]
+# A/B retrieval eval harness (S05): ranx is MIT; numpy comes transitively.
+# `pip install -e .[eval]` to run eval/harness.py + eval/gate.py + scripts/ci/eval_gate.sh.
+eval = ["ranx>=0.3.20", "numpy>=1.24"]
+# OPTIONAL, DELETABLE MCP bridge for the pure Claude Desktop Chat tab only
+# (src/brain/mcp_adapter.py). MCP is never the foundation — every other harness
+# calls the `brain` CLI directly. `pip install -e .[mcp]` then `brain-mcp`.
+mcp = ["mcp>=1.0"]
+
+[project.scripts]
+brain = "brain.cli:main"
+# optional Chat-tab bridge; harmless if [mcp] is not installed (import-time only).
+brain-mcp = "brain.mcp_adapter:serve"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+# Scope collection to tests/ so pytest never descends into a local model venv
+# (.venv-embed/) or the fastembed model cache (.fastembed_cache/).
+testpaths = ["tests"]
+
+# ---------------------------------------------------------------------------
+# LICENSING NOTE (FLEET / r2-codex)
+# This core is built FROM SCRATCH. basicmachines-co/basic-memory (AGPL-3.0) was
+# used as a CLEAN-ROOM DESIGN REFERENCE ONLY — no fork, no vendored modules, no
+# imports. See docs/clean-room-log.md and tools/code_origin_audit.py. If this
+# artifact is ever distributed, re-run the code-origin audit gate first; only a
+# recorded Legal clearance for internal-only conveyance may reinstate a fork.
+# ---------------------------------------------------------------------------

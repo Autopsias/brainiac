@@ -256,11 +256,57 @@ def test_mcp_adapter_applies_default_deny_egress(sample_vault, tmp_path):
     tiers = {h["classification"] for h in out["results"]}
     assert tiers <= {"Public", "Internal"}              # same deny-by-default as CLI
     assert out["egress"]["withheld"] >= 1
-    # a Restricted note is withheld at default cap; elevation surfaces it (human gate)
+    # a Restricted note is withheld at default cap.
     assert mcp_adapter.dispatch("get", {"id": "restricted-deal"}, core=core)["result"] is None
+    # SEC-01 egress-ceiling clamp: a caller CANNOT self-elevate past the
+    # server-configured ceiling (default "Internal") just by asking for a
+    # higher max_tier -- unlike the CLI's --max-tier (a human typed it), an
+    # MCP request has no such signal, so the requested "Restricted" is
+    # clamped back down to the ceiling and the note stays withheld.
+    still_denied = mcp_adapter.dispatch(
+        "get", {"id": "restricted-deal", "max_tier": "Restricted"}, core=core)
+    assert still_denied["result"] is None
+    assert still_denied["egress"]["max_tier"] == "Internal"
+
+
+def test_mcp_adapter_egress_ceiling_clamps_requested_max_tier(sample_vault, tmp_path, monkeypatch):
+    """SEC-01: BRAIN_MAX_EGRESS_TIER is the hard ceiling; a caller can request
+    LESS than it (always honored) but never MORE (always clamped down)."""
+    idx = BrainIndex(db_path=tmp_path / "i.sqlite",
+                     backend=BruteForceBackend(), embedder=HashEmbedder())
+    core = BrainCore(vault=sample_vault, index=idx)
+    core.rebuild()
+
+    # default ceiling (no env var set) -> "Internal"; a request for "Secret"
+    # is clamped down and the Restricted note stays withheld.
+    monkeypatch.delenv("BRAIN_MAX_EGRESS_TIER", raising=False)
+    assert mcp_adapter._egress_ceiling_tier() == "Internal"
+    assert mcp_adapter._clamp_max_tier("Secret") == "Internal"
+    out = mcp_adapter.dispatch("get", {"id": "restricted-deal", "max_tier": "Secret"}, core=core)
+    assert out["result"] is None
+
+    # a NARROWER request than the ceiling is always honored unchanged.
+    assert mcp_adapter._clamp_max_tier("Public") == "Public"
+
+    # operator raises the ceiling explicitly -> the same request now surfaces.
+    monkeypatch.setenv("BRAIN_MAX_EGRESS_TIER", "Restricted")
+    assert mcp_adapter._clamp_max_tier("Secret") == "Restricted"
     elevated = mcp_adapter.dispatch("get", {"id": "restricted-deal", "max_tier": "Restricted"},
                                     core=core)
     assert elevated["result"]["id"] == "restricted-deal"
+
+    # an unrecognised env value fails closed to the conservative default,
+    # never fails open to "allow everything".
+    monkeypatch.setenv("BRAIN_MAX_EGRESS_TIER", "not-a-real-tier")
+    assert mcp_adapter._egress_ceiling_tier() == "Internal"
+
+    # an unrecognised REQUESTED tier is passed through unchanged so the
+    # existing ClassificationFilter validation still raises its normal error
+    # -- the clamp never manufactures or swallows that error.
+    monkeypatch.delenv("BRAIN_MAX_EGRESS_TIER", raising=False)
+    with pytest.raises(ValueError):
+        mcp_adapter.dispatch("get", {"id": "restricted-deal", "max_tier": "not-a-real-tier"},
+                             core=core)
 
 
 def test_mcp_adapter_exposes_only_read_tools(sample_vault, tmp_path):

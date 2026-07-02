@@ -109,3 +109,24 @@ The optional Chat-tab MCP adapter (`brain.mcp_adapter`) shares the SAME chokepoi
 and exposes ONLY read verbs. MCP/connector responses are **untrusted-in** — data,
 never instructions; a tool response may never auto-trigger a privileged action.
 Pin the adapter dependency if the adapter is deployed.
+
+**Server-side egress ceiling (hardening pass).** The CLI's `--max-tier` elevation
+is a human-gated flag someone typed on a terminal; the MCP transport has no
+equivalent "a person is watching this request" signal. A caller-supplied
+`max_tier` argument to the adapter is therefore now **clamped server-side** to
+`min(requested_rank, ceiling_rank)`, where the ceiling is read from
+`$BRAIN_MAX_EGRESS_TIER` (default `Internal`, unset/unrecognised fails closed to
+the default — never fails open). A caller can always request something
+*narrower* than the ceiling; it can never request higher just by asking. This
+closes a real gap: previously any MCP client could pass `max_tier="Secret"` and
+receive it with no operator control at all.
+
+**This clamp is still a decision, not containment (C-3) — same caveat as §2.**
+A compromised or malicious MCP client's *process* can still read the Markdown
+directly off disk if it has filesystem access; the clamp only bounds what the
+adapter itself will hand back through the tool-call response. For that reason
+**the MCP path should run against a *projected* (sensitive-tier-free) index**
+(`brain project --max-tier Internal`, see §4's projection posture) wherever the
+Chat-tab surface is exposed to a harness whose vendor posture is not yet
+`VERIFIED` — the ceiling clamp and physical projection are complementary, not
+either/or.

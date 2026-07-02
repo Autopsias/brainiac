@@ -128,6 +128,8 @@ def _pem_from_cmd(cmd: str) -> bytes:
     # pipeline (e.g. `age -d -i id key.pem.age`). Anyone able to set this env
     # var already has code execution, so shell=True adds no attack surface.
     try:
+        # nosec B602 - operator-set env var (BRAIN_AUDIT_KEY_CMD), never untrusted
+        # input; see the NOTE above and docs/SECURITY_NOTES.md.
         out = subprocess.run(cmd, shell=True, capture_output=True, timeout=20)  # noqa: S602
     except (OSError, subprocess.SubprocessError) as exc:
         raise KeyUnavailable(f"BRAIN_AUDIT_KEY_CMD failed to run: {exc}") from exc

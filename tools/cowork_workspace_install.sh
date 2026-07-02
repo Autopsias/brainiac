@@ -51,6 +51,20 @@ for arch in x86_64 aarch64; do
 done
 [ "$shipped" -gt 0 ] || { echo "[install] ERROR: no ELFs found in $DIST" >&2; exit 2; }
 
+echo "[install] writing SHA256SUMS -> $BRAIN_DIR/bin/SHA256SUMS"
+# Supply-chain manifest (hardening pass): tools/cowork_session_bootstrap.sh
+# verifies these hashes on the VM leg BEFORE trusting/symlinking a binary.
+# Regenerated on every install, so a re-run after rebuilding the ELFs always
+# ships a manifest matching what's actually in bin/.
+if command -v sha256sum >/dev/null 2>&1; then
+  ( cd "$BRAIN_DIR/bin" && sha256sum brain-linux-* > SHA256SUMS )
+elif command -v shasum >/dev/null 2>&1; then
+  ( cd "$BRAIN_DIR/bin" && shasum -a 256 brain-linux-* > SHA256SUMS )
+else
+  echo "[install] WARN: neither sha256sum nor shasum found — no SHA256SUMS" \
+       "manifest written; the VM leg's integrity check will skip-with-warning" >&2
+fi
+
 echo "[install] model cache -> $BRAIN_DIR/model/ (bundled; VM has no HF egress)"
 cp -a "$MODEL_SRC/." "$BRAIN_DIR/model/"
 

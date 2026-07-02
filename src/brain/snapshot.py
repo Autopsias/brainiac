@@ -33,6 +33,8 @@ import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
+from . import config
+
 SNAPSHOT_DB = "index.snapshot.sqlite"
 MANIFEST = "snapshot.manifest.json"
 
@@ -157,13 +159,19 @@ def publish_snapshot(source_db: Path, dest_dir: Path) -> SnapshotManifest:
     finally:
         if tmp_db.exists():
             tmp_db.unlink()
-    # Make the snapshot a self-contained rollback-journal DB BEFORE marking it
-    # read-only, so a VM read-only open needs no -wal/-shm sidecars.
+    # Make the snapshot a self-contained rollback-journal DB BEFORE tightening
+    # its permissions, so a VM read-only open needs no -wal/-shm sidecars.
     _finalize_readonly(final_db)
-    try:
-        os.chmod(final_db, 0o444)  # read-only on disk (advisory)
-    except OSError:
-        pass
+    # Owner-only (0600), NOT the previous world-readable 0444 -- the snapshot
+    # can carry note bodies up to and including Secret-tier content, and a
+    # shared/multi-user machine is exactly the case the classification gate
+    # cannot protect against (it is an egress *decision*, not containment; see
+    # docs/operations/egress-provider-posture.md §2). Real read-only
+    # enforcement is the ``mode=ro`` + ``PRAGMA query_only=ON`` SQLite connection
+    # (BrainIndex.conn, read_only=True), NOT the filesystem bit, so this change
+    # does not weaken the write-protection guarantee -- it only removes the
+    # world-readable exposure.
+    config.secure_file_permissions(final_db)
 
     cm = _read_counts_and_meta(final_db)
     now = time.time()

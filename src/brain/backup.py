@@ -111,12 +111,69 @@ def create_backup(vault: Path, dest_dir: Path, *, name: str | None = None,
     return manifest
 
 
+# Python's stdlib gained extraction *filters* (PEP 706) that reject path
+# traversal, absolute paths, device/fifo members, and unsafe symlink/hardlink
+# targets at the C level. Available natively on 3.12+, and backported to the
+# 3.8.17 / 3.9.17 / 3.10.12 / 3.11.4 security-release lines — detect via the
+# presence of ``tarfile.data_filter`` rather than a bare version check, since
+# that covers both cases in one test.
+_HAS_TAR_DATA_FILTER = hasattr(tarfile, "data_filter")
+
+
+def _member_target_or_raise(member: "tarfile.TarInfo", dest_dir: Path) -> Path:
+    """Resolve ``member``'s extraction target and raise if it escapes ``dest_dir``.
+
+    Guards against path traversal in archive member *names* (``../../etc/passwd``
+    style, or an absolute path) regardless of Python version / filter support —
+    this check runs even when ``filter="data"`` will ALSO reject it, so the error
+    message is consistent across interpreters.
+    """
+    dest_resolved = dest_dir.resolve()
+    target = (dest_dir / member.name).resolve()
+    if target != dest_resolved and dest_resolved not in target.parents:
+        raise ValueError(f"archive member escapes dest: {member.name}")
+    return target
+
+
+def _reject_unsafe_member_pre312(member: "tarfile.TarInfo", dest_dir: Path) -> None:
+    """Fallback validation for interpreters WITHOUT ``tarfile.data_filter``
+    (pre-3.12, or a pre-security-release patch level).
+
+    Rejects anything that is not a plain file or directory — no symlinks,
+    hardlinks, device nodes, or FIFOs — and, belt-and-suspenders, validates that
+    any link member's ``linkname`` would resolve inside ``dest_dir``. A crafted
+    archive with a symlink member that points outside ``dest_dir`` (the classic
+    tar-extraction escape) is rejected here rather than silently followed.
+    """
+    if not (member.isfile() or member.isdir()):
+        raise ValueError(
+            f"archive member {member.name!r} is not a regular file or directory "
+            f"(tar type {member.type!r}); refusing to extract — symlink / hardlink / "
+            "device / fifo members are not allowed in a restored backup"
+        )
+    if member.issym() or member.islnk():  # pragma: no cover - unreachable after
+        # the isfile/isdir check above on current CPython tarfile classification,
+        # kept as an explicit second guard in case that classification ever
+        # changes so a link target is never silently trusted.
+        link_target = ((dest_dir / member.name).parent / member.linkname).resolve()
+        dest_resolved = dest_dir.resolve()
+        if link_target != dest_resolved and dest_resolved not in link_target.parents:
+            raise ValueError(
+                f"archive link member escapes dest: {member.name} -> {member.linkname}"
+            )
+
+
 def restore_backup(archive: Path, dest_dir: Path) -> dict[str, Any]:
     """Restore a backup archive into ``dest_dir`` (decrypting if needed).
 
     Returns a verdict with the restored file count and the plaintext sha256 (so a
     caller can assert byte-identity against the backup manifest). Authenticated
     decryption — a tampered ``.enc`` raises rather than restoring garbage.
+
+    Extraction is safe against path traversal AND symlink/hardlink escapes:
+    Python 3.12+ (and the 3.8.17/3.9.17/3.10.12/3.11.4+ backports) use the
+    stdlib ``filter="data"`` extraction filter; older interpreters fall back to
+    manual per-member validation (regular file/dir only + traversal check).
     """
     archive = Path(archive)
     dest_dir = Path(dest_dir)
@@ -129,15 +186,20 @@ def restore_backup(archive: Path, dest_dir: Path) -> dict[str, Any]:
     else:
         plaintext, encrypted = blob, False
 
-    restored = 0
     with tarfile.open(fileobj=io.BytesIO(plaintext), mode="r:gz") as tar:
-        for member in tar.getmembers():
-            # Guard against path traversal in archive member names.
-            target = (dest_dir / member.name).resolve()
-            if dest_dir.resolve() not in target.parents and target != dest_dir.resolve():
-                raise ValueError(f"archive member escapes dest: {member.name}")
-        tar.extractall(dest_dir)  # noqa: S202 - members validated above
-        restored = sum(1 for m in tar.getmembers() if m.isfile())
+        members = tar.getmembers()
+        for member in members:
+            # Name-based traversal guard runs on EVERY interpreter — belt and
+            # suspenders alongside filter="data" on 3.12+, the sole guard pre-3.12.
+            _member_target_or_raise(member, dest_dir)
+            if not _HAS_TAR_DATA_FILTER:
+                _reject_unsafe_member_pre312(member, dest_dir)
+
+        if _HAS_TAR_DATA_FILTER:
+            tar.extractall(dest_dir, filter="data")  # nosec B202 - safe filter + pre-validated above
+        else:
+            tar.extractall(dest_dir)  # nosec B202 - members pre-validated above (file/dir only, no traversal)
+        restored = sum(1 for m in members if m.isfile())
 
     return {
         "restored": True,

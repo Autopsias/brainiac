@@ -481,6 +481,74 @@ def test_dry_run_never_invokes_runner():
     assert any("Desktop" in s for s in report["residual_human_steps"])
 
 
+# --------------------------------------------------------------------------
+# dist/ rebuild — `pip install -e` (engine venv refresh) never regenerates
+# dist/COMPAT + dist/cowork-skills/*.skill; only tools/package_clients.py
+# does. Observed live twice (0.10.2->0.10.3, 0.10.3->0.10.4): skipping this
+# left restage_workspaces staging one-build-stale .skill bundles.
+# --------------------------------------------------------------------------
+
+def test_dist_rebuild_runs_after_engine_refresh_and_before_workspace_restage(monkeypatch):
+    call_order = []
+    monkeypatch.setattr(update, "probe_cli_capability", lambda run: {"ok": True, "reason": "ok", "manual_commands": []})
+    monkeypatch.setattr(update, "refresh_marketplace", lambda name, run: {"ok": True, "detail": "refreshed"})
+    monkeypatch.setattr(update, "run_doctor", lambda **kw: {"rows": [], "ok": True, "stale_count": 0, "ssot_version": "0.9.1"})
+    monkeypatch.setattr(update, "render_human", lambda report: "rendered")
+
+    def tracking_engine_refresh(*a, **kw):
+        call_order.append("engine_refresh")
+        return {"ok": True, "old_version": "x", "new_version": "y", "detail": "ok"}
+
+    def tracking_rebuild_dist(*a, **kw):
+        call_order.append("dist_rebuild")
+        return {"ok": True, "detail": "built"}
+
+    def tracking_restage(*a, **kw):
+        call_order.append("workspace_restage")
+        return []
+
+    monkeypatch.setattr(update, "refresh_engine_venv", tracking_engine_refresh)
+    monkeypatch.setattr(update, "rebuild_dist", tracking_rebuild_dist)
+    monkeypatch.setattr(update, "restage_workspaces", tracking_restage)
+
+    update.run_update(run=lambda cmd, **kw: _cp())
+
+    assert call_order == ["engine_refresh", "dist_rebuild", "workspace_restage"], call_order
+
+
+def test_dist_rebuild_failure_halts_before_workspace_restage(monkeypatch):
+    monkeypatch.setattr(update, "probe_cli_capability", lambda run: {"ok": True, "reason": "ok", "manual_commands": []})
+    monkeypatch.setattr(update, "refresh_marketplace", lambda name, run: {"ok": True, "detail": "refreshed"})
+    monkeypatch.setattr(update, "run_doctor", lambda **kw: {"rows": [], "ok": True, "stale_count": 0, "ssot_version": "0.9.1"})
+    monkeypatch.setattr(update, "render_human", lambda report: "rendered")
+    monkeypatch.setattr(update, "refresh_engine_venv", lambda *a, **kw: {"ok": True, "old_version": "x", "new_version": "y", "detail": "ok"})
+    monkeypatch.setattr(update, "rebuild_dist", lambda *a, **kw: {"ok": False, "detail": "FAIL: plugin.json version skew"})
+
+    restage_calls = []
+    monkeypatch.setattr(update, "restage_workspaces", lambda *a, **kw: restage_calls.append(1))
+
+    report = update.run_update(run=lambda cmd, **kw: _cp())
+
+    assert report["ok"] is False
+    assert restage_calls == [], "restage_workspaces must not run when dist rebuild fails"
+    assert "dist rebuild failed" in report["notes"]
+    assert report["steps"]["dist_rebuild"]["ok"] is False
+
+
+def test_dist_rebuild_dry_run_records_without_executing():
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return _cp()
+
+    report = update.run_update(run=fake_run, dry_run=True, skip_capability_probe=True)
+
+    assert calls == [], "dry-run must never invoke the injected runner"
+    assert report["steps"]["dist_rebuild"]["ok"] is True
+    assert "dry-run" in report["steps"]["dist_rebuild"]["detail"].lower()
+
+
 def test_render_before_after_produces_arrow_table():
     table = [{"surface": "X", "before": "1.0.0", "after": "1.1.0"}]
     text = update.render_before_after(table)

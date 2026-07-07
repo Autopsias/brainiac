@@ -7,6 +7,18 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.10.5] — 2026-07-08
+- **Fix (`run_update` restaged one-build-stale `.skill` bundles — observed
+  live twice, 0.10.2->0.10.3 and 0.10.3->0.10.4):** the engine venv refresh
+  (`pip install -e`) does not regenerate the gitignored `dist/COMPAT` +
+  `dist/cowork-skills/*.skill` artifacts — only `tools/package_clients.py`
+  does. `run_update` now runs the packager (via the injectable `Runner`,
+  skipped under `--dry-run`) as its own `dist_rebuild` step, right after the
+  engine refresh succeeds and before `restage_workspaces` copies `dist/`
+  into any cowork-vm workspace. A non-zero packager exit halts the update
+  (`ok: False`) before `restage_workspaces` runs, instead of silently
+  proceeding with stale bundles.
+
 ## [0.10.4] — 2026-07-08
 - **Fix (`brain doctor` crashed on the Cowork VM leg with
   `ModuleNotFoundError: workspace_registry`):** `doctor` is in `VM_ALLOWED`

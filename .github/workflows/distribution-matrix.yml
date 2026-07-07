@@ -1,0 +1,123 @@
+name: distribution-matrix
+
+# Proves the `brain` distribution BUILDS + RUNS on Windows and macOS — Layer 1
+# ("does it work on both OSes"). This is INDEPENDENT of the corporate
+# sign/Intune layer (Track-B: Azure Trusted Signing PW-2, WDAC PW-3, Intune
+# device PW-4), which stays multi-week and is gated in the plan, not here.
+#
+# Each OS job:
+#   1. Builds the one-dir PyInstaller bundle via the platform build script
+#      (packaging/macos/build_macos.sh · packaging/windows/build_windows.ps1),
+#      which itself runs a `--help` launch smoke (the S07 "frozen binary runs" bar).
+#   2. Runs an OFFLINE retrieval smoke over the fixture vault/ with
+#      BRAIN_EMBEDDER=hash (deterministic HashEmbedder — NO model download, NO
+#      network): `brain rebuild` then `brain search --json`, asserting the JSON
+#      carries `results` + `egress`. Proves the frozen binary does real retrieval.
+#   3. Uploads the built one-dir folder as a downloadable artifact per OS.
+#
+# PyInstaller is NOT a cross-compiler — a Windows .exe can only be produced on
+# Windows, a macOS bundle only on macOS — so the matrix IS the proof that both
+# native distributions build and run.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dist-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-smoke:
+    name: build + smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    env:
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Build one-dir bundle + launch smoke (macOS)
+        if: runner.os == 'macOS'
+        env:
+          # CI proves the BUILD + clean-run; model bundling is a separate
+          # corporate-build concern (DIST-02, proven locally). Skip staging so
+          # the matrix stays fast + deterministic with the HashEmbedder.
+          BRAIN_SKIP_MODEL_BUNDLE: "1"
+        run: PYTHON=python packaging/macos/build_macos.sh
+
+      - name: Build one-dir bundle + launch smoke (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          BRAIN_SKIP_MODEL_BUNDLE: "1"
+        run: packaging/windows/build_windows.ps1
+
+      - name: Offline retrieval smoke (HashEmbedder, no network)
+        env:
+          BRAIN_EMBEDDER: hash
+          BRAIN_VAULT: ${{ github.workspace }}/vault
+          BRAIN_INDEX_DIR: ${{ runner.temp }}/brain-idx
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="dist/brain/brain"
+          if [ "${RUNNER_OS}" = "Windows" ]; then BIN="dist/brain/brain.exe"; fi
+          echo "== rebuild index over fixture vault (offline HashEmbedder) =="
+          "$BIN" rebuild
+          echo "== search + assert sourced JSON =="
+          out=$("$BIN" search "arctic embed retrieval benchmark" --json -k 5)
+          printf '%s\n' "$out"
+          printf '%s' "$out" | python -c "import sys,json; \
+            d=json.load(sys.stdin); \
+            assert 'results' in d and 'egress' in d, d; \
+            assert isinstance(d['results'], list), d; \
+            print('SMOKE OK:', len(d['results']), 'results, egress=', d['egress'])"
+
+      - name: Generate SHA-256 manifest of built artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import pathlib
+
+          dist_dir = pathlib.Path("dist/brain")
+          manifest_path = dist_dir / "SHA256SUMS"
+          lines = []
+          for path in sorted(dist_dir.rglob("*")):
+              if path.is_file() and path.name != "SHA256SUMS":
+                  digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                  rel = path.relative_to(dist_dir).as_posix()
+                  lines.append(f"{digest}  {rel}")
+          manifest_path.write_text("\n".join(lines) + "\n")
+          print(f"wrote {len(lines)} entries to {manifest_path}")
+          PY
+          cat dist/brain/SHA256SUMS
+
+      # Only publish build artifacts for trusted events (push to master,
+      # workflow_dispatch) — never for pull_request, where the workflow may
+      # run against a fork's untrusted code and the artifact could otherwise
+      # be used as an exfiltration or supply-chain vector.
+      - name: Upload built distribution
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: brain-${{ runner.os }}
+          path: dist/brain/
+          if-no-files-found: error
+          retention-days: 14

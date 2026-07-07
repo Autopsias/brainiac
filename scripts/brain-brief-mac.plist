@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- brain-daily-brief — macOS launchd LaunchAgent (UX-02)
+     Install: BRAIN_VAULT=/path/to/vault bash scripts/install-brief-mac.sh
+     Uninstall: launchctl unload ~/Library/LaunchAgents/com.brainiac.nightly.<id>.plist
+                rm ~/Library/LaunchAgents/com.brainiac.nightly.<id>.plist
+     Logs: ~/Library/Logs/brain/brief-YYYY-MM-DD.log
+     Task name: com.brainiac.nightly.<id> (per-vault; <id> = 8-hex vault slug, rendered by install-brief-mac.sh)
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>LABEL_PLACEHOLDER</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>SCRIPTS_DIR/brain-brief.sh</string>
+    </array>
+
+    <!-- BRAIN_VAULT and BRAIN_AUDIT_KEY_PEM are substituted by install-brief-mac.sh.
+         The signing key is read from the macOS Keychain at install time and written
+         here; it is never stored in the source tree. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>BRAIN_VAULT</key>
+        <string>VAULT_PATH</string>
+        <key>BRAIN_AUDIT_KEY_PEM</key>
+        <string>AUDIT_KEY_PEM_PLACEHOLDER</string>
+        <key>BRAIN_LOG_DIR</key>
+        <string>HOME_DIR/.brain/logs</string>
+    </dict>
+
+    <!-- Daily at 07:00 local time -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>7</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>HOME_DIR/.brain/logs/launchd-brief-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>HOME_DIR/.brain/logs/launchd-brief-stderr.log</string>
+
+    <!-- Do NOT run immediately on load — wait for the first scheduled time. -->
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

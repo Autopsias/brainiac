@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+# cowork_workspace_install.sh — assemble the VM-readable runtime into the
+# workspace (INT-02 + INS-01). Run on the HOST. Idempotent: re-run to refresh
+# binaries + republish the snapshot. The Markdown in <vault> stays the single
+# source of truth; everything under <vault>/.brain/ is rebuildable from it.
+#
+# ONE install flow lands the full operational layer (INS-01):
+#   (a) the engine        — per-arch brain ELFs into .brain/bin/
+#   (b) the model cache   — bundled Arctic model into .brain/model/
+#   (c) the host index    — rebuilt + published as the read-only .brain/snapshot/
+#   (d) the SKILL payload  — dist/cowork-skills/*.skill into .brain/skills/,
+#                            REBUILT at the current version on every run and
+#                            version-verified against the engine (s08, cw-02)
+#   (e) the task manifest — routines/manifest.json into .brain/routines/ (s07)
+#   (f) brain init --full — detect client (VM), scaffold+validate the overlay,
+#                           and emit the Cowork task paste-prompt (INS-02)
+#
+# Egress (PF-02): every artifact landed carries the engine's deny-by-default
+# egress + classification + signed-audit posture; the snapshot published in (c)
+# IS the immutable dated export record the export-egress gate requires
+# (docs/operations/egress-provider-posture.md Leg 3).
+#
+# Usage:
+#   tools/cowork_workspace_install.sh <vault-dir> <model-cache-dir> [dist-dir]
+#
+#   <vault-dir>        the workspace vault/ (holds brain/ raw/)
+#   <model-cache-dir>  a fastembed cache dir already containing the Arctic model
+#                      (model.onnx + tokenizer/config); copied into .brain/model/
+#   [dist-dir]         where the built ELFs live (default: dist/)
+set -euo pipefail
+
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+VAULT="${1:?usage: cowork_workspace_install.sh <vault-dir> <model-cache-dir> [dist-dir]}"
+MODEL_SRC="${2:?missing <model-cache-dir>}"
+DIST="${3:-$REPO/dist}"
+
+VAULT="$(cd "$VAULT" && pwd)"
+BRAIN_DIR="$VAULT/.brain"
+mkdir -p "$BRAIN_DIR/bin" "$BRAIN_DIR/model" "$BRAIN_DIR/snapshot" \
+         "$BRAIN_DIR/capture-inbox" "$BRAIN_DIR/skills" "$BRAIN_DIR/routines"
+
+# (a) the engine, ZERO-INSTALL by default: the brain package is pure Python
+# with stdlib-only graceful degradation, so the VM runs it STRAIGHT FROM a
+# staged source copy (python3 -m brain.cli) — nothing is installed in the VM.
+# Dense query embedding is an optional in-VM `pip install onnxruntime
+# tokenizers numpy` (model files are already staged); without it the read
+# verbs run lexical-first (BM25/grep/frontmatter), which is the design.
+echo "[install] engine source -> $BRAIN_DIR/engine/brain/"
+rm -rf "$BRAIN_DIR/engine"
+mkdir -p "$BRAIN_DIR/engine"
+cp -R "$REPO/src/brain" "$BRAIN_DIR/engine/brain"
+find "$BRAIN_DIR/engine" -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
+cat > "$BRAIN_DIR/brain" <<'SHIM'
+#!/bin/sh
+# zero-install shim: run the staged brain engine from source
+DIR="$(cd "$(dirname "$0")" && pwd)"
+PYTHONPATH="$DIR/engine${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m brain.cli "$@"
+SHIM
+chmod 755 "$BRAIN_DIR/brain"
+
+# Verify the staged engine carries the COMMITTED version stamp (ADR-0005
+# Ruling 1). The stamp is git-tracked and written by the release pipeline —
+# the cp -R above carries it; if it's missing, the VM would report
+# 0.0.0+unknown on every surface, which is exactly the defect DV-01 fixed.
+STAGED_VERSION="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' "$BRAIN_DIR/engine/brain/_version.py" 2>/dev/null || true)"
+if [ -z "$STAGED_VERSION" ]; then
+  echo "[install] ERROR: staged engine has no version stamp" \
+       "($BRAIN_DIR/engine/brain/_version.py missing or malformed)." >&2
+  echo "          Run tools/package_clients.py in the checkout and retry." >&2
+  exit 1
+fi
+echo "[install] staged engine version: $STAGED_VERSION"
+
+echo "[install] frozen ELFs (optional, for VMs without python3) -> $BRAIN_DIR/bin/"
+shipped=0
+for arch in x86_64 aarch64; do
+  src="$DIST/brain-linux-$arch"
+  if [ -f "$src" ]; then
+    cp -f "$src" "$BRAIN_DIR/bin/brain-linux-$arch"
+    chmod 755 "$BRAIN_DIR/bin/brain-linux-$arch"
+    shipped=$((shipped+1))
+  fi
+done
+[ "$shipped" -gt 0 ] || echo "[install] note: no frozen ELFs staged (fine — the VM runs the staged source via .brain/brain; ELFs are only for VMs without python3)"
+
+if [ "$shipped" -gt 0 ]; then
+echo "[install] writing SHA256SUMS -> $BRAIN_DIR/bin/SHA256SUMS"
+# Supply-chain manifest (hardening pass): tools/cowork_session_bootstrap.sh
+# verifies these hashes on the VM leg BEFORE trusting/symlinking a binary.
+# Regenerated on every install, so a re-run after rebuilding the ELFs always
+# ships a manifest matching what's actually in bin/.
+if command -v sha256sum >/dev/null 2>&1; then
+  ( cd "$BRAIN_DIR/bin" && sha256sum brain-linux-* > SHA256SUMS )
+elif command -v shasum >/dev/null 2>&1; then
+  ( cd "$BRAIN_DIR/bin" && shasum -a 256 brain-linux-* > SHA256SUMS )
+else
+  echo "[install] WARN: neither sha256sum nor shasum found — no SHA256SUMS" \
+       "manifest written; the VM leg's integrity check will skip-with-warning" >&2
+fi
+fi
+
+echo "[install] model cache -> $BRAIN_DIR/model/ (bundled; VM has no HF egress)"
+cp -a "$MODEL_SRC/." "$BRAIN_DIR/model/"
+
+# Build the authoritative index on the host, then publish the read-only snapshot
+# the VM reads. The index itself lives in app-data (never in the workspace).
+# Use the install venv's interpreter when present: bare system python3 lacks
+# onnxruntime/tokenizers, silently falls back to the HASH embedder, and bakes
+# non-semantic vectors into the published snapshot — VM semantic search would
+# then be garbage regardless of what's installed in the sandbox.
+HOST_PY="python3"
+if [ -x "$HOME/.brainiac/venv/bin/python3" ]; then
+  HOST_PY="$HOME/.brainiac/venv/bin/python3"
+else
+  echo "[install] WARNING: ~/.brainiac/venv not found — using system python3." >&2
+  echo "          If it lacks onnxruntime, the snapshot is built with HASH (non-semantic)" >&2
+  echo "          vectors. Run ./install.sh first, then re-run this script." >&2
+fi
+echo "[install] rebuild host index + publish snapshot (interpreter: $HOST_PY)"
+export BRAIN_VAULT="$VAULT"
+export BRAIN_MODEL_CACHE="$BRAIN_DIR/model"
+PYTHONPATH="$REPO/src" "$HOST_PY" -m brain.cli rebuild
+PYTHONPATH="$REPO/src" "$HOST_PY" -m brain.cli snapshot --dest "$BRAIN_DIR/snapshot" \
+  --json | tee "$BRAIN_DIR/snapshot/export-snapshot.json"
+
+# (d) SKILL payload (s08, refreshed unconditionally per cw-02). ALWAYS
+# rebuild via tools/package_clients.py — not "only if absent" — so a re-stage
+# after a version bump ships the CURRENT-version zips, not whatever was left
+# over from the last install. package_clients.py is idempotent/fast (stdlib
+# zipfile, no network), so this costs nothing on a re-run.
+echo "[install] skills -> $BRAIN_DIR/skills/ (rebuilding current-version .skill bundles)"
+PYTHONPATH="$REPO/src" python3 "$REPO/tools/package_clients.py" >/dev/null
+COWORK_SKILLS="$REPO/dist/cowork-skills"
+if ! ls "$COWORK_SKILLS"/*.skill >/dev/null 2>&1; then
+  echo "[install] ERROR: tools/package_clients.py ran but produced no .skill zips in $COWORK_SKILLS" >&2
+  exit 1
+fi
+skills_shipped=0
+for s in "$COWORK_SKILLS"/*.skill; do
+  [ -f "$s" ] || continue
+  cp -f "$s" "$BRAIN_DIR/skills/"
+  skills_shipped=$((skills_shipped+1))
+done
+echo "[install] shipped $skills_shipped skill bundle(s)"
+
+# Verify the staged skill bundles carry the SAME version stamp as the staged
+# engine (cw-02) — both are written from the same pyproject SSOT in the same
+# install pass, so a mismatch here means the packager and the engine copy
+# disagree, which should stop the install rather than ship a split version.
+SKILL_SAMPLE="$BRAIN_DIR/skills/$(basename "$(ls "$BRAIN_DIR/skills"/*.skill | head -1)")"
+SKILL_SAMPLE_NAME="$(basename "$SKILL_SAMPLE" .skill)"
+STAGED_SKILL_VERSION="$(python3 -c "
+import zipfile, sys
+with zipfile.ZipFile(sys.argv[1]) as zf:
+    print(zf.read(sys.argv[2] + '/VERSION').decode().strip())
+" "$SKILL_SAMPLE" "$SKILL_SAMPLE_NAME" 2>/dev/null || true)"
+if [ -z "$STAGED_SKILL_VERSION" ]; then
+  echo "[install] ERROR: could not read VERSION from staged skill bundle $SKILL_SAMPLE" >&2
+  exit 1
+fi
+if [ "$STAGED_SKILL_VERSION" != "$STAGED_VERSION" ]; then
+  echo "[install] ERROR: staged skill bundle version ($STAGED_SKILL_VERSION) != staged engine version" \
+       "($STAGED_VERSION) — packager and engine disagree, aborting." >&2
+  exit 1
+fi
+echo "[install] staged skill bundle version: $STAGED_SKILL_VERSION (matches engine)"
+
+# (e) task manifest (s07) — the host/VM-aware scheduled-task manifest the
+# registrar + `brain init` consume.
+echo "[install] task manifest -> $BRAIN_DIR/routines/manifest.json"
+cp -f "$REPO/routines/manifest.json" "$BRAIN_DIR/routines/manifest.json"
+
+# (e2) the conventions contract + session prompt — Cowork does NOT auto-read
+# AGENTS.md/CLAUDE.md from a mounted folder, so the contract ships INTO the
+# workspace and the session prompt (also meant for the Claude Desktop
+# project's custom instructions) points the agent at it.
+echo "[install] conventions contract -> $BRAIN_DIR/AGENTS.md"
+cp -f "$REPO/AGENTS.md" "$BRAIN_DIR/AGENTS.md"
+echo "[install] session prompt -> $BRAIN_DIR/routines/cowork-session-prompt.md"
+cp -f "$REPO/docs/install/cowork-session-prompt.md" "$BRAIN_DIR/routines/cowork-session-prompt.md"
+
+# (f) brain init --full (INS-02). Run as the VM/Cowork client (BRAIN_ROLE=vm)
+# so it scaffolds+validates the overlay in the workspace vault and emits the
+# idempotent Cowork task paste-prompt (the VM leg registers nothing itself —
+# persistence-budget.md locks the VM OS-scheduled count at 0). No host mutation.
+echo "[install] brain init --full (client=cowork/VM)"
+PYTHONPATH="$REPO/src" BRAIN_ROLE=vm "$HOST_PY" -m brain.cli --vault "$VAULT" init --full \
+  --overlay-dir "$VAULT/overlay" \
+  --manifest "$BRAIN_DIR/routines/manifest.json" \
+  --save-cowork-prompt "$BRAIN_DIR/routines/cowork-registrar-prompt.md" \
+  --json | tee "$BRAIN_DIR/routines/brain-init-report.json" >/dev/null
+echo "[install] brain init report -> $BRAIN_DIR/routines/brain-init-report.json"
+echo "[install] cowork task paste-prompt -> $BRAIN_DIR/routines/cowork-registrar-prompt.md"
+
+cat <<EOF
+
+[install] done. Full operational layer assembled at:
+  $BRAIN_DIR
+    bin/       per-arch brain ELFs (the engine)
+    model/     bundled Arctic model (VM has no HF egress)
+    snapshot/  read-only index snapshot + export-snapshot.json (PF-02 record)
+    skills/    $skills_shipped .skill bundle(s), version $STAGED_SKILL_VERSION (matches engine)
+    routines/  manifest.json + cowork-registrar-prompt.md + brain-init-report.json
+    overlay/   scaffolded + validated (edit voice/brand/keywords/people to personalize)
+
+This ONE command just refreshed the engine AND the skills together (cw-02) —
+re-run it any time to pick up a new release; there is no separate skill
+reinstall step required.
+
+Next steps:
+  1. Skills are current in $BRAIN_DIR/skills/. Upload them via Cowork's
+     Save-skill flow if you haven't already (kernel first; extras optional —
+     see .claude/skills/setup-cowork). If your workspace already has the
+     Cowork Plugins-tab marketplace synced (Customize -> Plugins ->
+     Autopsias/brainiac), that stays current on its own via
+     /plugin marketplace update — the Save-skill upload here is the
+     always-guaranteed fallback that never depends on Cowork's own
+     marketplace-sync feature (docs/adr/0005-update-versioning-ux.md
+     Ruling 4 + addendum).
+  2. Paste $BRAIN_DIR/routines/cowork-registrar-prompt.md into a Cowork chat with
+     the scheduled-tasks MCP to register the poke-only task triggers.
+  3. Teach the agent: put the prompt block from
+     $BRAIN_DIR/routines/cowork-session-prompt.md into the Claude Desktop
+     project's CUSTOM INSTRUCTIONS (once per project) — or paste it as the
+     first message of each Cowork session. It bootstraps the env and points
+     the agent at $BRAIN_DIR/AGENTS.md (the conventions contract).
+EOF

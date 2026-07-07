@@ -1,0 +1,193 @@
+"""S05 — regression tests for the eval harness + ship gate.
+
+These lock the load-bearing behaviours: golden-set validation, qrels
+version-stamping for temporal, harness paired scoring with empty-run handling,
+and the gate's PASS / FAIL(abort) / ERROR exit contract.
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from datetime import datetime
+from pathlib import Path
+
+import pytest
+
+# harness.py / gate.py subprocesses need the opt-in [eval] extra (ranx et al,
+# pyproject optional-dependencies). Skip — not fail — where it isn't installed.
+pytest.importorskip("ranx", reason="eval extra not installed (pip install -e .[eval])")
+
+REPO = Path(__file__).resolve().parent.parent
+EVAL = REPO / "eval"
+
+
+def _run(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, *args], capture_output=True, text=True, cwd=REPO)
+
+
+def test_golden_set_builds_and_validates(tmp_path):
+    out = tmp_path / "g.json"
+    qr = tmp_path / "q.json"
+    r = _run(str(EVAL / "build_golden_set.py"), "--out", str(out), "--qrels-out", str(qr))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "validation: OK" in r.stdout
+    doc = json.loads(out.read_text())
+    assert 60 <= len(doc["queries"]) <= 80
+    # five mandated strata + cross-lingual present
+    strata = {q["stratum"] for q in doc["queries"]}
+    for s in ("cross_lingual_en_pt", "cross_lingual_en_es", "multi_hop",
+              "temporal", "monolingual_pt", "monolingual_es", "lexical_identifier"):
+        assert s in strata, s
+
+
+def test_temporal_qrels_are_version_stamped(tmp_path):
+    qr = tmp_path / "q.json"
+    _run(str(EVAL / "build_golden_set.py"), "--out", str(tmp_path / "g.json"),
+         "--qrels-out", str(qr))
+    qrels = json.loads(qr.read_text())
+    # every temporal query has at least one '#current' or '#superseded' doc key
+    assert any(any("#" in k for k in d) for d in qrels.values())
+
+
+def _write_runs(tmp_path, golden):
+    """Two synthetic runs over a 3-query golden subset: 'new' ties 'current'."""
+    qrels = {"a": {"docA": 3}, "b": {"docB": 2}, "c": {"docC": 3}}
+    g = {"schema_version": "t", "coverage": {"strata": {}, "languages": {"EN": {"power": "gate"}}},
+         "queries": [{"id": "a", "lang": "EN", "stratum": "x", "held_out": False, "qrels": []},
+                     {"id": "b", "lang": "EN", "stratum": "x", "held_out": False, "qrels": []},
+                     {"id": "c", "lang": "EN", "stratum": "x", "held_out": True, "qrels": []}]}
+    cur = {"system": "cur", "runs": {"a": {"docA": 0.9}, "b": {"docB": 0.8}, "c": {"docZ": 0.5}},
+           "latency_ms": {"a": 10, "b": 12, "c": 11}}
+    new = {"system": "new", "runs": {"a": {"docA": 0.9}, "b": {"docB": 0.8}, "c": {"docC": 0.7}},
+           "latency_ms": {"a": 5, "b": 6, "c": 5}}
+    (tmp_path / "g.json").write_text(json.dumps(g))
+    (tmp_path / "q.json").write_text(json.dumps(qrels))
+    (tmp_path / "cur.json").write_text(json.dumps(cur))
+    (tmp_path / "new.json").write_text(json.dumps(new))
+    return golden
+
+
+def test_harness_scores_and_gate_passes_when_non_inferior(tmp_path):
+    _write_runs(tmp_path, None)
+    sc = tmp_path / "sc.json"
+    r = _run(str(EVAL / "harness.py"), "--golden", str(tmp_path / "g.json"),
+             "--qrels", str(tmp_path / "q.json"), "--current", str(tmp_path / "cur.json"),
+             "--new", str(tmp_path / "new.json"), "--out", str(sc))
+    assert r.returncode == 0, r.stdout + r.stderr
+    card = json.loads(sc.read_text())
+    assert card["paired_scope"]["scored_n"] == 3
+    # new found docC for c where current missed -> new >= current
+    g = _run(str(EVAL / "gate.py"), "--scorecard", str(sc), "--bootstrap", "2000")
+    assert g.returncode == 0, g.stdout
+    assert "GATE: PASS" in g.stdout
+
+
+def test_gate_fails_and_aborts_when_inferior(tmp_path):
+    qrels = {"a": {"docA": 3}, "b": {"docB": 3}, "c": {"docC": 3}}
+    g = {"schema_version": "t", "coverage": {"strata": {}, "languages": {"EN": {"power": "gate"}}},
+         "queries": [{"id": x, "lang": "EN", "stratum": "x", "held_out": False, "qrels": []}
+                     for x in ("a", "b", "c")]}
+    cur = {"system": "cur", "runs": {"a": {"docA": .9}, "b": {"docB": .9}, "c": {"docC": .9}},
+           "latency_ms": {"a": 10, "b": 10, "c": 10}}
+    new = {"system": "new", "runs": {"a": {"docZ": .9}, "b": {"docZ": .9}, "c": {"docZ": .9}},
+           "latency_ms": {"a": 5, "b": 5, "c": 5}}
+    for n, o in [("g", g), ("q", qrels), ("cur", cur), ("new", new)]:
+        (tmp_path / f"{n}.json").write_text(json.dumps(o))
+    sc = tmp_path / "sc.json"
+    _run(str(EVAL / "harness.py"), "--golden", str(tmp_path / "g.json"),
+         "--qrels", str(tmp_path / "q.json"), "--current", str(tmp_path / "cur.json"),
+         "--new", str(tmp_path / "new.json"), "--out", str(sc))
+    res = _run(str(EVAL / "gate.py"), "--scorecard", str(sc), "--bootstrap", "2000")
+    assert res.returncode == 1, res.stdout
+    assert "ABORT BRANCH" in res.stdout
+    assert "Obsidian + Smart Connections" in res.stdout
+
+
+def test_gate_errors_on_empty_scored_set(tmp_path):
+    g = {"schema_version": "t", "coverage": {"strata": {}, "languages": {}},
+         "queries": [{"id": "a", "lang": "EN", "stratum": "x", "held_out": False, "qrels": []}]}
+    qrels = {"a": {"docA": 3}}
+    cur = {"system": "cur", "runs": {"a": {"docA": .9}}, "latency_ms": {}}
+    new = {"system": "new", "runs": {"zzz": {"docA": .9}}, "latency_ms": {}}  # no overlap
+    for n, o in [("g", g), ("q", qrels), ("cur", cur), ("new", new)]:
+        (tmp_path / f"{n}.json").write_text(json.dumps(o))
+    sc = tmp_path / "sc.json"
+    _run(str(EVAL / "harness.py"), "--golden", str(tmp_path / "g.json"),
+         "--qrels", str(tmp_path / "q.json"), "--current", str(tmp_path / "cur.json"),
+         "--new", str(tmp_path / "new.json"), "--out", str(sc))
+    res = _run(str(EVAL / "gate.py"), "--scorecard", str(sc))
+    assert res.returncode == 2, res.stdout  # ERROR, not pass
+
+
+def test_sc_baseline_fail_loud_on_empty(tmp_path):
+    empty = tmp_path / "empty.json"
+    empty.write_text("{}")
+    stats = tmp_path / "stats.json"
+    stats.write_text(json.dumps({"active_model": "x"}))
+    res = _run(str(EVAL / "capture_sc_baseline.py"), "--golden", str(EVAL / "golden_set.json"),
+               "--sc-results", str(empty), "--sc-stats", str(stats), "--out", str(tmp_path / "o.json"))
+    assert res.returncode == 2
+    assert not (tmp_path / "o.json").exists()
+
+
+def test_capture_run_output_is_a_valid_harness_pair(tmp_path, synthetic_vault):
+    """AUT-04 (autoresearch skill): eval/capture_run.py is the loop's capture
+    step — its output must be a drop-in --current/--new pair for
+    harness_direct.py + gate.py, and must carry the top-level ``captured`` ISO
+    field the same way every other eval/runs/*.json artifact does (the s09
+    brief staleness check, src/brain/core.py `_autoresearch_status`, parses
+    exactly that field via `datetime.fromisoformat`). Real end-to-end smoke
+    over the committed synthetic_vault fixture with two rrf_k values — not
+    golden_set.json, which is keyed to the real, private owner vault."""
+    golden = {
+        "schema_version": "t", "coverage": {"strata": {}, "languages": {"EN": {"power": "gate"}}},
+        "queries": [
+            {"id": "q1", "lang": "EN", "stratum": "x", "held_out": False,
+             "text": "Topic 018", "qrels": []},
+            {"id": "q2", "lang": "EN", "stratum": "x", "held_out": False,
+             "text": "Topic 030", "qrels": []},
+        ],
+    }
+    golden_path = tmp_path / "golden.json"
+    golden_path.write_text(json.dumps(golden))
+    qrels_path = tmp_path / "qrels.json"
+    qrels_path.write_text(json.dumps({
+        "q1": {"brain/areas/topic-018.md": 3},
+        "q2": {"brain/areas/topic-030.md": 3},
+    }))
+
+    # Isolate the index/runtime dirs this capture builds — never touch the
+    # developer's shared per-user app-data slot for a one-off test vault.
+    env = {**os.environ, "BRAIN_INDEX_DIR": str(tmp_path / "index"),
+           "BRAIN_RUNTIME_DIR": str(tmp_path / "runtime")}
+
+    outputs = {}
+    for rrf_k in (60, 40):
+        out = tmp_path / f"rrf{rrf_k}.json"
+        r = subprocess.run(
+            [sys.executable, str(EVAL / "capture_run.py"),
+             "--golden", str(golden_path), "--vault", str(synthetic_vault),
+             "--rrf-k", str(rrf_k), "--rerank-top", "10", "-k", "5",
+             "--system", f"rrf{rrf_k}", "--out", str(out), "--rebuild"],
+            capture_output=True, text=True, cwd=REPO, env=env,
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        data = json.loads(out.read_text())
+        for key in ("system", "captured", "index_state", "k", "runs", "latency_ms", "scope"):
+            assert key in data, f"{key} missing from capture_run.py output"
+        datetime.fromisoformat(data["captured"])  # must parse like every other eval/runs/*.json
+        assert set(data["runs"]) == {"q1", "q2"}
+        outputs[rrf_k] = out
+
+    sc = tmp_path / "sc.json"
+    r = _run(str(EVAL / "harness_direct.py"), "--golden", str(golden_path),
+             "--qrels", str(qrels_path), "--current", str(outputs[60]),
+             "--new", str(outputs[40]), "--out", str(sc), "--session", "autoresearch-test")
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    g = _run(str(EVAL / "gate.py"), "--scorecard", str(sc), "--metric", "recall@20",
+             "--bootstrap", "500")
+    # A real decision (PASS or FAIL), never ERROR — proves the pair scored.
+    assert g.returncode in (0, 1), g.stdout

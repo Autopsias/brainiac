@@ -1,0 +1,29 @@
+# Dockerfile.build — freeze the `brain` one-dir ELF inside a platform container.
+# Driven by packaging/linux/build_linux.sh with --platform per arch.
+# python:3.12-slim is multi-arch (amd64 + arm64); pinned by digest (the
+# manifest-LIST digest, not a single-platform manifest digest) so buildx still
+# selects the right per-arch image while the tag can't be silently repointed.
+# Resolved 2026-07-02 via `docker buildx imagetools inspect python:3.12-slim`
+# -> python 3.12.13-slim-trixie. Re-resolve + bump on the next base-image
+# refresh (dependabot docker ecosystem does not cover Dockerfile FROM digests
+# in this repo yet — tracked as a follow-up).
+FROM python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf AS build
+# binutils pinned to the version resolved against the base image above
+# (Debian trixie/main); re-resolve alongside the digest bump.
+RUN apt-get update && apt-get install -y --no-install-recommends binutils=2.44-3 && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY pyproject.toml README.md ./
+COPY src ./src
+COPY packaging ./packaging
+# TODO(follow-up, separate PR): install with `pip install --require-hashes`
+# against a committed lockfile once one exists — depends on the lockfile
+# generation work landing elsewhere; unpinned dependency resolution here is a
+# deliberate, tracked gap, not an oversight.
+RUN python -m pip install --quiet --upgrade pip pyinstaller \
+ && python -m pip install --quiet -e ".[vec,audit,yaml]"
+# Freeze (one-dir, no UPX) using the shared spec.
+RUN pyinstaller --clean --noconfirm \
+      --distpath /out --workpath /tmp/build \
+      packaging/linux/brain-linux.spec
+# Prove the frozen binary runs in-container.
+RUN /out/brain/brain --help >/dev/null && echo "smoke OK"

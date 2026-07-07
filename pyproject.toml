@@ -1,0 +1,122 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "profile-a-brain"
+version = "0.10.3"
+description = "Brainiac — local any-LLM second-brain core engine + brain CLI (Markdown truth, derived SQLite index)."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.9"
+# DEFAULT INSTALL = FULL CAPACITY (owner decision, 2026-07-04): a plain
+# `pip install .` ships real semantic search (direct-ONNX e5-small), the
+# sqlite-vec ANN backend, the signed audit chain, PyYAML, and the ReDoS-guard
+# regex engine. The code still degrades gracefully if any of these are absent,
+# so constrained environments (Intune / air-gapped) can strip deps with
+# `pip install --no-deps .` and re-add what their policy allows — that is a
+# technical-team decision, not an install-time menu for the ordinary user.
+dependencies = [
+    "onnxruntime>=1.17",
+    "tokenizers>=0.15",
+    "numpy>=1.24,<3",
+    "sqlite-vec>=0.1.6",
+    "huggingface-hub>=0.20",
+    "cryptography>=41",
+    "PyYAML>=6",
+    "regex>=2023.0.0",
+    # Windows Credential Manager backend for the audit signing key
+    # (audit.py resolve/provision import it); no-op elsewhere.
+    'keyring>=24; sys_platform == "win32"',
+    # ADR-0003 Ruling 1(g): document ingestion (src/brain/ingest/) joins the
+    # DEFAULT full-capacity install — pip-installable, pure-ish Python only,
+    # NO system binaries (no poppler/tesseract; OCR degrades gracefully absent
+    # a local binary, never cloud OCR). `[ingest]` below is a subset alias.
+    "pypdf>=4.0",
+    "python-docx>=1.1",
+    "python-pptx>=0.6.23",
+    "openpyxl>=3.1",
+    # S06 (ING-03) image handler metadata (+ OCR text when a LOCAL tesseract
+    # binary is present — the pytesseract binding itself stays a fully
+    # OPTIONAL, NOT-a-pip-dependency probe: OCR degrades gracefully absent
+    # it, matching the ADR's "system binaries are never pip deps" rule).
+    "Pillow>=10",
+]
+
+[project.optional-dependencies]
+# NOTE: vec/audit/yaml/corporate/index below are now SUBSETS of the core
+# dependencies — kept only so existing scripts and error-message hints that
+# say `pip install .[corporate]` etc. keep working. They add nothing on top
+# of a default install.
+# Dense-vector ANN backend. When absent the core falls back to the pure-Python
+# brute-force VectorBackend (see src/brain/vectors.py) — the adapter interface
+# guarantees retrieval works either way.
+vec = ["sqlite-vec>=0.1.6"]
+# Ed25519 audit chain (CORE-03). Without it the audit hook is unavailable and
+# write_note fails closed rather than writing an unsigned record.
+audit = ["cryptography>=41"]
+# Alternate fastembed-based embedder (NOT installed by default — the default
+# semantic path is the direct-ONNX e5-small embedder in the core deps).
+embed = ["fastembed>=0.3"]
+# CORPORATE minimal-dep set (DIST-01, S12): e5-small via DIRECT ONNX Runtime —
+# NO fastembed, NO PyTorch. This is what the signed Intune build ships. The
+# e5-small ONNX model is bundled inline as a data asset (not a pip dep).
+corporate = [
+    "onnxruntime>=1.17",
+    "tokenizers>=0.15",
+    "numpy>=1.24,<3",
+    "sqlite-vec>=0.1.6",
+    "huggingface-hub>=0.20",
+    "cryptography>=41",
+    "PyYAML>=6",
+]
+# YAML frontmatter (optional; a stdlib mini-parser is the fallback).
+yaml = ["PyYAML>=6"]
+# Document ingestion (ING-01/ING-02) — SUBSET ALIAS of the core deps (Ruling
+# 1(g); same vec/audit/yaml pattern): `pip install .[ingest]` keeps error-
+# message hints valid even though a default install already has these. Absent,
+# `brain ingest` degrades per-handler (reports which extensions are
+# unavailable) rather than crashing.
+ingest = ["pypdf>=4.0", "python-docx>=1.1", "python-pptx>=0.6.23", "openpyxl>=3.1", "Pillow>=10"]
+dev = ["pytest>=7"]
+# A/B retrieval eval harness (S05): ranx is MIT; numpy comes transitively.
+# `pip install -e .[eval]` to run eval/harness.py + eval/gate.py + scripts/ci/eval_gate.sh.
+eval = ["ranx>=0.3.20", "numpy>=1.24"]
+# One-off model-quantization TOOLING (S09/PF-01): `onnx` is needed ONLY to run
+# eval/int8_quantize_e5.py (onnxruntime.quantization depends on it); it is NOT
+# a runtime dep of brain.embed.OnnxEmbedder, which loads either fp32 or
+# already-quantized int8 weights via onnxruntime alone.
+quant-tools = ["onnx>=1.14"]
+# OPTIONAL, DELETABLE MCP bridge for the pure Claude Desktop Chat tab only
+# (src/brain/mcp_adapter.py). MCP is never the foundation — every other harness
+# calls the `brain` CLI directly. `pip install -e .[mcp]` then `brain-mcp`.
+mcp = ["mcp>=1.0"]
+# Timeout-bounded regex engine (mrab-regex) used by BrainIndex.grep's --regex
+# path (RET-04 hardening) as a ReDoS guard: regex.search(text, timeout=...)
+# genuinely bounds catastrophic backtracking, unlike stdlib `re`. Absent ->
+# grep falls back to stdlib re with a pattern-length cap as the sole
+# mitigation (documented residual risk: docs/SECURITY_NOTES.md).
+# NOTE: added without a lockfile update; a follow-up lockfile PR will pin it.
+index = ["regex>=2023.0.0"]
+
+[project.scripts]
+brain = "brain.cli:main"
+# optional Chat-tab bridge; harmless if [mcp] is not installed (import-time only).
+brain-mcp = "brain.mcp_adapter:serve"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+# Scope collection to tests/ so pytest never descends into a local model venv
+# (.venv-embed/) or the fastembed model cache (.fastembed_cache/).
+testpaths = ["tests"]
+
+# ---------------------------------------------------------------------------
+# LICENSING NOTE (FLEET / r2-codex)
+# This core is built FROM SCRATCH. basicmachines-co/basic-memory (AGPL-3.0) was
+# used as a CLEAN-ROOM DESIGN REFERENCE ONLY — no fork, no vendored modules, no
+# imports. See docs/clean-room-log.md and tools/code_origin_audit.py. If this
+# artifact is ever distributed, re-run the code-origin audit gate first; only a
+# recorded Legal clearance for internal-only conveyance may reinstate a fork.
+# ---------------------------------------------------------------------------

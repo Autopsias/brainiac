@@ -1,0 +1,83 @@
+# Runtime artifacts — derived cache, rebuildable from vault/ at any time.
+vault/.brain/
+# ADR-0003 Ruling 1: the ingestion drop zone (visible, unlike .brain/) —
+# originals + extracted sources belong in raw/ once promoted; the inbox
+# itself (and its _processing/_quarantine/_duplicate scratch dirs) is never
+# indexed and never committed.
+vault/inbox/
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+.venv-embed/
+.fastembed_cache/
+.pytest_cache/
+*.egg-info/
+# Frozen brain binaries (built per-arch into the workspace, never committed).
+dist/
+build/
+# PyInstaller writes a stray *.spec at the repo root when invoked without one;
+# ignore those, but KEEP the authored, version-controlled specs under packaging/.
+/*.spec
+!packaging/**/*.spec
+# The derived SQLite index lives under app-data, never in-repo, but ignore any
+# stray local index/snapshot just in case.
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# S10 derived real-corpus index (369M, regenerable) — never commit
+_evidence/s10/brain-index/
+_models/
+.venv-export/
+
+# Session build evidence + eval gold/run data — derived, regenerable, kept LOCAL.
+# (Removed from the public repo; do not re-commit.)
+_evidence/*
+# s09 exception: the two committed evidence samples for the AUT-01/AUT-03 HTML
+# brief/digest renderers — generated with the NEUTRAL FALLBACK overlay only
+# (ADR-0003 Ruling e / ADR-0001 clean-room export; never real owner content).
+!_evidence/s09/
+_evidence/s09/*
+!_evidence/s09/brief.html
+!_evidence/s09/digest.html
+# s10 exception (GRF-01): the one committed graphify build-artifact sample,
+# generated from the synthetic/neutral fixture corpus only — never real
+# owner content (ADR-0003 Ruling e / ADR-0001 clean-room export).
+!_evidence/s10/
+_evidence/s10/*
+!_evidence/s10/graph.json
+# s04/s05 eval-launch evidence: PID/timestamp/query-count metadata only,
+# never owner content — same allowlist pattern as s09/s10 above.
+!_evidence/eval/
+_evidence/eval/*
+!_evidence/eval/heartbeat.txt
+!_evidence/eval/DONE
+!_evidence/eval/capture.lock
+eval/_expand/
+eval/golden_set*.json
+eval/qrels/
+eval/reformulations.json
+eval/runs/
+
+# s04 full-corpus capture: multi-hour job output is a TEMP artifact promoted
+# to eval/runs/s13-final.json by s05 only AFTER the DONE sentinel validates —
+# never commit the in-flight partial.
+.brain/eval-tmp/
+
+# S10 live-vault migration workspace — MNPI corpus, never committed.
+_workspace/
+
+# Plan artifacts — internal (contain the codename + session IDs); never ship.
+# Grill decision 2026-07-03: ignore the whole tree, not just runtime state.
+_plans/
+_plans_index.md
+
+# plan-execute runtime state (auto-added by plan-builder)
+_plans/*/.lock
+_plans/*/_closeouts/
+_plans/*/run.ndjson
+_plans/*/run_state.json
+_plans/*/HALT_NOTICE.txt
+_archive/
+.claude/eval-gates.json

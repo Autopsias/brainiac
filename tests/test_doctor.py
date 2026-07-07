@@ -587,3 +587,169 @@ def test_run_doctor_end_to_end_all_fixtures(tmp_path):
     text = doctor.render_human(report)
     assert "✅" in text
     assert "/brainiac-update" in text
+
+
+# --------------------------------------------------------------------------
+# VM leg (2026-07-07 addendum) — role-aware doctor for the staged
+# zero-install Cowork copy. All-fixture: builds a staged-layout tmp dir
+# instead of touching the real machine.
+# --------------------------------------------------------------------------
+
+def _seed_vm_workspace(vault: Path, *, skill_version: str | None = None,
+                        schema_version: int = 3, snapshot_age_s: float = 10.0,
+                        with_model: bool = True) -> None:
+    """Build a staged Cowork VM workspace layout under ``vault/.brain/``.
+
+    ``run_doctor_vm`` reads the ENGINE version live (``brain.__version__`` of
+    the currently-running package — on a real VM that IS the staged copy's
+    own stamp, transitively, via the existing fallback chain in
+    ``brain/__init__.py``), so ``skill_version`` defaults to matching it."""
+    import time
+    import zipfile
+
+    import brain as _brain
+
+    if skill_version is None:
+        skill_version = _brain.__version__
+
+    brain_dir = vault / ".brain"
+    (brain_dir / "engine" / "brain").mkdir(parents=True)
+
+    skills_dir = brain_dir / "skills"
+    skills_dir.mkdir(parents=True)
+    if skill_version is not None:
+        with zipfile.ZipFile(skills_dir / "kb-curator.skill", "w") as zf:
+            zf.writestr("kb-curator/SKILL.md", "---\nname: x\ndescription: x\n---\nbody\n")
+            zf.writestr("kb-curator/VERSION", skill_version + "\n")
+
+    snap_dir = brain_dir / "snapshot"
+    snap_dir.mkdir(parents=True)
+    created_epoch = time.time() - snapshot_age_s
+    (snap_dir / "snapshot.manifest.json").write_text(json.dumps({
+        "generation": 1, "created_epoch": created_epoch,
+        "created_iso": "2026-07-07T00:00:00", "source_db": "x", "snapshot_db": "x",
+        "sha256": "abc", "bytes": 1, "notes": 5, "chunks": 10,
+        "embed_model": "e", "embed_dim": "1", "schema_version": schema_version,
+    }), encoding="utf-8")
+
+    if with_model:
+        model_dir = brain_dir / "model"
+        model_dir.mkdir(parents=True)
+        (model_dir / "model.onnx").write_text("x", encoding="utf-8")
+
+
+def test_looks_like_vm_stage_true_when_host_only_inputs_absent(tmp_path):
+    # No tools/workspace_registry.py, no pyproject.toml SSOT.
+    assert doctor.looks_like_vm_stage(tmp_path) is True
+
+
+def test_looks_like_vm_stage_false_on_full_host_checkout(tmp_path):
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / "workspace_registry.py").write_text("", encoding="utf-8")
+    _write_pyproject(tmp_path, "1.2.3")
+    assert doctor.looks_like_vm_stage(tmp_path) is False
+
+
+def test_run_doctor_vm_current_on_fresh_staged_workspace(tmp_path):
+    vault = tmp_path / "vault"
+    _seed_vm_workspace(vault)
+    report = doctor.run_doctor_vm(vault=vault)
+    assert report["role"] == "vm"
+    assert report["ok"] is True
+    assert report["stale_count"] == 0
+    engine_row = next(r for r in report["rows"] if "Engine version" in r["surface"])
+    assert engine_row["status"] == doctor.CURRENT
+    host_rows = [r for r in report["rows"] if "host Mac" in r["detail"]]
+    assert host_rows and all(r["status"] == doctor.NOT_DETECTABLE for r in host_rows)
+    text = doctor.render_human(report)
+    assert "brain doctor" in text
+
+
+def test_run_doctor_vm_stale_when_skill_bundle_mismatches(tmp_path):
+    vault = tmp_path / "vault"
+    _seed_vm_workspace(vault, skill_version="0.9.0")
+    report = doctor.run_doctor_vm(vault=vault)
+    assert report["ok"] is False
+    skill_row = next(r for r in report["rows"] if "Staged skill bundles" in r["surface"])
+    assert skill_row["status"] == doctor.STALE
+
+
+def test_run_doctor_vm_stale_when_engine_stamp_missing(tmp_path, monkeypatch):
+    import brain
+
+    vault = tmp_path / "vault"
+    _seed_vm_workspace(vault)
+    monkeypatch.setattr(brain, "__version__", "0.0.0+unknown")
+    report = doctor.run_doctor_vm(vault=vault)
+    engine_row = next(r for r in report["rows"] if "Engine version" in r["surface"])
+    assert engine_row["status"] == doctor.STALE
+    assert "cowork_workspace_install.sh" in engine_row["remediation"]
+    assert report["ok"] is False
+
+
+def test_run_doctor_vm_stale_when_schema_skewed(tmp_path):
+    vault = tmp_path / "vault"
+    _seed_vm_workspace(vault, schema_version=999)
+    report = doctor.run_doctor_vm(vault=vault)
+    schema_row = next(r for r in report["rows"] if "Snapshot schema" in r["surface"])
+    assert schema_row["status"] == doctor.STALE
+    assert report["ok"] is False
+
+
+def test_run_doctor_vm_flags_missing_model_cache(tmp_path):
+    vault = tmp_path / "vault"
+    _seed_vm_workspace(vault, with_model=False)
+    report = doctor.run_doctor_vm(vault=vault)
+    model_row = next(r for r in report["rows"] if "Model cache" in r["surface"])
+    assert model_row["status"] == doctor.STALE
+    assert report["ok"] is False
+
+
+def test_run_doctor_vm_reports_absent_snapshot_as_not_detectable(tmp_path):
+    vault = tmp_path / "vault"
+    (vault / ".brain" / "engine" / "brain").mkdir(parents=True)
+    (vault / ".brain" / "engine" / "brain" / "_version.py").write_text(
+        '__version__ = "1.2.3"\n', encoding="utf-8")
+    report = doctor.run_doctor_vm(vault=vault)
+    snap_row = next(r for r in report["rows"] if r["surface"].startswith("Snapshot ("))
+    assert snap_row["status"] == doctor.NOT_DETECTABLE
+    # never gates: absent snapshot is not-detectable, not stale
+    assert snap_row["status"] not in doctor._GATING_STATUSES
+
+
+def test_run_doctor_never_crashes_when_workspace_registry_unavailable(tmp_path, monkeypatch):
+    """The host-mode orchestrator must degrade to a NOT_DETECTABLE row rather
+    than raising ModuleNotFoundError, even when called with registry_entries
+    left as the default (the exact staged-VM-with-role=host crash shape)."""
+    import builtins
+    import sys
+
+    repo_root = tmp_path / "repo"  # no tools/workspace_registry.py here
+    _write_pyproject(repo_root, "1.2.3")
+    _write_stamp(repo_root, "1.2.3")
+    # Another test (or this repo's own tools/ on sys.path from an earlier
+    # sys.path.insert in run_doctor itself) may make the REAL
+    # workspace_registry importable regardless of this fixture's empty repo
+    # dir. Force the import to fail so this test exercises the actual
+    # guarded-import path deterministically, independent of run order.
+    monkeypatch.delitem(sys.modules, "workspace_registry", raising=False)
+    real_import = builtins.__import__
+
+    def _fake_import(name, *args, **kwargs):
+        if name == "workspace_registry":
+            raise ModuleNotFoundError("workspace_registry")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _fake_import)
+
+    report = doctor.run_doctor(
+        repo_root=repo_root,
+        brainiac_home=tmp_path / "brainiac_home",
+        claude_home=tmp_path / "claude_home",
+        app_support_dir=tmp_path / "app_support",
+        marketplace_dir=tmp_path / "claude_home" / "plugins" / "marketplaces" / "profile-a-marketplace",
+        # registry_entries left as None -> exercises the guarded import path
+    )
+    registry_row = next(r for r in report["rows"] if "Workspace registry" in r["surface"])
+    assert registry_row["status"] == doctor.NOT_DETECTABLE
+    assert "--role vm" in registry_row["remediation"]

@@ -46,6 +46,11 @@ Then read vault/.brain/AGENTS.md — it is the full conventions contract
   host signs and indexes later; never claim a capture is "saved to the
   brain" — it is staged.
 - Your snapshot is read-only and may be stale; brain status shows its age.
+- If something looks stale or broken (search returns nothing, semantic
+  search feels off), run `brain doctor` — it now works on this VM leg
+  (2026-07-07) and reports the engine version, skill-bundle versions,
+  snapshot schema/age, and whether the bundled model is present, plus which
+  surfaces only the host can check.
 - NEVER attempt write/rebuild/sync/snapshot/backup — they fail with
   role_forbidden by design. Do not try to work around that.
 ```

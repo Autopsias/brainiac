@@ -446,3 +446,59 @@ subprocess path, so no regression test was added; the stale-editable-metadata
 case is a `doctor.py`-surface concern, not a `brain/__init__.py`-resolution
 concern, and doctor's existing STALE-classification behavior for surface 3
 already generalizes to it without needing a new fixture.
+
+## Addendum (2026-07-07): role-aware VM leg — real crash, not theoretical
+
+`brain doctor` is in `VM_ALLOWED` (s02 decided read-only inspection is safe
+on the Cowork VM leg), but a real Cowork session hit
+`ModuleNotFoundError: workspace_registry` running it. Root cause:
+`run_doctor()`'s staged-workspace surfaces (7-10) import
+`tools/workspace_registry.py` to enumerate registered workspaces — a
+host-only companion script `cowork_workspace_install.sh` never copies into
+the staged zero-install engine (`.brain/engine/brain` is `src/brain` only).
+The same gap applies to every other host-only input `run_doctor()` reads
+(pyproject SSOT, `~/.brainiac` venv, `~/.claude` plugins, the marketplace
+clone, the Desktop store) — none exist on the VM's mounted `.brain/` tree.
+
+**Ruling:** `brain doctor` is now role-aware.
+
+1. `run_doctor()` (host mode, unchanged surfaces) guards the
+   `workspace_registry` import — unavailable now degrades to a
+   `not-detectable` row instead of raising, regardless of which role asked
+   for it (defense in depth: role=host on a machine without `tools/` must
+   still not crash).
+2. `run_doctor_vm()` (new) covers only what the staged workspace itself
+   carries: the running engine's own version (`brain.__version__` — on the
+   real VM process this transitively IS the staged copy's stamp, via the
+   existing fallback chain in `brain/__init__.py`), the `.brain/skills/*.skill`
+   VERSION markers (cw-02 lockstep), the snapshot's schema vs. this binary's
+   `SCHEMA_VERSION` (Ruling 2 above), the snapshot's generation/age, the
+   bundled model cache (no HF egress on the VM — a missing model silently
+   downgrades semantic search to hash embeddings), and the `brain maintain`
+   heartbeat file (VM-readable even though only the host runs it). Every
+   host-only surface (venv, SSOT, CLI plugins, marketplace cache, Desktop
+   store, the registry script itself) is listed as its own `not-detectable`
+   row naming `brain doctor` on the host as the remediation — never silently
+   dropped, never faked green.
+3. **Role detection has a structural fallback.** The staged VM shim
+   (`.brain/brain`) runs `python3 -m brain.cli "$@"` directly and does not set
+   `$BRAIN_ROLE` — so `doctor` additionally treats the process as VM-postured
+   whenever `tools/workspace_registry.py` AND a `pyproject.toml` SSOT are both
+   structurally absent (`doctor.looks_like_vm_stage()`), even if `--role`
+   was never passed. Every other VM-gated command keeps requiring an
+   explicit `--role vm`/`$BRAIN_ROLE`; this fallback is scoped to `doctor`
+   only, which is read-only regardless of role.
+4. Exit-code gating: only VM-checkable required surfaces (stale engine
+   stamp, skill-version mismatch, schema skew, missing model, stale/failing
+   maintain heartbeat) fail the VM leg's exit code. Host-only rows are always
+   `not-detectable` and never gate, on either leg.
+
+Verified against the real staged workspace (not just fixtures): the
+unmodified pre-fix engine crashes with `ModuleNotFoundError` running
+`PYTHONPATH=<vault>/.brain/engine BRAIN_VAULT=<vault> python3 -m brain.cli
+--role vm doctor`; the fixed engine, copied into the same staged location,
+reports `OK: all required surfaces current` under both `--role vm` and no
+`--role` at all (the real shim's invocation shape).
+
+**No version bump in this addendum** (0.10.4 cut is the follow-up that ships
+this fix); see `CHANGELOG.md` `[Unreleased]`.

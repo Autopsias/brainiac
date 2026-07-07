@@ -7,6 +7,24 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.10.4] — 2026-07-08
+- **Fix (`brain doctor` crashed on the Cowork VM leg with
+  `ModuleNotFoundError: workspace_registry`):** `doctor` is in `VM_ALLOWED`
+  but read `tools/workspace_registry.py`, a host-only companion script never
+  copied into the staged zero-install engine
+  (`cowork_workspace_install.sh` stages `src/brain` only). `brain doctor` is
+  now role-aware: `run_doctor()` (host) guards the import so it degrades to
+  a `not-detectable` row instead of raising; a new `run_doctor_vm()` covers
+  the surfaces the staged VM workspace CAN see (engine version, skill-bundle
+  VERSION markers, snapshot schema/generation/age, bundled model cache,
+  `brain maintain` heartbeat) and lists every host-only surface as its own
+  `not-detectable` row instead of a fake-green or a crash. Role detection
+  falls back structurally (`doctor.looks_like_vm_stage()`) when
+  `tools/workspace_registry.py` and a `pyproject.toml` SSOT are both absent,
+  since the staged VM shim never sets `$BRAIN_ROLE`. See
+  `docs/adr/0005-update-versioning-ux.md` (2026-07-07 addendum). Verified
+  against the real staged workspace, not just fixtures.
+
 ## [0.10.3] — 2026-07-07
 - **Fix (`restage_workspaces` skip gate silently dropped the user's own
   workspace — pre-existing since v0.10.0):** the cowork-vm/host re-stage

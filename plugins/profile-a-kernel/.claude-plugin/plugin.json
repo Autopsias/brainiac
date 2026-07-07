@@ -1,0 +1,16 @@
+{
+  "name": "profile-a-kernel",
+  "displayName": "Profile A — Kernel Skills",
+  "description": "Core brain-substrate skills for daily second-brain use against a `brain`-CLI vault: kb-curator (maintenance), promote (draft to typed PARA zone), vault-ingestion (capture), vault-eval (retrieval-quality eval), save-conversation (chat-to-note capture), voice (overlay-driven DRAFT/REWRITE/CHECK against the owner's writing voice).",
+  "version": "0.10.3",
+  "author": {
+    "name": "Profile A maintainers"
+  },
+  "license": "MIT",
+  "keywords": [
+    "second-brain",
+    "brain-cli",
+    "knowledge-management",
+    "PARA"
+  ]
+}

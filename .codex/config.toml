@@ -1,0 +1,26 @@
+#:schema https://developers.openai.com/codex/config-schema.json
+# Profile A brain — Codex CLI project-scoped config (loaded only when this
+# project is trusted; see https://developers.openai.com/codex/config-basic).
+#
+# Skills auto-load: Codex scans $REPO_ROOT/.agents/skills/<name>/SKILL.md
+# natively on every session start — no [[skills.config]] entry is required
+# to ENABLE a skill (see https://developers.openai.com/codex/skills and
+# AGENTS.md "Per-harness wiring"). To DISABLE one, add a block like:
+#
+#   [[skills.config]]
+#   path = "/absolute/path/to/.agents/skills/curation/SKILL.md"
+#   enabled = false
+#
+# AGENTS.md is Codex's native project-instructions file (read automatically,
+# no config needed) — it is the canonical conventions doc; CLAUDE.md and
+# .gemini/settings.json both import/point at the same file (INT-01).
+
+# Interactive default: pause before running generated commands.
+approval_policy = "on-request"
+
+# The brain CLI reads/writes only inside the vault + this repo; no outbound
+# network call is needed for retrieval, indexing, or maintenance.
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+network_access = false

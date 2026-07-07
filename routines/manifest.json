@@ -1,0 +1,208 @@
+{
+  "manifest_version": "1",
+  "issued": "2026-06-30",
+  "session": "s13",
+  "purpose": "Host/VM-aware scheduled-task manifest for the brain product. One entry per live maintenance task, naming its cadence, command, connectors, and RUNTIME (host-write vs vm-read+draft). Consumed by scripts/register_tasks.py (the s07 registrar) and by routines/task-registrar's per-client registration steps.",
+  "locked_counts": {
+    "note": "THE LOCK (C-s02, ratified). Any manifest entry with os_scheduled=true on the host beyond 1, or any os_scheduled=true entry on the VM, is a budget breach -- amend locked_counts here first.",
+    "host_os_scheduled": 1,
+    "vm_os_scheduled": 0
+  },
+  "tasks": [
+    {
+      "id": "brain-nightly",
+      "display_name": "brain-nightly (THE single sanctioned OS task)",
+      "folds": ["chief-of-staff-nightly", "daily-check (daily branch)", "recommendations-aging (daily branch, unconditional file scan)", "health (Monday branch)", "integrity-scan (Tuesday branch)", "ingestion-digest-weekly (Sunday branch)", "curation (Sunday branch: stale-link + revisit-sample scan)", "promotion-scan (Sunday branch: host brain promote-scan verb)", "graphify-discovery (1st-of-month branch, REAL bounded build, ADR-0003 Ruling 6/(a))", "inbox-ingest (daily branch, drain via sync)"],
+      "disposition": "FOLD",
+      "runtime": "host-write",
+      "os_scheduled": true,
+      "persistence_cost": 1,
+      "cadence": "daily 07:00, host local time -- date-gated branches fire inside the same run (Mon=health, Tue=integrity, Sun=digest+curate+promote-scan, 1st=graphify real build); ADR-0003 Ruling 5/(d) -- branches are DUE-SINCE-LAST-RUN (per-branch last-run markers in .brain/maintain-state.json), not calendar-day-only, so a branch missed because the host was off fires once on the next run, never silently forever; see this manifest's locked_counts",
+      "command": "brain maintain --json",
+      "command_notes": "brain maintain is the umbrella CLI verb (src/brain/core.py BrainCore.maintain, src/brain/maintenance.py maintain_branches): it runs sync --publish + brief + a cheap unconditional recommendations-aging scan every run, then runs health/integrity/digest for real on their date-gated day (1st-of-month graphify now invokes a REAL bounded build via BrainCore.graphify -- ADR-0003 Ruling 6/(a) supersedes this manifest's earlier row-7 \"documented only\" disposition; see the graphify-discovery row below). The Sunday digest branch now ALSO runs curate (stale-wikilink-target detection + an age x centrality revisit sample) and promote-scan, queuing findings into .brain/memory/hot.md (idempotent per branch/run-date via a hot.md idempotency-key marker); the graphify branch queues its own egress-gated link candidates into hot.md the same way. A single-runner file lock (.brain/maintain.lock) makes a concurrent maintain skip rather than race; a crash mid-branch leaves that branch's last-run marker unadvanced (still due next run) without blocking the branches that already succeeded. .brain/maintain-state.json is ONE file serving both the catch-up markers and the heartbeat (brain status surfaces a stale >48h daily branch or repeated branch failures) -- the same file src/brain/config.py maintain_state_path() and the session-start.sh hook's stale-nightly check both read. This single command IS the full date-gated heartbeat this manifest's locked_counts promises. Nightly REGISTRATION (not what it runs) is owned by /brainiac-install (per-vault launchd label com.profile-a-brain.daily-brief / Windows task brain-daily-brief, via `brain init --full --apply`) -- see docs/adr/0003-parity-architecture.md 'Settled context'; this manifest's registration block below documents the underlying scripts /brainiac-install drives.",
+      "connectors": ["macOS launchd (LaunchAgent com.profile-a-brain.daily-brief)", "Windows Task Scheduler (task brain-daily-brief)"],
+      "registration": {
+        "mac": {
+          "mechanism": "launchd LaunchAgent",
+          "label": "com.profile-a-brain.daily-brief",
+          "install_script": "scripts/install-brief-mac.sh",
+          "plist": "scripts/brain-brief-mac.plist",
+          "runtime_script": "scripts/brain-brief.sh"
+        },
+        "windows": {
+          "mechanism": "Task Scheduler",
+          "task_name": "brain-daily-brief",
+          "install_script": "scripts/install-brief-windows.ps1"
+        }
+      },
+      "vm_eligible": false,
+      "notes": "Host-only by construction -- the VM has no scheduler and registers nothing (client-access-model.md). Every write/sign/maintenance verb is refused on role=vm before BrainCore is constructed."
+    },
+    {
+      "id": "daily-check",
+      "source_task": "owner-vault-daily-check",
+      "disposition": "FOLD",
+      "runtime": "host-write",
+      "os_scheduled": false,
+      "persistence_cost": 0,
+      "cadence": "daily branch of brain-nightly (zero extra OS entries); standalone form is on-invoke",
+      "command": "brain check --json",
+      "connectors": [],
+      "vm_eligible": false,
+      "notes": "Index reconcile + drain drafts + status. _index.md regen stays vault-overlay (no brain equivalent)."
+    },
+    {
+      "id": "health",
+      "source_task": "owner-vault-health",
+      "disposition": "FOLD",
+      "runtime": "host-write",
+      "os_scheduled": false,
+      "persistence_cost": 0,
+      "cadence": "Monday branch of brain-nightly; standalone form is on-invoke",
+      "command": "brain health --json",
+      "connectors": [],
+      "vm_eligible": false,
+      "notes": "status + audit-chain verify + substrate self-test. Residual Obsidian/Bases-core plugin-hash check (if any client still runs Obsidian in parallel) stays a vault-overlay step, not a brain verb."
+    },
+    {
+      "id": "integrity-scan",
+      "source_task": "owner-vault-integrity-scan",
+      "disposition": "FOLD",
+      "runtime": "host-write",
+      "os_scheduled": false,
+      "persistence_cost": 0,
+      "cadence": "Tuesday branch of brain-nightly; standalone form is on-invoke",
+      "command": "brain integrity --min-score 0.95 --json",
+      "connectors": [],
+      "vm_eligible": false,
+      "notes": "Audit-chain verify + corpus-wide near-dup scan directly over the brain vector backend (e5-small ONNX) -- no MCP round-trip. Near-dup bands re-baselined for e5-small per execution-contract.md S5."
+    },
+    {
+      "id": "curation",
+      "source_task": "owner-vault-curation (kb-curator: audit / lint-orphans / lint-stale / lint-callouts / propose-cleanup / refresh-index / rotate-logs)",
+      "disposition": "FOLD",
+      "runtime": "host-write",
+      "os_scheduled": false,
+      "persistence_cost": 0,
+      "cadence": "Sunday branch of brain-nightly (zero extra OS entries, AUT-02); standalone form (`brain curate`) is on-invoke on host",
+      "command": "brain curate --json -- refresh-index + unclassified-notes lint + stale-wikilink-target detection + an age x whole-corpus-PageRank-centrality revisit sample (all now brain-retrieval-engine checks, ADR-0003 Ruling 5); orphan/contradiction/callout lint stays the .claude/skills/curation kernel skill (vault-graph structure, no brain-retrieval equivalent)",
+      "connectors": [],
+      "vm_eligible": false,
+      "notes": "AUT-02 (s08) moved stale-link + revisit-sample OUT of 'no brain equivalent' and into `brain curate` proper, reusing the existing src/brain/graph.py wikilink-BFS+PPR module (whole-corpus PageRank, superseding that module's previously-documented 'global centrality is gap G3, age-only fallback'). The .claude/skills/curation kernel skill stays the on-invoke DEEPER interactive surface (orphans/contradictions/callouts) and now documents that the engine runs its half of the scan every Sunday automatically. Findings queue into .brain/memory/hot.md via the Sunday brain-nightly branch, idempotent per run-date. Registration: /brainiac-install (no new OS task -- folds into the existing brain-nightly registration)."
+    },
+    {
+      "id": "promotion-scan",
+      "source_task": "owner-vault-promotion-scan",
+      "disposition": "FOLD (host Sunday) + ON-INVOKE (VM triage)",
+      "runtime": "host-write (scheduled) / vm-read+draft (on-invoke)",
+      "os_scheduled": false,
+      "persistence_cost": 0,
+      "cadence": "Sunday branch of brain-nightly for the host `brain promote-scan` verb (zero extra OS entries, AUT-02); the VM-eligible triage form is separately on-invoke (Cowork, surfaced at bootstrap or fired manually -- never OS-scheduled, per the locked VM=0 budget)",
+      "command": "Host Sunday fold: `brain promote-scan --json` (opens the index; findings queue into .brain/memory/hot.md). VM on-invoke triage:\nbrain bases-query --where status=candidate --max-tier Internal --json   # find candidates (VM-allowed, no index-open) \nbrain search \"<topic>\" --max-tier Internal --json                         # corroborate \nbrain draft-capture --content \"<proposal>\"                                # stage an unsigned DRAFT, drained+signed by the next host `brain sync`",
+      "command_notes": "The host-only `brain promote-scan` CLI verb (added in C-s03/CUT-03) is the DIFFERENT, more powerful host-side triage ritual that opens the index -- it is refused on role=vm, and as of AUT-02 (s08) it ALSO runs automatically as part of the Sunday brain-nightly branch. The VM-eligible on-invoke form is unchanged and uses only bases-query/search/draft-capture, all on the VM_ALLOWED list (src/brain/cli.py).",
+      "connectors": ["Cowork chat session (manual paste-prompt; poke-only trigger, no cron)"],
+      "vm_eligible": true,
+      "notes": "Promotion itself stays a human (P-10-equivalent) gate in BOTH forms; the host Sunday fold is triage-only (queues a hot.md entry, never auto-promotes). See routines/task-registrar's Cowork paste-prompt for the VM form. Registration for the host fold: /brainiac-install (no new OS task)."
+    },
+    {
+      "id": "inbox-ingest",
+      "source_task": "owner-vault-inbox-ingest",
+      "disposition": "FOLD",
+      "runtime": "host-write",
+      "os_scheduled": false,
+      "persistence_cost": 0,
+      "cadence": "daily branch of brain-nightly (drain via sync); standalone/event-driven form is on-invoke on host",
+      "command": "brain sync --json",
+      "connectors": [],
+      "vm_eligible": false,
+      "notes": "Binary-extraction pipeline stays overlay tooling; only its re-index step folds to brain sync (the incremental indexer IS the drain)."
+    },
+    {
+      "id": "graphify-discovery",
+      "source_task": "owner-vault-graphify-discovery",
+      "disposition": "FOLD",
+      "runtime": "host-write",
+      "os_scheduled": false,
+      "persistence_cost": 0,
+      "cadence": "monthly (1st), REAL build inside the graphify branch of brain-nightly (ADR-0003 Ruling 6/(a)); standalone form (`brain graphify`) is on-invoke on host",
+      "command": "brain graphify --json",
+      "connectors": [],
+      "vm_eligible": false,
+      "notes": "ADR-0003 Ruling 6/(a) SUPERSEDES this manifest's earlier task-disposition row 7 (\"documented only\" -- no clean fold, unbounded runtime risk). Both grounds are resolved by design: src/brain/graphify.py gives maintain a single function to call (clean fold), and three caps bound the monthly run -- a corpus-manifest drift gate (no-op in ms when unchanged), embedding reuse (never re-embeds), and a self-reported wall-clock budget (target <=60s at current corpus scale, action_required past 5min). brain maintain's graphify branch now sets invoked=true and calls BrainCore.graphify (src/brain/core.py), which builds a stamped `authoritative:false` graph.json (wikilink edges + capped, scored INFERRED embedding-neighbour edges) atomically to .brain/graph/, and queues egress-gated link candidates into .brain/memory/hot.md for human review (graphify never auto-writes a link into a note). `brain status` surfaces the build's generation/age. `brain graph-expand --use-inferred` can optionally consume the INFERRED edges as extra discovery-only traversal input."
+    },
+    {
+      "id": "autoresearch-cascade",
+      "source_task": "owner-vault-autoresearch-cascade",
+      "disposition": "ON-INVOKE",
+      "runtime": "host",
+      "os_scheduled": false,
+      "persistence_cost": 0,
+      "cadence": "on-invoke only, recommended quarterly BY CONVENTION -- documented here as prose, never a cron/schedule entry (ADR-0003 Ruling 7: too judgment-laden for the nightly heartbeat, needs a human to read the evidence before a kept change becomes a shipped default)",
+      "command": ".claude/skills/autoresearch/SKILL.md -- bounded loop: eval/capture_run.py (baseline + one-parameter-change candidate) -> eval/harness_direct.py -> eval/gate.py --metric recall@20 -> keep (non-inferior AND improved) or revert; every iteration writes eval/runs/autoresearch-*.json",
+      "command_notes": "AUT-04 (session s11) REPOINTS this row from an earlier placeholder ('autoresearch cascade' as a manual search+draft-capture research helper, which was VM-eligible) to the ADR-0003 Ruling 7 design actually built: a retrieval-PARAMETER self-tuning loop. It needs the profile-a-brain dev checkout (src/, eval/, the golden set + qrels the real owner vault was graded against) -- not something the sandboxed Cowork VM (vault/.brain/ runtime + published snapshot only, no eval/ or src/ on that mount) can run. Hence runtime=host, vm_eligible=false (was true under the old placeholder). It never edits src/brain/ -- a KEPT change is evidence + a recommendation; applying it to the shipped CLI/BrainCore defaults is a separate, human-reviewed code change.",
+      "connectors": ["Claude Code / any harness with a full profile-a-brain repo checkout on PATH (src/, eval/) -- NOT a Cowork VM session", "external research connectors stay human-initiated (egress posture, unchanged)"],
+      "vm_eligible": false,
+      "notes": "An analyst job, not a heartbeat. Evidence artifacts under eval/runs/autoresearch-*.json carry a top-level `captured` ISO field src/brain/core.py's `_autoresearch_status` reads for the morning brief's staleness line (ADR-0003 2026-07-05/s09 Amendment) -- so even a quarter where every candidate was reverted still refreshes the signal that the poke happened. See .claude/skills/autoresearch/SKILL.md for the full bounded-loop contract."
+    },
+    {
+      "id": "ingestion-digest-weekly",
+      "source_task": "owner-vault-ingestion-digest-weekly",
+      "disposition": "FOLD",
+      "runtime": "host-write (scheduled emission) / vm-read+draft (on-invoke)",
+      "os_scheduled": false,
+      "persistence_cost": 0,
+      "cadence": "Sunday branch of brain-nightly for the scheduled emission (folded, host, zero extra OS entries); on-demand VM form is on-invoke",
+      "command": "brain digest --days 7 --json",
+      "connectors": ["Cowork chat session (on-invoke VM form only; manual paste-prompt; poke-only trigger, no cron)"],
+      "vm_eligible": true,
+      "notes": "`digest` is on the VM_ALLOWED list (read-only), so the on-demand form can run directly in Cowork without a paste-prompt registrar step if the owner just wants a one-off read. The registrar's Cowork prompt offers it as a named poke-only trigger purely for convenience (avoid retyping)."
+    },
+    {
+      "id": "recommendations-aging",
+      "source_task": "owner-vault-recommendations-aging",
+      "disposition": "FOLD",
+      "runtime": "host-write",
+      "os_scheduled": false,
+      "persistence_cost": 0,
+      "cadence": "daily branch of brain-nightly (unconditional cheap file scan, no separate branch, MEM-03); zero extra OS entries",
+      "command": "(no standalone CLI verb -- an in-process file scan inside `brain maintain`'s daily branch: src/brain/core.py BrainCore._recommendations_aging_fold, src/brain/maintenance.py recommendations_aging_scan)",
+      "command_notes": "Reads/writes .brain/memory/recommendations-open.jsonl (lifecycle: open -> aging [implicit: an open entry past the aging threshold, default 14 days] -> surfaced -> resolved) and appends surfaced entries to .brain/memory/hot.md, idempotently (an entry is queued into hot.md exactly once, guarded both by the JSONL status flip and a hot.md idempotency-key marker). Resolving a recommendation (removing it from the open file, logging it to .brain/memory/recommendations-log.md) is a documented convention (maintenance.resolve_recommendation), same as hot.md's own owner-clears-an-entry etiquette -- no CLI verb yet.",
+      "connectors": [],
+      "vm_eligible": false,
+      "notes": "MEM-03 (s08) promoted this from an overlay-only pass-through to a real brain-nightly fold, porting the reference organization's `_recommendations_open.jsonl`/`_recommendations_log.md` SCHEMA (never content, ADR-0003 Appendix B). Registration: /brainiac-install (no new OS task)."
+    },
+    {
+      "id": "handoff-freshness",
+      "source_task": "owner-vault-handoff-freshness",
+      "disposition": "OVERLAY-ONLY",
+      "runtime": "host-write",
+      "os_scheduled": false,
+      "persistence_cost": 0,
+      "cadence": "on-invoke (host) -- no SC/Bases/cascade coupling",
+      "command": "(vault-specific overlay tooling -- no brain CLI equivalent)",
+      "connectors": [],
+      "vm_eligible": false,
+      "notes": "Roster reconciliation: the live-vault roster carries a couple of near-pure pass-throughs beyond this manifest's disposition-tagged tasks (see totals.check) -- trivially OVERLAY-ONLY / HOST / ON-INVOKE, zero OS entries, no brain CLI equivalent."
+    },
+    {
+      "id": "write-audit",
+      "source_task": "owner-vault-write-audit",
+      "disposition": "OVERLAY-ONLY",
+      "runtime": "host-write",
+      "os_scheduled": false,
+      "persistence_cost": 0,
+      "cadence": "on-invoke (host) -- audits the vault's own audit chain + git coexistence, not the brain's",
+      "command": "(vault-specific overlay tooling; brain's own chain is verified separately via `brain verify-audit` / `brain anchor` / `brain verify-anchor`)",
+      "connectors": [],
+      "vm_eligible": false,
+      "notes": "Roster reconciliation: the live-vault roster carries a couple of near-pure pass-throughs beyond this manifest's disposition-tagged tasks (see totals.check) -- trivially OVERLAY-ONLY / HOST / ON-INVOKE, zero OS entries, no brain CLI equivalent."
+    }
+  ],
+  "totals": {
+    "tasks_listed": 13,
+    "host_os_scheduled_entries": 1,
+    "vm_os_scheduled_entries": 0,
+    "vm_eligible_on_invoke_tasks": 2,
+    "check": "13 manifest rows = 1 umbrella (brain-nightly) + 10 disposition-tagged tasks it folds/hosts/on-invokes + 2 roster-reconciliation pass-throughs (handoff-freshness, write-audit). recommendations-aging moved from a roster pass-through to a real brain-nightly FOLD in AUT-02/MEM-03 (s08). persistence accounting matches this manifest's locked_counts exactly: 1 host, 0 VM. autoresearch-cascade dropped from vm_eligible_on_invoke_tasks (3 -> 2) in AUT-04/s11: it needs the profile-a-brain dev checkout (src/, eval/), not something a Cowork VM session (vault/.brain/ runtime only) can run -- see that row's command_notes."
+  }
+}

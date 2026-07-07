@@ -151,6 +151,74 @@ for a workspace's first-ever skill upload or if the analyst prefers the
 in-session Plugins-tab convenience — never because this host step left
 something stale.
 
+## Cowork skill refresh (in-session only)
+
+This section runs ONLY when `/brainiac-update` is invoked **inside a Cowork
+session**. On the host, skip it entirely — the host process has no reach
+into the Desktop/Cowork plugin store (ADR-0005 Ruling 4 / s04 addendum), so
+there is nothing here for a host run to do.
+
+`brain doctor`'s Desktop-store surface (surface 11,
+`check_desktop_plugin_store`) is best-effort and always `manual-required` —
+it **detects** skew, it never fixes it (the CLI structurally can't invoke a
+Claude slash-command skill). This loop is the fix. It reuses
+`/skill-creator`'s existing "Updating an existing skill" flow rather than
+building a parallel installer:
+
+a. Run `brain doctor --json` and parse the `Desktop/Cowork plugin store
+   (<plugin>)` rows. Compare each row's `raw.version` against the report's
+   `ssot_version` (numeric compare, never string order — `0.9.1 < 0.10.0`).
+   Plugins where installed < SSOT are stale.
+
+b. **No stale plugins** → say so, done, nothing to present.
+
+   **Stale plugins found** → for each one, resolve which skills it ships
+   (`profile-a-kernel` -> `KERNEL_SKILLS`, `profile-a-extras` ->
+   `EXTRAS_SKILLS` in `tools/package_clients.py`; a stale `brainiac-manager`
+   row is not actionable by this loop — those lifecycle skills are never
+   distributed through Cowork's Save-skill flow, so note it and move on).
+   For each affected skill:
+
+   1. Locate the current bundle already sitting in this session: the
+      workspace's own `.brain/skills/<name>.skill` — a zip of the current
+      SSOT version staged by the last `cowork_workspace_install.sh` run, no
+      re-fetch needed.
+   2. Unpack it to a writeable `/tmp/<name>/` dir (the installed/staged path
+      may be read-only — the same "copy before editing" rule
+      `/skill-creator`'s own "Updating an existing skill" section already
+      documents).
+   3. Invoke `/skill-creator` in update-existing-skill mode against that
+      `/tmp/<name>/` folder: **preserve the name** (the skill's `name`
+      frontmatter and directory name, unchanged), run its package step
+      (`package_skill.py`), and — `present_files` is available in Cowork —
+      present the resulting `.skill` so the user can click "Save and
+      Replace". (If `present_files` is ever unavailable, skip the
+      unpack/repackage round-trip and present the already-built
+      `dist/cowork-skills/<name>.skill` directly — same file.)
+
+c. **VERIFY — mandatory, never skip, cite the reason.** After the user
+   confirms they clicked "Save and Replace" for a skill, re-run
+   `brain doctor --json` and re-check that skill's plugin row. Only report a
+   skill "updated" once the row's version reads the SSOT version — never off
+   the click alone.
+
+   If it did NOT move: tell the user **loudly** that "Save and Replace"
+   silently no-op'd. This is a known bug (Anthropic #46844, P0, and #46836):
+   Cowork can package from a stale host-mounted path, or accept the upload
+   without actually overwriting the installed skill on disk, while still
+   showing a success toast.
+
+   Manual fallback for that case: re-open the presented `.skill`, confirm it
+   packaged from the `/tmp` working copy (not a stale host-mounted path), and
+   re-install; or, failing that, remove the plugin from Cowork's Plugins tab
+   entirely and re-add it fresh.
+
+This is the concrete "make the Desktop-tab skills current" flow. Step 3
+above's staged-bundle canonical path is unchanged by this — it remains the
+host-recognized source of truth regardless of what the Desktop store shows;
+this section only exists for when a human is sitting in a Cowork session
+watching the Plugins tab and wants it current too.
+
 ## Teardown
 
 Full removal (venv, nightly labels, registry entries this host owns) is a

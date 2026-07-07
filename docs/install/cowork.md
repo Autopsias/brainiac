@@ -166,6 +166,17 @@ rather than becoming what a Cowork update depends on. Use it if you like the
 one-time setup; skip it and the staged zips above are still enough on their
 own, every time.
 
+**Keeping the Plugins-tab install current later:** if you did use this path,
+`brain doctor` on the host can tell you when it drifts (`Desktop/Cowork
+plugin store (<plugin>)` rows go `manual-required` with an installed-vs-SSOT
+detail) but it cannot fix it — the Desktop store has no host-reachable CLI.
+Refreshing it is a **Cowork-session-only** step: `/brainiac-update`'s "Cowork
+skill refresh" section drives `/skill-creator` to repackage the stale
+skill(s) and present them for "Save and Replace", then re-checks `brain
+doctor` afterward to confirm the click actually took (Cowork's "Save and
+Replace" is known to silently no-op sometimes — Anthropic #46844/#46836 —
+so never trust the click alone).
+
 ## 3 — Register the on-invoke Cowork triggers (paste-ready prompt)
 
 Paste `docs/operations/cowork-task-registrar-prompt.md` (or the file written

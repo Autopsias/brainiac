@@ -2,7 +2,7 @@
   "name": "brainiac-manager",
   "displayName": "Brainiac Manager — host lifecycle",
   "description": "Host-mutating lifecycle skills for Brainiac: /brainiac-install (one-command host install + nightly registration + audit-key provisioning), /brainiac-update (refresh engine + workspaces + nightly after a marketplace update), /brainiac-uninstall (teardown). Separate from profile-a-kernel/profile-a-extras so daily-use skills never pull in host-mutating commands.",
-  "version": "0.10.5",
+  "version": "0.10.6",
   "author": {
     "name": "Profile A maintainers"
   },

@@ -334,10 +334,18 @@ def check_desktop_plugin_store(
         detail = (f"best-effort, last-seen (mtime {mtime_str}): version {version} "
                   f"(SSOT {ssot}); {len(candidates)} candidate session(s) found")
         # Always manual-required (Ruling 2/4): never gates the exit code, no
-        # matter what the version comparison says.
-        rows.append(_row(surface, MANUAL_REQUIRED, detail,
-                         remediation="Re-upload the .skill packages via Cowork's Save-skill "
-                                     "flow (dist/cowork-skills/*.skill) if this looks stale",
+        # matter what the version comparison says. The remediation text still
+        # differentiates stale-vs-current so it points at the real fix: the
+        # CLI only DETECTS this surface, the Cowork-session /brainiac-update
+        # (-> /skill-creator) loop is what UPDATES it (see SKILL.md "Cowork
+        # skill refresh").
+        if _compare(str(version), ssot) < 0:
+            remediation = ("in a Cowork session run /brainiac-update (or /skill-creator) to "
+                           "repackage + Save-and-Replace these, then re-run brain doctor to "
+                           "confirm it took")
+        else:
+            remediation = "looks current — no action needed"
+        rows.append(_row(surface, MANUAL_REQUIRED, detail, remediation=remediation,
                          raw={"version": version, "candidates": len(candidates),
                               "newest_mtime": mtime_str}))
     return rows

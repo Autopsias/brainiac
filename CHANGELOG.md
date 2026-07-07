@@ -7,6 +7,29 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.10.6] — 2026-07-08
+- **Wired the existing `/skill-creator` skill into the Cowork Desktop-store
+  refresh path** — `brain doctor`/`brain update` were left with only a
+  generic "verify/update manually" hedge for the always-`manual-required`
+  Desktop/Cowork plugin store (surface 11), even though the CLI has no way
+  to fix that surface at all. Added a new "Cowork skill refresh (in-session
+  only)" section to `/brainiac-update`'s SKILL.md documenting the sanctioned
+  detect(`brain doctor`) -> update(`/skill-creator`, reusing its
+  "Updating an existing skill" flow against the staged `.brain/skills/*.skill`
+  bundles) -> verify(`brain doctor` again) loop — never a parallel installer.
+  Reworded the Desktop-store remediation strings in `src/brain/doctor.py`
+  (`check_desktop_plugin_store`, now version-aware via the existing
+  `_compare` helper) and `src/brain/update.py` (`residual_human_steps`) to
+  point at this loop. The verify step is mandatory and cites Anthropic
+  #46844/#46836: Cowork's "Save and Replace" can silently no-op, so a skill
+  is only ever reported updated after a second `brain doctor` read confirms
+  the version actually moved — never off the user's click alone. See
+  `docs/adr/0005-update-versioning-ux.md` (2026-07-08 addendum). The
+  end-to-end Cowork loop (skill-creator invocation + Save-and-Replace +
+  verify) is documentation/prose, not unit-testable here — only the CLI
+  detection/remediation-string change is covered by
+  `tests/test_doctor.py` / `tests/test_update.py`.
+
 ## [0.10.5] — 2026-07-08
 - **Fix (`run_update` restaged one-build-stale `.skill` bundles — observed
   live twice, 0.10.2->0.10.3 and 0.10.3->0.10.4):** the engine venv refresh

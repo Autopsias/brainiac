@@ -1,7 +1,7 @@
 """``brain update`` (ADR-0005 Ruling 3, UP-01/UP-02) — the self-executing
 refresh: marketplace refresh -> downgrade-safe CLI-plugin reinstall -> engine
-venv refresh -> workspace re-stage -> ``brain doctor`` verify, with one
-before->after version table and one pass/fail.
+venv refresh -> dist/ rebuild -> workspace re-stage -> ``brain doctor`` verify,
+with one before->after version table and one pass/fail.
 
 This module RUNS the operations; it does not print instructions for a human
 to copy-paste (that was the old ``/brainiac-update`` skill's failure mode —
@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -257,6 +258,27 @@ def refresh_engine_venv(
 
 
 # --------------------------------------------------------------------------
+# dist/ rebuild — `pip install -e` (engine venv refresh, above) refreshes the
+# installed package/venv but NEVER regenerates the gitignored dist/COMPAT +
+# dist/cowork-skills/*.skill artifacts that restage_workspaces' cowork-vm leg
+# copies (tools/package_clients.py is the only thing that builds those).
+# Skipping this is the exact bug observed live twice (0.10.2->0.10.3 and
+# 0.10.3->0.10.4): restage_workspaces silently staged one-build-stale .skill
+# bundles and `brain doctor` flagged "Staged skill bundles stale" / "dist/COMPAT
+# stale" until a human ran the packager by hand and re-ran `brain update`.
+# --------------------------------------------------------------------------
+
+def rebuild_dist(engine_src: Path, run: Runner = _default_runner) -> dict:
+    packager = engine_src / "tools" / "package_clients.py"
+    try:
+        out = run([sys.executable, str(packager)], cwd=str(engine_src))
+    except Exception as exc:
+        return {"ok": False, "detail": f"{type(exc).__name__}: {exc}"}
+    ok = out.returncode == 0
+    return {"ok": ok, "detail": (out.stdout or out.stderr or "").strip()}
+
+
+# --------------------------------------------------------------------------
 # Workspace re-stage — thin wrapper delegating to workspace_registry; never
 # reimplements its locking/schema. For target "cowork-vm" this re-runs the
 # (a) engine-source and (d) skill-bundle legs of
@@ -441,8 +463,9 @@ def run_update(
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Chain, in order: capability probe -> marketplace refresh -> per-plugin
-    downgrade-safe reinstall -> engine venv refresh -> workspace re-stage ->
-    `brain doctor` verify. One pass/fail, one before->after table.
+    downgrade-safe reinstall -> engine venv refresh -> dist/ rebuild ->
+    workspace re-stage -> `brain doctor` verify. One pass/fail, one
+    before->after table.
 
     ``dry_run=True`` runs every read/decision step for real but skips every
     mutating call (marketplace update, plugin install/uninstall, pip install,
@@ -561,6 +584,17 @@ def run_update(
     result["steps"]["engine_refresh"] = engine_result
     if not engine_result["ok"] and not dry_run:
         result["notes"] = f"engine venv refresh failed: {engine_result['detail']} — stopping before workspace re-stage."
+        return result
+
+    # Step 3.5 — rebuild dist/ (COMPAT + cowork-skills bundles) from the
+    # freshly-installed engine, BEFORE staging workspaces below reads it.
+    if dry_run:
+        dist_rebuild = {"ok": True, "detail": "[dry-run] tools/package_clients.py (skipped)"}
+    else:
+        dist_rebuild = rebuild_dist(resolved_engine_src, run=run)
+    result["steps"]["dist_rebuild"] = dist_rebuild
+    if not dist_rebuild["ok"] and not dry_run:
+        result["notes"] = f"dist rebuild failed: {dist_rebuild['detail']} — stopping before workspace re-stage."
         return result
 
     # Step 4 — re-stage every registered workspace.

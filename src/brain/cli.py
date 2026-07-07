@@ -218,7 +218,10 @@ def build_parser() -> argparse.ArgumentParser:
         "doctor",
         help="READ-ONLY health + version table across every surface: engine, "
              "index/snapshot schema, CLI + Desktop plugin stores, staged "
-             "workspaces, marketplace cache freshness (ADR-0005 Ruling 2)",
+             "workspaces, marketplace cache freshness (ADR-0005 Ruling 2). "
+             "role=vm gets the staged-workspace-only subset (engine stamp, skill "
+             "bundles, snapshot, model cache, maintain heartbeat) plus a "
+             "host-only-surfaces list, instead of crashing or host checks",
     )
     sp.add_argument("--json", action="store_true")
 
@@ -629,7 +632,13 @@ def _main(argv: list[str] | None = None) -> int:
     if cmd == "doctor":
         from . import doctor as brain_doctor
 
-        report = brain_doctor.run_doctor()
+        # Role-aware (2026-07-07 addendum, ADR-0005 Ruling 2): the VM leg only
+        # ever sees the staged zero-install copy, so it gets its own surface
+        # set. Structural fallback covers the staged shim, which invokes
+        # `python3 -m brain.cli "$@"` directly and never sets $BRAIN_ROLE.
+        vm_posture = role == config.ROLE_VM or brain_doctor.looks_like_vm_stage()
+        report = (brain_doctor.run_doctor_vm(vault=args.vault) if vm_posture
+                  else brain_doctor.run_doctor())
         _emit(report if args.json else None, args.json,
               None if args.json else brain_doctor.render_human(report))
         return 0 if report["ok"] else 1

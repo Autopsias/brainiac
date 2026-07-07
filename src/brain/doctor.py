@@ -12,6 +12,14 @@ Only **scriptable REQUIRED** surfaces gate the process exit code — the
 Desktop/Cowork plugin-skill store (surface 11) is always ``manual-required``
 and never fails the run, otherwise `brain update`/CI could never go green
 while an unscriptable surface stays stale.
+
+Role-aware VM leg (2026-07-07 addendum, see docs/adr/0005-update-versioning-ux.md):
+``run_doctor()`` above assumes a full host checkout (pyproject SSOT, ~/.brainiac
+venv, ~/.claude plugins, tools/workspace_registry.py). None of that exists on
+the Cowork VM's staged zero-install copy — ``run_doctor_vm()`` covers the
+surfaces the VM CAN see (engine stamp, skill bundles, snapshot, model cache,
+maintain heartbeat) and lists the rest as not-detectable host-only surfaces,
+never a crash and never a fake-green.
 """
 from __future__ import annotations
 
@@ -519,6 +527,163 @@ def check_marketplace_cache(marketplace_dir: Path) -> dict:
 
 
 # --------------------------------------------------------------------------
+# VM leg (role-aware doctor, 2026-07-07 addendum to ADR-0005 Ruling 2) — the
+# Cowork VM only ever sees the staged zero-install copy
+# (cowork_workspace_install.sh: src/brain -> .brain/engine/brain, plus
+# .brain/{skills,snapshot,model,maintain-state.json}). None of the HOST-only
+# surfaces above (venv, pyproject SSOT, ~/.claude plugins, marketplace clone,
+# Desktop store, tools/workspace_registry.py) exist there. These checks read
+# ONLY what the staged workspace itself carries.
+# --------------------------------------------------------------------------
+
+def looks_like_vm_stage(repo_root: Optional[Path] = None) -> bool:
+    """True when this engine copy structurally lacks the host-only inputs
+    (no ``tools/workspace_registry.py`` companion script, no ``pyproject.toml``
+    SSOT) — i.e. it is a staged zero-install copy, even when role wasn't
+    explicitly passed. The staged VM shim (``.brain/brain``) runs
+    ``python3 -m brain.cli "$@"`` directly and does not set ``$BRAIN_ROLE``, so
+    this structural fallback is what keeps a role-less VM invocation from
+    hitting the host-only code path."""
+    root = repo_root or Path(__file__).resolve().parent.parent.parent
+    return not (root / "tools" / "workspace_registry.py").exists() and _ssot_version(root) is None
+
+
+def _read_version_stamp(path: Path) -> Optional[str]:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+    m = re.search(r'(?m)^__version__ = "([^"]+)"$', text)
+    return m.group(1) if m else None
+
+
+def check_vm_engine_stamp(engine_version: str) -> dict:
+    surface = "Engine version (this staged copy)"
+    if engine_version.startswith("0.0.0"):
+        return _row(surface, STALE, f"brain.__version__ reads {engine_version!r} — stale/pre-stamp stage",
+                    remediation="re-stage from the host: tools/cowork_workspace_install.sh",
+                    raw={"version": engine_version})
+    return _row(surface, CURRENT, f"brain {engine_version}", raw={"version": engine_version})
+
+
+def check_vm_snapshot(vault: Path) -> dict:
+    from . import config
+    from .snapshot import snapshot_status
+
+    surface = "Snapshot (read-only, .brain/snapshot)"
+    snap_dir = config.snapshot_dir(vault)
+    st = snapshot_status(snap_dir)
+    if st.get("snapshot") != "present":
+        return _row(surface, NOT_DETECTABLE, f"no snapshot published at {snap_dir}",
+                    remediation="publish a snapshot on the host (`brain snapshot`) and re-sync the VM mount")
+    age_s = st.get("age_seconds") or 0.0
+    detail = (f"gen {st.get('generation')} age {st.get('age_human')} "
+              f"({st.get('notes')} notes / {st.get('chunks')} chunks)")
+    if age_s > 48 * 3600:
+        return _row(surface, STALE, f"{detail} — older than 48h",
+                    remediation="publish a fresh snapshot on the host (`brain snapshot`) and re-sync the VM mount",
+                    raw=st)
+    return _row(surface, CURRENT, detail, raw=st)
+
+
+def check_vm_model_cache(vault: Path) -> dict:
+    from . import config
+
+    surface = "Model cache (.brain/model)"
+    model_dir = Path(os.environ.get("BRAIN_MODEL_CACHE") or (config.brain_runtime_dir(vault) / "model"))
+    if not model_dir.is_dir() or not any(model_dir.iterdir()):
+        return _row(surface, STALE,
+                    f"{model_dir} missing/empty — the VM has no HF egress, so semantic search "
+                    "silently falls back to hash embeddings without this",
+                    remediation="re-stage from the host: tools/cowork_workspace_install.sh")
+    n_files = sum(1 for p in model_dir.rglob("*") if p.is_file())
+    return _row(surface, CURRENT, f"{model_dir} present ({n_files} file(s))")
+
+
+def check_vm_maintain_heartbeat(vault: Path) -> dict:
+    """VM-readable mirror of ``BrainCore._maintain_heartbeat_summary`` (the VM
+    can read the heartbeat file even though only the host ever runs
+    ``brain maintain``)."""
+    import datetime as _dt
+
+    from . import config
+
+    surface = "Maintain heartbeat (.brain/maintain-state.json)"
+    state = _read_json(config.maintain_state_path(vault))
+    if not state:
+        return _row(surface, NOT_DETECTABLE,
+                    "no maintain-state.json yet — brain maintain (host-only ritual) has not run")
+    today = _dt.date.today()
+    stale, repeated = [], []
+    for branch, entry in state.items():
+        if not isinstance(entry, dict):
+            continue
+        last_run = entry.get("last_run")
+        age_hours: Optional[float] = None
+        if last_run:
+            try:
+                age_hours = (today - _dt.date.fromisoformat(last_run)).days * 24
+            except ValueError:
+                age_hours = None
+        if branch == "daily" and (entry.get("failed") or (age_hours is not None and age_hours > 48)):
+            stale.append(branch)
+        if int(entry.get("consecutive_failures", 0) or 0) >= 2:
+            repeated.append(branch)
+    if stale:
+        return _row(surface, STALE, f"stale branch(es): {stale}",
+                    remediation="brain maintain runs host-side only — check the host's nightly scheduler")
+    if repeated:
+        return _row(surface, STALE, f"repeated-failure branch(es): {repeated}",
+                    remediation="check the host's nightly maintenance logs")
+    return _row(surface, CURRENT, f"{len(state)} branch(es) tracked, none stale/repeatedly-failing")
+
+
+# Host-only surfaces the VM leg structurally cannot check (never gate, never
+# claimed as checked — ADR-0005 Ruling 2/4: a NOT_DETECTABLE row here, not a
+# fake-green or a crash).
+_HOST_ONLY_SURFACES = (
+    "Host engine venv (~/.brainiac/venv)",
+    "Version SSOT / dist/COMPAT (pyproject.toml, dist/)",
+    "Installed CLI plugins (~/.claude/plugins)",
+    "Marketplace cache freshness (~/.claude/plugins/marketplaces)",
+    "Desktop/Cowork plugin-skill store",
+    "Workspace registry (tools/workspace_registry.py)",
+)
+
+
+def run_doctor_vm(vault: Optional[str | os.PathLike[str]] = None) -> dict[str, Any]:
+    """Role-aware doctor for the Cowork VM leg — read-only, derived entirely
+    from what the staged workspace itself carries. Never raises: every
+    host-only import this needs is already isolated behind ``check_vm_*``
+    helpers that only touch the vault's own ``.brain/`` tree."""
+    from . import __version__ as engine_version
+    from . import config
+    from .index import SCHEMA_VERSION
+
+    vault_path = config.vault_root(vault)
+    entries = [{"vault_path": str(vault_path), "target": "vm"}]
+
+    rows: list[dict] = [check_vm_engine_stamp(engine_version)]
+    rows.extend(check_staged_skill_bundles(entries, engine_version))
+    rows.extend(check_workspace_schema(entries, SCHEMA_VERSION))
+    rows.append(check_vm_snapshot(vault_path))
+    rows.append(check_vm_model_cache(vault_path))
+    rows.append(check_vm_maintain_heartbeat(vault_path))
+    rows.extend(_row(s, NOT_DETECTABLE,
+                     "requires `brain doctor` on the host Mac — not checkable from this staged VM copy")
+                for s in _HOST_ONLY_SURFACES)
+
+    gating_stale = [r for r in rows if r["status"] in _GATING_STATUSES]
+    return {
+        "role": "vm",
+        "ssot_version": engine_version,
+        "rows": rows,
+        "ok": len(gating_stale) == 0,
+        "stale_count": len(gating_stale),
+    }
+
+
+# --------------------------------------------------------------------------
 # Orchestration
 # --------------------------------------------------------------------------
 
@@ -547,13 +712,24 @@ def run_doctor(
     app_support_dir = app_support_dir or (Path.home() / "Library" / "Application Support" / "Claude")
     marketplace_dir = marketplace_dir or (claude_home / "plugins" / "marketplaces" / marketplace_name)
 
+    registry_unavailable = False
     if registry_entries is None:
         import sys as _sys
 
-        _sys.path.insert(0, str(repo_root / "tools"))
-        import workspace_registry as _wr
+        try:
+            _sys.path.insert(0, str(repo_root / "tools"))
+            import workspace_registry as _wr
 
-        registry_entries = _wr.list_entries()
+            registry_entries = _wr.list_entries()
+        except Exception:
+            # HARDEN: `tools/workspace_registry.py` is a host-only companion
+            # script — never part of the staged zero-install engine
+            # (cowork_workspace_install.sh copies only src/brain). A staged
+            # VM copy invoking `brain doctor` with role=host (e.g. the shim
+            # doesn't set $BRAIN_ROLE) must degrade to "can't check this
+            # surface", never crash with a raw ModuleNotFoundError.
+            registry_entries = []
+            registry_unavailable = True
 
     ssot = _ssot_version(repo_root)
     rows: list[dict] = []
@@ -569,6 +745,14 @@ def run_doctor(
     rows.append(check_dist_compat(repo_root, ssot))
     rows.extend(check_plugin_manifests(repo_root, ssot))
     rows.extend(check_installed_cli_plugins(claude_home, ssot, marketplace_name))
+    if registry_unavailable:
+        rows.append(_row(
+            "Workspace registry (tools/workspace_registry.py)", NOT_DETECTABLE,
+            "unavailable in this checkout — looks like a staged zero-install VM "
+            "copy (tools/ is host-only, never staged); staged-workspace/skill-bundle "
+            "rows below are skipped here",
+            remediation="run `brain doctor --role vm` for the VM-appropriate surfaces, "
+                        "or run this on the full host checkout"))
     rows.extend(check_staged_workspaces(registry_entries, ssot))
     rows.extend(check_staged_skill_bundles(registry_entries, ssot))
     rows.extend(check_workspace_schema(registry_entries, SCHEMA_VERSION))

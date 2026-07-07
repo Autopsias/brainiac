@@ -481,9 +481,11 @@ def run_update(
         "steps": {},
         "before_after": [],
         "residual_human_steps": [
-            "Desktop/Cowork plugin store: no external CLI — verify/update manually "
-            "in the Cowork/Desktop client (skills-optional once cw-02 lands; see "
-            "the manual-required rows in `brain doctor`).",
+            "Desktop/Cowork plugin store: no external CLI — this run only DETECTS "
+            "staleness (see the manual-required rows in `brain doctor`); to UPDATE, "
+            "in a Cowork session run /brainiac-update (or /skill-creator) to "
+            "repackage + Save-and-Replace the stale skill(s), then re-run "
+            "`brain doctor` to confirm it took.",
         ],
     }
 

@@ -479,6 +479,14 @@ def test_dry_run_never_invokes_runner():
     assert report["ok"] in (True, False)  # doesn't crash either way
     assert "residual_human_steps" in report
     assert any("Desktop" in s for s in report["residual_human_steps"])
+    # The residual step now names the actual Cowork-session fix (detect via
+    # doctor -> update via /brainiac-update + /skill-creator -> verify via
+    # doctor again) instead of a bare "verify/update manually" hedge
+    # (ADR-0005 2026-07-08 addendum).
+    desktop_step = next(s for s in report["residual_human_steps"] if "Desktop" in s)
+    assert "/brainiac-update" in desktop_step
+    assert "/skill-creator" in desktop_step
+    assert "brain doctor" in desktop_step
 
 
 # --------------------------------------------------------------------------

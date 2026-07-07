@@ -502,3 +502,46 @@ reports `OK: all required surfaces current` under both `--role vm` and no
 
 **No version bump in this addendum** (0.10.4 cut is the follow-up that ships
 this fix); see `CHANGELOG.md` `[Unreleased]`.
+
+## Addendum (2026-07-08) — Cowork Desktop-store refresh: detect(doctor) -> update(skill-creator) -> verify(doctor)
+
+Ruling 4's Desktop-store surface (11) has been best-effort/`manual-required`
+since s04: `brain doctor` can **detect** skew there (installed version read
+from the per-session `rpm/plugin_*/.claude-plugin/plugin.json` cache vs. the
+SSOT) but structurally cannot **fix** it — a Python CLI cannot invoke a
+Claude slash-command skill. That gap sat undocumented as "verify/update
+manually"; this addendum names the sanctioned closed loop instead of leaving
+it to ad hoc clicking:
+
+1. **Detect** — `brain doctor --json`'s Desktop-store rows, unchanged
+   mechanism, now carry a remediation string that names the actual fix
+   instead of a generic "looks stale?" hedge once `_compare(installed, ssot)
+   < 0` (`check_desktop_plugin_store`, `src/brain/doctor.py`); `brain
+   update`'s `residual_human_steps` entry was reworded the same way
+   (`src/brain/update.py`).
+2. **Update** — this is a **Cowork-session-only** loop, documented as its own
+   section in `/brainiac-update`'s SKILL.md ("Cowork skill refresh
+   (in-session only)"), never in the host `brain update` path (the Desktop
+   store isn't reachable from the host at all). It reuses the existing
+   `/skill-creator` "Updating an existing skill" flow against the skill's own
+   `.brain/skills/<name>.skill` bundle already staged in the session — no
+   parallel installer.
+3. **Verify** — mandatory, never inferred from the user's click alone: after
+   "Save and Replace", re-run `brain doctor --json` and confirm the same row
+   now reads the SSOT version. This is not defensive boilerplate — Cowork's
+   "Save and Replace" is known to silently no-op (Anthropic #46844, P0, and
+   #46836): it can package from a stale host-mounted path, or accept the
+   upload without actually overwriting the installed skill on disk, while
+   still showing success. A skill is only ever reported "updated" off that
+   second `doctor` read.
+
+**No code change to the Desktop-store detection mechanism itself or its
+`manual-required` classification** — surface 11 still never gates the exit
+code (Ruling 2/4 stand as written). This addendum only (a) sharpens the
+remediation strings both `doctor` and `update` already print, and (b)
+documents, in the Cowork-only branch of `/brainiac-update`, the concrete
+detect→update→verify loop an analyst runs to act on them. Regression:
+`tests/test_doctor.py` / `tests/test_update.py` assert the new wording.
+
+**No version bump in this addendum** (a v0.10.6 cut is the follow-up); see
+`CHANGELOG.md` `[Unreleased]`.

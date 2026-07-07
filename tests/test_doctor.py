@@ -404,6 +404,9 @@ def test_desktop_store_picks_most_recent_session_by_mtime(tmp_path):
     assert row["raw"]["version"] == "1.2.3"
     assert row["raw"]["candidates"] == 2
     assert "last-seen (mtime" in row["detail"]
+    # version == ssot -> nothing to do, remediation says so rather than
+    # pointing at the Cowork refresh loop.
+    assert row["remediation"] == "looks current — no action needed"
 
 
 def test_desktop_store_never_gates_exit_code_even_when_stale(tmp_path):
@@ -417,6 +420,23 @@ def test_desktop_store_never_gates_exit_code_even_when_stale(tmp_path):
     rows = doctor.check_desktop_plugin_store(tmp_path, "9.9.9", plugin_dir_names=("brainiac-manager",))
     assert rows[0]["status"] == doctor.MANUAL_REQUIRED
     assert rows[0]["status"] not in doctor._GATING_STATUSES
+
+
+def test_desktop_store_stale_remediation_points_at_cowork_refresh_loop(tmp_path):
+    # installed (0.1.0) < SSOT (9.9.9) -> remediation must name the actual
+    # fix (detect(doctor) -> update(/brainiac-update + /skill-creator) ->
+    # verify(doctor)), not a generic "verify manually" hedge (ADR-0005
+    # 2026-07-08 addendum).
+    sessions_root = tmp_path / "local-agent-mode-sessions"
+    d = sessions_root / "sess-stale" / "sub" / "rpm" / "plugin_CCC" / ".claude-plugin"
+    d.mkdir(parents=True)
+    (d / "plugin.json").write_text(
+        json.dumps({"name": "brainiac-manager", "version": "0.1.0"}), encoding="utf-8")
+    rows = doctor.check_desktop_plugin_store(tmp_path, "9.9.9", plugin_dir_names=("brainiac-manager",))
+    remediation = rows[0]["remediation"]
+    assert "/brainiac-update" in remediation
+    assert "/skill-creator" in remediation
+    assert "brain doctor" in remediation
 
 
 # --------------------------------------------------------------------------

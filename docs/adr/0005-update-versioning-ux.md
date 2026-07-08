@@ -543,5 +543,19 @@ documents, in the Cowork-only branch of `/brainiac-update`, the concrete
 detect→update→verify loop an analyst runs to act on them. Regression:
 `tests/test_doctor.py` / `tests/test_update.py` assert the new wording.
 
+**Correction (2026-07-08, v0.10.7).** The shipment above put the Cowork loop
+*inside* `/brainiac-update` — which is **host-only** (`brain update` refuses
+`--role vm`). A real Cowork run correctly refuses the whole skill before ever
+reaching that section, so the loop was unreachable; and its "re-run `brain
+doctor` to verify" step can't work in the VM leg anyway (the Desktop store is
+host-only → `not-detectable` there). v0.10.7 removes the broken in-skill loop
+and corrects the `doctor`/`update` remediation strings to point at
+**`/skill-creator` directly** (which does run in Cowork), keeping the #46844
+verify-after-click discipline. The *automated* detect→verify loop belongs in a
+future **VM-native** `/brainiac-cowork-skills` skill (comparing the *loaded*
+skill version against the staged bundle), never bolted onto this host-only one.
+This was caught by an actual Cowork run refusing `/brainiac-update` — the
+anti-silent-failure posture working against our own mis-design.
+
 **No version bump in this addendum** (a v0.10.6 cut is the follow-up); see
 `CHANGELOG.md` `[Unreleased]`.

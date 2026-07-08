@@ -424,9 +424,8 @@ def test_desktop_store_never_gates_exit_code_even_when_stale(tmp_path):
 
 def test_desktop_store_stale_remediation_points_at_cowork_refresh_loop(tmp_path):
     # installed (0.1.0) < SSOT (9.9.9) -> remediation must name the actual
-    # fix (detect(doctor) -> update(/brainiac-update + /skill-creator) ->
-    # verify(doctor)), not a generic "verify manually" hedge (ADR-0005
-    # 2026-07-08 addendum).
+    # Cowork fix: /skill-creator (NOT the host-only /brainiac-update, which
+    # refuses --role vm), plus the host re-verify (ADR-0005 2026-07-08 addenda).
     sessions_root = tmp_path / "local-agent-mode-sessions"
     d = sessions_root / "sess-stale" / "sub" / "rpm" / "plugin_CCC" / ".claude-plugin"
     d.mkdir(parents=True)
@@ -434,9 +433,10 @@ def test_desktop_store_stale_remediation_points_at_cowork_refresh_loop(tmp_path)
         json.dumps({"name": "brainiac-manager", "version": "0.1.0"}), encoding="utf-8")
     rows = doctor.check_desktop_plugin_store(tmp_path, "9.9.9", plugin_dir_names=("brainiac-manager",))
     remediation = rows[0]["remediation"]
-    assert "/brainiac-update" in remediation
     assert "/skill-creator" in remediation
     assert "brain doctor" in remediation
+    # must NOT send Cowork users to the host-only skill that refuses there
+    assert "/brainiac-update" not in remediation
 
 
 # --------------------------------------------------------------------------

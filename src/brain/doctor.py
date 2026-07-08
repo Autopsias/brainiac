@@ -336,13 +336,14 @@ def check_desktop_plugin_store(
         # Always manual-required (Ruling 2/4): never gates the exit code, no
         # matter what the version comparison says. The remediation text still
         # differentiates stale-vs-current so it points at the real fix: the
-        # CLI only DETECTS this surface, the Cowork-session /brainiac-update
-        # (-> /skill-creator) loop is what UPDATES it (see SKILL.md "Cowork
-        # skill refresh").
+        # CLI only DETECTS this surface (it structurally cannot invoke a Claude
+        # slash-command skill); in a Cowork session /skill-creator is what
+        # repackages + presents the skill for Save-and-Replace. /brainiac-update
+        # is host-only (refuses --role vm) so it is NOT the Cowork fix.
         if _compare(str(version), ssot) < 0:
-            remediation = ("in a Cowork session run /brainiac-update (or /skill-creator) to "
-                           "repackage + Save-and-Replace these, then re-run brain doctor to "
-                           "confirm it took")
+            remediation = ("in a Cowork session use /skill-creator to repackage + "
+                           "Save-and-Replace the stale skill(s); re-run brain doctor on "
+                           "the host to confirm it took")
         else:
             remediation = "looks current — no action needed"
         rows.append(_row(surface, MANUAL_REQUIRED, detail, remediation=remediation,

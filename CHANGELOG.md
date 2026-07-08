@@ -7,6 +7,16 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.10.7] — 2026-07-08
+### Fixed
+- **Cowork skill-refresh guidance was wrong (v0.10.6 regression).** The refresh loop
+  was attached to the host-only `/brainiac-update` skill, which refuses `--role vm`, so it
+  was unreachable in Cowork and its `brain doctor` verify step couldn't see the Desktop
+  store from the VM. Removed the broken in-skill loop; `brain doctor` / `brain update`
+  remediation now points Cowork users at `/skill-creator` directly (which does run there),
+  keeping the #46844 verify-after-Save-and-Replace guard. A VM-native
+  `/brainiac-cowork-skills` skill that automates detect+verify is planned.
+
 ## [0.10.6] — 2026-07-08
 - **Wired the existing `/skill-creator` skill into the Cowork Desktop-store
   refresh path** — `brain doctor`/`brain update` were left with only a

@@ -2,7 +2,7 @@
   "name": "profile-a-extras",
   "displayName": "Profile A — Extras",
   "description": "Optional maintenance and admin skills for a brain-substrate second-brain: curation (stale-wikilink + revisit-queue lint), improve (session retrospective against AGENTS.md/CLAUDE.md/installed skills), task-registrar (idempotent scheduled-task registration), autoresearch (bounded self-tuning loop over retrieval parameters).",
-  "version": "0.10.6",
+  "version": "0.10.7",
   "author": {
     "name": "Profile A maintainers"
   },

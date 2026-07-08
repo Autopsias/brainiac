@@ -483,9 +483,9 @@ def run_update(
         "residual_human_steps": [
             "Desktop/Cowork plugin store: no external CLI — this run only DETECTS "
             "staleness (see the manual-required rows in `brain doctor`); to UPDATE, "
-            "in a Cowork session run /brainiac-update (or /skill-creator) to "
-            "repackage + Save-and-Replace the stale skill(s), then re-run "
-            "`brain doctor` to confirm it took.",
+            "in a Cowork session use /skill-creator to repackage + Save-and-Replace "
+            "the stale skill(s) — /brainiac-update is host-only and refuses in Cowork "
+            "— then re-run `brain doctor` on the host to confirm it took.",
         ],
     }
 

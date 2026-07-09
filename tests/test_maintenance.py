@@ -511,7 +511,7 @@ def test_status_surfaces_maintain_heartbeat(populated_core):
     _seed_state(populated_core, STEADY_STATE["2026-07-06"])
     populated_core.maintain(dry_run=False, today=monday)
 
-    res = populated_core.status()
+    res = populated_core.status(today=monday)
     hb = res["maintain_heartbeat"]
     assert hb["status"] == "ok"
     assert hb["branches"]["daily"]["last_run"] == monday.isoformat()
@@ -524,7 +524,7 @@ def test_status_flags_repeated_branch_failures(populated_core, monkeypatch):
     populated_core.maintain(dry_run=False, today=monday)
     populated_core.maintain(dry_run=False, today=monday)
 
-    hb = populated_core.status()["maintain_heartbeat"]
+    hb = populated_core.status(today=monday)["maintain_heartbeat"]
     assert "health" in hb["repeated_failure_branches"]
     assert hb["status"] == "repeated_failures"
 

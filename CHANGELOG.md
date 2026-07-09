@@ -7,6 +7,59 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-07-09
+### Added
+- **Real semantic search in Cowork, offline (DV-04).** The Cowork VM leg lacked
+  `tokenizers` (query tokenisation) and had no network to install it, so `brain search`
+  silently ran on the non-semantic hash embedder. The installer and `brain update` now
+  VENDOR `tokenizers` + `sqlite-vec` per-arch into `.brain/vendor/<arch>/` (shared
+  `tools/vendor_semantic_deps.py`), and the shim + session prompt put them on `PYTHONPATH`
+  — so the VM does real e5 retrieval with zero network.
+- **`brain mcp-config`.** Prints the paste-ready MCP-client entry to run `brain-mcp`
+  against a vault (Claude Desktop / Cowork / Claude Code) — the MCP-on-host path where the
+  host runs the engine and every client calls it, no per-vault staging. `install.sh` now
+  installs the `[mcp]` extra so `brain-mcp` never ships without its `mcp` dependency.
+
+### Fixed
+- **Silent hash-embedder fallback is now loud (DV-03).** `brain doctor` gains a
+  live-embedder probe that FAILS (non-zero) when the runtime would degrade to the
+  non-semantic HashEmbedder — the one health surface it was blind to. `role=vm` defaults
+  `BRAIN_REQUIRE_REAL_EMBEDDER=1`, so the semantic path errors loudly instead of returning
+  random results (lexical `grep`/`bases-query` unaffected).
+- **sqlite-vec KNN on older sqlite (DV-04).** The `vec0` query now expresses k as an
+  `AND k = ?` MATCH constraint, not a bound `LIMIT ?` — older sqlite (the Cowork VM's)
+  doesn't push a parameterised LIMIT into vec0's planner and raised "A LIMIT or 'k = ?'
+  constraint is required". Stayed hidden because vec0's native lib often isn't loaded on
+  the host (brute-force fallback), so the path went unexercised.
+- **`brain update` re-stages the FULL offline stack (DV-04).** The workspace re-stage
+  copied only engine + skills, so an update shipped the fixed engine but left the VM
+  without vendored deps / with a stale shim — semantic search silently stayed on hash. It
+  now stages vendor + shim + session prompt too, from the same helper the installer uses
+  (update == install).
+
+## [0.11.0] — 2026-07-09
+### Added
+- **`brain restore-index` — fast index recovery from the snapshot.** Restores the live
+  index from the published snapshot in seconds (vs a full re-embed `rebuild`) when the
+  index is corrupt or empty — e.g. an interrupted rebuild leaves a half-written DB.
+  Guards: refuses a missing/empty snapshot; refuses to clobber a live index holding MORE
+  notes than the snapshot without `--force` (data-loss guard); writes a reversible
+  `.pre-restore-*.bak`; verifies the note count post-restore. `--dry-run` previews.
+- **Daily notes (opt-in).** With `BRAIN_DAILY_NOTE` set, `brain-nightly`'s daily branch
+  creates today's `type: daily` note once per day (idempotent, seeded from the morning
+  brief, Confidential floor) — parity with the Obsidian daily-note habit. Default off, so
+  `maintain`'s note-count invariant is unchanged for vaults that don't want a journal.
+  `tools/brain_daily.py` provides the same on demand regardless of the flag.
+- **Scanned-PDF OCR in the installer.** `install.sh` installs `ocrmypdf` + `tesseract`
+  (+ language packs) best-effort so image-only PDFs ingest out of the box; a missing
+  toolchain never blocks install or ingestion (brain quarantines the scan as before).
+
+### Fixed
+- **Silent phantom-vault footgun.** `config.py::vault_root` now WARNS when it falls back
+  to `./vault` (no `--vault`/`$BRAIN_VAULT`) and `./vault` is not yet a vault, instead of
+  silently creating a phantom `./vault/.brain/` in whatever directory `brain` ran from.
+  Creation flows (`brain init`, the installer's sample-vault build) are unaffected.
+
 ## [0.10.7] — 2026-07-08
 ### Fixed
 - **Cowork skill-refresh guidance was wrong (v0.10.6 regression).** The refresh loop

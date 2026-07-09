@@ -609,6 +609,42 @@ def check_vm_model_cache(vault: Path) -> dict:
     return _row(surface, CURRENT, f"{model_dir} present ({n_files} file(s))")
 
 
+def check_embedder_liveness() -> dict:
+    """Probe whether the LIVE runtime can produce real semantic embeddings, or
+    would silently degrade to the non-semantic HashEmbedder (DV-03, 2026-07-09).
+
+    This is the one health surface older `brain doctor` was structurally blind
+    to: version / schema / staging / model-files can ALL read green while
+    `search` returns random results because onnxruntime isn't importable in the
+    interpreter that actually runs `brain` (the exact Cowork-VM failure that
+    lost a retrieval eval to a hash fallback). Note this is distinct from
+    ``check_vm_model_cache`` — the model files can be present on disk yet the
+    runtime still unable to load them. Reads only process/env state: no model
+    load, no side effects, safe in the read-only doctor."""
+    from .embed import probe_auto_embedder
+
+    surface = "Semantic embedder (live runtime)"
+    state, backend = probe_auto_embedder()
+    if state == "real":
+        return _row(surface, CURRENT, f"real semantic embedder available ({backend})",
+                    raw={"state": state, "backend": backend})
+    if state == "explicit-hash":
+        # Deliberate offline/test choice — never gates, never alarms.
+        return _row(surface, UNMANAGED,
+                    "hash embedder selected explicitly ($BRAIN_EMBEDDER=hash) — "
+                    "retrieval is non-semantic BY CHOICE, not a fault",
+                    raw={"state": state, "backend": backend})
+    # implicit-hash — the silent random-search failure. Gate the exit code.
+    return _row(surface, STALE,
+                "NO real semantic embedder — the auto-path would fall back to the "
+                "non-semantic HashEmbedder, so `search` ranks with RANDOM vectors "
+                "against a real-model index",
+                remediation="install onnxruntime + tokenizers into the interpreter that "
+                            "runs `brain` (the 'corporate' extras), or invoke the "
+                            "onnxruntime-bundled frozen binary; then re-run `brain status`",
+                raw={"state": state, "backend": backend})
+
+
 def check_vm_maintain_heartbeat(vault: Path) -> dict:
     """VM-readable mirror of ``BrainCore._maintain_heartbeat_summary`` (the VM
     can read the heartbeat file even though only the host ever runs
@@ -677,6 +713,7 @@ def run_doctor_vm(vault: Optional[str | os.PathLike[str]] = None) -> dict[str, A
     rows.extend(check_workspace_schema(entries, SCHEMA_VERSION))
     rows.append(check_vm_snapshot(vault_path))
     rows.append(check_vm_model_cache(vault_path))
+    rows.append(check_embedder_liveness())  # DV-03: model files present ≠ embedder loads
     rows.append(check_vm_maintain_heartbeat(vault_path))
     rows.extend(_row(s, NOT_DETECTABLE,
                      "requires `brain doctor` on the host Mac — not checkable from this staged VM copy")
@@ -751,6 +788,7 @@ def run_doctor(
 
     rows.append(check_committed_stamp(repo_root, ssot))
     rows.append(check_host_venv(brainiac_home, ssot))
+    rows.append(check_embedder_liveness())  # DV-03: the host also builds/queries
     rows.append(check_dist_compat(repo_root, ssot))
     rows.extend(check_plugin_manifests(repo_root, ssot))
     rows.extend(check_installed_cli_plugins(claude_home, ssot, marketplace_name))

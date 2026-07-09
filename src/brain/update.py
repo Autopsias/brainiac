@@ -330,6 +330,28 @@ def stage_engine_and_skills(engine_src: Path, workspace_path: str) -> dict:
     for z in zips:
         shutil.copyfile(z, skills_dst_dir / z.name)
 
+    # (c/c2/c3) offline semantic stack (DV-04) — the re-stage previously staged
+    # ONLY engine+skills, so a `brain update` shipped the fixed engine but left
+    # the VM without vendored tokenizers/sqlite-vec and with a stale shim/prompt:
+    # semantic search silently stayed on the hash fallback. Stage all three from
+    # the SAME shared helper the installer uses, so update == install.
+    vendor_status: dict[str, str] = {}
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(engine_src / "tools"))
+        import vendor_semantic_deps as _vsd  # type: ignore
+
+        _vsd.write_shim(brain_dir)                       # vendored-deps-aware shim
+        vendor_status = _vsd.stage_vendor(brain_dir)     # tokenizers + sqlite-vec per arch
+    except Exception as exc:  # advisory — a networkless host degrades to lexical
+        vendor_status = {"error": f"{type(exc).__name__}: {exc}"}
+    # session prompt — the instruction the Cowork agent follows each session.
+    prompt_src = engine_src / "docs" / "install" / "cowork-session-prompt.md"
+    if prompt_src.exists():
+        routines_dst = brain_dir / "routines"
+        routines_dst.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(prompt_src, routines_dst / "cowork-session-prompt.md")
+
     ssot = _ssot_version(engine_src)
     staged = _read_version_stamp(engine_dir / "brain" / "_version.py")
     return {
@@ -338,6 +360,7 @@ def stage_engine_and_skills(engine_src: Path, workspace_path: str) -> dict:
         "version_ok": ssot is not None and staged == ssot,
         "skills_shipped": len(zips),
         "skills_src_dir": str(skills_src_dir),
+        "vendor_status": vendor_status,
     }
 
 

@@ -670,7 +670,11 @@ def test_looks_like_vm_stage_false_on_full_host_checkout(tmp_path):
     assert doctor.looks_like_vm_stage(tmp_path) is False
 
 
-def test_run_doctor_vm_current_on_fresh_staged_workspace(tmp_path):
+def test_run_doctor_vm_current_on_fresh_staged_workspace(tmp_path, monkeypatch):
+    # DV-03: pin a real embedder so the new liveness probe is CI-deterministic
+    # (this test asserts the version/schema/model surfaces are green — it is not
+    # the test that exercises the embedder; that's the probe unit tests below).
+    monkeypatch.setattr("brain.embed.probe_auto_embedder", lambda: ("real", "onnx"))
     vault = tmp_path / "vault"
     _seed_vm_workspace(vault)
     report = doctor.run_doctor_vm(vault=vault)
@@ -773,3 +777,35 @@ def test_run_doctor_never_crashes_when_workspace_registry_unavailable(tmp_path, 
     registry_row = next(r for r in report["rows"] if "Workspace registry" in r["surface"])
     assert registry_row["status"] == doctor.NOT_DETECTABLE
     assert "--role vm" in registry_row["remediation"]
+
+
+# --------------------------------------------------------------------------
+# DV-03 (2026-07-09) — embedder-liveness probe: doctor must fail LOUD when the
+# live runtime would silently degrade to the non-semantic HashEmbedder (the
+# Cowork-VM failure that answered semantic queries with random vectors while
+# every version/schema/staging surface read green).
+# --------------------------------------------------------------------------
+
+def test_embedder_liveness_current_when_real(monkeypatch):
+    monkeypatch.setattr("brain.embed.probe_auto_embedder", lambda: ("real", "onnx"))
+    row = doctor.check_embedder_liveness()
+    assert row["status"] == doctor.CURRENT
+    assert row["status"] not in doctor._GATING_STATUSES
+
+
+def test_embedder_liveness_stale_and_gating_on_implicit_hash(monkeypatch):
+    monkeypatch.setattr("brain.embed.probe_auto_embedder",
+                        lambda: ("implicit-hash", "no-real-embedder"))
+    row = doctor.check_embedder_liveness()
+    assert row["status"] == doctor.STALE
+    assert row["status"] in doctor._GATING_STATUSES  # this is what makes doctor fail loud
+    assert "onnxruntime" in row["remediation"]
+
+
+def test_embedder_liveness_explicit_hash_never_gates(monkeypatch):
+    # BRAIN_EMBEDDER=hash is a deliberate offline/test choice — informational,
+    # never a fault, never gates the exit code.
+    monkeypatch.setattr("brain.embed.probe_auto_embedder",
+                        lambda: ("explicit-hash", "hash (BRAIN_EMBEDDER=hash)"))
+    row = doctor.check_embedder_liveness()
+    assert row["status"] not in doctor._GATING_STATUSES

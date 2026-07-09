@@ -23,18 +23,19 @@ the shell env does not):
   export BRAIN_ROLE=vm
   export BRAIN_RUNTIME_DIR="$BRAIN_VAULT/.brain"
   export BRAIN_MODEL_CACHE="$BRAIN_RUNTIME_DIR/model"
+  export PYTHONPATH="$BRAIN_RUNTIME_DIR/vendor/$(uname -m):$BRAIN_RUNTIME_DIR/engine:$PYTHONPATH"
   export PATH="$BRAIN_RUNTIME_DIR:$PATH"
-  python3 -c "import onnxruntime, tokenizers" 2>/dev/null || \
-    pip install --user --quiet onnxruntime tokenizers numpy pyyaml || \
-    echo "semantic deps unavailable — lexical search still works"
   brain status
 
-Nothing is installed — `brain` is a shim running the staged pure-Python
-engine (.brain/engine/) with your system python3. The pip line above enables
-real semantic search using the model already staged in .brain/model/ (no
-download); it is a no-op once installed, and if the sandbox blocks pip,
-lexical search (BM25/grep/frontmatter) still works — do not retry or
-troubleshoot it, just continue.
+Nothing is installed and nothing needs to be — `brain` is a shim running the
+staged pure-Python engine (.brain/engine/) with your system python3, plus the
+semantic deps vendored per-architecture at .brain/vendor/<arch>/ (tokenizers +
+sqlite-vec). Combined with onnxruntime (present in the Cowork base image) and
+the staged model (.brain/model/), real semantic search works fully offline —
+NO pip install, NO network. `brain status` should report a real embedder (no
+"HashEmbedder / FALLING BACK" warning); if it warns, the vendored deps for your
+arch weren't staged and search is lexical-only (still fine) — do not pip-install
+or troubleshoot, just tell the owner to re-run the host installer.
 
 Then read vault/.brain/AGENTS.md — it is the full conventions contract
 (note shape, wikilinks, classification tiers, the four verbs). Key rules:

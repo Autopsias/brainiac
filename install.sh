@@ -20,11 +20,37 @@ PY="$(command -v python3 || true)"
 "$PY" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' \
   || fail "Python 3.9+ required; found $("$PY" --version 2>&1)."
 
-# 2. Private venv + full install
+# 1b. OCR toolchain (OPTIONAL — enables scanned/image-only PDF ingestion).
+#     `brain ingest` needs ocrmypdf + tesseract only for image-only PDFs; a
+#     missing toolchain NEVER blocks install or ingestion (brain just quarantines
+#     the scan as `pdf_no_text_layer` instead). Best-effort + idempotent, so
+#     re-running install.sh is safe. tesseract-lang pulls all language packs
+#     (por/spa/eng/…) since the corpus is multilingual.
+if command -v ocrmypdf >/dev/null 2>&1; then
+  say "OCR toolchain present ($(ocrmypdf --version 2>/dev/null | head -1))"
+else
+  say "Installing OCR toolchain (ocrmypdf + tesseract) — optional, for scanned PDFs"
+  if command -v brew >/dev/null 2>&1; then
+    brew install ocrmypdf tesseract tesseract-lang >/dev/null 2>&1 \
+      && say "OCR toolchain installed" \
+      || printf 'NOTE: OCR install skipped/failed (non-fatal). Scanned PDFs quarantine until you run:\n      brew install ocrmypdf tesseract tesseract-lang\n'
+  elif command -v apt-get >/dev/null 2>&1; then
+    sudo apt-get install -y ocrmypdf tesseract-ocr tesseract-ocr-por tesseract-ocr-spa >/dev/null 2>&1 \
+      && say "OCR toolchain installed" \
+      || printf 'NOTE: OCR install skipped (non-fatal). For scanned PDFs run:\n      sudo apt-get install ocrmypdf tesseract-ocr tesseract-ocr-por\n'
+  else
+    printf 'NOTE: no brew/apt found — OCR is optional. To enable scanned-PDF ingestion,\n      install ocrmypdf + tesseract (with the language packs you need).\n'
+  fi
+fi
+
+# 2. Private venv + full install (incl. the [mcp] extra so `brain-mcp` — the
+#    host-side MCP server for Claude Desktop/Cowork/Code — works out of the box;
+#    the console script is defined unconditionally, so without the extra it
+#    would exist but crash on a missing `mcp` import).
 say "Installing Brainiac into $VENV_DIR (full capacity — no options to pick)"
 "$PY" -m venv "$VENV_DIR"
 "$VENV_DIR/bin/pip" install --quiet --upgrade pip
-"$VENV_DIR/bin/pip" install --quiet -e "$REPO_DIR"
+"$VENV_DIR/bin/pip" install --quiet -e "$REPO_DIR[mcp]"
 
 # 3. Put `brain` on PATH
 mkdir -p "$BIN_DIR"

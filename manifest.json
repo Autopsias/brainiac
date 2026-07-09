@@ -316,6 +316,7 @@
     "tests/test_direct_file_read.py",
     "tests/test_doctor.py",
     "tests/test_egress_per_subcommand.py",
+    "tests/test_embed.py",
     "tests/test_encryption_module.py",
     "tests/test_eval_harness.py",
     "tests/test_eval_stats.py",
@@ -331,6 +332,7 @@
     "tests/test_init_full.py",
     "tests/test_integration.py",
     "tests/test_maintenance.py",
+    "tests/test_mcp_config.py",
     "tests/test_migration_verification.py",
     "tests/test_multihop_graph.py",
     "tests/test_nightly_label.py",
@@ -343,11 +345,14 @@
     "tests/test_supersede_engine.py",
     "tests/test_typed_entities.py",
     "tests/test_update.py",
+    "tests/test_vectors.py",
+    "tests/test_vendor_semantic_deps.py",
     "tests/test_version_stamp.py",
     "tests/test_workspace_registry.py",
     "tests/test_zone_authority.py",
     "tests/test_zone_catalogs.py",
     "tools/apply_live_migration.py",
+    "tools/brain_daily.py",
     "tools/build_brain_binary.sh",
     "tools/code_origin_audit.py",
     "tools/cowork_session_bootstrap.sh",
@@ -363,6 +368,7 @@
     "tools/publish_release.py",
     "tools/release.py",
     "tools/validate.py",
+    "tools/vendor_semantic_deps.py",
     "tools/workspace_registry.py",
     "vault/brain/archive/catalog.md",
     "vault/brain/areas/catalog.md",
@@ -378,5 +384,5 @@
     "vault/raw/2026-06-27-arctic-vs-e5-benchmark.md",
     "vault/raw/README.md"
   ],
-  "count": 377
+  "count": 383
 }

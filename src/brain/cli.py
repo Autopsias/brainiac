@@ -226,6 +226,20 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--json", action="store_true")
 
     sp = sub.add_parser(
+        "mcp-config",
+        help="print the MCP-client config entry to run brain-mcp against this "
+             "vault (paste into Claude Desktop / Claude Code mcpServers). "
+             "Read-only; no index or key touched.",
+    )
+    sp.add_argument("--name", default="brainiac",
+                    help="server name/key in the config (default: %(default)s) — "
+                         "use a distinct name per vault")
+    sp.add_argument("--max-tier", default="Internal",
+                    help="egress ceiling for this MCP server (default: %(default)s; "
+                         "raise to e.g. Restricted for a vault whose notes need it)")
+    sp.add_argument("--json", action="store_true")
+
+    sp = sub.add_parser(
         "update",
         help="the ONE 'get current' command (ADR-0005 Ruling 3, UP-01/UP-02): "
              "marketplace refresh -> downgrade-safe CLI-plugin reinstall -> "
@@ -331,6 +345,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser(
         "snapshot", help="publish a read-only, generation-stamped index snapshot (host)")
     sp.add_argument("--dest", default=None, help="snapshot dir (default: vault/.brain/snapshot)")
+    sp.add_argument("--json", action="store_true")
+
+    sp = sub.add_parser(
+        "restore-index",
+        help="fast-recover the live index from the published snapshot (host) — "
+             "seconds, no re-embed; use instead of `rebuild` when the index is corrupt/empty")
+    sp.add_argument("--force", action="store_true",
+                    help="restore even if the live index has MORE notes than the snapshot "
+                         "(the snapshot is older — you may lose notes)")
+    sp.add_argument("--dry-run", action="store_true", help="report what would happen; write nothing")
     sp.add_argument("--json", action="store_true")
 
     sp = sub.add_parser(
@@ -541,6 +565,7 @@ def _make_core(args: Any, role: str) -> BrainCore:
 VM_ALLOWED = frozenset({
     "init",  # filesystem-only overlay validation; safe on either role
     "doctor",  # read-only version/health inspection; no index/key touched
+    "mcp-config",  # prints a config string; no index/key/vault read
     "search", "hybrid-search", "grep", "bases-query", "graph-expand",
     "get", "read", "recent", "status", "draft-capture",
     "capture", "brief", "digest",
@@ -563,6 +588,10 @@ def _main(argv: list[str] | None = None) -> int:
 
     args = build_parser().parse_args(argv)
     role = config.role(getattr(args, "role", None))
+    # DV-03: the VM leg fails closed on a dead embedder rather than silently
+    # answering semantic queries with random hash vectors (no-op when a real
+    # embedder is present or hash was chosen explicitly).
+    config.apply_role_embedder_policy(role)
     cmd = args.cmd
 
     # VM trust gate: refuse host-broker commands on the VM leg BEFORE constructing
@@ -642,6 +671,32 @@ def _main(argv: list[str] | None = None) -> int:
         _emit(report if args.json else None, args.json,
               None if args.json else brain_doctor.render_human(report))
         return 0 if report["ok"] else 1
+
+    # `mcp-config` prints the MCP-client entry to run brain-mcp against this
+    # vault (host-side stdio server, same pattern as Smart Connections' MCP).
+    # Pure string generation — no BrainCore, no index, no key.
+    if cmd == "mcp-config":
+        import shutil
+        import sys as _sys
+        from pathlib import Path
+
+        vault = str(Path(config.vault_root(args.vault)).resolve())
+        brain_mcp = shutil.which("brain-mcp") or str(Path(_sys.executable).parent / "brain-mcp")
+        env = {"BRAIN_VAULT": vault, "BRAIN_MAX_EGRESS_TIER": args.max_tier}
+        model_dir = Path(vault) / ".brain" / "model"
+        if model_dir.is_dir():  # a staged vault carries its own model cache
+            env["BRAIN_MODEL_CACHE"] = str(model_dir)
+        entry = {args.name: {"command": brain_mcp, "env": env}}
+        if args.json:
+            _emit(entry, True)
+        else:
+            body = json.dumps(entry, indent=2)
+            _emit(None, False,
+                  "Add this inside \"mcpServers\" in your MCP client config, then "
+                  "restart the client:\n"
+                  "  Claude Desktop: ~/Library/Application Support/Claude/claude_desktop_config.json\n"
+                  "  Claude Code:    ~/.claude.json (or `claude mcp add`)\n\n" + body)
+        return 0
 
     # `update` is the UP-02 single top-level entry point: it self-executes
     # (never just prints instructions) and is host-broker only — it mutates
@@ -859,6 +914,23 @@ def _main(argv: list[str] | None = None) -> int:
               f"published snapshot gen {res['generation']} "
               f"({res['notes']} notes, {res['chunks']} chunks) -> {res['snapshot_db']}",
               args.json)
+        return 0
+
+    if cmd == "restore-index":
+        try:
+            res = core.restore_index_from_snapshot(force=args.force, dry_run=args.dry_run)
+        except Exception as exc:  # H-4
+            _emit({"error": type(exc).__name__, "detail": str(exc)} if args.json
+                  else f"restore-index failed ({type(exc).__name__}): {exc}", args.json)
+            return 3
+        if args.json:
+            _emit(res, True)
+        elif res.get("dry_run"):
+            _emit(f"[dry-run] would restore {res['snapshot_notes']} notes from the snapshot "
+                  f"(live index now: {res['live_notes_before']}) — nothing written", False)
+        else:
+            _emit(f"restored index from snapshot: {res['live_notes_after']} notes "
+                  f"(prior index backed up at {res['backup']})", False)
         return 0
 
     if cmd == "status":

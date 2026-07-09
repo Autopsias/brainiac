@@ -340,6 +340,20 @@ def test_resolve_engine_source_falls_back_to_repo_root_when_pyproject_present(tm
 
 sys.path.insert(0, str(REPO_ROOT / "tools"))
 import workspace_registry as _wr  # noqa: E402  (path must be set first)
+import vendor_semantic_deps as _vsd  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _stub_vendor_network(monkeypatch):
+    """DV-04: the re-stage now stages the offline semantic deps, which normally
+    pip-downloads wheels. Stub that network call in the update tests (a real
+    download is exercised directly in test_vendor_semantic_deps)."""
+    calls = []
+    def _fake(brain_dir, **kw):
+        calls.append(str(brain_dir))
+        return {"aarch64": "stubbed", "x86_64": "stubbed"}
+    monkeypatch.setattr(_vsd, "stage_vendor", _fake)
+    return calls
 
 
 def _cowork_vm_entry(vault_path: Path, workspace_path: Path, **overrides) -> dict:
@@ -388,6 +402,30 @@ def test_restage_workspaces_cowork_vm_stages_engine_at_vault_path_not_workspace_
 
     skills_dir = vault / ".brain" / "skills"
     assert list(skills_dir.glob("*.skill")), ".skill bundles must be refreshed into vault_path/.brain/skills/"
+
+
+def test_restage_workspaces_cowork_vm_stages_shim_vendor_and_prompt(tmp_path, monkeypatch, _stub_vendor_network):
+    # DV-04 regression: `brain update` must re-stage the OFFLINE SEMANTIC bits
+    # (shim with vendor on PYTHONPATH, vendored deps, session prompt) — not just
+    # engine+skills. Before this, an update shipped the fixed engine but left the
+    # VM on the hash fallback, and the update reported "ok".
+    workspace = tmp_path / "workspace"
+    vault = workspace / "vault"
+    vault.mkdir(parents=True)
+    monkeypatch.setattr(_wr, "list_entries", lambda *a, **kw: [_cowork_vm_entry(vault, workspace)])
+    monkeypatch.setattr(_wr, "touch_refreshed", lambda **kw: {"ok": True})
+
+    results = update.restage_workspaces(
+        REPO_ROOT, tmp_path, run=lambda cmd, **kw: _cp(stdout="sync [incremental]: +0 ~0 -0 =4")
+    )
+    assert results[0]["status"] == "ok", results[0]
+
+    brain_dir = vault / ".brain"
+    shim = brain_dir / "brain"
+    assert shim.exists() and (shim.stat().st_mode & 0o111), "vendored-deps shim must be (re)written + executable"
+    assert "vendor/$ARCH" in shim.read_text(encoding="utf-8"), "shim must put vendor/<arch> on PYTHONPATH"
+    assert _stub_vendor_network == [str(brain_dir)], "stage_vendor must run against the VM's .brain"
+    assert (brain_dir / "routines" / "cowork-session-prompt.md").exists(), "session prompt must be re-staged"
 
 
 def test_restage_workspaces_cowork_vm_fails_on_stamp_mismatch(tmp_path, monkeypatch):

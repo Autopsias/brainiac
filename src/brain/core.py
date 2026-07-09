@@ -486,7 +486,87 @@ class BrainCore:
         dest_dir = Path(dest) if dest else config.snapshot_dir(self.vault)
         return _publish(self.index.db_path, dest_dir).to_dict()
 
-    def status(self, snapshot_dest: str | Path | None = None) -> dict[str, Any]:
+    def restore_index_from_snapshot(
+        self, *, force: bool = False, dry_run: bool = False
+    ) -> dict[str, Any]:
+        """Fast index recovery: replace the live index with the published snapshot.
+
+        The snapshot is a complete, read-consistent copy of the authoritative
+        index, so restoring from it is O(seconds) — the safe alternative to a
+        full re-embed ``rebuild`` when the live index is corrupt or empty (e.g.
+        an interrupted rebuild left a half-written DB). HOST-broker only.
+
+        Guards: refuses a missing/empty/unreadable snapshot; refuses to clobber a
+        live index that holds MORE notes than the snapshot (the snapshot is
+        older — ``sync``/``rebuild`` instead) unless ``force``; backs up the
+        current index (reversible ``.pre-restore-*.bak``) before overwriting; and
+        verifies the note count post-restore.
+        """
+        import datetime as _dt
+        import shutil as _sh
+        import sqlite3 as _sq
+
+        self._require_host("restore the index from a snapshot")
+        idx = config.index_path(self.vault)
+        snap = config.snapshot_db_path(self.vault)
+
+        def _count(p: Path):
+            if not p.exists():
+                return None  # absent
+            try:
+                c = _sq.connect(f"file:{p}?mode=ro", uri=True)
+                try:
+                    return int(c.execute("SELECT count(*) FROM notes").fetchone()[0])
+                finally:
+                    c.close()
+            except Exception:
+                return -1  # present but unreadable/corrupt
+
+        snap_n = _count(snap)
+        if snap_n is None:
+            raise FileNotFoundError(f"no snapshot to restore from: {snap}")
+        if snap_n <= 0:
+            raise ValueError(
+                f"snapshot has {snap_n} notes — refusing to restore an empty/corrupt "
+                f"snapshot ({snap})")
+        live_n = _count(idx)
+
+        if live_n is not None and live_n > snap_n and not force:
+            raise ValueError(
+                f"live index has {live_n} notes but the snapshot has only {snap_n} — "
+                f"restoring would LOSE {live_n - snap_n} note(s). The snapshot is older; "
+                f"run `brain sync`/`rebuild` instead, or pass --force to override.")
+
+        plan: dict[str, Any] = {
+            "index": str(idx), "snapshot": str(snap),
+            "snapshot_notes": snap_n, "live_notes_before": live_n,
+        }
+        if dry_run:
+            plan["dry_run"] = True
+            return plan
+
+        config.ensure_index_dir(self.vault)
+        backup = None
+        if idx.exists():
+            stamp = _dt.datetime.now().strftime("%Y%m%dT%H%M%S")
+            backup = idx.with_name(idx.name + f".pre-restore-{stamp}.bak")
+            _sh.move(str(idx), str(backup))
+        for suf in ("-wal", "-shm"):  # stale sqlite sidecars would mask the copy
+            side = idx.with_name(idx.name + suf)
+            if side.exists():
+                side.unlink()
+        _sh.copy2(str(snap), str(idx))
+
+        live_after = _count(idx)
+        if live_after != snap_n:
+            raise RuntimeError(
+                f"post-restore verification failed: index has {live_after} notes, "
+                f"expected {snap_n} (backup preserved at {backup})")
+        plan.update({"restored": True, "live_notes_after": live_after,
+                     "backup": str(backup) if backup else None})
+        return plan
+
+    def status(self, snapshot_dest: str | Path | None = None, today: Any = None) -> dict[str, Any]:
         """Report index stats + snapshot generation/age (available on BOTH legs —
         the VM uses it to tell whether its read-only view is fresh or stale, and
         how many drafts are pending)."""
@@ -555,7 +635,7 @@ class BrainCore:
         # own heartbeat (a stale `daily` branch or a repeatedly-failing branch)
         # so a broken nightly is visible here too, not only via the
         # session-start hook's stale-nightly line.
-        out["maintain_heartbeat"] = self._maintain_heartbeat_summary()
+        out["maintain_heartbeat"] = self._maintain_heartbeat_summary(today=today)
         out["graph"] = self._graph_status()
         return out
 
@@ -1600,7 +1680,7 @@ class BrainCore:
         tmp.write_text(_json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
         _os.replace(tmp, path)
 
-    def _maintain_heartbeat_summary(self) -> dict[str, Any]:
+    def _maintain_heartbeat_summary(self, today: Any = None) -> dict[str, Any]:
         """``brain status`` surfacing (HARDENED:premortem) — a heartbeat older
         than 48h on the ``daily`` branch, or any branch with >=2 consecutive
         failures, is flagged. Reads the SAME file `maintain` writes and the
@@ -1610,7 +1690,7 @@ class BrainCore:
         state = self._load_maintain_state()
         if not state:
             return {"status": "no-record", "note": "no maintain-state.json yet — brain maintain has not run"}
-        today = _dt.date.today()
+        today = today or _dt.date.today()
         branches: dict[str, Any] = {}
         stale, repeated_failures = [], []
         for branch, entry in state.items():
@@ -1659,6 +1739,33 @@ class BrainCore:
                 fh.write("\n")
             fh.write(marker + "\n" + entry_md.rstrip("\n") + "\n\n")
         return True
+
+    def _daily_note_fold(self, today: Any, brief_result: Any = None) -> dict[str, Any]:
+        """Daily fold: create today's ``type: daily`` note exactly once per day.
+
+        Second-brain parity with the old Obsidian ``80 Daily`` habit, done the
+        native way — a dated note with the standard template sections, seeded
+        from the morning brief already built this run. Idempotent via
+        ``self.get`` (never a second copy). Host verb: ``capture`` signs +
+        indexes. Defaults to Confidential (a personal work log carries deal
+        detail, matching the Daily-zone migration floor)."""
+        note_id = f"daily-{today.isoformat()}"
+        if self.get(note_id) is not None:
+            return {"created": False, "id": note_id}
+        lines = [f"# {today.isoformat()} ({today.strftime('%A')})", "", "## Session Summary"]
+        try:
+            for n in (brief_result or {}).get("recent_notes") or []:
+                title = (n.get("title") or n.get("id") or "").strip() if isinstance(n, dict) else str(n).strip()
+                if title:
+                    lines.append(f"- {title}")
+        except Exception:
+            pass  # seeding is best-effort; the empty note is still valid
+        lines += ["", "## Work Done", "", "## Open Threads", "", "## Next Session", ""]
+        body = "\n".join(lines).rstrip() + "\n"
+        self.capture(body, note_id=note_id, note_type="daily",
+                     classification="Confidential",
+                     reason="brain-nightly daily-note fold")
+        return {"created": True, "id": note_id}
 
     def _recommendations_aging_fold(self, today: Any) -> dict[str, Any]:
         """MEM-03 unconditional daily fold: surface any open recommendation
@@ -1801,6 +1908,23 @@ class BrainCore:
                         auto_fixed.append(maint.auto_fixed_item(
                             "recommendations-aging", str(config.recommendations_open_path(self.vault)),
                             f"surfaced {rec_res['surfaced']} aged recommendation(s) into hot.md"))
+                    try:
+                        # Opt-in (default off): folding note-creation into the
+                        # maintain loop must not change maintain's note-count
+                        # invariant for vaults that don't want a daily journal.
+                        import os as _os
+                        dn = (self._daily_note_fold(d, results.get("brief"))
+                              if _os.environ.get("BRAIN_DAILY_NOTE") else {"created": False, "skipped": "BRAIN_DAILY_NOTE unset"})
+                        results["daily_note"] = dn
+                        if dn.get("created"):
+                            auto_fixed.append(maint.auto_fixed_item(
+                                "daily-note", str(self.vault),
+                                f"created daily note {dn['id']}"))
+                    except Exception as exc:
+                        blocked.append(maint.blocked_item(
+                            "could not create today's daily note",
+                            f"{type(exc).__name__}: {exc}",
+                            "create it manually with tools/brain_daily.py"))
                     _mark("daily", True)
                 except Exception as exc:
                     blocked.append(maint.blocked_item(

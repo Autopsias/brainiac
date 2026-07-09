@@ -52,9 +52,12 @@ cp -R "$REPO/src/brain" "$BRAIN_DIR/engine/brain"
 find "$BRAIN_DIR/engine" -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
 cat > "$BRAIN_DIR/brain" <<'SHIM'
 #!/bin/sh
-# zero-install shim: run the staged brain engine from source
+# zero-install shim: run the staged brain engine from source, with the vendored
+# semantic deps (tokenizers/sqlite-vec, staged per-arch below) ahead of it on
+# the path so real query embedding works offline in the VM (DV-04).
 DIR="$(cd "$(dirname "$0")" && pwd)"
-PYTHONPATH="$DIR/engine${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m brain.cli "$@"
+ARCH="$(uname -m)"
+PYTHONPATH="$DIR/vendor/$ARCH:$DIR/engine${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m brain.cli "$@"
 SHIM
 chmod 755 "$BRAIN_DIR/brain"
 
@@ -102,6 +105,11 @@ fi
 echo "[install] model cache -> $BRAIN_DIR/model/ (bundled; VM has no HF egress)"
 cp -a "$MODEL_SRC/." "$BRAIN_DIR/model/"
 
+# Vendored semantic deps (tokenizers/sqlite-vec) are staged below via the shared
+# tools/vendor_semantic_deps.py helper — the SAME code `brain update` uses, so
+# install and update never drift (DV-04). It runs after HOST_PY is resolved
+# (it needs a networked interpreter), just before the snapshot build.
+
 # Build the authoritative index on the host, then publish the read-only snapshot
 # the VM reads. The index itself lives in app-data (never in the workspace).
 # Use the install venv's interpreter when present: bare system python3 lacks
@@ -116,12 +124,44 @@ else
   echo "          If it lacks onnxruntime, the snapshot is built with HASH (non-semantic)" >&2
   echo "          vectors. Run ./install.sh first, then re-run this script." >&2
 fi
+# (c3) VENDOR the offline semantic deps + refresh the shim via the shared helper
+# (DV-04) — the SAME code path `brain update` re-stages with, so the two can't
+# drift. Advisory: a networkless host just leaves the arch lexical-only.
+echo "[install] vendoring semantic deps (tokenizers, sqlite-vec) + shim -> $BRAIN_DIR/vendor/"
+"$HOST_PY" "$REPO/tools/vendor_semantic_deps.py" "$BRAIN_DIR" || \
+  echo "[install]   WARNING: vendoring reported an issue — VM may run lexical-only" >&2
+
 echo "[install] rebuild host index + publish snapshot (interpreter: $HOST_PY)"
 export BRAIN_VAULT="$VAULT"
 export BRAIN_MODEL_CACHE="$BRAIN_DIR/model"
 PYTHONPATH="$REPO/src" "$HOST_PY" -m brain.cli rebuild
 PYTHONPATH="$REPO/src" "$HOST_PY" -m brain.cli snapshot --dest "$BRAIN_DIR/snapshot" \
   --json | tee "$BRAIN_DIR/snapshot/export-snapshot.json"
+
+# (c2) VERIFY the offline semantic stack the VM will use (DV-03/DV-04). The VM
+# queries through the shim's python3, which needs: onnxruntime (present in the
+# Cowork base image), the vendored tokenizers + sqlite-vec staged above, and the
+# staged model. We can't run the VM's python from here, so we verify what the
+# installer actually controls — that the vendored deps landed. `brain doctor` /
+# `brain status` on the VM leg confirm the LIVE embedder at session time (and the
+# VM fails closed on a dead embedder, never returning random hash results).
+echo "[install] verifying vendored semantic deps ..."
+missing=""
+for arch in aarch64 x86_64; do
+  if [ -f "$BRAIN_DIR/vendor/$arch/tokenizers/tokenizers.abi3.so" ] \
+     && [ -f "$BRAIN_DIR/vendor/$arch/sqlite_vec/vec0.so" ]; then :; else
+    missing="$missing $arch"
+  fi
+done
+if [ -z "$missing" ]; then
+  echo "[install]   vendored tokenizers + sqlite-vec present (aarch64, x86_64)"
+else
+  echo "[install] WARNING: vendored semantic deps missing for:$missing" >&2
+  echo "          The VM runs lexical-only there (grep/bases-query still work) until" >&2
+  echo "          re-staged. Re-run this installer on a networked host to fetch them." >&2
+  echo "          The VM leg fails closed (BRAIN_REQUIRE_REAL_EMBEDDER), so it errors" >&2
+  echo "          loudly rather than returning random hash results." >&2
+fi
 
 # (d) SKILL payload (s08, refreshed unconditionally per cw-02). ALWAYS
 # rebuild via tools/package_clients.py — not "only if absent" — so a re-stage

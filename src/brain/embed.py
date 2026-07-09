@@ -769,3 +769,47 @@ def get_embedder(prefer: str = "auto") -> Embedder:
     if ArcticEmbedder.available():
         return ArcticEmbedder()
     return _implicit_hash_fallback()
+
+
+def probe_auto_embedder() -> tuple[str, str]:
+    """Read-only classification of which embedder the live runtime WOULD use,
+    for ``brain doctor``'s liveness probe (DV-03, 2026-07-09). Returns
+    ``(state, backend)`` where ``state`` is one of:
+
+      * ``"real"``          — a real semantic embedder is available;
+      * ``"explicit-hash"`` — ``$BRAIN_EMBEDDER=hash`` was chosen deliberately
+                              (tests/CI) — NOT a failure; must never gate/alarm;
+      * ``"implicit-hash"`` — the auto-path found no real embedder and would
+                              SILENTLY degrade to the non-semantic HashEmbedder
+                              (the dangerous case — semantic search goes random,
+                              the exact silent failure DV-03 hardens against).
+
+    Mirrors the auto-selection in ``get_embedder`` but WITHOUT constructing a
+    HashEmbedder or emitting the fallback warning, so it is safe to call from
+    the read-only doctor. ponytail: it duplicates the ``.available()`` chain
+    rather than calling ``get_embedder`` precisely to avoid that function's
+    stderr warning + HashEmbedder construction side effects.
+    """
+    forced = os.environ.get("BRAIN_EMBEDDER", "auto").strip().lower()
+    if forced == "hash":
+        return ("explicit-hash", "hash (BRAIN_EMBEDDER=hash)")
+    cat = os.environ.get("BRAIN_EMBED_MODEL")
+    if forced in ("onnx", "onnx-int8"):
+        return ("real", "onnx") if OnnxEmbedder.available() else ("implicit-hash", "onnx-unavailable")
+    if forced == "arctic":
+        return ("real", "arctic") if ArcticEmbedder.available() else ("implicit-hash", "arctic-unavailable")
+    if forced == "qwen":
+        return ("real", "qwen") if QwenEmbedder.available() else ("implicit-hash", "qwen-unavailable")
+    if forced == "catalog":
+        ok = bool(cat) and (QwenEmbedder.available() if (cat and is_qwen_model(cat)) else CatalogEmbedder.available())
+        return ("real", "catalog") if ok else ("implicit-hash", "catalog-unavailable")
+    # auto (or unset / unrecognised) — mirror get_embedder's discovery order.
+    if cat and is_qwen_model(cat) and QwenEmbedder.available():
+        return ("real", "qwen")
+    if OnnxEmbedder.available():
+        return ("real", "onnx")
+    if cat and CatalogEmbedder.available():
+        return ("real", "catalog")
+    if ArcticEmbedder.available():
+        return ("real", "arctic")
+    return ("implicit-hash", "no-real-embedder")

@@ -41,6 +41,25 @@ def role(explicit: str | None = None) -> str:
     return ROLE_VM if val == ROLE_VM else ROLE_HOST
 
 
+def apply_role_embedder_policy(resolved_role: str) -> None:
+    """The VM leg fails CLOSED on a dead embedder by default (DV-03, 2026-07-09).
+
+    A Cowork VM that silently answered semantic queries with random HASH vectors
+    (onnxruntime missing in the zero-install shim's python) is the exact failure
+    this guards: ``role=vm`` defaults ``$BRAIN_REQUIRE_REAL_EMBEDDER=1`` so the
+    implicit hash fallback RAISES instead of degrading. It is a no-op whenever a
+    real embedder is present (the flag only bites on a dead one), and lexical
+    verbs (``grep``/``bases-query``) never embed, so they keep working — only the
+    semantic path (``search``/``hybrid-search``) fails loud. Skipped when the
+    operator explicitly chose hash (``$BRAIN_EMBEDDER=hash``) or already pinned
+    the flag either way. Host leg is unchanged (warns, never fails closed)."""
+    if resolved_role != ROLE_VM:
+        return
+    if os.environ.get("BRAIN_EMBEDDER", "").strip().lower() == "hash":
+        return
+    os.environ.setdefault("BRAIN_REQUIRE_REAL_EMBEDDER", "1")
+
+
 def _app_data_base() -> Path:
     """Per-user app-data base dir (no vault scoping).
 
@@ -133,13 +152,30 @@ def secure_file_permissions(path: "os.PathLike[str] | str", mode: int = SECURE_F
 
 
 def vault_root(explicit: str | os.PathLike[str] | None = None) -> Path:
-    """Resolve the vault root: explicit arg > ``$BRAIN_VAULT`` > CWD/vault."""
+    """Resolve the vault root: explicit arg > ``$BRAIN_VAULT`` > CWD/vault.
+
+    When it falls back to CWD/vault, warn (stderr) if ``./vault`` is not yet a
+    Brainiac vault (no ``./vault/.brain``) — so brain never SILENTLY writes to a
+    phantom ``./vault/.brain/`` in whatever directory it happened to run from (a
+    footgun that once scattered 231 drafts into a stray ``migration/vault/``
+    mid-migration). Creation flows (``brain init``, the installer's sample-vault
+    build) still work: the fallback path is unchanged — only now it is loud.
+    """
     if explicit:
         return Path(explicit).expanduser().resolve()
     env = os.environ.get("BRAIN_VAULT")
     if env:
         return Path(env).expanduser().resolve()
-    return (Path.cwd() / "vault").resolve()
+    cwd_vault = (Path.cwd() / "vault").resolve()
+    if not (cwd_vault / ".brain").is_dir():
+        import sys as _sys
+        print(
+            f"brain: WARNING no --vault/$BRAIN_VAULT given; falling back to {cwd_vault}, "
+            "which is not yet a vault. Pass --vault to be explicit; otherwise brain "
+            "creates/uses a vault here.",
+            file=_sys.stderr,
+        )
+    return cwd_vault
 
 
 def vault_slug8(vault: str | os.PathLike[str] | None = None) -> str:

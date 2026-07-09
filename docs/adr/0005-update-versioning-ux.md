@@ -559,3 +559,33 @@ anti-silent-failure posture working against our own mis-design.
 
 **No version bump in this addendum** (a v0.10.6 cut is the follow-up); see
 `CHANGELOG.md` `[Unreleased]`.
+
+
+**Split-staging rejected (2026-07-08).** A proposed Cowork optimization — upload the
+stable engine + ~65 MB ONNX model **once** as Cowork *project files*, then stage only a
+fresh snapshot delta per session (to stop copying the whole vault over the device bridge
+every session) — was built as a plan (`_plans/cowork-split-staging-v0-10-8-2026-07-08`)
+and red-teamed by `/plan-harden` (three independent forks). It was **rejected before any
+session ran**, on three independent grounds:
+
+1. Cowork **project files are retrieval/context (RAG), not a container filesystem mount** an
+   engine can import from, and a **30 MB per-file cap** forbids the 65 MB model regardless.
+2. The Cowork VM is **deliberately egress-locked** (SEC-01, `src/brain/egress.py`; the
+   allowlist excludes HuggingFace — `src/brain/embed.py:14`, `:189`). The model is bundled
+   and copied over the bridge *because* the VM cannot fetch it — so the per-session copy is
+   the **intended cost of a network-locked VM**, not a defect to engineer around.
+3. The engine is **single-tree by design** (model cache under `vault/.brain/model`,
+   `run_doctor_vm` judges green over one co-located tree, no snapshot-delta concept in
+   `snapshot.py`); a resident-set + delta split reopens the two-`.brain`-tree **false-green**
+   class fixed by `ddd4016` / `f662864`.
+
+**Decision: keep full-stage; accept the per-session copy. No code change.** The device-bridge
+copy is the deliberate consequence of the egress-locked VM (embed.py's model-shipped-in-workspace
+posture stands). **Reopen condition:** only if a real-Cowork egress probe shows GitHub
+release-asset hosts (`objects.githubusercontent.com`) are on the VM allowlist — then a
+*fetch-in-container* variant (stays single-tree; loud sha + resident-vs-snapshot version-skew
+gates; loud, never-silent fallback) becomes worth building. Full audit trail incl. the
+per-finding confidences and the 6-month premortem:
+`_plans/cowork-split-staging-v0-10-8-2026-07-08/HARDEN-VIEW.md` (archived) + its `ARCHIVED.md`.
+
+**No version bump** (no code changed; documentation-only decision record).

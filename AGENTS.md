@@ -292,6 +292,37 @@ of `new-id` — both sides of the version chain, written through the audited
 before any signing-key resolution): the VM read+draft surface never gains this
 verb. See §2 for the edit-vs-supersede identity test and ADR-0003 Ruling 2/8.
 
+### Retrieval discipline — vault-first, and the web-search egress line
+
+The vault is the authoritative source for anything internal — projects, people,
+deals, decisions. **Exhaust `brain` before reaching for a web search.** Three
+rules, in order:
+
+1. **Vault-first.** Answer from `brain` (`search`/`grep`/`bases-query`/
+   `graph-expand`/`get`) first. A thin result is usually a *tier* problem, not an
+   *empty vault* — see rule 2. The web is for genuinely public/external context
+   (market prices, news, third-party facts), and only *after* the vault is spent.
+
+2. **A starved result means elevate, not give up.** The default egress cap is
+   `Internal`, so on internal topics the most valuable notes (Confidential/
+   Restricted/MNPI) are withheld by default — a query can return one weak hit
+   while the real content sits just above the cap. `brain search` now tells you
+   when this happens (`egress.hint` in `--json`, and a `-- N withheld …` line in
+   text): when you see it, **re-run with `--max-tier Restricted`** (or `MNPI` for
+   the most sensitive) — the human-gated elevation — instead of concluding the
+   vault has nothing and web-searching to compensate.
+
+3. **Never leak internal topics into a web search.** A web query for a
+   Confidential-or-above subject — a deal codename, a counterparty, an internal
+   project name — puts that term into a public search engine. That is an
+   **outbound egress leak**: the classification gate protects the *read* side,
+   but the model's own web-search tool is an *ungated outbound channel*, and the
+   query string itself is the leak. Web search is for terms that are already
+   public. When in doubt, treat the topic as internal and stay in the vault.
+
+This is the substrate's standing retrieval discipline; it replaces the old
+Obsidian "five-step retrieval cascade" rule for any harness reading this file.
+
 ### Self-discovery — the `brain` CLI is the one interface
 
 > **Any harness self-discovers the engine from this paragraph + `brain --help`.**

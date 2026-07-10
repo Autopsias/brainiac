@@ -427,6 +427,15 @@ def test_restage_workspaces_cowork_vm_stages_shim_vendor_and_prompt(tmp_path, mo
     assert _stub_vendor_network == [str(brain_dir)], "stage_vendor must run against the VM's .brain"
     assert (brain_dir / "routines" / "cowork-session-prompt.md").exists(), "session prompt must be re-staged"
 
+    # RET-08 regression: the conventions contract (AGENTS.md) must ALSO be
+    # re-staged, else an AGENTS.md change (e.g. the retrieval-discipline block)
+    # never reaches Cowork on `brain update` while the version check reports ok.
+    staged_agents = brain_dir / "AGENTS.md"
+    assert staged_agents.exists(), "AGENTS.md contract must be re-staged into <vault>/.brain/"
+    assert staged_agents.read_bytes() == (REPO_ROOT / "AGENTS.md").read_bytes(), (
+        "staged AGENTS.md must be byte-identical to the repo contract (not a stale copy)"
+    )
+
 
 def test_restage_workspaces_cowork_vm_fails_on_stamp_mismatch(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"

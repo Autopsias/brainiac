@@ -315,6 +315,7 @@
     "tests/test_cowork_restage.py",
     "tests/test_direct_file_read.py",
     "tests/test_doctor.py",
+    "tests/test_egress_hint.py",
     "tests/test_egress_per_subcommand.py",
     "tests/test_embed.py",
     "tests/test_encryption_module.py",
@@ -338,6 +339,7 @@
     "tests/test_nightly_label.py",
     "tests/test_overlay.py",
     "tests/test_publish_release.py",
+    "tests/test_recency_prior.py",
     "tests/test_release.py",
     "tests/test_retrieval.py",
     "tests/test_s04_medium_bugs.py",
@@ -384,5 +386,5 @@
     "vault/raw/2026-06-27-arctic-vs-e5-benchmark.md",
     "vault/raw/README.md"
   ],
-  "count": 383
+  "count": 385
 }

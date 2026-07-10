@@ -7,6 +7,53 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.14.1] — 2026-07-10
+### Fixed
+- **`brain update` re-stages the AGENTS.md contract, not just the engine.** The
+  Python re-stage (`stage_engine_and_skills`) copied engine + skills + vendor +
+  shim + session prompt but SKIPPED `AGENTS.md` — so an AGENTS.md change (e.g. the
+  new retrieval-discipline block) never reached Cowork on update, while `brain
+  doctor`'s staged-version check reads the engine stamp and reported the workspace
+  "current". It now copies `AGENTS.md` into `<vault>/.brain/` on every re-stage,
+  matching the installer's leg (update == install), with a byte-identity
+  regression test.
+
+## [0.14.0] — 2026-07-10
+### Added
+- **Retrieval discipline in AGENTS.md — vault-first, no internal web leaks.** A new
+  §5 block gives every harness the standing rule the substrate lacked: exhaust
+  `brain` before any web search; a starved result means *elevate the tier*, not
+  give up; and **never put a Confidential-or-above topic (deal codename,
+  counterparty, project name) into a web search** — the classification gate guards
+  reads, but the model's own web-search tool is an ungated outbound channel and the
+  query string itself is the leak. Replaces the old Obsidian "five-step retrieval
+  cascade" rule for any harness reading the file.
+
+### Fixed
+- **Silent egress starvation now nudges instead of misleading (RET-08).** At the
+  default `Internal` cap, an internal query surfaces almost nothing (the deal docs
+  are Restricted/MNPI) — which reads to an agent as "the vault is empty" and drives
+  it to web search. When the gate withholds anything, `brain search`/`grep`/
+  `bases-query`/`graph-expand`/`recent` now emit an actionable hint (`egress.hint`
+  in `--json`, a `-- N withheld …` line in text): re-run with `--max-tier
+  Restricted` rather than treating the vault as empty. Deny-by-default is unchanged;
+  the tier stays the human gate — this only signposts it.
+
+## [0.13.0] — 2026-07-10
+### Fixed
+- **Recency-aware ranking — the fusion is no longer time-blind (RET-07).** The RRF
+  fusion ranked purely on text similarity, so a stale version of a document outranked
+  its current successor and a "latest developments" query grounded on months-old
+  material (measured: on the live corpus a 4-month-old strategy doc outranked the
+  current report, and the newest revision of a document fell outside the top 20). `hybrid_search`
+  now applies a gentle multiplicative **staleness penalty** using the same valid-time
+  date (`effective_date` → `document_date` → `created`) `bases-query` uses — bounded
+  ≤1.0 so the fused score never exceeds the RRF ceiling (the same invariant the
+  zone-authority prior respects), leaving exact-match relevance intact while the newer
+  of two topically-similar hits wins. Tunable via `BRAIN_RECENCY_WEIGHT` (default
+  `0.25`, `0` disables) and `BRAIN_RECENCY_HALFLIFE_DAYS` (default `180`); clock
+  injectable via `BRAIN_NOW` for deterministic tests.
+
 ## [0.12.0] — 2026-07-09
 ### Added
 - **Real semantic search in Cowork, offline (DV-04).** The Cowork VM leg lacked

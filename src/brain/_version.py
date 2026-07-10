@@ -9,4 +9,4 @@ pip-installed host, importlib.metadata stays primary; brain/__init__.py reads
 this file only as the fallback before 0.0.0+unknown.
 """
 
-__version__ = "0.12.0"
+__version__ = "0.14.1"

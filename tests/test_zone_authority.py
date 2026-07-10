@@ -281,6 +281,10 @@ def test_get_vectors_roundtrip(zone_vault, tmp_path):
 def test_hybrid_search_lexical_hits_are_never_deweighted(zone_vault, tmp_path, monkeypatch):
     """scope=semantic_only (the default) must leave an exact lexical match's
     score untouched even if its zone would otherwise be damped."""
+    # Disable the orthogonal recency prior (RET-07) so this asserts the ZONE
+    # prior's scope in isolation — recency legitimately damps a stale exact-match
+    # by date, which is a separate concern with its own test.
+    monkeypatch.setenv("BRAIN_RECENCY_WEIGHT", "0")
     idx = _idx(zone_vault, tmp_path)
     rows = {
         r[1]: r[0]

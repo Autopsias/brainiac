@@ -18,6 +18,7 @@ S03 added:
 """
 from __future__ import annotations
 
+import datetime as _dt
 import hashlib
 import os
 import re
@@ -50,6 +51,51 @@ except ImportError:  # pragma: no cover - exercised only when `regex` is absent
 # ReDoS / resource-exhaustion guard for BrainIndex.grep (RET-04 hardening).
 MAX_GREP_PATTERN_LEN = 200      # absurdly long patterns are the abuse surface, not legitimate use
 GREP_REGEX_TIMEOUT_S = 2.0      # per-match wall-clock budget (only enforced with the `regex` engine)
+
+
+def _today() -> _dt.date:
+    """Today, overridable via ``BRAIN_NOW=YYYY-MM-DD`` so recency ranking is
+    deterministic in tests (mirrors the injectable-clock pattern used by
+    maintenance staleness)."""
+    v = os.environ.get("BRAIN_NOW", "").strip()
+    if v:
+        try:
+            return _dt.date.fromisoformat(v[:10])
+        except ValueError:
+            pass
+    return _dt.date.today()
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
+def _recency_factor(date_str: str, today: _dt.date, weight: float,
+                    half_life: float) -> float:
+    """Gentle multiplicative STALENESS PENALTY for the RRF fusion, bounded to
+    ``(1 - weight, 1.0]``. A note dated today (or in the future) is neutral at
+    ``1.0``; the penalty deepens as the note ages, halving its distance-from-full
+    every ``half_life`` days, asymptoting at ``1 - weight`` for very old notes.
+    An undated note (or ``weight<=0``) is neutral at ``1.0`` — undated notes are
+    never penalised.
+
+    A *penalty* (≤1), not a boost (>1), so the fused score never exceeds the RRF
+    ceiling ``2/(rrf_k+1)`` — the fusion-scale invariant the zone-authority prior
+    also respects. Relative order between any two DATED notes is identical to a
+    symmetric boost, so the newer of two topically-similar hits still wins."""
+    if weight <= 0 or not date_str:
+        return 1.0
+    try:
+        d = _dt.date.fromisoformat(date_str[:10])
+    except ValueError:
+        return 1.0
+    age = (today - d).days
+    if age <= 0:
+        return 1.0
+    return 1.0 - weight * (1.0 - 0.5 ** (age / half_life))
 
 
 class GrepPatternError(ValueError):
@@ -838,6 +884,7 @@ class BrainIndex:
         # semantic_only). Evidence: docs/operations/s10-pt-rootcause-and-fix.md.
         zmap: dict[int, str] = {}
         col_zone: dict[int, str] = {}
+        rdate: dict[int, str] = {}
         if scores:
             rids = tuple(scores)
             # FALSE POSITIVE (scanner: string-built SQL / hardcoded_sql_expressions):
@@ -846,17 +893,43 @@ class BrainIndex:
             # params (`rids`, passed separately below), never string-formatted
             # into the SQL text. See docs/SECURITY_NOTES.md.
             qmarks = ",".join("?" * len(rids))
-            for r, z, p in self.conn.execute(
-                f"SELECT rowid, zone, path FROM notes WHERE rowid IN ({qmarks})", rids  # nosec B608
+            # Valid-time fallback: effective_date → document_date → created,
+            # the same chain bases-query uses (§2/ADR-0003 Ruling 2).
+            date_expr = ("COALESCE(NULLIF(effective_date,''), "
+                         "NULLIF(document_date,''), created)")
+            for r, z, p, d in self.conn.execute(
+                f"SELECT rowid, zone, path, {date_expr} FROM notes "  # nosec B608
+                f"WHERE rowid IN ({qmarks})", rids
             ):
                 rid = int(r)
                 col_zone[rid] = z or ""
                 zmap[rid] = self._resolve_zone(z or "", p or "")
+                rdate[rid] = d or ""
             scope = os.environ.get("BRAIN_ZONE_SCOPE", "semantic_only").strip().lower()
             for rid in scores:
                 if scope == "semantic_only" and rid in in_lex:
                     continue  # exact-match hit — authority prior does not apply
                 scores[rid] *= self._zone_weight(zmap.get(rid, ""))
+
+            # Recency prior (RET-07). The RRF fusion above is time-blind: a stale
+            # version of a document outranks its current successor purely on text
+            # similarity, so a "latest developments" query grounds on months-old
+            # material. A gentle, multiplicative staleness penalty (≤1.0, so the
+            # fused score stays under the RRF ceiling like the zone prior) makes
+            # the more recent of two topically-similar hits win — without
+            # reconciling score scales (same reason RRF uses ranks). Neutral
+            # (×1.0) for undated notes, so nothing is penalised for lacking a date.
+            # Knobs: BRAIN_RECENCY_WEIGHT (0 disables), BRAIN_RECENCY_HALFLIFE_DAYS.
+            # ponytail: always-on gentle prior; query-intent weighting (heavier
+            # decay for "latest"/"as of <date>" queries) is the upgrade path if
+            # near-ties still slip through.
+            rweight = _env_float("BRAIN_RECENCY_WEIGHT", 0.25)
+            if rweight > 0:
+                rhalf = _env_float("BRAIN_RECENCY_HALFLIFE_DAYS", 180.0)
+                today = _today()
+                for rid in scores:
+                    scores[rid] *= _recency_factor(
+                        rdate.get(rid, ""), today, rweight, rhalf)
 
         def _source(rid: int) -> str:
             if rid in in_lex and rid in in_dense:

@@ -140,7 +140,30 @@ def _filter_dicts(items: list[dict], max_tier: str) -> tuple[list[dict], dict]:
     # THE single egress chokepoint — every content-returning subcommand routes
     # through egress.apply_gate so a new content path cannot silently bypass the
     # deny-by-default gate (SEC-01, r2-codex). The MCP adapter shares it too.
-    return egress.apply_gate(items, max_tier)
+    surfaced, report = egress.apply_gate(items, max_tier)
+    # Actionable-elevation nudge (RET-08): a starved result at the default
+    # Internal cap reads to the agent as "the vault is empty" and drives it to
+    # web search — leaking internal topics outward. Say WHY it's thin and HOW to
+    # elevate, in the report dict so it surfaces in BOTH --json (agent-facing)
+    # and the text footer. The tier stays the human gate; this only signposts it.
+    if report.get("withheld", 0) > 0 and max_tier != cls.TIERS[-1]:
+        report["hint"] = (
+            f"{report['withheld']} note(s) withheld above the {max_tier} cap — "
+            f"re-run with --max-tier Restricted (or MNPI for the most sensitive) "
+            f"to include them, rather than treating the vault as empty."
+        )
+    return surfaced, report
+
+
+def _egress_footer(report: dict) -> str:
+    """The `-- N/M surfaced; K withheld` line, plus the elevation hint when the
+    gate withheld anything (RET-08). One renderer so every read surface nudges
+    identically."""
+    line = (f"-- {report['surfaced']}/{report['total']} surfaced; "
+            f"{report['withheld']} withheld (max-tier={report['max_tier']})")
+    if report.get("hint"):
+        line += f"\n-- {report['hint']}"
+    return line
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -750,8 +773,7 @@ def _main(argv: list[str] | None = None) -> int:
         else:
             lines = [f"[{h['source']}] {h['id']}  ({h['classification'] or 'UNLABELLED'})"
                      f"  {h['score']}\n    {h['snippet']}" for h in surfaced]
-            footer = f"-- {report['surfaced']}/{report['total']} surfaced; " \
-                     f"{report['withheld']} withheld (max-tier={report['max_tier']})"
+            footer = _egress_footer(report)
             _emit(None, False, "\n".join(lines + [footer]) if lines else footer)
         return 0
 
@@ -763,8 +785,7 @@ def _main(argv: list[str] | None = None) -> int:
         else:
             lines = [f"{h['id']} ({h['classification'] or 'UNLABELLED'}) "
                      f"x{h['match_count']}\n    {h['snippet']}" for h in surfaced]
-            footer = f"-- {report['surfaced']}/{report['total']} surfaced; " \
-                     f"{report['withheld']} withheld (max-tier={report['max_tier']})"
+            footer = _egress_footer(report)
             _emit(None, False, "\n".join(lines + [footer]) if lines else footer)
         return 0
 
@@ -781,8 +802,7 @@ def _main(argv: list[str] | None = None) -> int:
         else:
             lines = [f"{h['id']}  type={h.get('type','?')}  ({h['classification'] or 'UNLABELLED'})"
                      for h in surfaced]
-            footer = f"-- {report['surfaced']}/{report['total']} surfaced; " \
-                     f"{report['withheld']} withheld (max-tier={report['max_tier']})"
+            footer = _egress_footer(report)
             _emit(None, False, "\n".join(lines + [footer]) if lines else footer)
         return 0
 
@@ -802,8 +822,7 @@ def _main(argv: list[str] | None = None) -> int:
                      f"hops={h.get('hops')}  ppr={h.get('ppr')}" for h in surfaced]
             head = (f"-- DISCOVERY-ONLY (non-authoritative); seeds="
                     f"{res.get('resolved_seeds')}; method={res.get('method')}")
-            footer = f"-- {report['surfaced']}/{report['total']} surfaced; " \
-                     f"{report['withheld']} withheld (max-tier={report['max_tier']})"
+            footer = _egress_footer(report)
             _emit(None, False, "\n".join([head] + lines + [footer]))
         return 0
 
@@ -834,8 +853,7 @@ def _main(argv: list[str] | None = None) -> int:
         else:
             lines = [f"{it['updated']}  {it['id']}  ({it['classification'] or 'UNLABELLED'})"
                      for it in surfaced]
-            lines.append(f"-- {report['surfaced']}/{report['total']} surfaced; "
-                         f"{report['withheld']} withheld (max-tier={report['max_tier']})")
+            lines.append(_egress_footer(report))
             _emit(None, False, "\n".join(lines))
         return 0
 

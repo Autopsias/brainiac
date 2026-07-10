@@ -352,6 +352,16 @@ def stage_engine_and_skills(engine_src: Path, workspace_path: str) -> dict:
         routines_dst.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(prompt_src, routines_dst / "cowork-session-prompt.md")
 
+    # conventions contract — the AGENTS.md the session prompt points the agent at
+    # (cowork_workspace_install.sh leg, line ~218). The re-stage previously
+    # SKIPPED it, so an AGENTS.md change (e.g. the retrieval-discipline block)
+    # never reached Cowork on `brain update`: the doctor's staged-version check
+    # reads the engine stamp and is blind to a stale contract. Copy it so
+    # update == install for the contract too.
+    agents_src = engine_src / "AGENTS.md"
+    if agents_src.exists():
+        shutil.copyfile(agents_src, brain_dir / "AGENTS.md")
+
     ssot = _ssot_version(engine_src)
     staged = _read_version_stamp(engine_dir / "brain" / "_version.py")
     return {

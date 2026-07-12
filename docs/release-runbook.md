@@ -63,7 +63,7 @@ Must print `All three client packages built + validated OK.` and exit 0. Any
 skew (a plugin.json ≠ pyproject) is a hard stop — ADR-0004 Ruling 5 makes this
 a breaking packaging change on the first reconciled release (v0.9.0): the
 three plugin manifests (previously `brainiac-manager` 1.0.0,
-`profile-a-kernel`/`profile-a-extras` 1.1.0) are re-based **down** onto the
+`brainiac-kernel`/`brainiac-extras` 1.1.0) are re-based **down** onto the
 engine's line. This is intentional and documented in §6 below — it is not a
 bug if a plugin version appears to move backwards for existing installs.
 
@@ -224,7 +224,7 @@ term or surrounding text.
 ## 6. Breaking-change transition for existing installs (Ruling 5)
 
 The first reconciled release (v0.9.0) re-bases the three plugin manifests
-(previously `brainiac-manager` 1.0.0, `profile-a-kernel` / `profile-a-extras`
+(previously `brainiac-manager` 1.0.0, `brainiac-kernel` / `brainiac-extras`
 1.1.0) **down** onto the engine's 0.9.x line. This is a one-time breaking
 packaging change, not a bug.
 
@@ -236,12 +236,12 @@ reconciliation.
 **Required transition — a clean reinstall:**
 ```
 /plugin uninstall brainiac-manager
-/plugin uninstall profile-a-kernel
-/plugin uninstall profile-a-extras
+/plugin uninstall brainiac-kernel
+/plugin uninstall brainiac-extras
 /plugin marketplace update <marketplace-name>
 /plugin install brainiac-manager
-/plugin install profile-a-kernel
-/plugin install profile-a-extras
+/plugin install brainiac-kernel
+/plugin install brainiac-extras
 ```
 No plugin-local state is lost — per ADR-0004 Ruling 4's never-touch contract,
 all vault/engine/audit-chain/memory state lives outside the plugin
@@ -255,7 +255,7 @@ v0.9.0 on there is only one line and future updates go through
 ## 7. Fresh-user consumption path
 
 1. `/plugin marketplace add Autopsias/brainiac`
-2. `/plugin install profile-a-kernel` (and optionally `profile-a-extras`)
+2. `/plugin install brainiac-kernel` (and optionally `brainiac-extras`)
 3. `/plugin install brainiac-manager`
 4. `/brainiac-install` — runs the host installer end-to-end: clone/locate
    `~/brainiac`, run `install.sh` (private venv, `brain` on PATH, first index
@@ -295,6 +295,218 @@ assertion + a static source-order guard so the two call sites can never
 silently swap back), `tests/test_migration_verification.py` (extended
 never-touch assertions — an update must leave `.brain/memory/`,
 `maintain-state.json`, `maintain.lock`, and the audit chain byte-identical).
+
+---
+
+## 7.6. Publish to PyPI (human-run) — MUST precede Step 8 (PYP-03)
+
+**Ordering contract (binding, not a suggestion):** publishing to PyPI (and,
+later, npm) **PRECEDES** the clean-room export in Step 8. §7's fresh-user
+consumption path and every "PyPI-first" doc this repo now ships
+(`docs/install/README.md` Path A/C/D, README.md, the lifecycle skills)
+describe `uv tool install brainiac-cli[mcp]` / `pip install brainiac-cli` as
+the primary install command. If the public repo commit in Step 8 lands
+**before** the matching version is actually on PyPI, every one of those docs
+is a 404 for anyone who reads them that day. Never run Step 8 for a version
+whose PyPI publish (this section) hasn't completed and been verified.
+
+`tools/release.py` is **build automation only** (`bump`/`set` + the
+packager) — it has no upload/publish subcommand and must never gain one.
+Publishing itself is always a deliberate human act, the same class of
+irreversible step as Step 8's `git push` to the public remote: a human
+runs the commands below from their own authenticated `twine`/PyPI session.
+No token, API key, or `.pypirc` credential is ever read, written, or
+referenced by any script in this repo.
+
+**1. Build the sdist + wheel** (scriptable, no auth needed):
+
+```
+python3 -m pip install --upgrade build twine   # once, into your own env — NOT this repo's
+python3 -m build
+```
+
+Produces `dist/brainiac_cli-<X.Y.Z>-py3-none-any.whl` and the matching
+`.tar.gz`. Confirm the version in the filename matches `pyproject.toml`'s
+SSOT (§2) exactly.
+
+**2. TestPyPI dry-run FIRST — never skip straight to production PyPI:**
+
+```
+python3 -m twine upload --repository testpypi dist/brainiac_cli-<X.Y.Z>*
+```
+
+(Requires a TestPyPI account + API token in the human's own session —
+`twine` prompts for it or reads `~/.pypirc` on the operator's machine,
+never this repo's.)
+
+**3. Verify the TestPyPI artifact installs and runs, from a clean throwaway
+environment** (a scratch dir/venv — never this repo's own `.venv` — see the
+TestPyPI RC checklist below for the full script):
+
+```
+uv venv /tmp/brainiac-testpypi-check && cd /tmp/brainiac-testpypi-check
+uv pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ 'brainiac-cli[mcp]'
+./bin/brain --version   # confirm it prints exactly X.Y.Z
+```
+
+(`--extra-index-url https://pypi.org/simple/` is required — TestPyPI doesn't
+mirror brainiac-cli's dependencies, only its own uploaded packages.)
+
+**4. Only once step 3 passes, publish to production PyPI:**
+
+```
+python3 -m twine upload dist/brainiac_cli-<X.Y.Z>*
+```
+
+**5. Verify the real publish**, and run the self-check row that gates this
+whole section:
+
+```
+brain doctor --check-registry --json
+```
+
+Confirm the "PyPI registry drift" row reads `current` (repo tag == installed
+== PyPI latest, all `<X.Y.Z>`) — never `not-detectable` ("not yet published")
+and never a marketplace/skills-ahead warning. This is the row that would have
+caught a public repo shipped ahead of its PyPI publish; running it here,
+before Step 8, is what makes the ordering contract above enforceable rather
+than just documented.
+
+**Only after this section's step 5 passes** does Step 8 (public git export +
+push) become safe to run for this version.
+
+---
+
+## 7.7. TestPyPI RC gate (prepared here — a human runs it)
+
+This subsection is a **checklist**, not an executed run — S07 prepares it so
+a human release operator has a ready-to-follow script the first time a real
+PyPI cut happens. The filled-in transcript of an actual run belongs at
+`_evidence/install-plan/testpypi-rc.md` (see that file for the template and
+required fields — its existence is a documented entry criterion for this
+plan's human-checkpoint session).
+
+1. Publish a **uniquely-versioned** build to TestPyPI (§7.6 steps 1-2) —
+   never re-upload an existing version number; TestPyPI (like PyPI) refuses
+   overwrites, and a throwaway pre-release suffix (e.g. `X.Y.Z.rc1`) keeps
+   this dry run from colliding with a real release number.
+2. Install with the **literal documented commands** — not a hand-tuned
+   variant — from each of the three PyPI channels this session ships:
+   ```
+   uv tool install 'brainiac-cli[mcp]'
+   pipx install 'brainiac-cli[mcp]'
+   python3 -m pip install --user 'brainiac-cli[mcp]'
+   ```
+   (point each at `--index-url https://test.pypi.org/simple/
+   --extra-index-url https://pypi.org/simple/` for the RC gate only — the
+   real published commands never carry an index-url flag).
+3. Exercise **upgrade**: bump the RC suffix, re-publish, run the matching
+   channel's real upgrade command (`uv tool upgrade brainiac-cli` / `pipx
+   upgrade brainiac-cli` / `pip install --user --upgrade brainiac-cli[mcp]`),
+   confirm `brain --version` moved.
+4. Exercise **uninstall** for each channel (`uv tool uninstall brainiac-cli`
+   / `pipx uninstall brainiac-cli` / `pip uninstall -y brainiac-cli`),
+   confirm `brain` is no longer on PATH afterward.
+5. Record the full transcript (commands run + their output, PASS/FAIL per
+   channel per step) at `_evidence/install-plan/testpypi-rc.md`.
+
+---
+
+## 7.8. Windows pre-release acceptance checklist (human-run, release gate)
+
+A fresh, **non-admin** Windows machine (or VM) — never the release
+operator's own dev box, which already has stale state from prior installs.
+Transcript of this run is release evidence, same class as the soak report in
+§1.
+
+1. **Install:** `.\install.ps1` (default PyPI-first path — confirm it tries
+   uv → pipx → pip --user and reports which one succeeded; also run
+   `.\install.ps1 -Dev` separately if a checkout is available, to confirm the
+   dev/offline path still works).
+2. **Init:** `brain init --full --apply` against a fresh vault folder.
+3. **First search:** confirm the seeded sample notes are findable
+   (`brain search "..." --json` returns results, no embedder warning).
+4. **Verify scheduled-task registration — BOTH host tasks, not just one:**
+   ```
+   .\scripts\install-brief-windows.ps1 -VaultPath <path>
+   Get-ScheduledTask -TaskName 'brain-daily-brief-*'
+   ```
+   As of this session, `install-brief-windows.ps1` registers only the
+   nightly umbrella task; the second locked host task (`brain-synthesis`,
+   weekly) has **no Windows registration path yet** (macOS's
+   `install-brief-mac.sh` registers both — see `routines/manifest.json`
+   `locked_counts.host_os_scheduled: 2`). Record this as a known gap in the
+   transcript rather than a checklist failure — closing it (a
+   PowerShell-native `brain-synthesis` runner + Task Scheduler registration)
+   is tracked follow-up work, not part of this session's scope.
+5. **Update:** `brain update` (or `/brainiac-update`) — confirm `brain
+   doctor`'s "Host engine install" row reports the correct channel and the
+   before→after table shows a version move on a subsequent release.
+6. **Uninstall:** `/brainiac-uninstall` — confirm the channel-aware removal
+   (§ lifecycle skill) actually removes the engine via the right command for
+   whichever channel step 1 used, and that the scheduled task(s) are gone.
+
+---
+
+## 7.9. Publish to npm (human-run) — after PyPI, before Step 8 (SUI-01)
+
+The `brainiac-install` npx bootstrap (`packaging/npm/brainiac-install/`) is
+published to npm **after** §7.6's PyPI publish completes and **before** Step
+8's public export — same ordering contract as §7.6, and for the same
+reason: the package's whole job is `npx brainiac-install` installing
+`brainiac-cli` from PyPI, so publishing it ahead of PyPI would ship a
+bootstrapper for a version that isn't there yet, and publishing it after
+Step 8 would leave the freshly-public docs pointing at an `npx` command
+that 404s.
+
+Same human-only class as PyPI/`git push`: no script in this repo holds or
+reads an npm token — a human runs `npm publish` from their own authenticated
+npm session (`npm login` / `~/.npmrc`, never this repo's).
+
+**1. Sync the package version with the release** (manual — `tools/
+package_clients.py`/`release.py` do not touch `packaging/npm/`; this is a
+known follow-up, not automated by this session):
+
+```
+# packaging/npm/brainiac-install/package.json "version" should read <X.Y.Z>,
+# matching pyproject.toml's SSOT (§2). Edit it by hand if `release.py` moved
+# the engine version and this package hasn't been bumped yet.
+```
+
+**2. Pack + smoke-test the tarball** (repeats this session's smoke test —
+never skip it, a broken tarball is a broken `npx` command for every user):
+
+```
+cd packaging/npm/brainiac-install
+npm pack --pack-destination /tmp/brainiac-npm-check
+cd /tmp/brainiac-npm-check
+npm install -g --prefix ./install-prefix --install-strategy=hoisted ./brainiac-install-<X.Y.Z>.tgz
+./install-prefix/bin/brainiac-install --dry-run   # confirm command plan, exit 0
+```
+
+**3. Publish:**
+
+```
+cd packaging/npm/brainiac-install
+npm publish --access public
+```
+
+(`--access public` is required the first time a scoped-or-not new package is
+published to a fresh npm account; harmless to repeat on subsequent
+releases.)
+
+**4. Verify the real publish** from a clean environment:
+
+```
+npx --yes brainiac-install@<X.Y.Z> --dry-run
+```
+
+Confirm it resolves the just-published version and prints the same command
+plan as step 2's local smoke test.
+
+**Only after this section's step 4 passes**, alongside §7.6's PyPI
+verification, does Step 8 (public git export + push) become safe to run for
+this version.
 
 ---
 

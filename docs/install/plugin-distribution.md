@@ -65,12 +65,12 @@ Order: re-resolve clone → compat check → refresh. **Refreshes:**
 
 ## 4 · Decision: plugin naming/layout — new `plugins/brainiac-manager`
 
-A separate plugin alongside `profile-a-kernel` / `profile-a-extras` in the same `profile-a-marketplace`:
+A separate plugin alongside `brainiac-kernel` / `brainiac-extras` in the same `brainiac`:
 
 ```
 plugins/
-├── profile-a-kernel/      # daily-use skills (unchanged)
-├── profile-a-extras/      # optional admin skills (unchanged)
+├── brainiac-kernel/      # daily-use skills (unchanged)
+├── brainiac-extras/      # optional admin skills (unchanged)
 └── brainiac-manager/      # host-mutating lifecycle skills
     └── skills/
         ├── brainiac-install/SKILL.md
@@ -85,7 +85,7 @@ Rationale: lifecycle skills mutate the host (launchd, venv, registry) — a user
 
 ```
 claude> /plugin marketplace add Autopsias/brainiac                # GitHub form — no clone, no creds
-claude> /plugin install brainiac-manager@profile-a-marketplace
+claude> /plugin install brainiac-manager@brainiac
 claude> /brainiac-install <vault-path>
 ```
 

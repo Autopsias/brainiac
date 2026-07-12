@@ -1,0 +1,15 @@
+# Keep the sdist minimal and contamination-safe (added 2026-07-12).
+# The test suite was built using the owner's real vault as example data, so it
+# is not shipped in the distribution — it isn't needed to build/run the package,
+# and shipping it once leaked a real term into the 0.16.0 sdist. The wheel never
+# contained tests (only src/brain); this makes the sdist match.
+prune tests
+prune eval
+prune docs
+prune tools
+prune packaging
+prune overlay
+prune templates
+prune scripts
+prune vault
+prune dist

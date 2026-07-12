@@ -121,6 +121,12 @@ class BrainCore:
     def search(self, query: str, k: int = 10) -> list[Hit]:
         return self.index.search(query, k)
 
+    def source_freshness(self, newest_hit_date: str, max_tier: str) -> dict[str, Any]:
+        """RET-09 freshness signal: count + newest date of notes whose
+        valid-time date is strictly newer than ``newest_hit_date``, at the
+        caller's egress cap. See ``BrainIndex.freshness``."""
+        return self.index.freshness(newest_hit_date, max_tier)
+
     def hybrid_search(
         self, query: str, k: int = 10, *, rerank: bool = False, rerank_top: int = 15,
         rrf_k: int = 60,
@@ -237,6 +243,66 @@ class BrainCore:
         TMP-02: ``latest_only``/``as_of`` are temporal views (Latest Only / As Of)."""
         return self.index.bases_query(filters, k=k, latest_only=latest_only, as_of=as_of)
 
+    def dossier(self, query: str, k: int = 12) -> dict[str, Any]:
+        """RET-10: the ONE-CALL retrieval sweep — what a careful agent
+        orchestrates by hand (decision layer + corroborating sources +
+        contradiction check + version noise handling), composed engine-side
+        so even a minimal-path harness gets the full sweep deterministically.
+
+        Motivation (2026-07-11 benchmark series close): on the same
+        substrate, the remaining quality gap between harnesses was
+        ORCHESTRATION BREADTH — one agent cross-checked newer sources
+        against the decision layer and caught superseded thinking; the
+        other walked the minimal path and could not see contradictions off
+        it. This verb makes the sweep the minimal path.
+
+        Returns (UNFILTERED — callers apply the egress gate):
+        - ``decisions``: hits with ``type: decision`` (the authority
+          layer), each carrying a ``tensions`` list — NEWER-dated,
+          non-decision hits from the same sweep (a proposal/deck that
+          post-dates the recorded decision: report the tension, never
+          promote the proposal).
+        - ``sources``: the remaining live hits (material under
+          consideration).
+        - ``retired_excluded``: hits dropped because a supersession chain
+          retired them (``is_latest_version: false``) — version noise the
+          sweep already handled.
+        """
+        # A DEEP candidate pool: decision notes are scarce and often rank
+        # below big source documents on broad queries — the decision layer
+        # must never come back empty just because the top-k was crowded
+        # (measured on the live corpus: decisions at rank ~30 on a broad
+        # decision-state query). Scanning deeper is one indexed query.
+        pool = [h.to_dict() for h in self.hybrid_search(query, k=max(k * 2, 60))]
+        live = [h for h in pool if h.get("is_latest_version") != "false"]
+        retired_excluded = len(pool) - len(live)
+        decisions = [h for h in live if h.get("type") == "decision"]
+        # RET-10b: MERGE a targeted BM25 probe over the decision layer — the
+        # decision layer must never come back empty just because a phrasing
+        # shift pushed decision notes below the semantic pool (measured live:
+        # a rewording emptied the layer while the notes plainly existed).
+        seen_ids = {d["id"] for d in decisions}
+        for h in self.index.decision_layer_hits(query, k=max(5, k // 2)):
+            hd = h.to_dict()
+            if hd["id"] not in seen_ids:
+                decisions.append(hd)
+                seen_ids.add(hd["id"])
+        decisions = decisions[:max(5, k // 2)]
+        sources = [h for h in live if h.get("type") != "decision"][:k]
+        for d in decisions:
+            d_date = d.get("date") or ""
+            d["tensions"] = [
+                {"id": s["id"], "date": s.get("date", ""), "type": s.get("type", "")}
+                for s in sources
+                if d_date and s.get("date") and s["date"] > d_date
+            ]
+        return {
+            "query": query,
+            "decisions": decisions,
+            "sources": sources,
+            "retired_excluded": retired_excluded,
+        }
+
     def graph_expand(
         self, seeds: list[str], *, depth: int = 2, k: int = 10, use_ppr: bool = True,
         use_inferred: bool = False,
@@ -313,6 +379,50 @@ class BrainCore:
     def rebuild(self) -> dict[str, Any]:
         self._require_host("rebuild the index")
         return self.index.rebuild(self.vault)
+
+    def embedder_pending(self) -> bool:
+        """True when the index's stored dense vectors were built with a
+        DIFFERENT embedder than the one the live runtime would use now (S02/
+        CS-01) — e.g. a cold-start install built the index with the offline
+        ``hash`` placeholder to avoid a network model download. Read-only,
+        cheap (no download): :meth:`BrainIndex.model_matches` only compares
+        recorded meta strings against the constructed (not yet loaded)
+        embedder's ``model_id``/``dim``."""
+        return not self.index.model_matches()
+
+    def warmup(self) -> dict[str, Any]:
+        """HOST-ONLY (S02/CS-01): resolve + download the live auto-embedder's
+        model weights now, instead of on the first real semantic search.
+
+        huggingface_hub prints its own progress bar to stderr during the
+        download (never stdout — keeps ``--json`` output parseable) and
+        already file-locks the blob it is writing
+        (``huggingface_hub.file_download.WeakFileLock``), so a concurrent
+        warmup / first-search / nightly-maintenance embed racing on the same
+        cache directory cannot corrupt it — see the closeout note; no extra
+        locking is added here.
+
+        Does NOT rebuild the index. If the index was built with a placeholder
+        embedder (``embedder_pending()`` was True), run `brain sync` (or
+        `brain rebuild`) afterward — `BrainIndex.sync`'s existing model-
+        mismatch guard will do a full, now-offline (model already cached)
+        re-embed automatically."""
+        self._require_host("warm up the embedding model (download)")
+        import os
+        import time
+
+        from .embed import get_embedder, model_cache_ready
+
+        embedder = get_embedder(os.environ.get("BRAIN_EMBEDDER", "auto"))
+        was_cached = model_cache_ready(embedder)
+        t0 = time.monotonic()
+        embedder.embed("warmup")  # triggers the real load/download if needed
+        elapsed = time.monotonic() - t0
+        return {
+            "model_id": embedder.model_id,
+            "already_cached": bool(was_cached),
+            "elapsed_s": round(elapsed, 2),
+        }
 
     def drafts_dir(self) -> Path:
         return self.vault / ".brain" / "drafts"
@@ -608,13 +718,39 @@ class BrainCore:
         try:
             live_id = self.index.embedder.model_id
             recorded = out.get("index", {}).get("embed_model")
+            matches = recorded is None or recorded == live_id
             out["live_embedder"] = {
                 "model_id": live_id,
                 "is_hash_fallback": live_id == "hash-v1",
-                "matches_index_metadata": (recorded is None or recorded == live_id),
+                "matches_index_metadata": matches,
             }
+            # `embedder: ready|pending` (S02/CS-01) — the cold-start-friendly
+            # summary a human/agent actually wants from `brain status`: is
+            # semantic search fully live right now, or is there a deferred
+            # download/re-embed step still owed? A deliberate explicit-hash
+            # choice ($BRAIN_EMBEDDER=hash) is "ready" (nothing IS pending —
+            # same "deliberate, not a fault" posture as `brain doctor`);
+            # otherwise pending means either the model isn't cached yet
+            # (`brain warmup` needed) or the index still carries placeholder
+            # vectors from a cold-start install (`brain sync` needed after).
+            import os
+
+            from .embed import ONNX_MODEL_SIZE_HINT, model_cache_ready
+
+            explicit_hash = os.environ.get("BRAIN_EMBEDDER", "").strip().lower() == "hash"
+            cached = model_cache_ready(self.index.embedder)
+            pending = (not explicit_hash) and (not matches or cached is False)
+            out["embedder"] = {
+                "state": "pending" if pending else "ready",
+                "model_id": live_id,
+                "cached": cached,
+                "index_matches": matches,
+            }
+            if pending and cached is False:
+                out["embedder"]["download_size_hint"] = ONNX_MODEL_SIZE_HINT
         except Exception as exc:
             out["live_embedder"] = {"error": f"{type(exc).__name__}: {exc}"}
+            out["embedder"] = {"state": "error", "error": f"{type(exc).__name__}: {exc}"}
         out["snapshot"] = snapshot_status(dest_dir)
         # Mirror of the index check above (Ruling 2's directional fail-fast):
         # a snapshot schema_version GREATER than this binary's SCHEMA_VERSION
@@ -677,10 +813,12 @@ class BrainCore:
             raise ValueError(f"write target escapes {subtree!r} subtree: {rel_path}")
         target = target.resolve()
         # Append the signed audit entry FIRST; if signing fails, nothing is written.
+        content_sha = sha256_text(content)
         try:
             entry = self.audit.append(
                 verb="write", path=rel_path,
-                reason=reason or f"write_note {rel_path} sha256={sha256_text(content)[:12]}",
+                reason=reason or f"write_note {rel_path}",
+                content_sha256=content_sha,
             )
         except KeyUnavailable:
             raise  # fail closed — no unsigned writes
@@ -833,11 +971,18 @@ class BrainCore:
             "reindexed": {"added": sync_res.get("added", 0), "updated": sync_res.get("updated", 0)},
         }
 
-    def verify_audit(self) -> dict[str, Any]:
+    def verify_audit(self, *, check_content: bool = False) -> dict[str, Any]:
         # HOST-broker only: verify() derives the public key via the resolved
         # signing key — the VM leg must never resolve a key.
         self._require_host("verify the audit chain (resolves the signing key)")
-        return self.audit.verify()
+        res = self.audit.verify()
+        if check_content:
+            drift = self.audit.content_drift(self.vault)
+            res["content_drift"] = drift
+            if drift and res["status"] == "ok":
+                # signatures fine, but a signed note's bytes changed on disk
+                res["status"] = "content_drift"
+        return res
 
     # -- off-host anchor + encrypted backup (HOST-broker only; SEC-03) ----
     def anchor_chain(self, anchor_dir: str | Path) -> dict[str, Any]:
@@ -1055,7 +1200,7 @@ class BrainCore:
 
     def brief_html(
         self, *, max_recent: int = 5, drain: bool = True,
-        max_tier: str = classification.DEFAULT_MAX_TIER, today: Any = None,
+        max_tier: str = classification.VM_DEFAULT_MAX_TIER, today: Any = None,
     ) -> dict[str, Any]:
         """Render + write the branded HTML morning brief (AUT-01, ADR-0003
         Ruling c) to ``.brain/brief/``. HOST-ONLY: this writes a FILE, a new
@@ -1128,7 +1273,7 @@ class BrainCore:
         return {"path": str(dated), "latest_path": str(latest), "bytes": len(html_text)}
 
     def digest_html(
-        self, *, days: int = 7, max_tier: str = classification.DEFAULT_MAX_TIER,
+        self, *, days: int = 7, max_tier: str = classification.VM_DEFAULT_MAX_TIER,
         today: Any = None,
     ) -> dict[str, Any]:
         """Render + write the branded HTML weekly digest (AUT-03, ADR-0003
@@ -1453,7 +1598,7 @@ class BrainCore:
 
     def graphify(
         self, *, force: bool = False, dry_run: bool = False, today: Any = None,
-        max_tier: str = classification.DEFAULT_MAX_TIER, candidate_limit: int = 20,
+        max_tier: str = classification.VM_DEFAULT_MAX_TIER, candidate_limit: int = 20,
     ) -> dict[str, Any]:
         """GRF-01: build the derived, non-authoritative discovery graph
         (ADR-0003 Ruling 6/(a) — supersedes the earlier "documented only"
@@ -1489,10 +1634,15 @@ class BrainCore:
 
         from . import egress
         from . import graphify as gmod
+        from . import maintenance as maint
         from .graph import build_graph
 
         self._require_host("build the graphify discovery graph")
-        d = today or _dt.date.today()
+        # [S04 fix 3/4] `today` is threaded EXPLICITLY (the CLI `--as-of` flag,
+        # which maintain's bounded child passes) — never from an ambient env
+        # var, which would silently leak a stale date into a manual
+        # `brain graphify`. A manual run leaves today=None and uses today's date.
+        d = today if today is not None else _dt.date.today()
         graph_dir = config.graph_dir(self.vault)
         graph_dir.mkdir(parents=True, exist_ok=True)
         manifest_path = config.graph_manifest_path(self.vault)
@@ -1618,6 +1768,218 @@ class BrainCore:
             "note_count": len(state.get("notes") or {}),
         }
 
+    def _run_bounded_graphify(
+        self, *, force: bool, dry_run: bool, today: Any, state: dict[str, Any],
+        reason: str, builder: Any = None,
+    ) -> dict[str, Any]:
+        """FRESH-01: run a graphify build IN-PROCESS, attempt-bounded — the ONE
+        path both the monthly date-gate FLOOR and the drift-triggered fold
+        route through.
+
+        OWNER DECISION 2026-07-11 (SUPERSEDES the earlier
+        ``[HARDENED:codex-verify-r1]`` subprocess-wrapper design): the build
+        runs via ``self.graphify()`` in-process, against THIS BrainCore's OWN
+        index — never a re-invoked ``brain.cli`` child. The subprocess approach
+        was reverted after review because it (a) re-resolved its index from the
+        environment, so an embedded/injected index built the WRONG corpus and
+        unit tests touched the real machine index; (b) needed JSON-over-stdout
+        parsing that could latch onto a JSON-shaped noise line; and (c) split
+        the ``_graphify_drift`` marker across two processes, causing
+        double-counted/clobbered backoff. Its one benefit — a hard KILL of a
+        hypothetical C-extension stall — is traded for simplicity and
+        correctness: a real corpus builds in ~60s, and the attempt-marker below
+        makes a stall non-fatal without a kill.
+
+        Bounding is the ATTEMPT-keyed ``_graphify_drift`` marker + capped
+        exponential backoff (``maintenance.graphify_backoff_days``):
+        - ``last_attempt`` is persisted BEFORE the build (HARDENED correction
+          b), so even a build that hangs (and whose ``maintain`` is later
+          killed) leaves an attempt on disk — the next maintain respects the
+          cooldown and does NOT re-fire within it.
+        - ANY non-publishing, non-skipped, non-preview outcome (an exception, a
+          non-dict, or an in-process ``build_failed``/``invalid_artifact``)
+          bumps ``consecutive_overruns`` and keeps ``build.action_required`` so
+          the alarm layer sees it. ``consecutive_overruns`` resets to 0 only on
+          a build that actually publishes or cleanly skips.
+        - A dry-run is a PREVIEW: returned as-is (neither pass nor fail for
+          backoff); no state is persisted under dry_run.
+
+        ``builder`` is a test-only injection point — a callable
+        ``(force, dry_run, today) -> result dict`` standing in for
+        ``self.graphify`` so tests drive published/skipped/failed/raising
+        outcomes without a real vector build. Defaults to ``self.graphify``
+        at the HOST egress default tier (owner ruling 2026-07-10: the host
+        default is the full vault — graphify's own signature default is the
+        conservative VM tier, which would silently drop hot-queue candidates
+        touching Confidential/Restricted/MNPI notes; review finding [1])."""
+        if builder is not None:
+            build = builder
+        else:
+            def build(*, force: bool, dry_run: bool, today: Any) -> dict[str, Any]:
+                return self.graphify(
+                    force=force, dry_run=dry_run, today=today,
+                    max_tier=classification.DEFAULT_MAX_TIER)
+
+        # `state` is this process's live dict — the marker in it is
+        # authoritative (in-process design; no cross-process copy to re-read).
+        marker = dict(state.get("_graphify_drift") or {})
+        marker["last_attempt"] = today.isoformat()
+        marker["last_reason"] = reason
+        state["_graphify_drift"] = marker
+        if not dry_run:
+            self._save_maintain_state(state)  # ATTEMPT persisted BEFORE the build
+
+        def _bump_and_persist() -> None:
+            marker["consecutive_overruns"] = int(marker.get("consecutive_overruns", 0)) + 1
+            marker["last_overrun"] = today.isoformat()
+            state["_graphify_drift"] = marker
+            if not dry_run:
+                self._save_maintain_state(state)
+
+        try:
+            result = build(force=force, dry_run=dry_run, today=today)
+        except Exception as exc:  # noqa: BLE001 — a build error is a failure, never propagate
+            _bump_and_persist()
+            return {"ritual": "graphify", "invoked": True, "published": False,
+                    "reason": reason, "status": "build_error",
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "build": {"action_required": True}}
+
+        if not isinstance(result, dict):
+            _bump_and_persist()
+            return {"ritual": "graphify", "invoked": True, "published": False,
+                    "reason": reason, "status": "bad_result",
+                    "build": {"action_required": True}}
+        result["invoked"] = True
+        result["reason"] = reason
+
+        # A dry-run is a PREVIEW (published False by design): neither pass nor
+        # fail for backoff, and no state persisted under dry_run.
+        if dry_run or result.get("dry_run"):
+            return result
+        if result.get("published") or result.get("skipped"):
+            marker["consecutive_overruns"] = 0
+            marker["last_success"] = today.isoformat()
+            state["_graphify_drift"] = marker
+            self._save_maintain_state(state)
+            return result
+
+        # published False, not skipped, not a preview: an in-process
+        # build_failed/invalid_artifact — a failure for backoff/escalation.
+        _bump_and_persist()
+        result.setdefault("build", {})["action_required"] = True
+        result.setdefault("status", "build_not_published")
+        return result
+
+    def _run_golden_probe(
+        self, *, probes_path: Path, timeout_seconds: int | None = None,
+        codex_call: Any = None, self_call: Any = None,
+    ) -> dict[str, Any]:
+        """WD-03: the Sunday cross-family golden-probe EXECUTION. Codex (the
+        family that did NOT build the retrieval engine) shells the SAME
+        ``brain`` CLI the probes exercise — this is cross-family EXECUTION of
+        a deterministic scorer, correction 5: NEVER "independent
+        verification" / "Codex grades retrieval". A shared retrieval bug is
+        invisible to both invokers; only the INVOKER differs, not the
+        measurement.
+
+        Codex runs READ-ONLY (``--sandbox read-only``) and ONLY executes the
+        scorer; it never asserts a decision. Any parse/shape/range failure,
+        non-zero codex exit, or timeout falls back to running the probe
+        runner directly (subprocess) and returns ``{"runner": "self",
+        "degraded": True}`` — NEVER a codex-sourced score from unvalidated
+        output (exit-0-with-garbage is the trap this two-stage validation
+        exists for).
+
+        ``codex_call``/``self_call`` are test-only injection points —
+        ``(argv: list[str], timeout: int) -> (returncode, stdout, stderr)`` —
+        standing in for the two subprocess invocations so tests never spawn a
+        real codex (or python) child process. Production default shells out
+        via ``subprocess.run``."""
+        import json as _json
+        import shlex as _shlex
+        import subprocess as _subprocess
+        import sys as _sys
+
+        from . import maintenance as maint
+
+        timeout = timeout_seconds if timeout_seconds is not None else maint.golden_codex_timeout_seconds()
+        # PATH-independent brain command (review fix [2]): under launchd's
+        # minimal PATH a bare `brain` isn't resolvable, so pin golden_probe to
+        # the SAME interpreter running maintain via `-m brain.cli`. Used by
+        # BOTH the codex-exec prompt's runner and the self-run fallback below.
+        brain_cmd = _shlex.join([_sys.executable, "-m", "brain.cli"])
+
+        def _default_call(argv: list[str], to: int) -> tuple[int, str, str]:
+            try:
+                proc = _subprocess.run(argv, capture_output=True, text=True, timeout=to)
+                return proc.returncode, proc.stdout, proc.stderr
+            except _subprocess.TimeoutExpired as exc:
+                return -1, "", f"timeout after {to}s: {exc}"
+            except OSError as exc:  # e.g. `codex` not on PATH
+                return -1, "", f"{type(exc).__name__}: {exc}"
+
+        codex_call = codex_call or _default_call
+        self_call = self_call or _default_call
+
+        # Pass the ABSOLUTE interpreter (has `brain` importable) so BOTH the
+        # codex prompt's outer `-m brain.golden_probe` AND its inner
+        # `--brain-cmd` are PATH-independent (re-review: a bare outer `python3`
+        # ModuleNotFound'd on uv/pipx installs).
+        prompt = maint.build_codex_golden_prompt(probes_path, Path(self.vault), _sys.executable)
+        codex_argv = [
+            "codex", "exec", "--skip-git-repo-check", "--sandbox", "read-only",
+            "-C", str(self.vault), "--json", prompt,
+        ]
+        codex_error: str | None = None
+        rc, stdout, stderr = codex_call(codex_argv, timeout)
+        if rc == 0:
+            final_text = maint.parse_codex_final_message(stdout)
+            if final_text is None:
+                codex_error = "no agent_message event in codex --json stream"
+            else:
+                try:
+                    doc: Any = _json.loads(final_text)
+                except ValueError as exc:
+                    codex_error = f"final message is not JSON: {exc}"
+                    doc = None
+                if codex_error is None:
+                    shape_err = maint.validate_golden_probe_doc(doc)
+                    if shape_err:
+                        codex_error = f"invalid golden-probe doc: {shape_err}"
+                    else:
+                        return {
+                            "score": doc.get("score"), "disposition": doc.get("disposition"),
+                            "exit_code": doc.get("exit_code"), "runner": "codex", "degraded": False,
+                        }
+        else:
+            codex_error = f"codex exec exited {rc}: {(stderr or stdout or '').strip()[:300]}"
+
+        # -- fall back to the self-run (subprocess, same probes file/vault) --
+        self_argv = [
+            _sys.executable, "-m", "brain.golden_probe", str(probes_path),
+            "--vault", str(self.vault), "--brain-cmd", brain_cmd,
+        ]
+        rc2, stdout2, stderr2 = self_call(self_argv, timeout)
+        try:
+            doc2: Any = _json.loads(stdout2)
+        except ValueError:
+            doc2 = None
+        shape_err2 = (maint.validate_golden_probe_doc(doc2) if doc2 is not None
+                      else f"non-JSON self-run output (rc={rc2}): "
+                           f"{(stderr2 or stdout2 or '').strip()[:300]}")
+        if shape_err2:
+            return {
+                "score": None, "disposition": "transient", "exit_code": maint.GOLDEN_EXIT_TRANSIENT,
+                "runner": "self", "degraded": True,
+                "error": f"self-run also failed: {shape_err2} (codex: {codex_error})",
+            }
+        return {
+            "score": doc2.get("score"), "disposition": doc2.get("disposition"),
+            "exit_code": doc2.get("exit_code"), "runner": "self", "degraded": True,
+            "codex_error": codex_error,
+        }
+
     # -- maintain: lock + state-file helpers (ADR-0003 Ruling 5/d, HARDENED:codex) --
     def _acquire_maintain_lock(
         self, lock_path: Path, *, stale_after_seconds: float = 2 * 3600,
@@ -1694,6 +2056,8 @@ class BrainCore:
         branches: dict[str, Any] = {}
         stale, repeated_failures = [], []
         for branch, entry in state.items():
+            if str(branch).startswith("_"):
+                continue  # [S04 fix 7] marker, not a branch (mirrors maintain()'s own filter)
             if not isinstance(entry, dict):
                 continue
             last_run = entry.get("last_run")
@@ -1743,7 +2107,7 @@ class BrainCore:
     def _daily_note_fold(self, today: Any, brief_result: Any = None) -> dict[str, Any]:
         """Daily fold: create today's ``type: daily`` note exactly once per day.
 
-        Second-brain parity with the old Obsidian ``80 Daily`` habit, done the
+        Second-brain parity with an old daily-note habit, done the
         native way — a dated note with the standard template sections, seeded
         from the morning brief already built this run. Idempotent via
         ``self.get`` (never a second copy). Host verb: ``capture`` signs +
@@ -1793,6 +2157,7 @@ class BrainCore:
     def maintain(
         self, *, dry_run: bool = False, today: Any = None,
         min_score: float = 0.95, near_dup_k: int = 5,
+        graphify_runner: Any = None, golden_runner: Any = None,
     ) -> dict[str, Any]:
         """The umbrella — THE single sanctioned host task (``brain-nightly``,
         persistence-budget.md THE LOCK). Runs ``sync --publish`` + ``brief`` +
@@ -1813,9 +2178,35 @@ class BrainCore:
         crash never aborts the rest of the run, and a branch's marker only
         advances to ``today`` on SUCCESS — a crash leaves it due next time,
         safely, because every branch (and every hot-queue write) is
-        idempotent. HOST-broker."""
+        idempotent. HOST-broker.
+
+        FRESH-01 (2026-07-11): the 1st-of-month graphify date-gate is a
+        FLOOR, not a gate — the daily fold ALSO measures corpus drift since
+        the last build (``maintenance.graphify_drift``) and fires the same
+        bounded build early once drift crosses ``BRAIN_GRAPHIFY_DRIFT_PCT``
+        (default 15%) and its own attempt-keyed cooldown
+        (``BRAIN_GRAPHIFY_COOLDOWN_DAYS``, default 2 days, capped
+        exponential backoff on overruns) has elapsed. Both the monthly floor
+        and the drift trigger execute through ONE attempt-bounded path
+        (``_run_bounded_graphify``) that runs ``self.graphify()`` IN-PROCESS
+        against this BrainCore's own index (owner decision 2026-07-11,
+        superseding the earlier subprocess wrapper — see
+        ``_run_bounded_graphify``). ``graphify_runner`` is test-only dependency
+        injection: a ``(force, dry_run, today) -> result dict`` builder that
+        stands in for ``self.graphify`` — production leaves it ``None``.
+
+        WD-03 (2026-07-12): Sun->golden — cross-family EXECUTION (never
+        "verification") of the WD-02 golden-probe scorer via ``codex exec``
+        (read-only, validated, self-run-fallback on any failure — see
+        ``_run_golden_probe``), gated by its own ``_golden_attempt``
+        next-retry marker so a transient failure backs off instead of
+        re-invoking codex every hourly run. ``golden_runner`` is test-only
+        dependency injection: a ``(probes_path) -> result dict`` callable
+        standing in for ``self._run_golden_probe`` — production leaves it
+        ``None``."""
         from . import maintenance as maint
         import datetime as _dt
+        import os as _os
 
         self._require_host("run the maintain umbrella")
         d = today or _dt.date.today()
@@ -1868,8 +2259,32 @@ class BrainCore:
             if dry_run:
                 results["status"] = self.status()
             else:
+                # WSP-01 workspace sweep — BEFORE sync, so the ingest drain
+                # inside sync picks up what the sweep just staged (settled
+                # workspace files gain their lifecycle in the same nightly:
+                # sweep -> inbox -> ingest -> raw/ -> index+embed -> snapshot).
+                # No-op unless $BRAIN_WORKSPACE_SWEEP_DIRS is configured.
+                sweep_dirs, sweep_age = maint.workspace_sweep_config()
+                if sweep_dirs:
+                    try:
+                        sweep_res = maint.sweep_workspace(
+                            sweep_dirs, self.vault / "inbox", sweep_age)
+                        results["workspace_sweep"] = sweep_res
+                        if sweep_res["swept"]:
+                            auto_fixed.append(maint.auto_fixed_item(
+                                "workspace-sweep", str(self.vault / "inbox"),
+                                f"swept {len(sweep_res['swept'])} settled "
+                                f"workspace file(s) into inbox/ "
+                                f"(age>{sweep_age}d)"))
+                    except Exception as exc:
+                        blocked.append(maint.blocked_item(
+                            f"workspace sweep failed: {exc}",
+                            "filesystem", "next maintain run"))
                 try:
-                    sync_res = self.sync(drain=True, publish=True)
+                    # First pass WITHOUT publish: the self-organization folds
+                    # below mutate metadata/paths, and the snapshot must carry
+                    # their result — publish happens in the second pass.
+                    sync_res = self.sync(drain=True, publish=False)
                     results["sync"] = sync_res
                     added = sync_res.get("added", 0)
                     updated = sync_res.get("updated", 0)
@@ -1883,7 +2298,180 @@ class BrainCore:
                         auto_fixed.append(maint.auto_fixed_item(
                             "drain", str(self.capture_inbox_dir()),
                             f"drained {drain['promoted']} pending capture(s)"))
-                    snap = sync_res.get("snapshot")
+
+                    # -- self-organization folds (owner decision 2026-07-11:
+                    # metadata, versioning, PARA and navigation are automatic,
+                    # never user-gated). Each fold is independent — one
+                    # failure never aborts the others or the publish.
+                    try:
+                        vres = maint.auto_version_chains(self)
+                        results["version_chains"] = vres
+                        if vres["chained"]:
+                            auto_fixed.append(maint.auto_fixed_item(
+                                "version-chain", str(self.vault),
+                                f"stamped {len(vres['chained'])} supersession "
+                                f"link(s) across explicit version families"))
+                        for fam in vres["skipped_conflict"]:
+                            action_required.append(maint.action_required_item(
+                                f"version family '{fam}' has a manual chain that "
+                                f"disagrees with the computed order",
+                                "auto-chaining never overrides a human supersede",
+                                "inspect the family and fix the chain with "
+                                "`brain supersede` if the manual link is wrong",
+                                fam))
+                    except Exception as exc:
+                        blocked.append(maint.blocked_item(
+                            f"auto version-chain fold failed: {exc}",
+                            "index/write path", "next maintain run"))
+                    try:
+                        pres = maint.auto_para(Path(self.vault))
+                        results["auto_para"] = pres
+                        if pres["moved"]:
+                            auto_fixed.append(maint.auto_fixed_item(
+                                "auto-para", str(Path(self.vault) / "brain"),
+                                f"filed {len(pres['moved'])} note(s) into their "
+                                f"PARA zone by metadata"))
+                    except Exception as exc:
+                        blocked.append(maint.blocked_item(
+                            f"auto-PARA fold failed: {exc}",
+                            "filesystem", "next maintain run"))
+                    try:
+                        nres = maint.refresh_navigation(Path(self.vault))
+                        results["navigation"] = nres
+                        auto_fixed.append(maint.auto_fixed_item(
+                            "navigation", str(Path(self.vault) / "brain"),
+                            f"regenerated backlinks ({nres['backlink_targets']} "
+                            f"targets) + {len(nres['catalog_counts'])} zone catalogs"))
+                    except Exception as exc:
+                        blocked.append(maint.blocked_item(
+                            f"navigation refresh failed: {exc}",
+                            "filesystem", "next maintain run"))
+
+                    # CUT-02: duplicate-retention prune — safe only because
+                    # every candidate is re-verified through the full
+                    # provenance chain (manifest -> raw note -> archived
+                    # original) right before deletion; see
+                    # `maint.retention_fold`'s docstring. Gated to run at most
+                    # ONCE PER DAY via the `_`-prefixed `_retention` marker
+                    # (review finding [4]: the maintain umbrella fires hourly,
+                    # and re-hashing the permanently-unverifiable residue every
+                    # hour is ~24x wasted whole-file I/O over ~1k parked files).
+                    _ret_marker = state.get("_retention")
+                    _ret_marker = _ret_marker if isinstance(_ret_marker, dict) else {}
+                    if _ret_marker.get("last_run") != d.isoformat():
+                        try:
+                            ret_res = maint.retention_fold(Path(self.vault), d)
+                            results["retention"] = ret_res
+                            if not dry_run:
+                                state["_retention"] = {"last_run": d.isoformat()}
+                            if ret_res["pruned"]:
+                                auto_fixed.append(maint.auto_fixed_item(
+                                    "duplicate-retention", str(Path(self.vault) / "inbox" / "_duplicate"),
+                                    f"pruned {len(ret_res['pruned'])} duplicate(s) older "
+                                    f"than {ret_res['retention_days']}d "
+                                    f"(provenance-verified)"))
+                            if ret_res["skipped"]:
+                                # Distinguish "kept, chain unverifiable" (the
+                                # designed conservative outcome) from a real
+                                # delete/stat failure (review finding [2]): the
+                                # message must not tell the owner a file failed
+                                # provenance when it was actually a delete error.
+                                prov = [s for s in ret_res["skipped"]
+                                        if s.get("kind") == "provenance"]
+                                err = [s for s in ret_res["skipped"]
+                                       if s.get("kind") in ("delete", "stat")]
+                                if prov:
+                                    action_required.append(maint.action_required_item(
+                                        f"{len(prov)} aged duplicate(s) kept — their "
+                                        "provenance chain does not verify",
+                                        "an unverifiable duplicate is never auto-deleted "
+                                        "(its archived original may be missing/changed)",
+                                        "inspect inbox/_duplicate and the referenced "
+                                        "manifest/raw/originals entries",
+                                        str(Path(self.vault) / "inbox" / "_duplicate")))
+                                if err:
+                                    action_required.append(maint.action_required_item(
+                                        f"{len(err)} aged duplicate(s) could not be "
+                                        "stat'd/deleted (filesystem error)",
+                                        "a real I/O/permission error, NOT a provenance "
+                                        "failure — the file was not removed",
+                                        "check inbox/_duplicate permissions/mount",
+                                        str(Path(self.vault) / "inbox" / "_duplicate")))
+                        except Exception as exc:
+                            blocked.append(maint.blocked_item(
+                                f"duplicate-retention fold failed: {exc}",
+                                "filesystem/manifest read", "next maintain run"))
+
+                    # CUT-02: monthly quarantine triage summary — NEVER
+                    # deletes; queues a hot.md summary at most once per ISO
+                    # month (idempotency key), gated by the `_`-prefixed
+                    # `_quarantine_summary` marker (mirrors `_graphify_drift`).
+                    try:
+                        q_marker = state.get("_quarantine_summary")
+                        q_marker = q_marker if isinstance(q_marker, dict) else None
+                        if maint.quarantine_summary_due(q_marker, d):
+                            q_summary = maint.quarantine_triage_summary(Path(self.vault), d)
+                            results["quarantine_summary"] = q_summary
+                            if q_summary["total"]:
+                                self._append_hot_once(
+                                    f"quarantine-summary:{d.strftime('%Y-%m')}",
+                                    maint.render_quarantine_summary_hot_entry(q_summary, d),
+                                )
+                            state["_quarantine_summary"] = {"last_month": d.strftime("%Y-%m")}
+                    except Exception as exc:
+                        blocked.append(maint.blocked_item(
+                            f"quarantine triage summary failed: {exc}",
+                            "filesystem read", "next maintain run"))
+
+                    # DEC-01 decision-capture nudge — after the sync so
+                    # freshly ingested notes are already indexed. Queues each
+                    # candidate to hot.md ONCE (idempotency key = note id);
+                    # capturing the decision note stays a human/synthesis gate.
+                    try:
+                        dcands = maint.decision_capture_scan(self.index.conn, d)
+                        results["decision_capture"] = {"candidates": len(dcands)}
+                        for c in dcands:
+                            if self._append_hot_once(
+                                f"decision-capture:{c['id']}",
+                                maint.render_decision_capture_hot_entry(c, d),
+                            ):
+                                action_required.append(maint.action_required_item(
+                                    f"possible uncaptured decision in `{c['id']}` "
+                                    f"(“{c['phrase']}”)",
+                                    "recording a decision note is a human gate — "
+                                    "the fold only nudges",
+                                    "review the hot.md entry; if real, capture a "
+                                    "type: decision note (+ supersede what it reverses)",
+                                    c["id"]))
+                    except Exception as exc:
+                        blocked.append(maint.blocked_item(
+                            f"decision-capture scan failed: {exc}",
+                            "index read", "next maintain run"))
+
+                    # WATCHDOG-01: the hourly umbrella watches the weekly
+                    # synthesis task's heartbeat (the reverse watch lives in
+                    # the synthesis prompt: doctor-first). Queued to hot.md
+                    # at most once per ISO week.
+                    try:
+                        wd = maint.synthesis_heartbeat_finding(Path(self.vault), d)
+                        if wd is not None:
+                            action_required.append(wd)
+                            week = d.isocalendar()
+                            self._append_hot_once(
+                                f"synthesis-watchdog:{week[0]}-W{week[1]}",
+                                f"## {d.isoformat()} — synthesis watchdog\n"
+                                f"- **Finding:** {wd['finding']}\n"
+                                f"- **Owner input needed:** {wd['proposed_action']}\n")
+                    except Exception as exc:
+                        blocked.append(maint.blocked_item(
+                            f"synthesis watchdog failed: {exc}",
+                            "state file read", "next maintain run"))
+
+                    # Second pass: reconcile the folds' mutations + publish.
+                    sync2 = self.sync(drain=False, publish=True)
+                    results["sync_publish"] = {
+                        k: sync2.get(k) for k in ("added", "updated", "deleted")}
+                    snap = sync2.get("snapshot")
                     if snap:
                         auto_fixed.append(maint.auto_fixed_item(
                             "snapshot", str(snap.get("snapshot_db", "")),
@@ -1932,6 +2520,46 @@ class BrainCore:
                         f"{type(exc).__name__}: {exc}",
                         "re-run maintain after the underlying error is fixed"))
                     _mark("daily", False, f"{type(exc).__name__}: {exc}")
+
+            # FRESH-01 — drift-triggered graphify check (2026-07-11). Runs
+            # every maintain, REGARDLESS of dry_run and independent of the
+            # daily branch's own try/except (a corpus-drift READ never needs
+            # the daily fold's sync to have succeeded — ``self.index.conn``
+            # already reflects whatever the index currently holds): the
+            # monthly date-gate below remains the FLOOR trigger; this is the
+            # inverse — a vault that drifts past the threshold rebuilds
+            # early instead of waiting out the calendar. Computed once here
+            # so the unified graphify block below never double-builds on a
+            # day that is BOTH drift-triggered and the monthly floor.
+            graphify_drift_triggered = False
+            try:
+                import json as _json
+
+                try:
+                    old_manifest = _json.loads(
+                        config.graph_manifest_path(self.vault).read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    old_manifest = None
+                drift_ratio = maint.graphify_drift(old_manifest, self.index.conn)
+                drift_marker = state.get("_graphify_drift")
+                drift_marker = drift_marker if isinstance(drift_marker, dict) else None
+                # A manifest that has NEVER existed has no baseline to have
+                # drifted FROM (the pure ratio function still reports 1.0 for
+                # it — a defined, degenerate "unknown" signal) — that
+                # first-ever-build case is already the monthly floor's job
+                # (a "graphify" branch absent from maintain-state is due
+                # immediately, ADR-0003 Ruling d/``maintain_branches``). The
+                # drift trigger only fires once there IS an established
+                # baseline to measure real drift against.
+                graphify_drift_triggered = bool(old_manifest) and maint.should_trigger_drift_graphify(
+                    drift_ratio, drift_marker, d)
+                results["graphify_drift"] = {
+                    "ratio": round(drift_ratio, 4), "triggered": graphify_drift_triggered,
+                    "has_baseline": bool(old_manifest)}
+            except Exception as exc:
+                blocked.append(maint.blocked_item(
+                    f"graphify drift check failed: {exc}",
+                    "index read", "next maintain run"))
 
             if "health" in branches:
                 try:
@@ -2003,32 +2631,390 @@ class BrainCore:
                         "re-run maintain after the underlying error is fixed"))
                     _mark("digest", False, f"{type(exc).__name__}: {exc}")
 
-            if "graphify" in branches:
+            if "golden" in branches:
                 try:
-                    g = self.graphify(force=False, dry_run=dry_run, today=d)
-                    g["invoked"] = True
-                    results["graphify"] = g
-                    if not dry_run and g.get("published") and g.get("candidates"):
-                        self._append_hot_once(
-                            f"maintain:graphify:{d.isoformat()}",
-                            maint.render_graphify_hot_entry(g["candidates"], d),
-                        )
-                    if g.get("build", {}).get("action_required"):
+                    probes_path = maint.golden_probes_path(Path(self.vault))
+                    if not probes_path.is_file():
+                        # Absent probes file — skip LOUDLY (never a silent
+                        # pass, never an error): mark done so this doesn't
+                        # re-check every hour, but next Sunday re-checks.
+                        results["golden"] = {
+                            "score": None, "runner": None, "degraded": False,
+                            "skipped": "no probes file",
+                        }
                         action_required.append(maint.action_required_item(
-                            f"graphify build took {g['build']['duration_seconds']}s "
-                            f"(> {g['build']['action_required_seconds']}s soft budget)",
-                            "the monthly graph build exceeded its 5-minute soft budget",
-                            "investigate corpus scale / vector backend before next month's run",
-                            "graphify build"))
-                    _mark("graphify", True)
+                            f"golden-probe branch skipped: no probes file at {probes_path}",
+                            "WD-03 cross-family execution needs a per-vault "
+                            "eval/golden-probes.json (WD-02) to score",
+                            "author a probes file (see `brain-golden-probe --help` "
+                            "/ docs/operations/s06-evidence.md)",
+                            str(probes_path)))
+                        _mark("golden", True)
+                    else:
+                        marker = state.get("_golden_attempt")
+                        marker = marker if isinstance(marker, dict) else None
+                        now_dt = _dt.datetime.now(_dt.timezone.utc)
+                        if not maint.golden_attempt_due(marker, now_dt):
+                            results["golden"] = {
+                                "score": None, "runner": None, "degraded": False,
+                                "skipped": "cooldown",
+                                "next_retry_at": (marker or {}).get("next_retry_at"),
+                            }
+                            # Deliberately no `_mark` call: the branch stays
+                            # due (still Sunday, or a missed catch-up), but
+                            # NO codex/self invocation happens this hour —
+                            # the whole point of the next_retry_at gate.
+                        elif dry_run:
+                            # Fix [3]: a --dry-run PREVIEW must NOT spawn the
+                            # golden runner (real codex/self subprocess, up to
+                            # ~600s+600s) or burn codex quota — report what
+                            # WOULD run and persist NO marker.
+                            results["golden"] = {
+                                "score": None, "runner": None, "degraded": False,
+                                "dry_run": True, "would_run": True,
+                                "probes_path": str(probes_path),
+                            }
+                            _mark("golden", True)
+                        else:
+                            # Persist a PROVISIONAL next_retry_at (short
+                            # backoff) BEFORE the shell-out (fix [1], mirrors
+                            # `_run_bounded_graphify`'s attempt-persisted-
+                            # before-build ordering). `golden_attempt_due`
+                            # keys the cooldown on `next_retry_at` alone, so a
+                            # run KILLED mid-`codex exec` (reboot/OOM/launchd
+                            # timeout) — leaving no clean return to write the
+                            # outcome-based value — still backs off next hour
+                            # instead of re-storming codex. Overwritten with
+                            # the outcome-based value on a clean return below.
+                            base_min = int(_os.environ.get(
+                                maint.GOLDEN_RETRY_BASE_MINUTES_ENV,
+                                maint.DEFAULT_GOLDEN_RETRY_BASE_MINUTES))
+                            # ESCALATING provisional (re-review): optimistically
+                            # count THIS attempt as a failure and back off on the
+                            # incremented count, so a REPEATEDLY killed run backs
+                            # off progressively (6h → 12h → …) instead of a flat
+                            # base every time. A clean return below recomputes the
+                            # authoritative marker from the PRE-attempt count
+                            # `orig_n` (so a real transient isn't double-counted,
+                            # and a success resets to 0).
+                            orig_n = int((marker or {}).get("consecutive_transient_failures", 0))
+                            prov_n = orig_n + 1
+                            pre_marker = dict(marker or {})
+                            pre_marker["last_attempt"] = now_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+                            pre_marker["consecutive_transient_failures"] = prov_n
+                            pre_marker["next_retry_at"] = (
+                                now_dt + _dt.timedelta(
+                                    minutes=maint.golden_retry_backoff_minutes(base_min, prov_n))
+                            ).strftime("%Y-%m-%dT%H:%M:%SZ")
+                            state["_golden_attempt"] = pre_marker
+                            self._save_maintain_state(state)
+                            runner = golden_runner or self._run_golden_probe
+                            g = runner(probes_path=probes_path)
+                            results["golden"] = g
+                            exit_code = g.get("exit_code")
+                            transient = exit_code not in (
+                                maint.GOLDEN_EXIT_OK, maint.GOLDEN_EXIT_REGRESSION,
+                                maint.GOLDEN_EXIT_ACTION_REQUIRED)
+                            state["_golden_attempt"] = maint.update_golden_attempt_marker(
+                                {**pre_marker, "consecutive_transient_failures": orig_n},
+                                now_dt, transient=transient)
+                            self._save_maintain_state(state)
+                            if transient:
+                                blocked.append(maint.blocked_item(
+                                    f"golden-probe run was transient (runner="
+                                    f"{g.get('runner')}): {g.get('error') or g.get('codex_error') or 'no deterministic result'}",
+                                    "the brain CLI itself failed/emitted non-JSON, or "
+                                    "codex could not be validated and the self-run "
+                                    "fallback also failed",
+                                    "bounded backoff will retry automatically once "
+                                    "the cooldown elapses"))
+                                _mark("golden", False, "transient")
+                            else:
+                                if exit_code == maint.GOLDEN_EXIT_ACTION_REQUIRED:
+                                    action_required.append(maint.action_required_item(
+                                        f"golden-probe run is config-invalid (score="
+                                        f"{g.get('score')})",
+                                        "a deterministic problem in the probes file/vault "
+                                        "anchors — never retried before next Sunday",
+                                        "fix the probes file, then re-run "
+                                        "`brain-golden-probe` manually to confirm",
+                                        str(probes_path)))
+                                elif exit_code == maint.GOLDEN_EXIT_REGRESSION:
+                                    action_required.append(maint.action_required_item(
+                                        f"golden-probe regression: score {g.get('score')}",
+                                        "retrieval quality regressed below the "
+                                        "probes-file threshold",
+                                        "run the autoresearch skill or review recent "
+                                        "promotions/curation findings",
+                                        str(probes_path)))
+                                # A persistent degraded/self-run state means
+                                # cross-family EXECUTION is not actually
+                                # happening (codex unavailable/unvalidated) —
+                                # surfaced every degraded run, not just once,
+                                # so it naturally reads as "persistent" in
+                                # hot.md/action_required if it keeps recurring
+                                # (ponytail: no extra streak-counter state).
+                                if g.get("degraded"):
+                                    action_required.append(maint.action_required_item(
+                                        "golden-probe ran in DEGRADED (self) mode — "
+                                        f"codex execution unavailable/unvalidated: "
+                                        f"{g.get('codex_error')}",
+                                        "cross-family EXECUTION requires codex to "
+                                        "actually run the scorer; a persistent "
+                                        "degraded state means that isn't happening",
+                                        "check codex CLI availability/auth on this host",
+                                        str(probes_path)))
+                                _mark("golden", True)
                 except Exception as exc:
+                    # Fix [1]: a raise mid-branch (before the pre-shell-out
+                    # save, or in the runner/marker-update path) must still
+                    # leave a next_retry_at so the next hourly maintain backs
+                    # off instead of re-invoking codex every hour. The
+                    # pre-shell-out save usually already wrote one; this is the
+                    # belt for a raise BEFORE it lands.
+                    if not dry_run:
+                        try:
+                            cur = state.get("_golden_attempt")
+                            cur = dict(cur) if isinstance(cur, dict) else {}
+                            now_dt = _dt.datetime.now(_dt.timezone.utc)
+                            # Refresh the backoff when it is ABSENT *or already
+                            # ELAPSED*: an elapsed next_retry_at is exactly why
+                            # this branch was due, so leaving it in place keeps
+                            # `golden_attempt_due` True and re-storms codex every
+                            # hour. Only a still-FUTURE value (the provisional
+                            # save already landed) is left alone. Parsing mirrors
+                            # `golden_attempt_due` so "present" means the same
+                            # thing on both sides of the gate.
+                            existing = cur.get("next_retry_at")
+                            existing_dt = None
+                            if existing:
+                                try:
+                                    existing_dt = _dt.datetime.fromisoformat(
+                                        str(existing).replace("Z", "+00:00"))
+                                    if existing_dt.tzinfo is None:
+                                        existing_dt = existing_dt.replace(
+                                            tzinfo=_dt.timezone.utc)
+                                except ValueError:
+                                    existing_dt = None
+                            if existing_dt is None or existing_dt <= now_dt:
+                                try:
+                                    base_min = int(_os.environ.get(
+                                        maint.GOLDEN_RETRY_BASE_MINUTES_ENV,
+                                        maint.DEFAULT_GOLDEN_RETRY_BASE_MINUTES))
+                                except ValueError:
+                                    base_min = maint.DEFAULT_GOLDEN_RETRY_BASE_MINUTES
+                                cur["last_attempt"] = now_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+                                cur["next_retry_at"] = (
+                                    now_dt + _dt.timedelta(minutes=base_min)
+                                ).strftime("%Y-%m-%dT%H:%M:%SZ")
+                                state["_golden_attempt"] = cur
+                                self._save_maintain_state(state)
+                        except Exception:  # noqa: BLE001 — backoff persist is best-effort
+                            pass
                     blocked.append(maint.blocked_item(
-                        "graphify branch raised",
+                        "golden branch raised",
                         f"{type(exc).__name__}: {exc}",
                         "re-run maintain after the underlying error is fixed"))
-                    _mark("graphify", False, f"{type(exc).__name__}: {exc}")
+                    _mark("golden", False, f"{type(exc).__name__}: {exc}")
+
+            # FRESH-01: the monthly date-gate (floor) and the drift trigger
+            # (early rebuild) are ORed into ONE build — both routed through the
+            # SAME attempt-bounded in-process path (`_run_bounded_graphify`;
+            # owner decision 2026-07-12). A day that is both the monthly floor
+            # AND drift-triggered still builds exactly once.
+            monthly_due = "graphify" in branches
+            # The ATTEMPT-keyed cooldown (with capped exponential backoff)
+            # gates the MONTHLY floor too (review finding [0]): a failing
+            # 1st-of-month build leaves its branch due, and without this gate
+            # it would re-fire a full rebuild every hourly maintain, unbounded.
+            # The floor OBLIGATION survives (the branch stays due until a
+            # publish advances it) — only the RETRY CADENCE backs off.
+            import os as _os
+
+            _drift_marker = state.get("_graphify_drift")
+            _drift_marker = _drift_marker if isinstance(_drift_marker, dict) else None
+            attempt_allowed = maint.graphify_drift_marker_due(
+                _drift_marker, d, int(_os.environ.get(
+                    maint.GRAPHIFY_COOLDOWN_DAYS_ENV, maint.DEFAULT_GRAPHIFY_COOLDOWN_DAYS)))
+            if (monthly_due or graphify_drift_triggered) and not attempt_allowed:
+                # Deferred by the attempt-keyed (backed-off) cooldown — leave a
+                # breadcrumb so a skipped build is explainable, never silent.
+                results["graphify"] = {
+                    "ritual": "graphify", "invoked": False, "published": False,
+                    "status": "cooldown_deferred",
+                    "note": "a recent failed attempt is backing off; the build "
+                            "retries once the (exponential) cooldown elapses",
+                }
+            if (monthly_due or graphify_drift_triggered) and attempt_allowed:
+                reason = "drift" if graphify_drift_triggered else "monthly-floor"
+                try:
+                    g = self._run_bounded_graphify(
+                        force=False, dry_run=dry_run, today=d, state=state,
+                        reason=reason, builder=graphify_runner)
+                    results["graphify"] = g
+                    if not dry_run and g.get("published") and g.get("candidates"):
+                        # Best-effort (review finding [4]): a hot.md write
+                        # failure must not skip the `_mark` below — the build
+                        # PUBLISHED, and leaving the branch due would trigger a
+                        # redundant rebuild next run. Surface it instead.
+                        try:
+                            self._append_hot_once(
+                                f"maintain:graphify:{d.isoformat()}",
+                                maint.render_graphify_hot_entry(g["candidates"], d),
+                            )
+                        except Exception as hot_exc:  # noqa: BLE001
+                            action_required.append(maint.action_required_item(
+                                "graphify hot-queue entry could not be written",
+                                f"{type(hot_exc).__name__}: {hot_exc}",
+                                "check .brain/memory/hot.md writability; the "
+                                "graph itself published fine",
+                                "graphify hot-queue"))
+                    build_info = g.get("build") or {}
+                    published = bool(g.get("published"))
+                    skipped = bool(g.get("skipped"))
+                    # Key the "benign, never alarm" suppression on the RESULT's
+                    # own dry_run flag: a genuine dry-run PREVIEW sets
+                    # ``g["dry_run"] = True`` (published False by design) and must
+                    # not alarm as a FAILURE; but a REAL failure under `brain
+                    # maintain --dry-run` returns a failure result with NO
+                    # dry_run flag, and the preview MUST still surface it.
+                    result_is_preview = bool(g.get("dry_run"))
+                    dur = build_info.get("duration_seconds")
+                    dur_suffix = f" ({dur}s)" if dur is not None else ""
+                    if result_is_preview:
+                        # Never a failure alarm — but a soft-budget breach in the
+                        # preview is exactly the pre-flight signal `--dry-run`
+                        # exists to show (review finding [5]): keep it.
+                        if build_info.get("action_required"):
+                            dur_txt = f"{dur}s" if dur is not None else "an unknown duration"
+                            action_required.append(maint.action_required_item(
+                                f"graphify dry-run build took {dur_txt} "
+                                f"(> {build_info.get('action_required_seconds')}s soft budget)",
+                                "the PREVIEW build exceeded the soft wall-clock "
+                                "budget — the real scheduled build likely will too",
+                                "investigate corpus scale / vector backend before "
+                                "the next scheduled build",
+                                "graphify build"))
+                    elif not published and not skipped:
+                        # A failed in-process build MUST append a `blocked` item
+                        # too — OBS-02's alarm keys off `blocked` count, so a
+                        # failed graph build must never read as a clean run just
+                        # because it also has an action_required.
+                        blocked.append(maint.blocked_item(
+                            f"graphify build ({reason}, status={g.get('status', 'unknown')}) "
+                            f"failed to complete{dur_suffix}",
+                            "the in-process graph build raised, returned a bad "
+                            "result, or failed to build/validate "
+                            "(build_failed/invalid_artifact)",
+                            "capped exponential backoff will retry automatically "
+                            "once the cooldown elapses"))
+                        action_required.append(maint.action_required_item(
+                            f"graphify build ({reason}, status={g.get('status', 'unknown')}) "
+                            f"failed to complete{dur_suffix}",
+                            "the in-process graph build raised, returned a bad "
+                            "result, or failed to build/validate",
+                            "inspect the result's error/status detail and "
+                            ".brain/graph/BUILD_FAILED.json; capped exponential "
+                            "backoff will retry automatically once the cooldown "
+                            "elapses",
+                            "graphify build"))
+                    elif published and build_info.get("action_required"):
+                        # published, but slower than the soft budget —
+                        # informational only: this build already succeeded, so
+                        # never claim a retry that will not happen.
+                        dur_txt = f"{dur}s" if dur is not None else "an unknown duration"
+                        action_required.append(maint.action_required_item(
+                            f"graphify build ({reason}) published but took {dur_txt} "
+                            f"(> {build_info.get('action_required_seconds')}s soft budget)",
+                            "the graph build exceeded its soft wall-clock budget "
+                            "but completed and published successfully",
+                            "investigate corpus scale / vector backend before the "
+                            "next scheduled build — no retry is needed, this "
+                            "build already succeeded",
+                            "graphify build"))
+                    if result_is_preview:
+                        pass  # a genuine dry-run preview marks nothing
+                    elif published or skipped:
+                        _mark("graphify", True)
+                    elif monthly_due:
+                        # the monthly FLOOR was due and the build failed — leave
+                        # it due (never silently drop the floor obligation).
+                        _mark("graphify", False, g.get("status", "build_failed"))
+                except Exception as exc:  # noqa: BLE001 — backstop for the maintain-
+                    # SIDE handling (e.g. the hot.md append, or a disk error in
+                    # `_run_bounded_graphify`'s own state write). The build's OWN
+                    # outcome + backoff are fully owned by `_run_bounded_graphify`
+                    # (it catches build errors internally and records/persists the
+                    # `_graphify_drift` marker), so this handler MUST NOT touch the
+                    # backoff marker: doing so would double-count a build failure,
+                    # or worse, penalize a build that actually PUBLISHED when the
+                    # post-publish hot.md write is what raised. It only surfaces
+                    # the failure so it is never silent.
+                    blocked.append(maint.blocked_item(
+                        "graphify branch raised (maintain-side handling)",
+                        f"{type(exc).__name__}: {exc}",
+                        "re-run maintain after the underlying error is fixed"))
+
+            # -- OBS-01/02/04: ONE final health-history append per run
+            # (HARDENED correction 2 — never appended right after the second
+            # sync, so this record carries health/integrity/digest/graphify
+            # outcomes too; ``results`` is the structured hook a later
+            # golden-eval branch folds into via ``results["golden"]``).
+            # HOST-broker, and skipped (read-only collection only) under
+            # ``dry_run`` — no append, no notification, no state mutation.
+            pre_outcomes = maint.build_outcomes(auto_fixed, action_required, blocked)
+            health_record: dict[str, Any] | None = None
+            trend_findings: list[dict[str, Any]] = []
+            notifications: list[str] = []
+            try:
+                health_record = maint.collect_health_metrics(
+                    self, outcomes=pre_outcomes, results=results,
+                    run_id=maint.new_health_run_id())
+                if not dry_run:
+                    maint.append_health_record(Path(self.vault), health_record)
+            except Exception as exc:
+                blocked.append(maint.blocked_item(
+                    f"health-history/trend/notify fold failed: {exc}",
+                    "metrics collection or file I/O", "next maintain run"))
+
+            # Fix [2]: compute trend + fire notifications from the POST-fold
+            # outcomes (built fresh here, AFTER the except above may have
+            # just appended its own blocked_item) — never from the frozen
+            # ``pre_outcomes`` snapshot. Otherwise a health-fold failure
+            # (e.g. `.brain` full/read-only) reports blocked>0 in the run's
+            # own outcomes yet never raises the alarm OBS-02 exists for,
+            # because the notify call used to sit INSIDE the same try block
+            # that just failed and was skipped entirely.
+            if not dry_run:
+                post_outcomes = maint.build_outcomes(auto_fixed, action_required, blocked)
+                try:
+                    history = maint.read_health_history(Path(self.vault))
+                    sparse_history = maint.read_sparse_history(Path(self.vault))
+                    trend_findings = maint.health_trend(
+                        history, d, sparse_history=sparse_history)
+                except Exception:  # noqa: BLE001 — trend is best-effort; the
+                    pass            # blocked count alone still drives the alarm below.
+                try:
+                    candidates = maint.pending_notifications(
+                        Path(self.vault), post_outcomes, trend_findings, d)
+                    notifications = maint.fire_and_mark_notifications(
+                        Path(self.vault), candidates, d)
+                except Exception:  # noqa: BLE001 — a notify-path failure is cosmetic,
+                    pass            # never allowed to fail the maintain run itself.
+            results["health_history"] = health_record
+            results["health_trend"] = trend_findings
+            results["notifications"] = notifications
 
             if not dry_run:
+                # In-process graphify (owner decision 2026-07-11): the
+                # `_graphify_drift` marker is written by `_run_bounded_graphify`
+                # within THIS process, into THIS `state` dict, so `state` already
+                # holds the authoritative marker — no cross-process re-merge is
+                # needed (the subprocess-era re-read that could revert an
+                # in-memory backoff bump is gone with the subprocess). Two
+                # overlapping maintain PROCESSES under a broken 2h stale-lock
+                # last-writer-win their branch stamps, as they always have — a
+                # pre-existing maintain limitation, not something graphify adds.
                 self._save_maintain_state(state)
 
             return {

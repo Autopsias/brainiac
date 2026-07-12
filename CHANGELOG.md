@@ -7,6 +7,129 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.16.1] — 2026-07-12
+### Security
+- **Pre-release contamination scrub + gate repair.** The clean-room export's
+  contamination scanner had been silently passing every release — blank and
+  `#`-comment lines in the annotated denylist made `grep -f` emit zero output —
+  so a real term reached the 0.16.0 sdist before it was caught by hand during
+  the public-repo push (which was never performed). Fixes: repaired the scanner
+  (strips comments/blanks first); pruned `tests/` from the sdist (the leak
+  channel); excluded corpus-derived artifacts (the test suite, the eval golden
+  set, the corpus-migration tools/doc, and owner-cutover design docs) from the
+  public export; made the engine's ranking-zone taxonomy configurable
+  (`BRAIN_ZONE_WEIGHTS`) instead of hard-coding one vault's folder names; and
+  scrubbed owner-specific references from shipped code/docs. **0.16.0 was
+  yanked; 0.16.1 is the clean re-release** (all 0.16.0 features included; full
+  suite green).
+
+## [0.16.0] — 2026-07-12
+### Added
+- **SUI-02 `brain connect` — wire an AI client in one command, not four
+  hand-copied snippets.** `brain connect --client
+  claude-code|claude-desktop|codex|gemini` writes that client's config
+  itself (plugin marketplace + kernel skill for Claude Code, the
+  `claude_desktop_config.json` MCP stanza for Desktop, a marked block in
+  AGENTS.md for Codex, `.gemini/settings.json` for Gemini CLI) — always
+  showing a diff and asking before touching your file, idempotent on a
+  second run, and reversible with `--client <c> --remove`. Host-only.
+- **SUI-01 `npx brainiac-install` — a one-command bootstrap for anyone with
+  Node.js, no shell script required.** Installs the engine from PyPI
+  (`uv tool` → `pipx` → `pip --user`, same fallback order as `install.sh`),
+  verifies it, offers to initialize a vault, and can wire one client in the
+  same command (`npx brainiac-install --vault ~/my-brain --client
+  claude-code`). Zero runtime dependencies, no telemetry, `--dry-run` prints
+  the exact command plan without touching anything.
+- **SUI-03 `.mcpb` bundle for the Claude Desktop Chat tab.** The one surface
+  that can't run a command gets a double-click install: a thin Node stdio
+  shim that spawns your already-installed `brain-mcp` (never vendors or
+  reimplements the engine) and exposes the same read-only verb set and
+  classification egress gate as the CLI. Fails to start with an actionable
+  message if the engine isn't installed yet. `brain doctor` now flags it if
+  both this and the `brain connect --client claude-desktop` config-stanza
+  route are registered for the same vault — pick one, never both.
+
+### Changed
+- **PYP-04 channel switchover — PyPI-first install, clone is dev-only.**
+  `install.sh`/`install.ps1` default to `uv tool install` → `pipx install` →
+  `pip install --user 'brainiac-cli[mcp]'` (first success wins, each
+  attempt visibly reported); `--dev`/`-Dev` keeps the editable-checkout path
+  for contributors/offline use. The lifecycle skills (`/brainiac-install`,
+  `/brainiac-update`, `/brainiac-uninstall`) and `brain doctor`/`brain
+  update` are now channel-aware (`pypi-uv | pipx | pip-user |
+  editable-checkout`), each running the right install/upgrade/uninstall
+  command for the detected channel. `brain doctor --check-registry` adds an
+  opt-in row comparing the repo's latest release tag, the installed
+  version, and the latest version actually published on PyPI. Known gap:
+  `tools/workspace_registry.py` and Cowork staging (`stage_model.py`,
+  `cowork_workspace_install.sh`) are not yet wheel-packaged, so
+  `/brainiac-install`'s registry-write step and any Cowork workspace still
+  need a read-only checkout of `~/brainiac` for those two things only.
+- **PYP-03 PyPI publish runbook.** `docs/release-runbook.md` gains §7.6
+  (build → TestPyPI → verify → PyPI, human-run, tokens never in-repo), §7.7
+  (a prepared TestPyPI RC checklist — `_evidence/install-plan/testpypi-rc.md`),
+  and §7.8 (a Windows pre-release acceptance checklist). The publish step
+  must complete and be verified (`brain doctor --check-registry`) BEFORE the
+  clean-room export in §8 — otherwise the exported public repo documents a
+  `pip install` command that 404s.
+
+## [0.15.0] — 2026-07-11
+
+The G&P benchmark-series release: seven adversarial retrieval rounds
+(2026-07-10/11), each fixed same-day, systemically.
+
+### Added
+- **RET-10 `brain dossier`** — the one-call retrieval sweep for
+  decision-state questions: decision layer vs sources SPLIT, per-decision
+  `tensions` (newer sources post-dating a recorded decision), retired
+  versions pre-excluded, freshness attached; CLI (VM_ALLOWED) + MCP tool;
+  RET-10b targeted BM25 decision probe so the layer survives semantic
+  crowding.
+- **RET-09 freshness signal** — search responses carry
+  `freshness {newer_count, vault_newest, hint}`; hits carry `date` +
+  `type` (the decision/source AUTHORITY signal).
+- **WSP-01 workspace sweep** — `brain sweep-workspace` + nightly fold:
+  settled top-level files flow from configured working/capture folders
+  into `inbox/`; per-dir age overrides (`path=N`), `path=0` capture-inbox
+  mode (same-day, 15-min write-settle guard), ingest-handler-aware skip.
+- **Self-organization folds** — VER-01 auto version-chains (audited
+  supersede over explicit `…-vN` families), PAR-01 auto-PARA filing,
+  NAV-01 nightly backlinks/catalog regeneration.
+- **DEC-01 decision-capture nudge** — decision language (EN+PT) in fresh
+  sources queues a once-per-note hot.md candidate + action_required.
+- **`brain-synthesis`** — second sanctioned scheduled task (weekly,
+  registry-driven headless kb-curator session); installer registration +
+  launchd template.
+- **MCP `bases_query` tool** (latest_only / as_of temporal routing).
+
+### Changed
+- **Host egress default = FULL VAULT (MNPI)** (owner decision 2026-07-10);
+  `--role vm` keeps the conservative Internal default; MCP ceiling default
+  follows the host. `brain project` + HTML brief/digest stay conservative.
+- **Temporal-intent queries** ("latest/current/as of", EN+PT) double the
+  recency staleness penalty and halve its half-life.
+- **`document_date` derived at ingest** from leading/embedded/trailing
+  filename dates — bulk re-ingestions no longer rank as fresh.
+- **Maintenance umbrella fires HOURLY** (installer templates updated,
+  macOS + Windows); persistence budget formally amended to two host tasks.
+- CLI `--help`/AGENTS.md/MCP descriptions carry one shared retrieval
+  discipline (decision-layer-authoritative; proposals never self-promote).
+
+### Fixed
+- MCP dossier egress-report merge KeyError on conditional casing warnings.
+- Decision-capture scan skips retired version-family members.
+- Freshness MAX ignores non-ISO `created` values.
+
+### Changed (distribution)
+- **Marketplace/plugin rename: `profile-a-marketplace` → `brainiac`, `profile-a-kernel`/`profile-a-extras` → `brainiac-kernel`/`brainiac-extras`.**
+  `brainiac-manager` is unchanged. Anyone already installed under the old
+  names: `brain doctor` now flags the stale registration; recover with
+  `claude plugin marketplace add Autopsias/brainiac && claude plugin install
+  brainiac-manager@brainiac`, then run `/brainiac-update`, which detects the
+  old names and finishes the migration (install-new-before-remove-old, with a
+  recorded-state rollback on any mid-migration failure). See
+  `docs/adr/0006-distribution-naming.md`.
+
 ## [0.14.1] — 2026-07-10
 ### Fixed
 - **`brain update` re-stages the AGENTS.md contract, not just the engine.** The

@@ -3,8 +3,12 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "profile-a-brain"
-version = "0.14.1"
+# PyPI distribution name (PYP-01, ADR-0006): `brainiac` is taken on PyPI
+# (HTTP 200, verified 2026-07-11); `brainiac-cli` was free (404) at the same
+# check. The IMPORT package stays `brain` and the console script stays
+# `brain` — only the distribution/project name changes.
+name = "brainiac-cli"
+version = "0.16.1"
 description = "Brainiac — local any-LLM second-brain core engine + brain CLI (Markdown truth, derived SQLite index)."
 readme = "README.md"
 license = "Apache-2.0"
@@ -78,7 +82,7 @@ yaml = ["PyYAML>=6"]
 # `brain ingest` degrades per-handler (reports which extensions are
 # unavailable) rather than crashing.
 ingest = ["pypdf>=4.0", "python-docx>=1.1", "python-pptx>=0.6.23", "openpyxl>=3.1", "Pillow>=10"]
-dev = ["pytest>=7"]
+dev = ["pytest>=7", "build>=1"]
 # A/B retrieval eval harness (S05): ranx is MIT; numpy comes transitively.
 # `pip install -e .[eval]` to run eval/harness.py + eval/gate.py + scripts/ci/eval_gate.sh.
 eval = ["ranx>=0.3.20", "numpy>=1.24"]
@@ -103,9 +107,21 @@ index = ["regex>=2023.0.0"]
 brain = "brain.cli:main"
 # optional Chat-tab bridge; harmless if [mcp] is not installed (import-time only).
 brain-mcp = "brain.mcp_adapter:serve"
+# WD-02 golden-set regression probes: resolved from the INSTALLED distribution
+# (never repo-relative) so the launchd maintain run — which has no repo CWD —
+# can invoke it. `python -m brain.golden_probe` is the equivalent module form.
+brain-golden-probe = "brain.golden_probe:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# PYP-02: wheel-complete scaffold/registration assets. src/brain/_assets/
+# mirrors the repo-root layout (AGENTS.md, templates/, overlay/template/,
+# routines/manifest.json, scripts/<registrar + installer scripts>) and is
+# SYNCED — never hand-edited — by tools/package_clients.py from the repo-root
+# originals (lockstep-validated in --validate-only).
+brain = ["_assets/**"]
 
 [tool.pytest.ini_options]
 # Scope collection to tests/ so pytest never descends into a local model venv

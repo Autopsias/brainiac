@@ -70,7 +70,7 @@ entry instead of each claiming their own. Full justification:
 | Kernel skills (canonical copy) | `.claude/skills/<name>/SKILL.md` | 11 skills (10 kernel+extras + `setup-cowork`); this is the one copy you ever hand-edit |
 | Codex mirror | `.agents/skills/<name>/SKILL.md` | Auto-synced by `tools/package_clients.py`; identical set minus `setup-cowork` |
 | Cowork bundles | `dist/cowork-skills/<name>.skill` | 10 zips, one per kernel+extras skill, ready for Cowork's Save-skill upload |
-| Claude Code marketplace (optional) | `.claude-plugin/marketplace.json` + `plugins/profile-a-kernel/` + `plugins/profile-a-extras/` | For installing without cloning the repo |
+| Claude Code marketplace (optional) | `.claude-plugin/marketplace.json` + `plugins/brainiac-kernel/` + `plugins/brainiac-extras/` | For installing without cloning the repo |
 | The task manifest | `routines/manifest.json` | Single source of truth for every scheduled/on-invoke task across host + VM; consumed by `scripts/register_tasks.py` and the `task-registrar` skill |
 
 **Never hand-edit a mirror.** If a kernel skill changes, edit

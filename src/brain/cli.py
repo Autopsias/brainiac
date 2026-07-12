@@ -32,6 +32,13 @@ FINAL stage before stdout. A harness self-discovers the whole contract from
     brain ingest-transcript <path> --origin O [--language L]   # host-broker (ING-04)
     brain write <relpath> [--reason R]     # host-broker, audited, fails closed
     brain verify-audit [--json]            # verify the Ed25519 chain
+    brain connect --client <c> [--remove]  # SUI-02, host-broker: wire/unwire ONE
+                                            # client (claude-code|claude-desktop|
+                                            # codex|gemini) — diff-first, asks
+                                            # before touching any user config file
+    brain mcp-config [--json]              # PRINT-ONLY equivalent for the
+                                            # claude-desktop MCP stanza (paste it
+                                            # yourself instead of `connect` writing it)
 
 Trust role (--role / $BRAIN_ROLE, default host): the Cowork Linux VM runs
 ``--role vm`` — a READ + DRAFT surface. It may run the read tools + ``status`` +
@@ -39,10 +46,12 @@ Trust role (--role / $BRAIN_ROLE, default host): the Cowork Linux VM runs
 verify-audit) are refused on the VM. The VM opens only the read-only published
 snapshot (never WAL) and never resolves a signing key. See AGENTS.md §6.
 
-Egress: results are filtered to ``--max-tier`` (default: Internal). Unlabelled
-or unrecognised notes are treated as MNPI and withheld (default-deny). Surfacing
-Restricted/MNPI requires an explicit ``--max-tier`` elevation — the human gate.
-The same filter is reused by the optional MCP adapter (a thin wrapper over this).
+Egress: results are filtered to ``--max-tier``. Default on the trusted host:
+the FULL vault (MNPI) — narrow with ``--max-tier`` or ``$BRAIN_DEFAULT_MAX_TIER``.
+Default on ``--role vm``: Internal — the untrusted leg keeps the conservative
+cap, and elevating it is the explicit human gate. Unlabelled or unrecognised
+notes rank as MNPI (default-deny at any cap below MNPI). The same filter is
+reused by the optional MCP adapter (a thin wrapper over this).
 """
 from __future__ import annotations
 
@@ -52,6 +61,7 @@ import sys
 from typing import Any
 
 from . import __version__, classification as cls
+from . import connect as _connect
 from . import egress
 from .core import BrainCore
 
@@ -76,6 +86,23 @@ temporal query surface FIRST, before plain semantic search:
 search/get results also carry `is_latest_version` on every hit, so even a plain
 semantic-search agent can prefer the current claim without a second round-trip.
 
+retrieval discipline (non-negotiable; details in AGENTS.md §5):
+  - every search hit carries `type` — the AUTHORITY signal. A `type: decision`
+    hit IS the recorded decision layer; a `type: source` hit (memos, decks,
+    drafts) is material under consideration and NEVER overturns a decision on
+    its own. Conflict between a newer source and a decision note? Report the
+    tension — never promote the proposal.
+  - decision-state questions ("what have we decided", "latest decisions",
+    "current state of X"): `brain dossier "<question>" --json` is the
+    ONE-CALL sweep — decision layer + sources + tensions (newer sources
+    post-dating a decision) + freshness, retired versions pre-excluded.
+    (`bases-query --where type=decision --latest-only` remains the raw
+    probe.) The newest DOCUMENT VERSION is not the newest DECISION STATE.
+  - react to the search response's `freshness` block ("N sources newer than
+    your newest hit"): probe past your hits (recent / --latest-only / a
+    narrower search) before answering a "latest/current" question.
+  - a `-- N withheld` egress line means elevate --max-tier, not "vault empty".
+
 examples:
   brain grep "sqlite-vec" --json
   brain bases-query --where type=note --where classification=Internal --json
@@ -89,9 +116,10 @@ examples:
   brain --vault ./vault supersede arctic-embed-choice e5-small-choice --reason "switched embedder"
   brain --vault ./vault project --dest /tmp/vm-workspace --max-tier Internal
 
-egress filter (deny-by-default):
+egress filter (deny-by-default below the cap):
   tiers low->high: Public < Internal < Confidential < Restricted < MNPI
-  default --max-tier is Internal; unlabelled notes => MNPI => withheld.
+  default --max-tier: full vault (MNPI) on host, Internal on --role vm;
+  unlabelled notes rank as MNPI (withheld at any lower cap).
   the filter is the final stage before stdout. it is an egress DECISION, not
   containment — a file-capable harness reads Markdown directly; use
   `brain project` (a filtered workspace copy) for real containment.
@@ -155,6 +183,32 @@ def _filter_dicts(items: list[dict], max_tier: str) -> tuple[list[dict], dict]:
     return surfaced, report
 
 
+def _freshness_block(core: Any, surfaced: list[dict], max_tier: str) -> dict | None:
+    """RET-09: the "the vault continues past your hits" signal. Computed from
+    the surfaced hits' valid-time dates; None when no hit carries a date (a
+    hitless or dateless result has nothing to compare against). The hint only
+    renders when newer material actually exists — an agent answering a
+    "latest/current" question must probe past its hits before declaring the
+    answer current (this is the exact failure of the 2026-07 G&P benchmark:
+    a coherent-but-stale curated answer with newer sources sitting in raw/)."""
+    dates = [h.get("date", "") for h in surfaced if h.get("date")]
+    if not dates:
+        return None
+    try:
+        fresh = core.source_freshness(max(dates), max_tier)
+    except Exception:  # noqa: BLE001 — a freshness probe must never break search
+        return None
+    if fresh.get("newer_count", 0) > 0:
+        fresh["hint"] = (
+            f"{fresh['newer_count']} note(s)/source(s) carry dates newer than your "
+            f"newest hit ({fresh['newest_hit_date']}; vault newest "
+            f"{fresh['vault_newest']}). For 'latest/current' questions, probe past "
+            f"these hits (brain recent, bases-query --latest-only, or a narrower "
+            f"search) before treating this result as the current state."
+        )
+    return fresh
+
+
 def _egress_footer(report: dict) -> str:
     """The `-- N/M surfaced; K withheld` line, plus the elevation hint when the
     gate withheld anything (RET-08). One renderer so every read surface nudges
@@ -186,8 +240,10 @@ def build_parser() -> argparse.ArgumentParser:
     def add_common(sp: argparse.ArgumentParser) -> None:
         sp.add_argument("--json", action="store_true", help="emit JSON")
         sp.add_argument(
-            "--max-tier", default=cls.DEFAULT_MAX_TIER, choices=cls.TIERS,
-            help="egress cap; results above this tier are withheld (default: %(default)s)",
+            "--max-tier", default=None, choices=cls.TIERS,
+            help="egress cap; results above this tier are withheld "
+                 f"(default: {cls.DEFAULT_MAX_TIER} on host, "
+                 f"{cls.VM_DEFAULT_MAX_TIER} on --role vm)",
         )
 
     def add_search(name: str, help_text: str) -> None:
@@ -235,6 +291,20 @@ def build_parser() -> argparse.ArgumentParser:
                     help="[--full] task manifest path (default: installed/repo routines/manifest.json)")
     sp.add_argument("--save-cowork-prompt", default=None,
                     help="[--full, cowork] also write the Cowork paste-prompt to this file")
+    sp.add_argument("--no-seed-vault", dest="seed_vault", action="store_false",
+                    help="[--full] do NOT seed a genuinely empty vault with the 3 "
+                         "generic sample notes")
+    sp.add_argument("--import-from", default=None,
+                    help="[--full, host only] guided first-ingest: stage an existing "
+                         "folder of documents (e.g. an Obsidian vault) into this "
+                         "vault's inbox/ and run the standard ingest drain. Prints a "
+                         "dry-run manifest (file count/bytes/extensions) first; pass "
+                         "--yes to actually stage + ingest. Refused on --role vm.")
+    sp.add_argument("--yes", action="store_true",
+                    help="[--import-from] skip the interactive y/N confirmation")
+    sp.add_argument("--import-force", action="store_true",
+                    help="[--import-from] override the default safety caps "
+                         "(5000 files / 500 MB)")
     sp.add_argument("--json", action="store_true")
 
     sp = sub.add_parser(
@@ -247,6 +317,11 @@ def build_parser() -> argparse.ArgumentParser:
              "host-only-surfaces list, instead of crashing or host checks",
     )
     sp.add_argument("--json", action="store_true")
+    sp.add_argument("--check-registry", action="store_true",
+                    help="host only: add the 'PyPI registry drift' row (repo tag / "
+                         "installed / latest-published-on-PyPI) via a single cached "
+                         "HTTPS metadata read. Off by default — this is the only "
+                         "network call `doctor` ever makes, and only with this flag.")
 
     sp = sub.add_parser(
         "mcp-config",
@@ -257,9 +332,35 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--name", default="brainiac",
                     help="server name/key in the config (default: %(default)s) — "
                          "use a distinct name per vault")
-    sp.add_argument("--max-tier", default="Internal",
-                    help="egress ceiling for this MCP server (default: %(default)s; "
-                         "raise to e.g. Restricted for a vault whose notes need it)")
+    sp.add_argument("--max-tier", default="MNPI",
+                    help="egress ceiling for this MCP server (default: %(default)s "
+                         "= full vault, matching the host CLI default; narrow to "
+                         "e.g. Internal for a server that must stay capped)")
+    sp.add_argument("--json", action="store_true")
+
+    sp = sub.add_parser(
+        "connect",
+        help="SUI-02: wire ONE client (claude-code|claude-desktop|codex|gemini) to "
+             "this vault — shows a diff, asks before touching any user config file, "
+             "idempotent (re-run says 'already connected'). Host-only, "
+             "self-executing (not print-only — that's `mcp-config`). "
+             "`--remove` unwires the same client.",
+    )
+    sp.add_argument("--client", required=True, choices=list(_connect.CLIENTS))
+    sp.add_argument("--target", default=".",
+                    help="project directory being wired (default: cwd) — where "
+                         "CLAUDE.md/AGENTS.md/.gemini/settings.json live")
+    sp.add_argument("--name", default="brainiac",
+                    help="MCP server name for --client claude-desktop (default: %(default)s)")
+    sp.add_argument("--max-tier", default="MNPI",
+                    help="egress ceiling baked into the claude-desktop MCP stanza "
+                         "(default: %(default)s = full vault, matches `mcp-config`)")
+    sp.add_argument("--marketplace-source", default=_connect.DEFAULT_MARKETPLACE_SOURCE,
+                    help="source passed to `claude plugin marketplace add` for "
+                         "--client claude-code (default: %(default)s)")
+    sp.add_argument("--remove", action="store_true", help="unwire this client instead of wiring it")
+    sp.add_argument("--yes", action="store_true",
+                    help="skip the interactive y/N confirmation (required when not a TTY)")
     sp.add_argument("--json", action="store_true")
 
     sp = sub.add_parser(
@@ -269,7 +370,7 @@ def build_parser() -> argparse.ArgumentParser:
              "engine venv refresh -> workspace re-stage -> `brain doctor` "
              "verify, one before->after table, one pass/fail (host only)",
     )
-    sp.add_argument("--marketplace", default="profile-a-marketplace",
+    sp.add_argument("--marketplace", default="brainiac",
                     help="marketplace name to refresh/compare against (default: %(default)s)")
     sp.add_argument("--engine-src", default=None,
                     help="engine checkout to install -e from (default: resolved from "
@@ -284,8 +385,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     # `search` and `hybrid-search` are the SAME fused RRF retrieval (RET-01);
     # the second name is the explicit agentic-tool spelling (RET-04).
-    add_search("search", "fused RRF(60) BM25 + dense retrieval (sourced)")
+    add_search("search", "fused RRF(60) BM25 + dense retrieval — hits carry "
+                         "type/date/is_latest_version; response carries a "
+                         "freshness block (react to it: see --help discipline)")
     add_search("hybrid-search", "alias of `search`: fused RRF(60) BM25 + dense (RET-01)")
+
+    sp = sub.add_parser(
+        "dossier",
+        help="RET-10: the ONE-CALL retrieval sweep for decision-state questions — "
+             "decision-layer hits + corroborating sources + TENSIONS (newer "
+             "sources post-dating a recorded decision) + freshness, with "
+             "retired versions already excluded. Prefer this over plain "
+             "search when the question is 'what have we decided / what's "
+             "the current state'",
+    )
+    sp.add_argument("query")
+    sp.add_argument("-k", type=int, default=12, help="max live hits (default: 12)")
+    add_common(sp)
 
     sp = sub.add_parser("grep", help="lexical-first exact/regex scan over notes — NO embedding (RET-04)")
     sp.add_argument("pattern")
@@ -354,6 +470,17 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--json", action="store_true")
 
     sp = sub.add_parser(
+        "warmup",
+        help="HOST-ONLY (S02/CS-01): resolve + download the live embedding "
+             "model now (stderr progress), instead of deferring to the first "
+             "real semantic search. Never on role=vm — the VM model is "
+             "pre-staged by the host and HuggingFace is off its egress "
+             "allowlist. Does not rebuild the index; run `brain sync` after "
+             "if `brain status` reported embedder: pending.",
+    )
+    sp.add_argument("--json", action="store_true")
+
+    sp = sub.add_parser(
         "sync",
         help="incremental upsert by path+hash + delete-propagation (no full rebuild); "
              "drains capture drafts first (host)",
@@ -387,7 +514,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("project", help="write a classification-filtered copy of the vault (real containment)")
     sp.add_argument("--dest", required=True, help="destination directory (recreated each run)")
-    sp.add_argument("--max-tier", default=cls.DEFAULT_MAX_TIER, choices=cls.TIERS)
+    # project builds a workspace for an UNTRUSTED leg — it keeps the
+    # conservative Internal default even now that the host read surface
+    # defaults to the full vault (a full-vault containment copy is an
+    # explicit choice, never a default).
+    sp.add_argument("--max-tier", default="Internal", choices=cls.TIERS)
     sp.add_argument("--json", action="store_true")
 
     sp = sub.add_parser(
@@ -425,6 +556,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--json", action="store_true")
 
     sp = sub.add_parser("verify-audit", help="verify the Ed25519 audit chain")
+    sp.add_argument("--check-content", action="store_true",
+                    help="also flag notes whose current bytes differ from the "
+                         "last signed content hash (detects post-commit edits)")
     sp.add_argument("--json", action="store_true")
 
     sp = sub.add_parser("anchor", help="publish the signed chain head OFF-HOST (host; SEC-03)")
@@ -467,7 +601,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("-n", type=int, default=5, help="max recent notes to show (default: 5)")
     sp.add_argument("--no-drain", action="store_true",
                     help="skip the capture drain (VM / read-only mode)")
-    sp.add_argument("--max-tier", default=cls.DEFAULT_MAX_TIER, choices=cls.TIERS)
+    sp.add_argument("--max-tier", default=None, choices=cls.TIERS)
     sp.add_argument("--json", action="store_true")
     sp.add_argument(
         "--html", action="store_true",
@@ -480,7 +614,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="weekly digest: notes added/updated in the past N days (UX-02)",
     )
     sp.add_argument("--days", type=int, default=7, help="lookback period in days (default: 7)")
-    sp.add_argument("--max-tier", default=cls.DEFAULT_MAX_TIER, choices=cls.TIERS)
+    sp.add_argument("--max-tier", default=None, choices=cls.TIERS)
     sp.add_argument("--json", action="store_true")
     sp.add_argument(
         "--html", action="store_true",
@@ -527,9 +661,30 @@ def build_parser() -> argparse.ArgumentParser:
     add_common(sp)
 
     sp = sub.add_parser(
+        "sweep-workspace",
+        help="WSP-01: move SETTLED top-level files (mtime older than --age-days) "
+             "from configured working folder(s) into <vault>/inbox/ for the "
+             "standard ingest drain — the lifecycle for session-artifact dumping "
+             "grounds. Sources: --dir (repeatable) or $BRAIN_WORKSPACE_SWEEP_DIRS. "
+             "Subdirectories and dotfiles are never touched; already-ingested "
+             "content dedups by hash downstream. Runs inside the nightly "
+             "maintain automatically when configured (host-only)",
+    )
+    sp.add_argument("--dir", action="append", default=None, dest="dirs",
+                    help="workspace folder to sweep (repeatable; default: "
+                         "$BRAIN_WORKSPACE_SWEEP_DIRS)")
+    sp.add_argument("--age-days", type=int, default=None,
+                    help="settled threshold in days (default: "
+                         "$BRAIN_WORKSPACE_SWEEP_AGE_DAYS or 14)")
+    sp.add_argument("--dry-run", action="store_true",
+                    help="report what would move; touch nothing")
+    sp.add_argument("--json", action="store_true")
+
+    sp = sub.add_parser(
         "maintain",
         help="the umbrella: THE single sanctioned host task (brain-nightly) — "
-             "sync --publish + brief + recommendations-aging fold, plus date-gated "
+             "workspace sweep (when configured) + sync --publish + brief + "
+             "recommendations-aging fold, plus date-gated "
              "health/integrity/digest(+curate+promote-scan)/graphify branches; "
              "due-since-last-run catch-up + single-runner lock (ADR-0003 Ruling 5/d)",
     )
@@ -567,6 +722,182 @@ def _make_core(args: Any, role: str) -> BrainCore:
         return BrainCore(vault=args.vault)
 
 
+def _connect_confirm(preview: str, args: Any) -> bool:
+    """The one confirmation gate every `connect` mutation goes through:
+    --yes always proceeds; --json never prompts (automation must pass --yes
+    explicitly, same contract as `init --import-from`); otherwise prompt on a
+    real TTY, and refuse (caller prints the preview + exits non-zero) when
+    neither holds."""
+    if args.yes:
+        return True
+    if args.json or not sys.stdin.isatty():
+        return False
+    sys.stdout.write(preview + "\n")
+    ans = input("Proceed? [y/N] ").strip().lower()
+    return ans in ("y", "yes")
+
+
+def _connect_file_step(plan: "_connect.ConnectPlan", args: Any, *, remove: bool) -> dict:
+    """Diff -> confirm -> write, for one file-based connect plan (both the
+    Markdown marked-block clients and the JSON-merge clients share this)."""
+    if plan.action == "noop" and not remove:
+        return {"path": str(plan.target_path), "action": "noop",
+                "already_connected": True, "diff": ""}
+    if plan.action == "noop" and remove:
+        return {"path": str(plan.target_path), "action": "noop",
+                "detail": "nothing to unwire", "diff": ""}
+    if not _connect_confirm(plan.diff or f"(would create {plan.target_path})", args):
+        return {"path": str(plan.target_path), "action": plan.action,
+                "diff": plan.diff, "confirmed": False,
+                "detail": "not confirmed — pass --yes to proceed non-interactively"}
+    if remove:
+        _connect.apply_remove_marked_block(plan)
+    else:
+        if plan.target_path.suffix == ".json":
+            _connect.apply_json_merge(plan)
+        else:
+            _connect.apply_marked_block(plan)
+    return {"path": str(plan.target_path), "action": plan.action,
+            "diff": plan.diff, "confirmed": True}
+
+
+def _cmd_connect(args: Any) -> int:
+    from pathlib import Path
+
+    from . import config
+
+    client = args.client
+    remove = args.remove
+    target_dir = Path(args.target).resolve()
+    vault = str(Path(config.vault_root(args.vault)).resolve())
+    steps: list[dict] = []
+    ok = True
+
+    if client == "claude-desktop":
+        path = _connect.claude_desktop_config_path()
+        if remove:
+            found = _connect.plan_restore_from_backup(path)
+            if not found["ok"]:
+                steps.append({"path": str(path), "action": "noop", "detail": found["reason"]})
+            elif _connect_confirm(f"restore {path} from backup {found['backup']}", args):
+                _connect.apply_restore_from_backup(path, Path(found["backup"]))
+                steps.append({"path": str(path), "action": "restore",
+                              "backup": found["backup"], "confirmed": True})
+            else:
+                steps.append({"path": str(path), "action": "restore", "confirmed": False,
+                              "detail": "not confirmed — pass --yes to proceed non-interactively"})
+                ok = False
+        else:
+            plan = _connect.plan_claude_desktop(path, vault, args.name, args.max_tier)
+            step = _connect_file_step(plan, args, remove=False)
+            steps.append(step)
+            ok = step.get("already_connected") or step.get("confirmed", False)
+
+    elif client == "gemini":
+        path = target_dir / ".gemini" / "settings.json"
+        if remove:
+            found = _connect.plan_restore_from_backup(path)
+            if not found["ok"]:
+                steps.append({"path": str(path), "action": "noop", "detail": found["reason"]})
+            elif _connect_confirm(f"restore {path} from backup {found['backup']}", args):
+                _connect.apply_restore_from_backup(path, Path(found["backup"]))
+                steps.append({"path": str(path), "action": "restore",
+                              "backup": found["backup"], "confirmed": True})
+            else:
+                steps.append({"path": str(path), "action": "restore", "confirmed": False,
+                              "detail": "not confirmed — pass --yes to proceed non-interactively"})
+                ok = False
+        else:
+            plan = _connect.plan_gemini(path)
+            step = _connect_file_step(plan, args, remove=False)
+            steps.append(step)
+            ok = step.get("already_connected") or step.get("confirmed", False)
+
+    elif client == "codex":
+        path = target_dir / "AGENTS.md"
+        if remove:
+            plan = _connect.plan_remove_marked_block(path)
+            step = _connect_file_step(plan, args, remove=True)
+        else:
+            plan = _connect.plan_marked_block(path)
+            step = _connect_file_step(plan, args, remove=False)
+        steps.append(step)
+        ok = step.get("already_connected") or step.get("confirmed", False) or step["action"] == "noop"
+
+    elif client == "claude-code":
+        if remove:
+            available = _connect.claude_plugin_cli_available()
+            if available and _connect_confirm(
+                    f"claude plugin uninstall {_connect.KERNEL_PLUGIN}@{_connect.MARKETPLACE_NAME}", args):
+                result = _connect.run_claude_code_plugin_uninstall(
+                    claude_home=Path.home() / ".claude")
+                steps.append({"kind": "plugin", "confirmed": True, **result})
+                ok = result["ok"]
+            elif not available:
+                steps.append({"kind": "plugin", "detail": "`claude plugin` CLI not available; "
+                              f"run manually: claude plugin uninstall "
+                              f"{_connect.KERNEL_PLUGIN}@{_connect.MARKETPLACE_NAME}"})
+            else:
+                steps.append({"kind": "plugin", "confirmed": False,
+                              "detail": "not confirmed — pass --yes to proceed non-interactively"})
+                ok = False
+            path = target_dir / "CLAUDE.md"
+            plan = _connect.plan_remove_marked_block(path)
+            step = _connect_file_step(plan, args, remove=True)
+            steps.append(step)
+            ok = ok and (step.get("already_connected") or step.get("confirmed", False) or step["action"] == "noop")
+        else:
+            claude_home = Path.home() / ".claude"
+            already_installed = _connect.is_plugin_installed(claude_home)
+            if already_installed:
+                steps.append({"kind": "plugin", "action": "noop", "already_connected": True})
+            else:
+                available = _connect.claude_plugin_cli_available()
+                cmds = _connect.claude_code_plugin_commands(args.marketplace_source)
+                preview = "\n".join(" ".join(c) for c in cmds)
+                if not available:
+                    steps.append({
+                        "kind": "plugin", "action": "manual",
+                        "detail": "`claude` plugin CLI not detected/usable — run these two "
+                                  "commands yourself (guided, not one-command, for this client):",
+                        "commands": [" ".join(c) for c in cmds],
+                    })
+                elif _connect_confirm(preview, args):
+                    result = _connect.run_claude_code_plugin_install(
+                        marketplace_source=args.marketplace_source, claude_home=claude_home)
+                    steps.append({"kind": "plugin", "confirmed": True, **result})
+                    ok = result["ok"]
+                else:
+                    steps.append({"kind": "plugin", "confirmed": False, "commands": [" ".join(c) for c in cmds],
+                                  "detail": "not confirmed — pass --yes to proceed non-interactively"})
+                    ok = False
+            path = target_dir / "CLAUDE.md"
+            plan = _connect.plan_marked_block(path)
+            step = _connect_file_step(plan, args, remove=False)
+            steps.append(step)
+            ok = ok and (step.get("already_connected") or step.get("confirmed", False))
+
+    report = {"client": client, "removed": remove, "steps": steps, "ok": ok}
+    if args.json:
+        _emit(report, True)
+    else:
+        lines = [f"brain connect --client {client}{' --remove' if remove else ''} — "
+                 f"{'OK' if ok else 'INCOMPLETE'}"]
+        for step in steps:
+            if step.get("already_connected"):
+                lines.append(f"  {step.get('path', step.get('kind'))}: already connected")
+            elif step.get("confirmed"):
+                lines.append(f"  {step.get('path', step.get('kind'))}: wired")
+            else:
+                lines.append(f"  {step.get('path', step.get('kind'))}: {step.get('detail', step.get('action'))}")
+                if step.get("diff"):
+                    lines.append(step["diff"])
+                if step.get("commands"):
+                    lines.extend(f"    {c}" for c in step["commands"])
+        _emit(None, False, "\n".join(lines))
+    return 0 if ok else 2
+
+
 # Commands the read+draft-only VM leg may run. Everything else is host-broker.
 # capture/brief/digest are included because BrainCore routes correctly by role:
 #   capture → draft_capture (VM), write_note (host)
@@ -589,7 +920,7 @@ VM_ALLOWED = frozenset({
     "init",  # filesystem-only overlay validation; safe on either role
     "doctor",  # read-only version/health inspection; no index/key touched
     "mcp-config",  # prints a config string; no index/key/vault read
-    "search", "hybrid-search", "grep", "bases-query", "graph-expand",
+    "search", "hybrid-search", "dossier", "grep", "bases-query", "graph-expand",
     "get", "read", "recent", "status", "draft-capture",
     "capture", "brief", "digest",
 })
@@ -611,6 +942,14 @@ def _main(argv: list[str] | None = None) -> int:
 
     args = build_parser().parse_args(argv)
     role = config.role(getattr(args, "role", None))
+    # Role-aware egress default (owner decision, 2026-07-10): the trusted host
+    # surfaces the FULL vault unless --max-tier narrows it; the untrusted VM
+    # leg keeps the conservative Internal cap. An explicit --max-tier always
+    # wins on either role — argparse leaves it None only when the flag was
+    # not typed.
+    if getattr(args, "max_tier", "unset") is None:
+        args.max_tier = (cls.VM_DEFAULT_MAX_TIER if role == config.ROLE_VM
+                         else cls.DEFAULT_MAX_TIER)
     # DV-03: the VM leg fails closed on a dead embedder rather than silently
     # answering semantic queries with random hash vectors (no-op when a real
     # embedder is present or hash was chosen explicitly).
@@ -640,6 +979,53 @@ def _main(argv: list[str] | None = None) -> int:
         if args.full:
             from . import init as brain_init
 
+            import_report: dict[str, Any] | None = None
+            if args.import_from:
+                # ONB-01: refused BEFORE any filesystem side effect -- no
+                # dry-run scan, no read of the import folder at all. `init`
+                # itself is VM_ALLOWED (filesystem-only overlay setup), but
+                # --import-from drives the host-only ingest drain, so it
+                # gets its own gate here, same shape as the general VM
+                # trust-gate refusal above.
+                if role == config.ROLE_VM:
+                    msg = {
+                        "error": "role_forbidden", "role": role, "cmd": "init --import-from",
+                        "detail": "'init --import-from' stages + ingests a folder via "
+                                  "the host ingest drain; the VM leg is read + draft "
+                                  "only. Run it on the host.",
+                    }
+                    _emit(msg if args.json else
+                          "refused: 'init --import-from' is host-broker only "
+                          "(role=vm is read+draft). Run it on the host.", args.json)
+                    return 4
+                try:
+                    dry_run = brain_init.build_import_dry_run(
+                        args.import_from, args.vault, force=args.import_force)
+                except brain_init.ImportSafetyError as exc:
+                    _emit({"error": "import_safety", "detail": str(exc)} if args.json
+                          else f"import refused: {exc}", args.json)
+                    return 2
+                proceed = args.yes
+                dry_run_printed = False
+                if not proceed and not args.json and sys.stdin.isatty():
+                    sys.stdout.write(brain_init.render_import_dry_run(dry_run) + "\n")
+                    dry_run_printed = True
+                    ans = input("Proceed with staging + ingest? [y/N] ").strip().lower()
+                    proceed = ans in ("y", "yes")
+                if not proceed:
+                    if args.json:
+                        _emit({"action": "init-import-dry-run", "manifest":
+                               {k: v for k, v in dry_run.items() if k != "_files"},
+                               "hint": "re-run with --yes to stage + ingest"}, True)
+                    else:
+                        human = "aborted: pass --yes to proceed non-interactively"
+                        if not dry_run_printed:
+                            human = brain_init.render_import_dry_run(dry_run) + "\n\n" + human
+                        _emit(None, False, human)
+                    return 2
+                import_report = brain_init.stage_and_ingest_import(
+                    args.import_from, args.vault, role, force=args.import_force)
+
             report = brain_init.run_full_init(
                 vault=args.vault,
                 overlay_dir=args.overlay_dir,
@@ -650,7 +1036,10 @@ def _main(argv: list[str] | None = None) -> int:
                 apply=args.apply,
                 manifest=args.manifest,
                 save_cowork_prompt=args.save_cowork_prompt,
+                seed_vault=args.seed_vault,
             )
+            if import_report is not None:
+                report["import"] = import_report
             _emit(report if args.json else None, args.json,
                   None if args.json else brain_init.render_human(report))
             return 0 if report["ok"] else 1
@@ -689,8 +1078,14 @@ def _main(argv: list[str] | None = None) -> int:
         # set. Structural fallback covers the staged shim, which invokes
         # `python3 -m brain.cli "$@"` directly and never sets $BRAIN_ROLE.
         vm_posture = role == config.ROLE_VM or brain_doctor.looks_like_vm_stage()
-        report = (brain_doctor.run_doctor_vm(vault=args.vault) if vm_posture
-                  else brain_doctor.run_doctor())
+        if vm_posture:
+            report = brain_doctor.run_doctor_vm(vault=args.vault)
+        else:
+            registry_fetch = None
+            if getattr(args, "check_registry", False):
+                def registry_fetch():  # noqa: E306 - single cached HTTPS read, opt-in only
+                    return {"pypi_version": brain_doctor.fetch_pypi_latest_version()}
+            report = brain_doctor.run_doctor(registry_fetch=registry_fetch)
         _emit(report if args.json else None, args.json,
               None if args.json else brain_doctor.render_human(report))
         return 0 if report["ok"] else 1
@@ -699,17 +1094,13 @@ def _main(argv: list[str] | None = None) -> int:
     # vault (host-side stdio server, same pattern as Smart Connections' MCP).
     # Pure string generation — no BrainCore, no index, no key.
     if cmd == "mcp-config":
-        import shutil
-        import sys as _sys
         from pathlib import Path
 
         vault = str(Path(config.vault_root(args.vault)).resolve())
-        brain_mcp = shutil.which("brain-mcp") or str(Path(_sys.executable).parent / "brain-mcp")
-        env = {"BRAIN_VAULT": vault, "BRAIN_MAX_EGRESS_TIER": args.max_tier}
-        model_dir = Path(vault) / ".brain" / "model"
-        if model_dir.is_dir():  # a staged vault carries its own model cache
-            env["BRAIN_MODEL_CACHE"] = str(model_dir)
-        entry = {args.name: {"command": brain_mcp, "env": env}}
+        # Same entry shape `brain connect --client claude-desktop` WRITES
+        # (connect.mcp_server_entry) — one builder, so print-only and
+        # write-for-real can never drift apart (SUI-02 reconciliation).
+        entry = _connect.mcp_server_entry(vault, args.name, args.max_tier)
         if args.json:
             _emit(entry, True)
         else:
@@ -721,6 +1112,14 @@ def _main(argv: list[str] | None = None) -> int:
                   "  Claude Code:    ~/.claude.json (or `claude mcp add`)\n\n" + body)
         return 0
 
+    # `connect` (SUI-02) — universal per-client wirer. Dispatched BEFORE
+    # BrainCore construction, same reasoning as `doctor`/`mcp-config`: it
+    # never touches the index/key/vault at all, only user config files +
+    # (claude-code only) the `claude` CLI. Already refused on role=vm at the
+    # VM_ALLOWED gate above, before this line is ever reached.
+    if cmd == "connect":
+        return _cmd_connect(args)
+
     # `update` is the UP-02 single top-level entry point: it self-executes
     # (never just prints instructions) and is host-broker only — it mutates
     # the CLI plugin store, the engine venv, and staged workspaces, none of
@@ -728,6 +1127,12 @@ def _main(argv: list[str] | None = None) -> int:
     if cmd == "update":
         from . import update as brain_update
 
+        if config.is_managed() and not args.dry_run:
+            _emit("brain update is disabled on a managed endpoint "
+                  "($BRAIN_MANAGED) — updates are deployed centrally. "
+                  "Use --dry-run to preview what a managed rollout would change.",
+                  args.json)
+            return 1
         report = brain_update.run_update(
             marketplace_name=args.marketplace,
             engine_src=args.engine_src,
@@ -763,18 +1168,86 @@ def _main(argv: list[str] | None = None) -> int:
         return 3
 
     if cmd in ("search", "hybrid-search"):
+        # S02/CS-01: check BEFORE the search call — a cold-start index built
+        # with the offline hash placeholder degrades to FTS-only inside
+        # BrainIndex._dense_ranked (see its docstring); surface that here so
+        # the agent/user sees WHY results look lexical-only rather than
+        # concluding the vault is thin.
+        embedder_pending = core.embedder_pending()
         hits = [h.to_dict() for h in core.hybrid_search(
             args.query, k=args.k, rerank=args.rerank,
             rerank_top=args.rerank_top, rrf_k=args.rrf_k)]
         surfaced, report = _filter_dicts(hits, args.max_tier)
+        freshness = _freshness_block(core, surfaced, args.max_tier)
+        notice = (
+            "embedder pending — dense/semantic ranking is skipped (FTS-only "
+            "results) until the real model is applied to this index; run "
+            "`brain warmup` then `brain sync`." if embedder_pending else None
+        )
         if args.json:
-            _emit({"query": args.query, "rerank": args.rerank,
-                   "results": surfaced, "egress": report}, True)
+            payload = {"query": args.query, "rerank": args.rerank,
+                       "results": surfaced, "egress": report}
+            if freshness:
+                payload["freshness"] = freshness
+            if notice:
+                payload["embedder_notice"] = notice
+            _emit(payload, True)
         else:
-            lines = [f"[{h['source']}] {h['id']}  ({h['classification'] or 'UNLABELLED'})"
-                     f"  {h['score']}\n    {h['snippet']}" for h in surfaced]
+            lines = [f"[{h['source']}] {h['id']}  <{h.get('type') or '?'}>"
+                     f"  ({h['classification'] or 'UNLABELLED'})"
+                     f"  {h.get('date') or 'undated'}  {h['score']}\n    {h['snippet']}"
+                     for h in surfaced]
             footer = _egress_footer(report)
+            if notice:
+                footer += f"\n-- {notice}"
+            if freshness and freshness.get("hint"):
+                footer += f"\n-- {freshness['hint']}"
             _emit(None, False, "\n".join(lines + [footer]) if lines else footer)
+        return 0
+
+    if cmd == "dossier":
+        res = core.dossier(args.query, k=args.k)
+        decisions, drep = _filter_dicts(res["decisions"], args.max_tier)
+        sources, srep = _filter_dicts(res["sources"], args.max_tier)
+        report = {
+            "total": drep["total"] + srep["total"],
+            "surfaced": drep["surfaced"] + srep["surfaced"],
+            "withheld": drep["withheld"] + srep["withheld"],
+            "withheld_unlabelled_default_deny":
+                drep["withheld_unlabelled_default_deny"]
+                + srep["withheld_unlabelled_default_deny"],
+            "max_tier": args.max_tier,
+        }
+        if report["withheld"] > 0 and args.max_tier != cls.TIERS[-1]:
+            report["hint"] = (
+                f"{report['withheld']} note(s) withheld above the "
+                f"{args.max_tier} cap — re-run with a higher --max-tier.")
+        freshness = _freshness_block(core, decisions + sources, args.max_tier)
+        payload = {"query": res["query"], "decisions": decisions,
+                   "sources": sources,
+                   "retired_excluded": res["retired_excluded"],
+                   "egress": report}
+        if freshness:
+            payload["freshness"] = freshness
+        if args.json:
+            _emit(payload, True)
+        else:
+            lines = [f"== decision layer ({len(decisions)}) =="]
+            for h in decisions:
+                lines.append(f"  {h['id']}  ({h['classification']})  {h.get('date') or 'undated'}")
+                for x in h.get("tensions", []):
+                    lines.append(f"    !! newer source post-dates this decision: "
+                                 f"{x['id']} ({x['date']}) — report the tension, "
+                                 f"never promote the proposal")
+            lines.append(f"== sources under consideration ({len(sources)}) ==")
+            lines += [f"  {h['id']}  <{h.get('type') or '?'}>  {h.get('date') or 'undated'}"
+                      for h in sources]
+            if res["retired_excluded"]:
+                lines.append(f"-- {res['retired_excluded']} retired version(s) excluded")
+            footer = _egress_footer(report)
+            if freshness and freshness.get("hint"):
+                footer += f"\n-- {freshness['hint']}"
+            _emit(None, False, "\n".join(lines + [footer]))
         return 0
 
     if cmd == "grep":
@@ -884,6 +1357,21 @@ def _main(argv: list[str] | None = None) -> int:
               args.json)
         return 0
 
+    if cmd == "warmup":
+        try:
+            res = core.warmup()
+        except Exception as exc:  # H-4: no raw tracebacks from maintenance cmds
+            _emit({"error": type(exc).__name__, "detail": str(exc)} if args.json
+                  else f"warmup failed ({type(exc).__name__}): {exc}", args.json)
+            return 3
+        _emit(res if args.json else
+              (f"embedder {res['model_id']} already cached "
+               if res["already_cached"] else f"downloaded embedder {res['model_id']} ")
+              + f"({res['elapsed_s']}s). Run `brain sync` to apply it to the index "
+              + "if `brain status` shows embedder: pending.",
+              args.json)
+        return 0
+
     if cmd == "sync":
         try:
             res = core.sync(drain=not args.no_drain, publish=args.publish)
@@ -957,6 +1445,13 @@ def _main(argv: list[str] | None = None) -> int:
             _emit(res, True)
         else:
             ix, sn, ver = res.get("index", {}), res.get("snapshot", {}), res.get("version", {})
+            emb = res.get("embedder", {})
+            emb_line = f"embedder: {emb.get('state','?')} [{emb.get('model_id','?')}]"
+            if emb.get("state") == "pending":
+                hint = emb.get("download_size_hint")
+                emb_line += (" — run `brain warmup`"
+                             + (f" ({hint} download)" if hint else "")
+                             + " then `brain sync` for real semantic search")
             skew_lines = []
             if ver.get("index_newer_than_binary"):
                 skew_lines.append(
@@ -973,6 +1468,7 @@ def _main(argv: list[str] | None = None) -> int:
                   f"brain {ver.get('package_version','?')}\n"
                   f"index: {ix.get('notes','?')} notes / {ix.get('chunks','?')} chunks "
                   f"[{ix.get('embed_model','?')} d={ix.get('embed_dim','?')}]\n"
+                  f"{emb_line}\n"
                   f"snapshot: {sn.get('snapshot','?')} "
                   + (f"gen {sn.get('generation')} age {sn.get('age_human')}"
                      if sn.get('snapshot') == 'present' else '')
@@ -1091,10 +1587,12 @@ def _main(argv: list[str] | None = None) -> int:
         return 0
 
     if cmd == "verify-audit":
-        res = core.verify_audit()
-        _emit(res if args.json else
-              f"audit chain: {res['status']} ({res['entries_checked']} entries, "
-              f"{len(res['errors'])} errors)", args.json)
+        res = core.verify_audit(check_content=args.check_content)
+        drift = res.get("content_drift", [])
+        text = (f"audit chain: {res['status']} ({res['entries_checked']} entries, "
+                f"{len(res['errors'])} errors")
+        text += f", {len(drift)} content-drift)" if args.check_content else ")"
+        _emit(res if args.json else text, args.json)
         return 0 if res["status"] in ("ok", "empty") else 1
 
     if cmd == "anchor":
@@ -1343,6 +1841,33 @@ def _main(argv: list[str] | None = None) -> int:
             head = (f"promote-scan -- {report['surfaced']}/{report['total']} candidates surfaced; "
                     f"{res['pending_drafts']} pending draft(s)")
             _emit(None, False, head + "\n" + maint.render_outcomes_markdown(outcomes))
+        return 0
+
+    if cmd == "sweep-workspace":
+        from pathlib import Path
+
+        env_dirs, env_age = maint.workspace_sweep_config()
+        dirs = [Path(d).expanduser() for d in args.dirs] if args.dirs else env_dirs
+        age = args.age_days if args.age_days else env_age
+        if not dirs:
+            _emit({"error": "no_dirs",
+                   "detail": "no workspace dirs: pass --dir or set "
+                             f"${maint.WORKSPACE_SWEEP_DIRS_ENV}"} if args.json
+                  else f"no workspace dirs: pass --dir or set "
+                       f"${maint.WORKSPACE_SWEEP_DIRS_ENV}", args.json)
+            return 2
+        res = maint.sweep_workspace(dirs, Path(core.vault) / "inbox", age,
+                                    dry_run=args.dry_run)
+        if args.json:
+            _emit(res, True)
+        else:
+            _emit(None, False,
+                  f"sweep-workspace [dry_run={res['dry_run']}] age>{res['age_days']}d: "
+                  f"{len(res['swept'])} swept, {res['skipped_active']} still active, "
+                  f"{len(res['missing_dirs'])} missing dir(s), "
+                  f"{len(res['errors'])} error(s)"
+                  + ("\nnext: `brain sync --publish` (or the nightly) drains "
+                     "inbox/ into signed raw/ notes" if res["swept"] and not res["dry_run"] else ""))
         return 0
 
     if cmd == "maintain":

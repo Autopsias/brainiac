@@ -28,7 +28,7 @@ def walk_files(root: Path):
     for dirpath, dirnames, filenames in __import__("os").walk(root):
         # Prune dot/underscore infra dirs at descent (Obsidian/system caches),
         # but keep vault-content zones (they are digit-prefixed, not
-        # dot/underscore) and 99 Workspace / 00 Inbox / 80 Daily which are
+        # dot/underscore) and any digit-prefixed content zones (e.g. a workspace/inbox/daily drop) which are
         # legitimate content zones despite not matching a "NN " prefix check
         # here (this tool hashes the WHOLE vault tree for integrity, not just
         # the JD zones migrate_corpus.py imports).

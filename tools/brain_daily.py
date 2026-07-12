@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """brain_daily — create (or open) today's daily note in a Brainiac vault.
 
-Second-brain parity with the old Obsidian "80 Daily" daily-note habit, done the
+Second-brain parity with an old daily-note habit, done the
 native Brainiac way: renders the `templates/daily.md` sections, optionally seeds
 the Session Summary from `brain brief`, and captures a signed+indexed
 `type: daily` note via `brain capture`.

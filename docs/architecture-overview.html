@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Brainiac — Architecture Overview</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#1a1f24; --muted:#5b6570; --line:#e3e7ea;
+    --accent:#0b5fa5; --chip:#eef4f9; --code-bg:#f5f7f9; --th:#f0f3f5;
+    --warn-bg:#fff8e6; --warn-line:#e6c96a;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#14181c; --fg:#e5e9ec; --muted:#9aa5ae; --line:#2b3238;
+      --accent:#6db3e8; --chip:#1d2731; --code-bg:#1c2126; --th:#1d2329;
+      --warn-bg:#2a2410; --warn-line:#8a7328;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  main{max-width:54rem;margin:0 auto;padding:2.5rem 1.5rem 5rem}
+  h1{font-size:1.9rem;line-height:1.25;margin:.2rem 0 .4rem}
+  h2{font-size:1.3rem;margin:2.4rem 0 .6rem;padding-top:1rem;border-top:1px solid var(--line)}
+  h3{font-size:1.05rem;margin:1.4rem 0 .4rem}
+  .kicker{color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:.08em;font-size:.75rem}
+  .meta{color:var(--muted);font-size:.9rem;margin-bottom:1.2rem}
+  .lead{font-size:1.06rem}
+  code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.86em}
+  code{background:var(--code-bg);padding:.12em .35em;border-radius:4px}
+  pre{background:var(--code-bg);padding: .9rem 1rem;border-radius:8px;overflow-x:auto;line-height:1.45}
+  pre code{background:none;padding:0}
+  table{border-collapse:collapse;width:100%;margin:.8rem 0;font-size:.92rem}
+  th,td{border:1px solid var(--line);padding:.45rem .6rem;text-align:left;vertical-align:top}
+  th{background:var(--th)}
+  .box{border:1px solid var(--line);border-radius:10px;padding:1rem 1.2rem;margin:1rem 0}
+  .callout{background:var(--warn-bg);border:1px solid var(--warn-line);border-radius:8px;padding:.7rem 1rem;margin:.9rem 0;font-size:.95rem}
+  .chips span{display:inline-block;background:var(--chip);color:var(--accent);border-radius:999px;
+    padding:.15rem .7rem;margin:.15rem .25rem .15rem 0;font-size:.8rem;font-weight:600}
+  .toc{columns:2;font-size:.92rem}
+  .toc a{color:var(--accent);text-decoration:none}
+  .toc a:hover{text-decoration:underline}
+  figure{margin:1rem 0}
+  figcaption{color:var(--muted);font-size:.85rem;margin-top:.3rem}
+  .wide{overflow-x:auto}
+  details{margin:.8rem 0}
+  details summary{cursor:pointer;color:var(--muted);font-size:.9rem}
+  .info{margin:1.4rem 0}
+  .info svg{width:100%;height:auto;display:block;font-family:inherit}
+  .info figcaption{color:var(--muted);font-size:.85rem;margin-top:.4rem;text-align:center}
+  svg .b{fill:var(--chip);stroke:var(--accent);stroke-width:1.3}
+  svg .b2{fill:var(--code-bg);stroke:var(--line);stroke-width:1.2}
+  svg .bg{fill:none;stroke:var(--line);stroke-width:1.2}
+  svg .gate{fill:var(--accent)}
+  svg .t{fill:var(--fg);font-size:13px;font-weight:650}
+  svg .tt{fill:var(--fg);font-size:14px;font-weight:700}
+  svg .ts{fill:var(--muted);font-size:11px;font-weight:400}
+  svg .ta{fill:var(--accent);font-size:11.5px;font-weight:650}
+  svg .tg{fill:#fff;font-size:11.5px;font-weight:700}
+  svg .a{stroke:var(--muted);stroke-width:1.5;fill:none}
+  svg .ad{stroke:var(--muted);stroke-width:1.4;fill:none;stroke-dasharray:5 4}
+  svg .ah{fill:var(--muted)}
+  svg text{font-family:inherit}
+  @media print{ body{font-size:12px} h2{break-after:avoid} pre{white-space:pre-wrap} }
+</style>
+</head>
+<body>
+<main>
+  <div class="kicker">Brainiac · for the IT architecture team</div>
+  <h1>Architecture Overview</h1>
+  <div class="meta">Plain-language companion to <code>docs/substrate-spec.md</code> (normative spec) and <code>docs/adr/</code> (decision records). Describes the shipped system as of <strong>v0.16 (2026-07)</strong>. Security &amp; threat model: <code>docs/security-overview.html</code>.</div>
+
+  <div class="chips">
+    <span>local-first</span><span>no server</span><span>no daemon</span>
+    <span>no cloud store</span><span>no API keys</span><span>SQLite</span>
+    <span>on-device embeddings</span><span>signed audit chain</span>
+  </div>
+
+  <div class="box toc">
+    <strong>Contents</strong><br>
+    <a href="#what">1 · What it is</a><br>
+    <a href="#principles">2 · Design principles</a><br>
+    <a href="#map">3 · Component map</a><br>
+    <a href="#data">4 · The data model</a><br>
+    <a href="#flows">5 · Data flows</a><br>
+    <a href="#trust">6 · Trust contexts</a><br>
+    <a href="#install">7 · Installation surfaces</a><br>
+    <a href="#tech">8 · Technology choices</a><br>
+    <a href="#ops">9 · Operational properties</a><br>
+    <a href="#deeper">10 · Where to read deeper</a>
+  </div>
+
+  <h2 id="what">1 · What it is, in one paragraph</h2>
+  <p class="lead">
+    Brainiac is a <strong>local-first personal knowledge engine</strong>: a folder of plain
+    Markdown files (the “vault”) plus a single Python command-line program (<code>brain</code>)
+    that indexes those files and answers questions over them — lexically (full-text search)
+    and semantically (vector embeddings computed on-device). AI assistants (Claude Code,
+    Claude Desktop, Codex, Gemini CLI) use it by running the CLI in a shell. There is
+    <strong>no server, no daemon, no cloud component, and no API key held by the system</strong>.
+    Everything lives on the user's machine; the only network egress in the whole design is the
+    AI assistant's own model call, which belongs to the assistant vendor, not to Brainiac.
+  </p>
+
+  <h2 id="principles">2 · Design principles (the “why” behind every component)</h2>
+  <ol>
+    <li><strong>Files are the single source of truth.</strong> Every note is a Markdown file
+      with a YAML header (“frontmatter”) carrying its id, type, dates, and a mandatory
+      <code>classification</code> label. The search index is a <em>derived cache</em>: it can be
+      deleted and rebuilt from the files at any time (<code>brain rebuild</code>). No state exists
+      only in a database.</li>
+    <li><strong>Local by default.</strong> Indexing, embedding, and retrieval all run on-device
+      (SQLite + ONNX models). No document content leaves the machine through Brainiac itself.</li>
+    <li><strong>Egress is the security budget.</strong> The load-bearing control is not disk
+      encryption but the <strong>egress gate</strong>: what the engine is willing to print to an AI
+      model, filtered by each note's classification tier.</li>
+    <li><strong>Two trust contexts, split capabilities.</strong> A trusted host process can write
+      and sign; an untrusted sandbox (Claude Desktop's Linux VM, “Cowork”) can only read a
+      published snapshot and stage drafts. The sandbox can never mutate the canonical data.</li>
+    <li><strong>Minimal persistence footprint.</strong> Exactly <strong>two</strong> OS-scheduled
+      tasks exist (hourly maintenance + weekly synthesis). No background daemons.</li>
+  </ol>
+
+  <h2 id="map">3 · Component map</h2>
+
+  <figure class="info">
+  <svg viewBox="0 0 780 480" role="img" aria-label="System diagram">
+    <rect x="16" y="12" width="564" height="66" rx="10" class="b2"/>
+    <text x="28" y="32" class="tt">Your AI assistants</text>
+    <text x="200" y="32" class="ts">— the only model calls in the whole design</text>
+    <rect x="28" y="42" width="120" height="26" rx="13" class="b"/><text x="88" y="59" text-anchor="middle" class="ta">Claude Code</text>
+    <rect x="158" y="42" width="130" height="26" rx="13" class="b"/><text x="223" y="59" text-anchor="middle" class="ta">Claude Desktop</text>
+    <rect x="298" y="42" width="90" height="26" rx="13" class="b"/><text x="343" y="59" text-anchor="middle" class="ta">Codex</text>
+    <rect x="398" y="42" width="110" height="26" rx="13" class="b"/><text x="453" y="59" text-anchor="middle" class="ta">Gemini CLI</text>
+    <rect x="600" y="12" width="164" height="66" rx="10" class="b2"/>
+    <text x="682" y="32" text-anchor="middle" class="tt">2 scheduled tasks</text>
+    <text x="682" y="49" text-anchor="middle" class="ts">brain-nightly (hourly)</text>
+    <text x="682" y="63" text-anchor="middle" class="ts">brain-synthesis (weekly)</text>
+    <line x1="682" y1="78" x2="682" y2="128" class="a"/><polygon points="678,126 686,126 682,134" class="ah"/>
+    <line x1="290" y1="78" x2="290" y2="128" class="a"/><polygon points="286,126 294,126 290,134" class="ah"/>
+    <text x="302" y="100" class="ts">runs `brain …` in a shell</text>
+    <text x="302" y="114" class="ts">(Desktop chat tab: read-only MCP bridge)</text>
+    <rect x="16" y="134" width="748" height="196" rx="10" class="bg"/>
+    <text x="28" y="156" class="tt">brain CLI — the engine</text>
+    <text x="200" y="156" class="ts">one Python package · no server · no daemon · no API keys</text>
+    <rect x="30" y="168" width="256" height="72" rx="8" class="b"/>
+    <text x="158" y="188" text-anchor="middle" class="t">READ verbs</text>
+    <text x="158" y="206" text-anchor="middle" class="ts">search · grep · bases-query</text>
+    <text x="158" y="220" text-anchor="middle" class="ts">graph-expand · get · dossier · recent</text>
+    <rect x="30" y="248" width="256" height="30" rx="6" class="gate"/>
+    <text x="158" y="267" text-anchor="middle" class="tg">EGRESS GATE — deny-by-default, before every stdout</text>
+    <rect x="306" y="168" width="240" height="72" rx="8" class="b"/>
+    <text x="426" y="188" text-anchor="middle" class="t">WRITE verbs — HOST ONLY</text>
+    <text x="426" y="206" text-anchor="middle" class="ts">sync · ingest · write · supersede</text>
+    <text x="426" y="220" text-anchor="middle" class="ts">rebuild · graphify · maintain</text>
+    <rect x="306" y="248" width="240" height="30" rx="6" class="b2"/>
+    <text x="426" y="267" text-anchor="middle" class="ts">every commit Ed25519-signed → audit chain</text>
+    <rect x="566" y="168" width="184" height="50" rx="8" class="b2"/>
+    <text x="658" y="188" text-anchor="middle" class="t">on-device embeddings</text>
+    <text x="658" y="205" text-anchor="middle" class="ts">e5-small ONNX · hash fallback</text>
+    <rect x="566" y="228" width="184" height="50" rx="8" class="b2"/>
+    <text x="658" y="248" text-anchor="middle" class="t">optional reranker</text>
+    <text x="658" y="265" text-anchor="middle" class="ts">cross-encoder, skippable</text>
+    <text x="30" y="308" class="ts">reads flow UP through the gate · writes flow DOWN through the signer — the sqlite index is a disposable cache of the files</text>
+    <line x1="158" y1="330" x2="158" y2="366" class="a"/><polygon points="154,364 162,364 158,372" class="ah"/>
+    <line x1="426" y1="330" x2="426" y2="366" class="a"/><polygon points="422,364 430,364 426,372" class="ah"/>
+    <line x1="658" y1="330" x2="658" y2="366" class="a"/><polygon points="654,364 662,364 658,372" class="ah"/>
+    <rect x="16" y="374" width="270" height="88" rx="10" class="b"/>
+    <text x="151" y="398" text-anchor="middle" class="tt">vault/ — Markdown + YAML</text>
+    <text x="151" y="418" text-anchor="middle" class="ts">THE single source of truth</text>
+    <text x="151" y="433" text-anchor="middle" class="ts">raw/ immutable sources · brain/ curated notes</text>
+    <text x="151" y="448" text-anchor="middle" class="ts">back up like any folder</text>
+    <rect x="300" y="374" width="240" height="88" rx="10" class="b2"/>
+    <text x="420" y="398" text-anchor="middle" class="tt">index.sqlite</text>
+    <text x="420" y="418" text-anchor="middle" class="ts">FTS5 (lexical) + sqlite-vec (dense)</text>
+    <text x="420" y="433" text-anchor="middle" class="ts">derived cache — deletable,</text>
+    <text x="420" y="448" text-anchor="middle" class="ts">rebuilt any time (brain rebuild)</text>
+    <rect x="554" y="374" width="210" height="88" rx="10" class="b2"/>
+    <text x="659" y="398" text-anchor="middle" class="tt">audit-log.jsonl</text>
+    <text x="659" y="418" text-anchor="middle" class="ts">Ed25519-signed, hash-chained</text>
+    <text x="659" y="433" text-anchor="middle" class="ts">append-only write history</text>
+    <text x="659" y="448" text-anchor="middle" class="ts">key in the OS secret store</text>
+  </svg>
+  <figcaption>Everything runs on the user's machine. The gate sits between the data and every model.</figcaption>
+  </figure>
+
+  <details><summary>Text version of the map (file layout detail)</summary>
+  <figure class="wide">
+<pre>┌─────────────────────────────────────────────────────────────────────────┐
+│ USER'S MACHINE                                                          │
+│                                                                         │
+│  vault/  (plain Markdown + YAML — THE data)                             │
+│  ├── raw/        immutable captured sources (append-only, sha256'd)     │
+│  ├── brain/      agent-curated atomic notes (PARA folders, wikilinks)   │
+│  ├── inbox/      drop zone for new material (PDF/DOCX/…)                │
+│  ├── overlay/    per-owner personalization (voice/brand/people)         │
+│  └── .brain/     runtime (gitignored): snapshot/, capture-inbox/,       │
+│                  memory/, graph/                                        │
+│                                                                         │
+│  per-user app data dir                                                  │
+│  └── index.sqlite    derived index: FTS5 (lexical) + sqlite-vec (dense) │
+│      audit-log.jsonl Ed25519-signed, hash-chained write log             │
+│                                                                         │
+│  brain CLI  (Python, `brainiac-cli` wheel)                              │
+│  ├── read verbs      search / grep / bases-query / graph-expand / get / │
+│  │                   recent / dossier / brief / digest                  │
+│  ├── write verbs     write / ingest / supersede / sync / snapshot /     │
+│  │   (HOST-ONLY)     rebuild / graphify / maintain                      │
+│  ├── egress gate     classification filter, applied before EVERY stdout │
+│  ├── embedders       e5-small ONNX default · hash offline fallback ·    │
+│  │                   optional Arctic / catalog models · opt. reranker   │
+│  └── audit chain     every committed write signed + hash-chained        │
+│                                                                         │
+│  Scheduled tasks (the ONLY persistence)                                 │
+│  ├── brain-nightly    hourly umbrella: ingest, sync, snapshot, folds    │
+│  └── brain-synthesis  weekly model-backed curation session              │
+│                                                                         │
+│  Integration surfaces                                                   │
+│  ├── shell           AI CLIs call `brain …` directly (primary path)     │
+│  ├── brain connect   one-command wiring of a client to a vault          │
+│  ├── MCP adapter     optional stdio server, READ-ONLY 5 tools           │
+│  └── plugins/skills  Claude Code marketplace + Cowork zip uploads       │
+└─────────────────────────────────────────────────────────────────────────┘</pre>
+    <figcaption>Everything runs inside the user's machine; there is no network service anywhere in this picture.</figcaption>
+  </figure>
+  </details>
+
+  <p>Every box is a module in <code>src/brain/</code> (one Python package). The main ones:</p>
+  <div class="wide">
+  <table>
+    <tr><th>Component</th><th>Module</th><th>Job</th></tr>
+    <tr><td>CLI + dispatch</td><td><code>cli.py</code></td><td>the one entry point; <code>brain --help</code> is the always-current contract</td></tr>
+    <tr><td>Orchestration core</td><td><code>core.py</code></td><td>wires vault + index + gate together; owns <code>maintain</code>; enforces the host/VM role gate</td></tr>
+    <tr><td>Index</td><td><code>index.py</code>, <code>vectors.py</code></td><td>one SQLite file: FTS5 tables + sqlite-vec vector tables, incremental upsert by path+content-hash; pure-Python brute-force vector fallback when the sqlite-vec extension can't load</td></tr>
+    <tr><td>Embedders</td><td><code>embed.py</code></td><td><strong>default: <code>multilingual-e5-small</code></strong> via direct ONNX Runtime (384-dim, ~465&nbsp;MB one-time download); deterministic <em>hash embedder</em> as fully-offline fallback; optional Arctic-embed / catalog models behind an extra; resolved lazily on first semantic use</td></tr>
+    <tr><td>Reranker</td><td><code>rerank.py</code></td><td>optional cross-encoder (jina-reranker-v2) over the top hits; identity fallback — always skippable</td></tr>
+    <tr><td>Egress gate</td><td><code>classification.py</code>, <code>egress.py</code></td><td>tier filter before stdout; deny-by-default (see security doc)</td></tr>
+    <tr><td>Audit chain</td><td><code>audit.py</code>, <code>anchor.py</code></td><td>Ed25519-signed, hash-chained JSONL of every committed write; key in the OS secret store; optional off-host anchoring (<code>brain anchor</code> / <code>verify-anchor</code>)</td></tr>
+    <tr><td>Capture</td><td><code>capture.py</code></td><td><code>draft-capture</code> staging — the untrusted-leg write path</td></tr>
+    <tr><td>Ingestion</td><td><code>init.py</code>, <code>core.py</code></td><td>drains <code>inbox/</code> → immutable <code>raw/</code> sources (PDF/DOCX/PPTX/XLSX/image extraction)</td></tr>
+    <tr><td>Snapshot</td><td><code>snapshot.py</code></td><td>atomic, generation-stamped read-only copy of the index, published for the VM</td></tr>
+    <tr><td>Maintenance</td><td><code>maintenance.py</code>, <code>brief.py</code>, <code>golden_probe.py</code></td><td>the hourly umbrella's branch logic, health metrics history, watchdogs, weekly retrieval-regression probe</td></tr>
+    <tr><td>Graph layer</td><td><code>graph.py</code>, <code>graphify.py</code>, <code>multihop.py</code></td><td>wikilink graph expansion (discovery-only, never authoritative) + bounded monthly link-discovery build</td></tr>
+    <tr><td>MCP adapter</td><td><code>mcp_adapter.py</code></td><td>optional read-only stdio server (exactly 5 read tools) for clients that can't run a shell</td></tr>
+    <tr><td>Client wiring</td><td><code>connect.py</code></td><td><code>brain connect</code> writes per-client config: claude-code, claude-desktop, codex, gemini</td></tr>
+    <tr><td>Lifecycle</td><td><code>doctor.py</code>, <code>update.py</code>, <code>backup.py</code>, <code>encryption.py</code></td><td>health checks, self-update, encrypted backup (AES-256-GCM, off by default)</td></tr>
+    <tr><td>Conventions validator</td><td><code>tools/validate.py</code></td><td>frontmatter schema, classification presence, link/versioning invariants</td></tr>
+  </table>
+  </div>
+
+  <h2 id="data">4 · The data model (what a “note” is)</h2>
+  <p>Two zones with different rules:</p>
+  <ul>
+    <li><strong><code>raw/</code> — immutable capture.</strong> A source document lands once, gets a
+      <code>sha256</code> of its body written into its header, and is never edited again. Original
+      binaries are archived alongside. This gives every derived claim a provenance anchor.</li>
+    <li><strong><code>brain/</code> — curated knowledge.</strong> Atomic notes (one idea each), densely
+      linked with <code>[[wikilinks]]</code>, organized only by a light PARA folder scheme
+      (Projects/Areas/Resources/Archive). Structure comes from links, not folders or tags.</li>
+  </ul>
+  <p>Every note's YAML header carries: <code>id</code>, <code>type</code> (note/decision/person/… — a
+    small typed vocabulary), <code>classification</code> (one of five ordered tiers — mandatory;
+    missing = treated as most-sensitive), dates, and optional <strong>bitemporal versioning</strong>
+    keys: when a claim changes, the old note is <em>superseded</em> (chained to its successor, never
+    deleted), so “what did we believe on date X” stays answerable. The validator enforces chain
+    sanity: no cycles, no forks, one latest version per chain.</p>
+
+  <h2 id="flows">5 · Data flows</h2>
+
+  <h3>5.1 Retrieval (read path)</h3>
+<pre>question → brain grep / bases-query      (cheap, lexical, no embedding)
+         → brain search / hybrid-search  (BM25 + dense vectors fused; embeds
+                                          the QUERY only, on-device)
+         → brain graph-expand / get      (follow links, read full notes)
+         → [egress gate]                 (classification filter — final stage
+                                          before ANY result reaches stdout)</pre>
+  <p>The model orchestrates these composable probes; nothing is a black box. The
+    <code>dossier</code> verb bundles the common decision-state sweep (current decisions separated
+    from raw sources, with version tensions flagged).</p>
+
+  <h3>5.2 Capture (write path — host)</h3>
+<pre>file lands in vault/inbox/  →  hourly `brain maintain` (or manual `brain sync`)
+  → validate + classify + sha256 → promote to raw/ (immutable)
+  → Ed25519-sign audit entry → commit to index → republish snapshot</pre>
+
+  <h3>5.3 Capture (write path — untrusted sandbox)</h3>
+<pre>[VM]  brain draft-capture → .brain/capture-inbox/&lt;id&gt;.md   (status: draft,
+                                                            trust: untrusted)
+[HOST] next sync drains it: validate → sign → index → snapshot republish
+[VM]  the note is now retrievable — from the new snapshot only</pre>
+  <p>The VM never signs, never writes the index, never sees a key. A draft is invisible to
+    search until the host has committed it. Fails closed: no signing key ⇒ the draft stays a draft.</p>
+
+  <figure class="info">
+  <svg viewBox="0 0 780 195" role="img" aria-label="Capture pipeline">
+    <text x="16" y="20" class="ts">every hourly `brain maintain` (and any manual `brain sync`) runs this pipeline — host only:</text>
+    <rect x="16" y="32" width="132" height="58" rx="9" class="b"/>
+    <text x="82" y="54" text-anchor="middle" class="t">capture</text>
+    <text x="82" y="70" text-anchor="middle" class="ts">inbox/ drop, or a VM</text>
+    <text x="82" y="83" text-anchor="middle" class="ts">draft (untrusted)</text>
+    <line x1="148" y1="61" x2="164" y2="61" class="a"/><polygon points="162,57 162,65 170,61" class="ah"/>
+    <rect x="172" y="32" width="132" height="58" rx="9" class="b"/>
+    <text x="238" y="54" text-anchor="middle" class="t">validate</text>
+    <text x="238" y="70" text-anchor="middle" class="ts">frontmatter + tier</text>
+    <text x="238" y="83" text-anchor="middle" class="ts">label + sha256</text>
+    <line x1="304" y1="61" x2="320" y2="61" class="a"/><polygon points="318,57 318,65 326,61" class="ah"/>
+    <rect x="328" y="32" width="132" height="58" rx="9" class="b"/>
+    <text x="394" y="54" text-anchor="middle" class="t">sign</text>
+    <text x="394" y="70" text-anchor="middle" class="ts">Ed25519 entry on</text>
+    <text x="394" y="83" text-anchor="middle" class="ts">the audit chain</text>
+    <line x1="460" y1="61" x2="476" y2="61" class="a"/><polygon points="474,57 474,65 482,61" class="ah"/>
+    <rect x="484" y="32" width="132" height="58" rx="9" class="b"/>
+    <text x="550" y="54" text-anchor="middle" class="t">commit</text>
+    <text x="550" y="70" text-anchor="middle" class="ts">promote to raw/ or</text>
+    <text x="550" y="83" text-anchor="middle" class="ts">brain/ + index upsert</text>
+    <line x1="616" y1="61" x2="632" y2="61" class="a"/><polygon points="630,57 630,65 638,61" class="ah"/>
+    <rect x="640" y="32" width="124" height="58" rx="9" class="b"/>
+    <text x="702" y="54" text-anchor="middle" class="t">publish</text>
+    <text x="702" y="70" text-anchor="middle" class="ts">atomic snapshot,</text>
+    <text x="702" y="83" text-anchor="middle" class="ts">generation N+1</text>
+    <line x1="394" y1="90" x2="394" y2="118" class="ad"/>
+    <rect x="230" y="122" width="330" height="30" rx="8" class="b2"/>
+    <text x="395" y="141" text-anchor="middle" class="ta">fails closed: no signing key ⇒ the draft stays a draft</text>
+    <text x="702" y="118" text-anchor="middle" class="ts">only NOW can the</text>
+    <text x="702" y="132" text-anchor="middle" class="ts">VM read the note</text>
+    <text x="16" y="176" class="ts">a captured document is searchable within the hour — with provenance (sha256), a tier label, and a signed history entry.</text>
+  </svg>
+  <figcaption>One pipeline, five steps, each fail-closed — the same path for host captures and sandbox drafts.</figcaption>
+  </figure>
+
+  <h3>5.4 Maintenance (the two scheduled tasks)</h3>
+  <ul>
+    <li><strong><code>brain-nightly</code> (hourly):</strong> drains the inbox, syncs the index,
+      republishes the snapshot, and runs date-gated folds — Monday health metrics, Tuesday
+      integrity scan, Sunday digest/curation/promotion scan + a golden-set retrieval regression
+      probe, monthly drift-gated graph rebuild. All metadata work; it never writes prose.</li>
+    <li><strong><code>brain-synthesis</code> (weekly):</strong> the one model-backed session, keeping
+      human-readable synthesis (index map, state-of-play notes) current — because prose needs a
+      model and the engine deliberately does not hold one.</li>
+  </ul>
+  <p>Self-observability: every maintain run appends a metrics record to
+    <code>health-history.jsonl</code> (trend detection), degradations raise a deduplicated desktop
+    notification, and an independent “watchdog of last resort” check detects that the scheduler
+    itself died (heartbeat staleness).</p>
+
+  <h2 id="trust">6 · Trust contexts (the load-bearing split)</h2>
+
+  <figure class="info">
+  <svg viewBox="0 0 780 240" role="img" aria-label="Host / VM trust split">
+    <rect x="16" y="22" width="386" height="192" rx="12" class="b"/>
+    <text x="32" y="48" class="tt">HOST — macOS / Windows</text>
+    <text x="32" y="72" class="ts">• EDR-visible, audit-logged</text>
+    <text x="32" y="92" class="ts">• reads the LIVE index — full-tier default</text>
+    <text x="32" y="112" class="ts">• the ONLY writer: validate → sign → index → publish</text>
+    <text x="32" y="132" class="ts">• holds the Ed25519 key (OS secret store)</text>
+    <text x="32" y="152" class="ts">• runs both scheduled tasks</text>
+    <line x1="420" y1="10" x2="420" y2="228" class="ad"/>
+    <text x="420" y="238" text-anchor="middle" class="ta">trust boundary</text>
+    <rect x="438" y="22" width="326" height="192" rx="12" class="b2"/>
+    <text x="454" y="48" class="tt">COWORK VM — Linux sandbox</text>
+    <text x="454" y="72" class="ts">• EDR-blind, ephemeral</text>
+    <text x="454" y="92" class="ts">• reads a published SNAPSHOT only</text>
+    <text x="454" y="112" class="ts">• writes: draft-capture staging only</text>
+    <text x="454" y="132" class="ts">• can never resolve a signing key</text>
+    <text x="454" y="152" class="ts">• egress cap: Internal tier and below</text>
+    <line x1="402" y1="178" x2="438" y2="178" class="a"/><polygon points="436,174 436,182 444,178" class="ah"/>
+    <text x="300" y="172" class="ts">snapshot (read-only) →</text>
+    <line x1="438" y1="198" x2="402" y2="198" class="a"/><polygon points="404,194 404,202 396,198" class="ah"/>
+    <text x="454" y="192" class="ts">← drafts (trust: untrusted)</text>
+  </svg>
+  <figcaption>Read + propose on the untrusted side; validate + sign + write only on the visible side.</figcaption>
+  </figure>
+
+  <div class="wide">
+  <table>
+    <tr><th></th><th>HOST (macOS/Windows)</th><th>Cowork VM (Claude Desktop Linux sandbox)</th></tr>
+    <tr><td>Visibility</td><td>EDR-visible, audit-logged</td><td>EDR-blind, ephemeral</td></tr>
+    <tr><td>Reads</td><td>full index (live)</td><td>published read-only snapshot ONLY</td></tr>
+    <tr><td>Writes</td><td>everything (sign + index + snapshot)</td><td><code>draft-capture</code> staging only</td></tr>
+    <tr><td>Keys</td><td>holds the Ed25519 audit key (OS secret store)</td><td>can never resolve a key</td></tr>
+    <tr><td>Default egress cap</td><td>full vault</td><td><code>Internal</code> tier and below</td></tr>
+  </table>
+  </div>
+  <p>With <code>--role vm</code> (or <code>BRAIN_ROLE=vm</code>) the write verbs are refused before any
+    engine construction, the index opens read-only from the snapshot, and key-resolution paths are
+    unreachable — pinned by integration tests. Note the honest limit: <code>--role</code> is
+    caller-selected and defaults to <code>host</code>, so the split is a <em>deployment</em> boundary
+    (the untrusted leg must be a separate context given only a projected vault + a capped binary),
+    not something a single shared binary enforces by itself. See the security doc §2.2/§6.3.</p>
+
+  <h2 id="install">7 · Installation &amp; integration surfaces</h2>
+  <ul>
+    <li><strong>PyPI:</strong> <code>uv tool install brainiac-cli</code> / <code>pipx install brainiac-cli</code>
+      — the primary channel; a wheel-complete package (console scripts <code>brain</code>,
+      <code>brain-mcp</code>).</li>
+    <li><strong>Bootstrap installers:</strong> <code>install.sh</code> (macOS/Linux) and
+      <code>install.ps1</code> (Windows), also reachable via a zero-dependency
+      <code>npx brainiac-install</code>. They chain uv → pipx → pip (first success wins), build the
+      first index with the offline hash embedder (no model download at install time), and defer
+      the real embedding model to an explicit <code>brain warmup</code>.</li>
+    <li><strong>Client wiring:</strong> <code>brain connect &lt;client&gt;</code> writes the per-client
+      config (claude-code, claude-desktop, codex, gemini) pointing it at a vault. The
+      <code>.mcpb</code> bundle serves Claude Desktop's chat tab (the one surface that cannot run a
+      shell) through the read-only MCP adapter — it spawns the host's <code>brain-mcp</code>, never
+      vendoring a second engine.</li>
+    <li><strong>Skills/plugins:</strong> curation skills ship as a Claude Code plugin marketplace
+      in-repo (<code>brainiac-kernel</code> / <code>brainiac-extras</code> / <code>brainiac-manager</code>),
+      and as zip uploads for the Cowork VM.</li>
+  </ul>
+  <p>End-to-end sequences for a new machine / an existing machine + new project:
+    <code>docs/install-guide.html</code> (plain-language) and <code>docs/install/README.md</code> (full detail).</p>
+
+  <h2 id="tech">8 · Technology choices (and what was deliberately avoided)</h2>
+  <div class="wide">
+  <table>
+    <tr><th>Choice</th><th>Rationale</th></tr>
+    <tr><td>SQLite (FTS5 + sqlite-vec)</td><td>one file, zero administration, rebuildable; no client/server DB to operate or secure; brute-force fallback keeps working without the native extension</td></tr>
+    <tr><td>ONNX embeddings on-device (multilingual-e5-small default)</td><td>no document content sent to an embedding API; works offline after a one-time ~465&nbsp;MB download; deterministic hash fallback keeps the system usable with no model at all</td></tr>
+    <tr><td>Ed25519 + hash chain (JSONL)</td><td>tamper-evident write history (each entry binds a content hash, so post-commit edits are detectable via <code>verify-audit --check-content</code>) at ~zero operational cost; keys live in the OS secret store</td></tr>
+    <tr><td>Plain Markdown + YAML</td><td>vendor-neutral, human-readable, diffable, survives any tool's demise</td></tr>
+    <tr><td>Python ≥3.9, short dependency list</td><td><code>onnxruntime</code>, <code>tokenizers</code>, <code>numpy</code>, <code>sqlite-vec</code>, <code>cryptography</code>, <code>PyYAML</code>, document parsers — no web framework, no ORM, no network client</td></tr>
+  </table>
+  </div>
+  <div class="callout"><strong>Deliberately absent:</strong> no server process, no daemon, no cloud
+    storage, no telemetry, no model API keys (the AI assistant's own vendor session is the only
+    model call), no background sync agents beyond the two scheduled tasks.</div>
+
+  <h2 id="ops">9 · Operational properties an architect should know</h2>
+  <ul>
+    <li><strong>Recoverability:</strong> the index is disposable (<code>brain rebuild</code>); the vault
+      is plain files (back up like any folder); the audit chain is append-only JSONL
+      (<code>brain verify-audit</code>).</li>
+    <li><strong>Concurrency:</strong> single-user by design. Maintenance runs under a lock with a
+      stale-lock auto-break; the metrics log is rotation-safe under overlap.</li>
+    <li><strong>Failure posture:</strong> fail-closed everywhere it matters — unlabelled notes are
+      treated as most-sensitive; a missing signing key blocks promotion rather than silently
+      skipping signing; a missing embedder fails only the semantic paths (lexical search and
+      capture keep working).</li>
+    <li><strong>Observability:</strong> <code>brain status</code> (index stats, snapshot generation/age,
+      pending drafts, embedder ready/pending), <code>brain doctor</code>, hourly
+      <code>health-history.jsonl</code>, desktop degradation alarms, weekly golden-set retrieval
+      regression score.</li>
+  </ul>
+
+  <h2 id="deeper">10 · Where to read deeper</h2>
+  <div class="wide">
+  <table>
+    <tr><th>Topic</th><th>Document</th></tr>
+    <tr><td>Normative spec (zones, protocol, gate)</td><td><code>docs/substrate-spec.md</code></td></tr>
+    <tr><td>Security model + threat analysis</td><td><code>docs/security-overview.html</code></td></tr>
+    <tr><td>Classification tiers + default-deny</td><td><code>docs/classification-scheme.md</code></td></tr>
+    <tr><td>Per-decision rationale</td><td><code>docs/adr/0001…0006</code></td></tr>
+    <tr><td>Agent-facing contract (note shape, verbs)</td><td><code>AGENTS.md</code></td></tr>
+    <tr><td>Install, all channels, end-to-end</td><td><code>docs/install-guide.html</code> · <code>docs/install/README.md</code></td></tr>
+    <tr><td>Client wiring matrix</td><td><code>docs/harness-wiring.md</code></td></tr>
+  </table>
+  </div>
+
+  <style>.related{margin-top:2.2rem;padding-top:1rem;border-top:1px solid var(--line);color:var(--muted);font-size:.85rem}.related a{color:var(--accent);text-decoration:none}.related a:hover{text-decoration:underline}</style>
+  <p class="related"><strong>Related:</strong>
+    <a href="install-guide.html">Install guide</a> ·
+    <a href="architecture-overview.html">Architecture</a> ·
+    <a href="security-overview.html">Security &amp; threat model</a> ·
+    <a href="deployment-authorization-memo.html">Authorization memo</a> ·
+    <a href="managed-deployment-runbook.html">Managed deployment</a> · full doc map: <code>docs/README.md</code>.</p>
+</main>
+</body>
+</html>

@@ -76,24 +76,40 @@ def step_contamination_scan(export_dir: Path, denylist: Path) -> dict:
     command)."""
     if not denylist.exists():
         raise PublishError(f"denylist not found: {denylist} (external, never committed — see runbook §5)")
+    # CRITICAL (fixed 2026-07-12): the raw denylist is an ANNOTATED file — it
+    # carries `#` comment lines and blank separators. Passed straight to
+    # `grep -F -f`, a single EMPTY pattern line makes grep emit ZERO output for
+    # the WHOLE scan (empirically reproduced: bare-term `-f` finds 46 hits, the
+    # full annotated denylist finds 0) — a SILENT FALSE PASS that shipped a real
+    # term to PyPI before this was caught by hand. Feed grep ONLY the bare
+    # terms: strip blank lines and `#`-comments into a temp file first.
+    terms = [ln for ln in denylist.read_text(encoding="utf-8").splitlines()
+             if ln.strip() and not ln.lstrip().startswith("#")]
+    if not terms:
+        raise PublishError(f"denylist {denylist} has no usable terms after stripping comments/blanks")
+    with tempfile.NamedTemporaryFile("w", suffix=".denylist", delete=False,
+                                     encoding="utf-8") as tf:
+        tf.write("\n".join(terms) + "\n")
+        clean_denylist = tf.name
     # -I skips binary files: _evidence/ carries multi-GB benchmark/eval
     # artifacts (indexes, model caches) that a binary-unaware grep chokes on
-    # for minutes with zero signal — the runbook's own scan command picked
-    # this up too (see docs/release-runbook.md §5). -f takes its own argument
-    # (not bundled into -rFoiI) — this repo's `grep` resolves to ugrep on
-    # macOS, which parses a bundled "-f<path>" as flag "-f" + filename "I",
-    # not GNU grep's more permissive bundling; splitting -f out is portable
-    # across both.
-    proc = subprocess.run(
-        ["grep", "-rFoiI", "-f", str(denylist), str(export_dir)],
-        capture_output=True, text=True,
-    )
-    hits = [line for line in proc.stdout.splitlines() if line.strip()]
-    evidence_proc = subprocess.run(
-        ["grep", "-rFoiI", "-f", str(denylist), str(REPO_ROOT / "_evidence")],
-        capture_output=True, text=True,
-    )
-    evidence_hits = [line for line in evidence_proc.stdout.splitlines() if line.strip()]
+    # for minutes with zero signal (see docs/release-runbook.md §5). -f takes
+    # its own argument (not bundled into -rFoiI) — this repo's `grep` resolves
+    # to ugrep on macOS, which parses a bundled "-f<path>" as flag "-f" +
+    # filename "I"; splitting -f out is portable across both.
+    try:
+        proc = subprocess.run(
+            ["grep", "-rFoiI", "-f", clean_denylist, str(export_dir)],
+            capture_output=True, text=True,
+        )
+        hits = [line for line in proc.stdout.splitlines() if line.strip()]
+        evidence_proc = subprocess.run(
+            ["grep", "-rFoiI", "-f", clean_denylist, str(REPO_ROOT / "_evidence")],
+            capture_output=True, text=True,
+        )
+        evidence_hits = [line for line in evidence_proc.stdout.splitlines() if line.strip()]
+    finally:
+        Path(clean_denylist).unlink(missing_ok=True)
     return {"export_hit_count": len(hits), "evidence_hit_count": len(evidence_hits)}
 
 

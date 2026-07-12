@@ -4,9 +4,9 @@
 > there if you haven't already picked your path.
 
 If you use **Claude Code**, the fastest path is the `brainiac-manager`
-plugin. It clones the repo, runs the installer, verifies search, registers
-nightly maintenance, provisions the audit key, and asks you the one Cowork
-question — all in one command.
+plugin. It installs the engine from PyPI (no clone), verifies search,
+registers nightly maintenance, provisions the audit key, and asks you the
+one Cowork question — all in one command.
 
 > **Not Cowork, and not the Chat tab.** Cowork runs inside an ephemeral Linux
 > sandbox — nothing installed there survives, so it can never be the host
@@ -19,7 +19,7 @@ question — all in one command.
 
 ```text
 claude> /plugin marketplace add Autopsias/brainiac                # public repo — no clone, no creds needed
-claude> /plugin install brainiac-manager@profile-a-marketplace
+claude> /plugin install brainiac-manager@brainiac
 claude> /brainiac-install
 ```
 
@@ -27,14 +27,19 @@ claude> /brainiac-install
 Desktop's Cowork and want this brain available there?"* Answer yes and it
 runs `/brainiac-cowork-setup` for you; answer no and you're done.
 
-**Note:** `/brainiac-install` still clones `~/brainiac` itself as the
-canonical code checkout — the plugin only carries the lifecycle skills, not
-the code. Git clone is no longer a prerequisite step for you to run by hand.
+**Note:** `/brainiac-install` installs the `brain` CLI engine straight from
+**PyPI** (`brainiac-cli` — tries `uv tool install`, then `pipx`, then `pip
+--user`, first success wins) — no clone. A checkout is only needed for two
+things: contributing to Brainiac itself (`--dev`, an editable install) and
+the one-time workspace-registry write (a tracked packaging gap — see
+`docs/install/README.md` Path A step 5).
 
 **Fallback (offline / credential-restricted environments):**
 `git clone https://github.com/Autopsias/brainiac.git ~/brainiac` then
 `/plugin marketplace add ~/brainiac` (local-path add) works with zero
-ambient network auth.
+ambient network auth — that's the fallback for the *skills* marketplace; the
+engine itself falls back the same way, via `./install.sh --dev` from that
+same clone.
 
 ## Updating Brainiac
 
@@ -43,9 +48,13 @@ claude> /plugin marketplace update
 claude> /brainiac-update
 ```
 
-This re-pulls `~/brainiac`, reinstalls the engine venv, re-stages every
-registered Cowork workspace, refreshes the nightly maintenance task if it
-changed, and prints a per-workspace pass/fail report.
+This self-executes the whole update: marketplace refresh, then a
+**channel-aware** engine reinstall (`uv tool upgrade` / `pipx upgrade` /
+`pip install --user --upgrade`, whichever channel installed it), a
+downgrade-safe CLI-plugin reinstall, a re-stage of every registered Cowork
+workspace, a nightly-task refresh if it changed, and a final `brain doctor`
+verify — then a before→after version table and one pass/fail. `brain update
+--dry-run` previews every decision without changing anything.
 
 ## Removing Brainiac
 
@@ -53,93 +62,42 @@ changed, and prints a per-workspace pass/fail report.
 claude> /brainiac-uninstall
 ```
 
-Removes this host's nightly maintenance task(s) and venv, and drops this
-host's registry entries. Never touches a vault, its notes, or the audit
-signing key — it prints what it left behind (vaults, key location) so you
-can archive deliberately. `~/brainiac` and the plugin itself are left for
-you to remove by hand (the skill prints those commands too).
+Removes this host's nightly maintenance task(s), the engine (channel-aware —
+`uv tool uninstall` / `pipx uninstall` / `pip uninstall`, whichever
+channel installed it), and this host's registry entries. Never touches a
+vault, its notes, or the audit signing key — it prints what it left behind
+(vaults, key location) so you can archive deliberately.
 
-## Fallback: agents without plugin support (e.g. Codex)
+**Not using Claude Code, or want to uninstall by hand?** Run the command for
+whichever channel `install.sh`/`install.ps1` used: `uv tool uninstall
+brainiac-cli`, `pipx uninstall brainiac-cli`, or `python3 -m pip uninstall
+brainiac-cli`. `brain doctor` reports the detected channel if you're not
+sure which one applies. Unwire an AI client with `brain connect --client
+<name> --remove`; remove the Desktop Chat tab extension via Settings →
+Extensions → Brainiac → Remove.
 
-Codex (and any other AI client that runs commands directly on your computer
-but doesn't support Claude Code plugins) can still do the whole install —
-paste this prompt instead:
+## Any other AI assistant: paste TWO lines, it does the rest
+
+Every AI client that can run commands on your computer (Codex, Gemini CLI,
+Claude Code without the plugin, …) can execute the whole install from the
+**machine runbook** — a step-by-step instruction set written *for the
+assistant*, with detection logic, verification gates, a failure playbook,
+and a strict four-question budget (most installs ask you just one: where
+the vault should live). Paste this:
 
 ```text
-Please install the Brainiac second-brain CLI for me:
-
-0. First, check where your shell actually runs. If you cannot run commands
-   directly on MY computer — because you run in a sandbox or VM (e.g. you
-   are Cowork or a cloud agent) — do NOT install anything there: it would
-   be wiped and never reach my PATH. Instead, give me this exact block to
-   paste into my own Terminal, then guide me through the remaining steps
-   and verify from my pasted output:
-
-     cd "$HOME/brainiac" 2>/dev/null || gh repo clone Autopsias/brainiac "$HOME/brainiac"
-     cd "$HOME/brainiac" && ./install.sh
-
-1. Get the code: if it is already cloned somewhere on this machine, use
-   that copy; otherwise clone it with an authenticated client
-   (`gh repo clone Autopsias/brainiac ~/brainiac` — the repo is private
-   pre-release, so an anonymous git clone will fail).
-2. Run its ./install.sh from the repo root. It creates a private Python
-   venv, installs the `brain` CLI at full capacity, links it onto my PATH,
-   and builds the search index for the bundled sample vault (this downloads
-   an embedding model once — a few hundred MB).
-3. Verify the install: run `brain search "arctic-embed vs e5" --json` from
-   the repo root and confirm it returns JSON results with classification
-   tiers and an egress block, with no embedder warning.
-4. Read the repo's AGENTS.md so you know the note conventions and the
-   security rules for future sessions.
-5. Report the scheduled-maintenance status in one line: whether the nightly
-   drain/sign/reindex task got registered (name + vault it covers), or if
-   it's missing/skipped, say so explicitly and what I must decide
-   (see SECURITY.md) — never leave this silent.
-6. Tell me, in plain language: where my notes will live, where the index
-   lives, and the three commands I'm most likely to want next.
-7. Then ask me ONE question: "Do you also use Claude Desktop's Cowork and
-   want this brain available there?" If I say no, you're done. If I say
-   yes, do the ENTIRE Cowork preparation yourself with no further
-   questions except which folder is my workspace:
-   - Stage the embedding model with packaging/stage_model.py, then run
-     tools/cowork_workspace_install.sh <my workspace>/vault <model dir>.
-     No Docker, no compilers, and NOTHING gets installed in the Cowork
-     sandbox — the pure-Python engine is staged into the workspace and
-     runs directly with the sandbox's python3.
-   - Register the host maintenance task for that vault:
-     BRAIN_VAULT=<my workspace>/vault brain init --full (as host, from the
-     repo clone). This registers the per-vault nightly label — the ONE
-     sanctioned daily OS task that drains Cowork drafts, signs them,
-     re-indexes, and republishes the snapshot. Show me its report; if it
-     reports a missing signing key or a skipped registrar, explain what
-     that means and what I must decide (see SECURITY.md) — do not silently
-     leave maintenance unregistered.
-   - If the registrar warns that no audit signing key exists, create it in
-     the same session: generate an Ed25519 key with brain.audit's
-     generate_key_pem() and store it in the OS secret store (macOS:
-     `security add-generic-password -s profile-a-brain-audit-key -a $USER -w
-     "<PEM>"`; Windows: Credential Manager) — tell me in one sentence what
-     the key does (signs every committed note so the audit chain is
-     tamper-evident) and let me approve the permission prompt when it
-     appears. Never print or persist the PEM anywhere else.
-   - When it finishes, print for me, in the chat: (a) the exact folder I
-     must add inside Cowork, (b) the full contents of
-     <workspace>/vault/.brain/routines/cowork-session-prompt.md so I can
-     copy it straight from this conversation, and (c) the list of the 10
-     kernel/extras skill files in <workspace>/vault/.brain/skills/ with one
-     line on how to add them (Cowork Save-skill upload — a drag-and-drop
-     only I can do).
-   My only remaining manual work must be: add the folder in Cowork, paste
-   that one block into the Cowork project's custom instructions (or as my
-   first message there), and optionally upload the skill zips. Task
-   TRIGGERS on the Cowork side (the registrar prompt) stay optional —
-   mention them, don't walk me through unless I ask. Also mention that in
-   Claude Code, working inside the repo clone auto-loads the skills, and
-   the brainiac-manager plugin (see the 3-command flow at the top of this
-   page) installs them for sessions in other folders.
-
-If anything fails, show me the exact error and fix it before moving on.
+Install Brainiac for me. Your complete instruction set is here — fetch it and
+follow it exactly, asking me only the questions it allows:
+https://raw.githubusercontent.com/Autopsias/brainiac/main/docs/install/LLM-INSTALL.md
 ```
+
+No web access? Point it at a local copy instead: clone
+`https://github.com/Autopsias/brainiac.git` and say *"Read
+docs/install/LLM-INSTALL.md from ~/brainiac and follow it."* The runbook
+covers macOS, Linux, Windows, sandboxed assistants (it refuses to install
+inside a throwaway VM and hands you the commands instead), existing vaults
+(the `brain rebuild` gotcha), imports, maintenance-task registration, and
+the Cowork question — end to end.
 
 ## After it's installed
 

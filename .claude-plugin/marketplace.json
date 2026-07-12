@@ -1,27 +1,27 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
-  "name": "profile-a-marketplace",
+  "name": "brainiac",
   "description": "Plugin marketplace for the Profile A brain-substrate second-brain — kernel skills (kb-curator, promote, vault-ingestion, vault-eval, save-conversation, voice), an optional extras plugin (curation, improve, task-registrar, autoresearch), and brainiac-manager (host lifecycle: /brainiac-install). The kernel skills also auto-load from .claude/skills/ on a repo clone; this marketplace is the install path for a Claude Code user who is NOT working inside this repo, or who wants extras/lifecycle skills one command away.",
   "owner": {
     "name": "Profile A maintainers"
   },
   "plugins": [
     {
-      "name": "profile-a-kernel",
-      "source": "./plugins/profile-a-kernel",
+      "name": "brainiac-kernel",
+      "source": "./plugins/brainiac-kernel",
       "description": "Core brain-substrate skills for daily second-brain use: kb-curator, promote, vault-ingestion, vault-eval, save-conversation, voice.",
       "category": "productivity"
     },
     {
-      "name": "profile-a-extras",
-      "source": "./plugins/profile-a-extras",
+      "name": "brainiac-extras",
+      "source": "./plugins/brainiac-extras",
       "description": "Optional maintenance/admin skills: curation (stale-link + revisit-queue lint), improve (session retrospective), task-registrar (scheduled-task registration), autoresearch (retrieval self-tuning loop).",
       "category": "productivity"
     },
     {
       "name": "brainiac-manager",
       "source": "./plugins/brainiac-manager",
-      "description": "Host-mutating lifecycle skills: /brainiac-install runs the full host install (clone/install.sh/search-verify/nightly registration/audit-key provisioning/registry write) in one command.",
+      "description": "Host lifecycle skills: /brainiac-install runs the full host install (clone/install.sh/search-verify/nightly registration/audit-key provisioning/registry write) in one command; /brainiac-health runs a one-command doctor+status+trend+heartbeat readout with a HEALTHY/DEGRADED/BROKEN verdict.",
       "category": "productivity"
     }
   ]

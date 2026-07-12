@@ -28,7 +28,18 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from .doctor import _compare, _ssot_version, check_installed_cli_plugins, run_doctor, render_human
+from .doctor import (
+    CHANNEL_EDITABLE,
+    CHANNEL_PIP_USER,
+    CHANNEL_PIPX,
+    CHANNEL_PYPI_UV,
+    _compare,
+    _ssot_version,
+    check_installed_cli_plugins,
+    detect_install_channel,
+    render_human,
+    run_doctor,
+)
 
 # --------------------------------------------------------------------------
 # Runner abstraction — the ONLY place subprocess.run is called from this
@@ -230,30 +241,58 @@ def resolve_engine_source(
 def refresh_engine_venv(
     engine_src: Path, brainiac_home: Path, run: Runner = _default_runner,
 ) -> dict:
-    venv_dir = brainiac_home / "venv"
-    pip = venv_dir / "bin" / "pip"
-    brain_bin = venv_dir / "bin" / "brain"
+    """Channel-aware refresh (PYP-04): detect which of the four channels the
+    host is actually on — the legacy editable dev checkout
+    (``~/.brainiac/venv``, pre-PyPI / --dev / offline) or one of the three
+    PyPI channels `install.sh`/`install.ps1` try in order (uv tool / pipx /
+    pip --user) — and run THAT channel's own upgrade command. A PyPI-first
+    default install never creates ``~/.brainiac/venv``, so unconditionally
+    running `pip install -e` there (the pre-S07 behavior) would silently
+    no-op forever on a real PyPI install; detecting the live channel via the
+    PATH-resolved `brain` binary is what makes `/brainiac-update` self-heal
+    the right thing regardless of how the engine was installed.
+    """
+    legacy_venv_dir = brainiac_home / "venv"
+    legacy_bin = legacy_venv_dir / "bin" / "brain"
+    which_brain = shutil.which("brain")
+    brain_bin: Optional[Path] = legacy_bin if legacy_bin.exists() else (
+        Path(which_brain) if which_brain else None
+    )
+    channel = detect_install_channel(brain_bin) if brain_bin else CHANNEL_EDITABLE
 
-    def _read_version() -> str:
-        if not brain_bin.exists():
+    def _read_version(bin_path: Optional[Path]) -> str:
+        if not bin_path or not Path(bin_path).exists():
             return "unknown"
         try:
-            out = run([str(brain_bin), "--version"])
+            out = run([str(bin_path), "--version"])
             return (out.stdout or out.stderr or "unknown").strip() or "unknown"
         except Exception:
             return "unknown"
 
-    old_version = _read_version()
-    if not pip.exists():
-        run(["python3", "-m", "venv", str(venv_dir)])
-    install_out = run([str(pip), "install", "--upgrade", "-e", str(engine_src)])
+    old_version = _read_version(brain_bin)
+
+    if channel == CHANNEL_PYPI_UV:
+        install_out = run(["uv", "tool", "upgrade", "brainiac-cli"])
+    elif channel == CHANNEL_PIPX:
+        install_out = run(["pipx", "upgrade", "brainiac-cli"])
+    elif channel == CHANNEL_PIP_USER:
+        install_out = run([sys.executable, "-m", "pip", "install", "--user",
+                           "--upgrade", "brainiac-cli[mcp]"])
+    else:  # editable-checkout — the pre-PyPI / --dev / offline path, unchanged
+        if not (legacy_venv_dir / "bin" / "pip").exists():
+            run(["python3", "-m", "venv", str(legacy_venv_dir)])
+        pip = legacy_venv_dir / "bin" / "pip"
+        install_out = run([str(pip), "install", "--upgrade", "-e", f"{engine_src}[mcp]"])
+        brain_bin = legacy_bin
+
     ok = install_out.returncode == 0
-    new_version = _read_version() if ok else old_version
+    new_version = _read_version(brain_bin) if ok else old_version
     return {
         "ok": ok,
         "old_version": old_version,
         "new_version": new_version,
         "detail": (install_out.stdout or install_out.stderr or "").strip(),
+        "channel": channel,
     }
 
 
@@ -487,7 +526,7 @@ def render_before_after(table: list[dict]) -> str:
 
 def run_update(
     *,
-    marketplace_name: str = "profile-a-marketplace",
+    marketplace_name: str = "brainiac",
     engine_src: Optional[str] = None,
     brainiac_home: Optional[Path] = None,
     claude_home: Optional[Path] = None,
@@ -623,8 +662,22 @@ def run_update(
 
     # Step 3.5 — rebuild dist/ (COMPAT + cowork-skills bundles) from the
     # freshly-installed engine, BEFORE staging workspaces below reads it.
+    # PYP-04: dist_rebuild and workspace re-stage both need a REAL checkout
+    # (tools/package_clients.py, dist/cowork-skills/) — a PyPI-first host
+    # install has none by default, and only Cowork workspaces need either
+    # step. Gate on the checkout actually existing so a host-only PyPI
+    # install's `brain update` never fails on a step it doesn't need.
+    engine_src_available = (resolved_engine_src / "pyproject.toml").exists()
+    no_checkout_detail = (
+        f"skipped — no local checkout at {resolved_engine_src} (a PyPI-first install "
+        "has none by default; only needed to re-stage Cowork workspaces — clone "
+        "https://github.com/Autopsias/brainiac.git and pass --engine-src, or set "
+        "$BRAINIAC_ENGINE_SRC, if you use Cowork)"
+    )
     if dry_run:
         dist_rebuild = {"ok": True, "detail": "[dry-run] tools/package_clients.py (skipped)"}
+    elif not engine_src_available:
+        dist_rebuild = {"ok": True, "skipped": True, "detail": no_checkout_detail}
     else:
         dist_rebuild = rebuild_dist(resolved_engine_src, run=run)
     result["steps"]["dist_rebuild"] = dist_rebuild
@@ -636,6 +689,9 @@ def run_update(
     if dry_run:
         workspace_results: list[dict] = [{"workspace_path": "[dry-run]", "target": "n/a",
                                           "status": "skipped", "reason": "dry-run: no re-stage executed"}]
+    elif not engine_src_available:
+        workspace_results = [{"workspace_path": "n/a", "target": "n/a", "status": "skipped",
+                              "reason": no_checkout_detail}]
     else:
         workspace_results = restage_workspaces(resolved_engine_src, brainiac_home, run=run)
     result["steps"]["workspace_restage"] = workspace_results

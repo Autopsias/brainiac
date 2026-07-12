@@ -1,0 +1,86 @@
+{
+  "manifest_version": "0.4",
+  "name": "brainiac",
+  "display_name": "Brainiac (read-only)",
+  "version": "0.15.0",
+  "description": "Read-only search over your Brainiac vault for the Claude Desktop Chat tab. Requires the `brain` engine already installed on this machine (npx brainiac-install) \u2014 this bundle never installs or vendors the engine itself, it only spawns it.",
+  "long_description": "Brainiac is a local, any-LLM second brain (plain Markdown + YAML). This extension is a thin Node.js stdio shim: it locates your HOST-installed `brain-mcp` engine (the same one `pip install brainiac-cli[mcp]` / `uv tool install brainiac-cli[mcp]` puts on PATH) and spawns it, piping stdio through unchanged. It exposes exactly the same read-only verb set and classification egress gate as the CLI's `brain search`/`get`/`recent`/`dossier`/`bases-query` \u2014 no write, draft, or host-broker verbs. If the engine isn't installed yet, the extension fails to start with an actionable error: install it with `npx brainiac-install`, then reopen this extension.\n\nDo not also run `brain connect --client claude-desktop` for the same vault \u2014 pick ONE registration path (this extension, or the CLI-managed claude_desktop_config.json stanza), never both. `brain doctor` flags it if both are present.",
+  "author": {
+    "name": "Brainiac",
+    "url": "https://github.com/Autopsias/brainiac"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Autopsias/brainiac"
+  },
+  "homepage": "https://github.com/Autopsias/brainiac",
+  "documentation": "https://github.com/Autopsias/brainiac/blob/main/docs/install/README.md",
+  "license": "MIT",
+  "keywords": [
+    "second-brain",
+    "notes",
+    "retrieval",
+    "read-only"
+  ],
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/server/index.js"
+      ],
+      "env": {
+        "BRAIN_VAULT": "${user_config.vault}",
+        "BRAIN_MAX_EGRESS_TIER": "${user_config.max_tier}"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "search",
+      "description": "Hybrid BM25+dense retrieval over the vault, egress-filtered."
+    },
+    {
+      "name": "get",
+      "description": "Fetch one full note by id, egress-filtered."
+    },
+    {
+      "name": "recent",
+      "description": "List the most recently created/updated notes, egress-filtered."
+    },
+    {
+      "name": "dossier",
+      "description": "One-call decision-state sweep: decision layer + sources, separated, egress-filtered."
+    },
+    {
+      "name": "bases_query",
+      "description": "Structured frontmatter query (latest-only / as-of), egress-filtered."
+    }
+  ],
+  "user_config": {
+    "vault": {
+      "type": "directory",
+      "title": "Vault path",
+      "description": "Path to your Brainiac vault workspace (the folder containing vault/brain, vault/raw). Required: Claude Desktop has no reliable working directory to fall back to when this extension spawns the engine, and there is no such thing as a registry of a 'default vault' \u2014 leaving this blank would silently point at an empty phantom vault, so this bundle requires an explicit path.",
+      "required": true
+    },
+    "max_tier": {
+      "type": "string",
+      "title": "Max egress tier",
+      "description": "Classification ceiling for this session: Public, Internal, Confidential, Restricted, or MNPI. Matches the host CLI default (full vault) \u2014 narrow it if you want a capped read surface. This bundle never widens the ceiling the engine itself enforces.",
+      "required": false,
+      "default": "MNPI"
+    }
+  },
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": [
+      "darwin",
+      "win32"
+    ],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  }
+}

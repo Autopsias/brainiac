@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Brainiac — Deployment Authorization Memo</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#1a1f24; --muted:#5b6570; --line:#e3e7ea;
+    --accent:#0b5fa5; --chip:#eef4f9; --code-bg:#f5f7f9; --th:#f0f3f5;
+    --ok:#1f7a4d; --ok-bg:#f0f9f3; --ok-line:#79c298;
+    --open-bg:#fff8e6; --open-line:#e6c96a; --open-fg:#8a6d1a;
+    --no-bg:#fdf1f1; --no-line:#d99; --no-fg:#a33636;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#14181c; --fg:#e5e9ec; --muted:#9aa5ae; --line:#2b3238;
+      --accent:#6db3e8; --chip:#1d2731; --code-bg:#1c2126; --th:#1d2329;
+      --ok:#7cc9a0; --ok-bg:#15231a; --ok-line:#2e5c42;
+      --open-bg:#2a2410; --open-line:#8a7328; --open-fg:#d8be6a;
+      --no-bg:#2a1a1a; --no-line:#7a3b3b; --no-fg:#e08a8a;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:15.5px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  main{max-width:52rem;margin:0 auto;padding:2.4rem 1.5rem 5rem}
+  h1{font-size:1.7rem;line-height:1.25;margin:.2rem 0 .3rem}
+  h2{font-size:1.15rem;margin:2rem 0 .5rem;padding-top:.9rem;border-top:1px solid var(--line)}
+  .kicker{color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:.08em;font-size:.72rem}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.86em;background:var(--code-bg);padding:.1em .35em;border-radius:4px}
+  table{border-collapse:collapse;width:100%;margin:.7rem 0;font-size:.9rem}
+  th,td{border:1px solid var(--line);padding:.45rem .6rem;text-align:left;vertical-align:top}
+  th{background:var(--th)}
+  .verdict{border:2px solid var(--ok-line);background:var(--ok-bg);border-radius:12px;padding:1.1rem 1.3rem;margin:1.1rem 0}
+  .verdict h2{border:none;margin:0 0 .35rem;padding:0;color:var(--ok)}
+  .meta{color:var(--muted);font-size:.85rem;margin:.3rem 0 0}
+  .metatable{font-size:.82rem;color:var(--muted);margin:.9rem 0 0}
+  .metatable td{border:none;padding:.1rem .8rem .1rem 0}
+  .pill{display:inline-block;font-size:.7rem;font-weight:700;border-radius:999px;padding:.08rem .55rem;white-space:nowrap}
+  .done{background:var(--ok-bg);color:var(--ok);border:1px solid var(--ok-line)}
+  .open{background:var(--open-bg);color:var(--open-fg);border:1px solid var(--open-line)}
+  .gate{background:var(--no-bg);color:var(--no-fg);border:1px solid var(--no-line)}
+  .scope{display:flex;gap:1rem;flex-wrap:wrap;margin:.8rem 0}
+  .scope>div{flex:1 1 15rem;border:1px solid var(--line);border-radius:10px;padding:.8rem 1rem}
+  .scope .yes{border-color:var(--ok-line)}
+  .scope .no{border-color:var(--no-line)}
+  .scope h3{margin:.1rem 0 .4rem;font-size:.95rem}
+  ul{margin:.3rem 0 .3rem 0;padding-left:1.2rem}
+  li{margin:.15rem 0}
+  .sign{border:1px dashed var(--line);border-radius:10px;padding:1rem 1.2rem;margin:1rem 0}
+  .sign td{border:none;padding:.5rem 1rem .5rem 0}
+  .rule{color:var(--muted);font-size:.85rem}
+  @media print{ body{font-size:11px} h2{break-after:avoid} .scope{display:block} }
+</style>
+</head>
+<body>
+<main>
+  <div class="kicker">Confidential · internal decision memo · draft for sign-off</div>
+  <h1>Deployment Authorization — Brainiac on company laptops</h1>
+  <p class="meta">Prepared for: IT Architecture &amp; Information Security. Subject: whether to authorize
+    Brainiac (local knowledge-engine CLI, <code>v0.16.0</code>) for endpoint deployment, and under what
+    conditions. Basis: two independent security reviews (in-house + cross-family, Codex
+    <code>gpt-5.6-sol</code>), each verified against source, plus a hardening pass that closed several
+    findings. This memo records the recommendation; the named approvers below make the decision.</p>
+
+  <div class="verdict">
+    <h2>Recommendation: CONDITIONALLY AUTHORIZE</h2>
+    <p style="margin:.2rem 0 0"><strong>Authorize deployment on single-user, company-managed laptops</strong>
+    as a personal knowledge engine over content the user is already entitled to see — subject to the
+    conditions in §3. <strong>Do not authorize</strong> reliance on the classification tiers as an
+    access-control boundary between a user and data on their own machine, the sandbox/Cowork VM leg, or
+    vaults holding regulated data (MNPI/PII/PCI) without the separate compliance sign-off in §4.</p>
+  </div>
+
+  <h2>1 · Why this is a conditional yes</h2>
+  <p>Brainiac is a local-first CLI: no server, no listening ports, no telemetry, no stored third-party
+    credentials, and no network traffic of its own beyond an explicit, user-triggered model download. The
+    security design correctly treats the AI model as the exfiltration channel and puts a deny-by-default
+    egress gate in front of it. Both reviews independently reached the same verdict. The gaps are of two
+    kinds: (a) <em>engineering hardening</em>, most of which we have now closed (§3, "Done"), and (b)
+    <em>policy/deployment lines</em> the organization must draw — no code change resolves these (§3,
+    "Org owns" and §4).</p>
+  <p><strong>One structural fact to internalize:</strong> the vault is plaintext Markdown in user space.
+    The classification gate governs what an AI model is shown; it is <em>not</em> a barrier against the
+    laptop's own user, who can read their files directly. That is the normal trust model of any local
+    file — acceptable — but it makes the authorization contingent on the rule in §4.1.</p>
+
+  <h2>2 · Scope of this authorization</h2>
+  <div class="scope">
+    <div class="yes">
+      <h3>✓ Authorized</h3>
+      <ul>
+        <li>Single-user, MDM-managed laptops (macOS / Windows).</li>
+        <li>Vaults holding <strong>only data the user is entitled to</strong>, up to Confidential.</li>
+        <li>Host-role CLI use by approved AI assistants (see §4.5).</li>
+        <li>The read-only MCP surface, capped per §3.</li>
+      </ul>
+    </div>
+    <div class="no">
+      <h3>✗ Not authorized (this memo)</h3>
+      <ul>
+        <li>Tiers used as an <strong>intra-machine access boundary</strong>.</li>
+        <li>The <strong>Cowork / sandbox-VM leg</strong> (EDR-blind).</li>
+        <li>Vaults containing <strong>MNPI / regulated data</strong> → §4 compliance gate.</li>
+        <li>Multi-user or shared machines.</li>
+        <li>Self-service install/update on managed endpoints (use §3.6 managed build).</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>3 · Conditions of authorization</h2>
+  <p class="rule">Status legend: <span class="pill done">DONE</span> shipped &amp; tested in
+    <code>v0.16.0</code> · <span class="pill open">ORG</span> the organization's action before rollout ·
+    <span class="pill gate">GATE</span> a hard blocker if unmet.</p>
+  <table>
+    <tr><th>#</th><th>Condition</th><th>Status</th></tr>
+    <tr><td>3.1</td><td><strong>Vault entitlement rule.</strong> Written policy: a vault may contain only
+      data its owner is cleared to access. Classification tiers are a safety default, not a boundary.</td>
+      <td><span class="pill open">ORG</span> <span class="pill gate">GATE</span></td></tr>
+    <tr><td>3.2</td><td><strong>Full-disk encryption + owner-only ACLs</strong> on every endpoint
+      (FileVault / BitLocker). Live-store confidentiality rests on this — app-layer encryption today
+      covers backups only.</td><td><span class="pill open">ORG</span> <span class="pill gate">GATE</span></td></tr>
+    <tr><td>3.3</td><td><strong>Hash-pinned dependencies + CVE gate + SBOM.</strong> Install resolves the
+      pinned lock from an approved internal index; CI audits it weekly.</td>
+      <td><span class="pill done">DONE</span> <code>requirements.lock</code>, <code>supply-chain.yml</code>
+      · <span class="pill open">ORG</span> internal mirror</td></tr>
+    <tr><td>3.4</td><td><strong>No runtime model download.</strong> Pre-stage a reviewed, checksummed model
+      bundle; the default download is now revision-pinned for reproducibility.</td>
+      <td><span class="pill done">DONE</span> revision pin + <code>$BRAIN_MODEL_CACHE</code>
+      · <span class="pill open">ORG</span> sign the bundle</td></tr>
+    <tr><td>3.5</td><td><strong>Audit-chain integrity.</strong> Every signed write binds a content hash;
+      <code>verify-audit --check-content</code> detects post-commit edits. Keys in the OS keystore,
+      fail-closed.</td><td><span class="pill done">DONE</span></td></tr>
+    <tr><td>3.6</td><td><strong>Managed lockdown.</strong> Deploy with <code>BRAIN_MANAGED=1</code>: disables
+      self-update and ad-hoc env/shell key custody (keystore-only). Updates pushed centrally.</td>
+      <td><span class="pill done">DONE</span> · <span class="pill open">ORG</span> set the flag via MDM</td></tr>
+    <tr><td>3.7</td><td><strong>Destructive-path + symlink hardening.</strong> <code>project --dest</code>
+      cannot delete the vault/home/ancestors; inbox ingestion rejects symlinks (no read outside the vault).</td>
+      <td><span class="pill done">DONE</span></td></tr>
+    <tr><td>3.8</td><td><strong>Cap the MCP surface.</strong> Set <code>BRAIN_MAX_EGRESS_TIER</code> via
+      managed config the AI client cannot edit (default ships full-vault).</td>
+      <td><span class="pill open">ORG</span></td></tr>
+    <tr><td>3.9</td><td><strong>Prohibit the sandbox-VM leg</strong> in this authorization (EDR-blind;
+      optional and severable).</td><td><span class="pill open">ORG</span></td></tr>
+    <tr><td>3.10</td><td><strong>Parser sandboxing (defense-in-depth).</strong> The five document parsers
+      are the main third-party attack surface; run ingestion in a low-privilege worker where feasible.</td>
+      <td><span class="pill open">ORG</span> recommended, not blocking</td></tr>
+  </table>
+
+  <h2>4 · Decisions the organization must record (no code resolves these)</h2>
+  <table>
+    <tr><td style="width:2.4rem"><strong>4.1</strong></td><td><strong>Entitlement.</strong> Confirm the
+      vault-entitlement rule (3.1) is owned by a named policy and enforced by onboarding, not by the tool.</td></tr>
+    <tr><td><strong>4.2</strong></td><td><strong>Model-vendor terms.</strong> The AI assistant's own model
+      call is the real egress; authorization is contingent on the enterprise no-train / zero-data-retention
+      agreement with that vendor. Confirm coverage for the content tiers in scope.</td></tr>
+    <tr><td><strong>4.3</strong></td><td><strong>Harness tool policy.</strong> No approved AI profile may
+      hold vault access <em>and</em> an outbound web/search or arbitrary-shell tool for Confidential+ vaults
+      — this is the surviving prompt-injection exfiltration path, and it is configured outside Brainiac.</td></tr>
+    <tr><td><strong>4.4</strong></td><td><strong>Support posture.</strong> Single maintainer, no SLA,
+      latest-tag-only fixes (per <code>SECURITY.md</code>). Accept, or operate an internally-reviewed
+      fork/mirror.</td></tr>
+    <tr><td><strong>4.5</strong></td><td><strong>Regulated data.</strong> If any vault will hold
+      MNPI/PII/PCI, route to Legal/Compliance for DLP, retention, and e-discovery over plaintext files —
+      out of scope for this memo.</td></tr>
+  </table>
+
+  <h2>5 · Residual risks accepted at sign-off</h2>
+  <ul>
+    <li><strong>Prompt injection is mitigated, not eliminated</strong> — bounded by the gate + §4.3 harness
+      policy; a persuasive injected instruction to an over-privileged host agent remains the residual path.</li>
+    <li><strong>The trusted-host default surfaces the full vault</strong> to any process running as the user
+      — an intentional owner decision; the compensating control is OS-level (who runs as the user) + the
+      signed audit chain, not the gate.</li>
+    <li><strong>Elevation is a CLI flag, not an enforced human gate</strong>; real containment for any
+      untrusted leg is a filtered projection, which §3.9 defers.</li>
+    <li><strong>Availability is best-effort</strong> (watchdogs, no HA) — acceptable for a single-user tool.</li>
+  </ul>
+  <p class="rule">These are documented in full in <code>docs/security-overview.html</code> §6, which was
+    corrected in this review cycle to remove earlier overstatements.</p>
+
+  <h2>6 · Recommendation &amp; sign-off</h2>
+  <p>With conditions 3.1, 3.2 met (GATE) and 3.3–3.9 applied, the residual risk is consistent with a
+    standard local productivity tool over entitled data. <strong>Recommended: authorize the scope in §2 for
+    a bounded managed pilot, then review.</strong></p>
+  <div class="sign">
+    <table>
+      <tr><td><strong>Information Security</strong></td><td>Approve ▢  Approve w/ conditions ▢  Decline ▢</td><td>Name / date ______________</td></tr>
+      <tr><td><strong>IT Architecture</strong></td><td>Approve ▢  Approve w/ conditions ▢  Decline ▢</td><td>Name / date ______________</td></tr>
+      <tr><td><strong>Data / Compliance</strong> <span class="rule">(if §4.5 applies)</span></td><td>Approve ▢  N/A ▢  Decline ▢</td><td>Name / date ______________</td></tr>
+    </table>
+  </div>
+
+  <table class="metatable">
+    <tr><td>Evidence base</td><td><code>docs/security-overview.html</code> · <code>docs/architecture-overview.html</code> · in-repo tests <code>tests/test_security_hardening_2026_07.py</code> (12 cases) · full suite 1091 passed</td></tr>
+    <tr><td>Hardening commits</td><td><code>65a2bb8</code> (correctness + doc corrections) · <code>c79d8a9</code> (supply chain)</td></tr>
+    <tr><td>Reviews</td><td>in-house + independent cross-family (Codex gpt-5.6-sol), both source-verified</td></tr>
+    <tr><td>Status</td><td>Draft for approver sign-off — not an authorization until signed above</td></tr>
+  </table>
+</main>
+</body>
+</html>

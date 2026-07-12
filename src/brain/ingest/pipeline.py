@@ -394,14 +394,23 @@ def run_ingest(core: Any, *, dry_run: bool = False) -> dict[str, Any]:
         )
 
     candidates = sorted(
+        # `is_file()` FOLLOWS symlinks, so exclude symlinks explicitly: a
+        # symlink dropped in the inbox would otherwise let ingestion read an
+        # arbitrary file OUTSIDE the vault (and be a rename/stat/read TOCTOU
+        # vector). Regular files only; symlinks are quarantined below.
         p for p in inbox.iterdir()
-        if p.is_file() and not p.name.startswith(".") and p.parent.name not in reserved
+        if not p.is_symlink() and p.is_file()
+        and not p.name.startswith(".") and p.parent.name not in reserved
     )
+    symlinks = [p for p in inbox.iterdir()
+                if p.is_symlink() and not p.name.startswith(".")]
     # Also skip anything whose top-level parent is a reserved dir (iterdir only
     # lists the inbox root, so this is defense-in-depth, not load-bearing).
     candidates = [p for p in candidates if p.name not in reserved]
 
     if dry_run:
+        for link in symlinks:
+            report["skipped"].append({"file": link.name, "reason": "symlink_rejected"})
         for path in candidates:
             handler = H.handler_for(path)
             if handler is None:
@@ -433,6 +442,17 @@ def run_ingest(core: Any, *, dry_run: bool = False) -> dict[str, Any]:
 
     manifest = _load_manifest(vault)
     today = _dt.date.today().isoformat()
+
+    # Quarantine rejected symlinks by moving the LINK itself (os.rename never
+    # follows it), so a hostile inbox symlink is neither ingested nor left to
+    # re-trigger every run — and its target is never opened.
+    for link in symlinks:
+        try:
+            _quarantine(link, quarantine_dir, "symlink_rejected",
+                        ["symlinks are not ingested (would read outside the vault)"])
+            report["quarantined"].append({"file": link.name, "reason": "symlink_rejected"})
+        except OSError:
+            report["skipped"].append({"file": link.name, "reason": "symlink_rejected"})
 
     for path in candidates:
         claimed = _claim(path, processing_dir)
@@ -763,8 +783,53 @@ def _process_nested(
             report["quarantined"].append({"file": name, "reason": reason, "parent": parent_slug})
 
 
+# Leading-date filename styles a dropped document commonly carries. Anchored
+# at the start and followed by a non-digit so partial numbers (audit codes
+# like "2024_011", MMYYYY stamps like "042022") never misparse into a date.
+_DOC_DATE_RES = (
+    re.compile(r"^(\d{4})[-_. ](\d{1,2})[-_. ](\d{1,2})(?!\d)"),  # 2026-03-25
+    re.compile(r"^(\d{4})(\d{2})(\d{2})(?!\d)"),                   # 20260325
+    re.compile(r"^(\d{2})(\d{2})(\d{2})(?!\d)"),                   # 260325 (YYMMDD)
+    # Embedded full-ISO fallback (workspace naming style:
+    # "_scenario_board_2026-06-15_v16.md"). Only the unambiguous hyphenated
+    # ISO form is accepted mid-name — never the digit-run styles, which would
+    # false-positive on version/id numbers.
+    re.compile(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)"),
+    # Trailing YYYYMMDD before the extension ("b2c-gp-analysis-20260331.md")
+    # — end-anchored so a digit run mid-name never matches; the calendar +
+    # range checks below still reject non-dates.
+    re.compile(r"(?<!\d)(\d{4})(\d{2})(\d{2})(?=\.[A-Za-z0-9]+$|$)"),
+)
+
+
+def _derive_document_date(name: str, today: str) -> str | None:
+    """Best-effort ``document_date`` from a leading date in the ORIGINAL
+    filename. Without it, a bulk re-ingestion of old documents ranks as the
+    freshest content in the vault (recency keys on capture date) and "latest"
+    queries ground on months-old material. Conservative by design: anything
+    ambiguous, non-calendar, pre-1990 or in the future returns None — an
+    undated source is NEUTRAL in recency ranking, a misdated one poisons it."""
+    for rx in _DOC_DATE_RES:
+        # search(), not match(): the first three patterns are ^-anchored (so
+        # search behaves identically), the embedded-ISO fallback is not.
+        m = rx.search(name)
+        if not m:
+            continue
+        y, mo, d = (int(g) for g in m.groups())
+        if y < 100:
+            y += 2000
+        try:
+            dd = _dt.date(y, mo, d)
+        except ValueError:
+            continue
+        if y < 1990 or dd > _dt.date.fromisoformat(today):
+            continue
+        return dd.isoformat()
+    return None
+
+
 def _meta(slug: str, today: str, archive_path: Path, vault: Path, body_sha: str) -> dict[str, Any]:
-    return {
+    meta: dict[str, Any] = {
         "id": slug,
         "type": "source",
         "classification": "Internal",  # ADR-0003: unlabelled -> MNPI; ingest
@@ -776,6 +841,10 @@ def _meta(slug: str, today: str, archive_path: Path, vault: Path, body_sha: str)
         "sha256": body_sha,
         "immutable": True,
     }
+    doc_date = _derive_document_date(archive_path.name, today)
+    if doc_date and doc_date != today:
+        meta["document_date"] = doc_date
+    return meta
 
 
 def _quarantine(claimed: Path, quarantine_dir: Path, reason: str, warnings: list[str]) -> None:

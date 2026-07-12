@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Brainiac — Security Overview &amp; Threat Model</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#1a1f24; --muted:#5b6570; --line:#e3e7ea;
+    --accent:#8a2f2f; --chip:#f9efef; --code-bg:#f5f7f9; --th:#f0f3f5;
+    --warn-bg:#fff8e6; --warn-line:#e6c96a; --risk-bg:#fdf1f1; --risk-line:#d99;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#14181c; --fg:#e5e9ec; --muted:#9aa5ae; --line:#2b3238;
+      --accent:#e08a8a; --chip:#2a1d1d; --code-bg:#1c2126; --th:#1d2329;
+      --warn-bg:#2a2410; --warn-line:#8a7328; --risk-bg:#2a1a1a; --risk-line:#7a3b3b;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  main{max-width:54rem;margin:0 auto;padding:2.5rem 1.5rem 5rem}
+  h1{font-size:1.9rem;line-height:1.25;margin:.2rem 0 .4rem}
+  h2{font-size:1.3rem;margin:2.4rem 0 .6rem;padding-top:1rem;border-top:1px solid var(--line)}
+  h3{font-size:1.05rem;margin:1.4rem 0 .4rem}
+  .kicker{color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:.08em;font-size:.75rem}
+  .meta{color:var(--muted);font-size:.9rem;margin-bottom:1.2rem}
+  .lead{font-size:1.06rem}
+  code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.86em}
+  code{background:var(--code-bg);padding:.12em .35em;border-radius:4px}
+  pre{background:var(--code-bg);padding:.9rem 1rem;border-radius:8px;overflow-x:auto;line-height:1.45}
+  pre code{background:none;padding:0}
+  table{border-collapse:collapse;width:100%;margin:.8rem 0;font-size:.92rem}
+  th,td{border:1px solid var(--line);padding:.45rem .6rem;text-align:left;vertical-align:top}
+  th{background:var(--th)}
+  .box{border:1px solid var(--line);border-radius:10px;padding:1rem 1.2rem;margin:1rem 0}
+  .risk{background:var(--risk-bg);border:1px solid var(--risk-line);border-radius:8px;padding:.7rem 1rem;margin:.9rem 0}
+  .risk h3{margin-top:.1rem}
+  .chips span{display:inline-block;background:var(--chip);color:var(--accent);border-radius:999px;
+    padding:.15rem .7rem;margin:.15rem .25rem .15rem 0;font-size:.8rem;font-weight:600}
+  .toc{columns:2;font-size:.92rem}
+  .toc a{color:var(--accent);text-decoration:none}
+  .toc a:hover{text-decoration:underline}
+  .wide{overflow-x:auto}
+  .info{margin:1.4rem 0}
+  .info svg{width:100%;height:auto;display:block;font-family:inherit}
+  .info figcaption{color:var(--muted);font-size:.85rem;margin-top:.4rem;text-align:center}
+  svg .b{fill:var(--chip);stroke:var(--accent);stroke-width:1.3}
+  svg .b2{fill:var(--code-bg);stroke:var(--line);stroke-width:1.2}
+  svg .gate{fill:var(--accent)}
+  svg .t{fill:var(--fg);font-size:13px;font-weight:650}
+  svg .tt{fill:var(--fg);font-size:14px;font-weight:700}
+  svg .ts{fill:var(--muted);font-size:11px;font-weight:400}
+  svg .ta{fill:var(--accent);font-size:11.5px;font-weight:650}
+  svg .tw{fill:#fff;font-size:12px;font-weight:700}
+  svg .a{stroke:var(--muted);stroke-width:1.5;fill:none}
+  svg .ad{stroke:var(--muted);stroke-width:1.4;fill:none;stroke-dasharray:5 4}
+  svg .bad{stroke:#c25454;stroke-width:1.6;fill:none;stroke-dasharray:6 4}
+  svg .tbad{fill:#c25454;font-size:12px;font-weight:700}
+  svg .ah{fill:var(--muted)}
+  svg text{font-family:inherit}
+  @media print{ body{font-size:12px} h2{break-after:avoid} pre{white-space:pre-wrap} }
+</style>
+</head>
+<body>
+<main>
+  <div class="kicker">Brainiac · for the cyber-security team</div>
+  <h1>Security Overview &amp; Threat Model</h1>
+  <div class="meta">Companions: <code>docs/architecture-overview.html</code> (component map) ·
+    <code>docs/classification-scheme.md</code> (tier definitions) ·
+    <code>docs/SECURITY_NOTES.md</code> (triaged static-scanner findings).
+    Describes the shipped system as of <strong>v0.16 (2026-07)</strong>.
+    <strong>This document is deliberately honest about residual risk — §6 lists what is NOT mitigated.</strong></div>
+
+  <div class="chips">
+    <span>deny-by-default egress</span><span>host/VM trust split</span>
+    <span>Ed25519 audit chain</span><span>fail-closed signing</span>
+    <span>no listening ports</span><span>no API keys</span>
+  </div>
+
+  <div class="box toc">
+    <strong>Contents</strong><br>
+    <a href="#one">1 · System in one sentence</a><br>
+    <a href="#controls">2 · The four load-bearing controls</a><br>
+    <a href="#atrest">3 · Data at rest</a><br>
+    <a href="#surface">4 · Attack surface inventory</a><br>
+    <a href="#threat">5 · Threat model</a><br>
+    <a href="#risks">6 · Known vulnerabilities &amp; residual risks</a><br>
+    <a href="#checklist">7 · What a cyber review should verify</a><br>
+    <a href="#config">8 · Security-relevant configuration</a>
+  </div>
+
+  <h2 id="one">1 · System in one sentence, posture in one more</h2>
+  <p class="lead">
+    Brainiac is a local-only CLI that indexes a folder of Markdown notes and surfaces them to AI
+    assistants; it runs no server, opens no listening ports, holds no API keys, and initiates no
+    network traffic of its own (one exception: an explicit, user-invoked embedding-model
+    download — §6.5). The security design assumes the <em>content</em> is sensitive and the
+    <em>AI model</em> is the exfiltration channel to worry about — so the primary control is an
+    <strong>egress gate</strong> on what the tool will print, not perimeter defenses it doesn't need.
+  </p>
+
+  <h2 id="controls">2 · The four load-bearing controls</h2>
+
+  <figure class="info">
+  <svg viewBox="0 0 780 130" role="img" aria-label="The four load-bearing controls">
+    <rect x="16" y="16" width="178" height="96" rx="10" class="b"/>
+    <text x="105" y="42" text-anchor="middle" class="tt">1 · Egress gate</text>
+    <text x="105" y="62" text-anchor="middle" class="ts">deny-by-default tier filter</text>
+    <text x="105" y="76" text-anchor="middle" class="ts">on every read, before stdout</text>
+    <text x="105" y="97" text-anchor="middle" class="ta">unlabelled ⇒ most-sensitive</text>
+    <rect x="206" y="16" width="178" height="96" rx="10" class="b"/>
+    <text x="295" y="42" text-anchor="middle" class="tt">2 · Trust split</text>
+    <text x="295" y="62" text-anchor="middle" class="ts">untrusted VM: read + draft only</text>
+    <text x="295" y="76" text-anchor="middle" class="ts">host alone writes + signs</text>
+    <text x="295" y="97" text-anchor="middle" class="ta">breaks the lethal trifecta</text>
+    <rect x="396" y="16" width="178" height="96" rx="10" class="b"/>
+    <text x="485" y="42" text-anchor="middle" class="tt">3 · Audit chain</text>
+    <text x="485" y="62" text-anchor="middle" class="ts">Ed25519-signed, hash-chained</text>
+    <text x="485" y="76" text-anchor="middle" class="ts">record of every write</text>
+    <text x="485" y="97" text-anchor="middle" class="ta">no key ⇒ no commit</text>
+    <rect x="586" y="16" width="178" height="96" rx="10" class="b"/>
+    <text x="675" y="42" text-anchor="middle" class="tt">4 · Data ≠ instructions</text>
+    <text x="675" y="62" text-anchor="middle" class="ts">vault content is never</text>
+    <text x="675" y="76" text-anchor="middle" class="ts">executed as commands</text>
+    <text x="675" y="97" text-anchor="middle" class="ta">policy — see residual §6.1</text>
+  </svg>
+  <figcaption>Independent layers; each fails closed. Controls 1–3 are mechanisms, control 4 is contract.</figcaption>
+  </figure>
+
+  <h3>2.1 Classification egress gate (deny-by-default)</h3>
+  <p>Every note carries a <code>classification:</code> label from a five-tier ordered scheme:</p>
+  <pre>Public &lt; Internal &lt; Confidential &lt; Restricted &lt; MNPI</pre>
+  <p>Before <strong>any</strong> read verb (<code>search</code>, <code>get</code>, <code>recent</code>,
+    <code>grep</code>, <code>bases-query</code>, <code>graph-expand</code>, <code>dossier</code>, …) writes to
+    stdout, results above the caller's allowed tier are withheld. The withholding is
+    <em>visible</em> (a “N withheld” notice), so a starved result is a prompt for a human-gated
+    elevation, not a silent gap.</p>
+  <ul>
+    <li><strong>Fail-closed rule:</strong> a note whose label is missing, empty, or unrecognized is
+      treated as <strong>MNPI (most sensitive)</strong> at every surfacing boundary.
+      <strong>Consequence to understand precisely:</strong> this only <em>hides</em> the note when
+      the caller's cap is <em>below</em> MNPI. On the trusted-host default (full vault = MNPI cap,
+      owner decision 2026-07-10) an unlabelled note ranks as MNPI and is therefore <em>surfaced</em>,
+      not hidden. Unlabelled content becomes invisible only under a narrowed cap
+      (<code>$BRAIN_DEFAULT_MAX_TIER</code> below MNPI, or the VM leg's <code>Internal</code>
+      default). So the “deny-by-default” property protects a capped surface; it does not hide
+      mislabelled notes from a full-vault host session — that host is trusted to see everything.</li>
+    <li><strong>Role-split defaults:</strong> a trusted host session defaults to the full vault;
+      the untrusted sandbox leg (<code>--role vm</code>) defaults to <code>Internal</code> and below.
+      <code>--max-tier</code> narrows or raises the cap per call. <strong>Important honesty:</strong>
+      <code>--max-tier</code> is an ordinary CLI flag — an explicit value <em>wins on either role</em>
+      (<code>cli.py</code>), so it is <strong>not a technically-enforced human gate</strong>: a caller
+      that constructs the argv (including a model on the VM leg) can raise its own cap. The real
+      containment for an untrusted leg is not the flag but <code>brain project</code> — a filtered
+      snapshot that physically omits higher tiers (see §2.2 / §6.3). Treat “human-gated elevation”
+      as an operating convention, not a mechanism.</li>
+    <li>The graph surface applies the same gate — a withheld note cannot leak via link expansion.</li>
+  </ul>
+  <figure class="info">
+  <svg viewBox="0 0 780 285" role="img" aria-label="Classification egress gate">
+    <text x="16" y="20" class="ts">notes in the vault (every note carries a tier)</text>
+    <rect x="16" y="30" width="170" height="30" rx="7" fill="#2e7d54"/><text x="101" y="50" text-anchor="middle" class="tw">Public · rank 0</text>
+    <rect x="16" y="68" width="170" height="30" rx="7" fill="#3f6fa8"/><text x="101" y="88" text-anchor="middle" class="tw">Internal · rank 1</text>
+    <rect x="16" y="106" width="170" height="30" rx="7" fill="#a8842f"/><text x="101" y="126" text-anchor="middle" class="tw">Confidential · rank 2</text>
+    <rect x="16" y="144" width="170" height="30" rx="7" fill="#a85c2f"/><text x="101" y="164" text-anchor="middle" class="tw">Restricted · rank 3</text>
+    <rect x="16" y="182" width="170" height="30" rx="7" fill="#a33636"/><text x="101" y="202" text-anchor="middle" class="tw">MNPI · rank 4</text>
+    <rect x="16" y="220" width="170" height="30" rx="7" class="b2" stroke-dasharray="5 4"/>
+    <text x="101" y="240" text-anchor="middle" class="ts">no / unknown label</text>
+    <path d="M186 235 L218 235 L218 197 L192 197" class="bad" fill="none"/><polygon points="196,193 196,201 188,197" fill="#c25454"/>
+    <text x="226" y="239" class="tbad">treated as MNPI</text>
+    <rect x="392" y="16" width="16" height="240" rx="5" class="gate"/>
+    <text x="400" y="278" text-anchor="middle" class="ta">EGRESS GATE — caller's max tier</text>
+    <line x1="186" y1="45" x2="560" y2="45" class="a"/><polygon points="558,41 558,49 566,45" class="ah"/>
+    <line x1="186" y1="83" x2="560" y2="83" class="a"/><polygon points="558,79 558,87 566,83" class="ah"/>
+    <line x1="186" y1="121" x2="384" y2="121" class="bad"/><text x="300" y="113" class="tbad">✕ withheld</text>
+    <line x1="186" y1="159" x2="384" y2="159" class="bad"/><text x="300" y="151" class="tbad">✕ withheld</text>
+    <line x1="186" y1="197" x2="384" y2="197" class="bad"/>
+    <rect x="574" y="24" width="190" height="82" rx="10" class="b"/>
+    <text x="669" y="50" text-anchor="middle" class="tt">AI model</text>
+    <text x="669" y="70" text-anchor="middle" class="ts">sees only tiers ≤ the cap</text>
+    <text x="669" y="86" text-anchor="middle" class="ts">(example shown: cap = Internal)</text>
+    <rect x="574" y="120" width="190" height="72" rx="10" class="b2"/>
+    <text x="669" y="142" text-anchor="middle" class="t">withholding is VISIBLE</text>
+    <text x="669" y="160" text-anchor="middle" class="ts">“3 withheld — re-run with</text>
+    <text x="669" y="174" text-anchor="middle" class="ts">--max-tier …” (human-gated)</text>
+    <text x="440" y="235" class="ts">defaults: trusted host = full vault ·</text>
+    <text x="440" y="250" class="ts">sandbox VM = Internal and below</text>
+  </svg>
+  <figcaption>Fail-closed both ways: a missing label restricts, and a starved result asks for elevation instead of leaking.</figcaption>
+  </figure>
+
+  <p>Code: <code>src/brain/classification.py</code>, <code>src/brain/egress.py</code>; scheme:
+    <code>docs/classification-scheme.md</code>.</p>
+
+  <h3>2.2 Host/VM trust split (breaking the “lethal trifecta”)</h3>
+  <p>The dangerous combination for an AI agent is <strong>untrusted content + private data + an
+    outbound channel</strong> in one execution path. Brainiac splits it:</p>
+
+  <figure class="info">
+  <svg viewBox="0 0 780 265" role="img" aria-label="Breaking the lethal trifecta">
+    <rect x="60" y="14" width="180" height="44" rx="10" class="b2"/>
+    <text x="150" y="32" text-anchor="middle" class="t">untrusted content</text>
+    <text x="150" y="48" text-anchor="middle" class="ts">wild PDFs, web clips, drafts</text>
+    <rect x="300" y="14" width="180" height="44" rx="10" class="b2"/>
+    <text x="390" y="32" text-anchor="middle" class="t">private data</text>
+    <text x="390" y="48" text-anchor="middle" class="ts">the vault, up to MNPI</text>
+    <rect x="540" y="14" width="180" height="44" rx="10" class="b2"/>
+    <text x="630" y="32" text-anchor="middle" class="t">outbound channel</text>
+    <text x="630" y="48" text-anchor="middle" class="ts">web tools, writes, model call</text>
+    <path d="M150 58 L150 92 L630 92 L630 58" class="bad" fill="none"/>
+    <line x1="390" y1="58" x2="390" y2="92" class="bad"/>
+    <text x="390" y="112" text-anchor="middle" class="tbad">all three in ONE execution path = exfiltration by prompt injection</text>
+    <line x1="390" y1="122" x2="390" y2="142" class="a"/><polygon points="386,140 394,140 390,148" class="ah"/>
+    <text x="404" y="140" class="ta">so the paths are split:</text>
+    <rect x="16" y="154" width="360" height="92" rx="12" class="b"/>
+    <text x="196" y="178" text-anchor="middle" class="tt">VM leg (reads wild content)</text>
+    <text x="196" y="198" text-anchor="middle" class="ts">✓ untrusted content   ✓ data capped at Internal</text>
+    <text x="196" y="214" text-anchor="middle" class="ts">✗ no writes, no signing key, no live index</text>
+    <text x="196" y="232" text-anchor="middle" class="ta">proposes drafts — inert until host-validated</text>
+    <rect x="404" y="154" width="360" height="92" rx="12" class="b"/>
+    <text x="584" y="178" text-anchor="middle" class="tt">HOST leg (holds the data + keys)</text>
+    <text x="584" y="198" text-anchor="middle" class="ts">✓ full vault   ✓ signs + writes (EDR-visible, audited)</text>
+    <text x="584" y="214" text-anchor="middle" class="ts">reads only validated, signed content</text>
+    <text x="584" y="232" text-anchor="middle" class="ta">residual: host agent + web tool — see §6.2</text>
+  </svg>
+  <figcaption>No single leg holds all three ingredients — but the strength depends on the deployment (below), not on a flag.</figcaption>
+  </figure>
+  <div class="wide">
+  <table>
+    <tr><th>Capability</th><th>HOST broker (macOS/Win)</th><th>Cowork Linux VM (sandbox)</th></tr>
+    <tr><td>Read</td><td>live index, full-tier default</td><td>read-only <strong>snapshot</strong>, <code>Internal</code>-capped</td></tr>
+    <tr><td>Write</td><td>sign + index + snapshot publish</td><td><code>draft-capture</code> staging only</td></tr>
+    <tr><td>Signing key</td><td>OS secret store</td><td><strong>cannot resolve a key</strong> (no code path)</td></tr>
+    <tr><td>EDR / audit visibility</td><td>visible</td><td>blind, ephemeral</td></tr>
+  </table>
+  </div>
+  <p>The VM is a <em>read + propose</em> surface. Its drafts carry
+    <code>provenance.trust: untrusted</code> and are inert — not indexed, not searchable — until the
+    host validates, signs, and commits them. When the process actually runs as <code>role=vm</code>,
+    write verbs are refused before the engine is even constructed, and this is pinned by
+    integration tests.</p>
+  <div class="risk"><strong>Where the split is strong, and where it isn't.</strong> The refusal is
+    real, but <code>--role</code> is <em>caller-selected</em> and defaults to <code>host</code>: on a
+    single machine, any process that can run <code>brain</code> can select <code>--role host</code>.
+    So the split is a <strong>deployment boundary, not a runtime guarantee</strong> — it holds only
+    when the untrusted leg is a genuinely separate context (the Cowork VM) that (a) is given a
+    <em>projected</em> vault via <code>brain project</code> — never the canonical files — and (b)
+    runs a binary that cannot select the host role. A corporate build should ship a separate VM
+    entry point with host verbs removed and a non-overridable cap (§6.3). On a normal laptop there
+    is no VM: the user is the host and reading their own entitled files is expected.</div>
+
+  <h3>2.3 Tamper-evident audit chain (fail-closed signing)</h3>
+  <p>Every committed write (note promotion, supersession, ingestion) appends an
+    <strong>Ed25519-signed, hash-chained</strong> JSONL record — each entry carries the hash of its
+    predecessor; <code>brain verify-audit</code> walks the chain, and <code>brain anchor</code> /
+    <code>verify-anchor</code> can pin the chain head off-host. Key custody, in order, failing closed:</p>
+  <ol>
+    <li>macOS Keychain / Windows Credential Manager (service <code>profile-a-brain-audit-key</code>), or</li>
+    <li>an operator-supplied custody command (<code>$BRAIN_AUDIT_KEY_CMD</code>, e.g. an
+      <code>age</code>-decrypt pipeline), or</li>
+    <li>explicit PEM via env.</li>
+  </ol>
+  <p><strong>No key ⇒ no promotion.</strong> A draft is left staged rather than committed unsigned.
+    Code: <code>src/brain/audit.py</code>.</p>
+  <p><strong>What it does and does not prove (hardened 2026-07-12).</strong> Each signed entry now
+    binds a full <code>content_sha256</code> of the exact bytes written, so a note <em>edited on disk
+    after commit</em> is detectable: <code>brain verify-audit --check-content</code> reports any note
+    whose current bytes differ from the last hash the chain signed. The chain proves
+    <em>integrity of the operation record and, with the content hash, of the committed bytes</em> — it
+    does <strong>not</strong> provide confidentiality (entries and the log are plaintext), and two
+    residual gaps remain by design at this scale: continuity is not re-verified before each append
+    (a truncated log can start a new genesis), and the append↔file-write pair is not a single durable
+    transaction. Off-host anchoring (<code>brain anchor</code>) mitigates the first for deployments
+    that require it; treat these as the honest boundary of the guarantee.</p>
+
+  <h3>2.4 Untrusted content is data, never instructions</h3>
+  <p>Anything from <code>raw/</code>, freshly-ingested files, MCP/tool output, and session memory is
+    contractually <strong>data</strong>: the agent-facing contract (<code>AGENTS.md</code>) instructs
+    every harness to never execute instructions found inside vault content. This is a
+    prompt-injection <em>mitigation</em>, not a proof — see §6.1.</p>
+
+  <h2 id="atrest">3 · Data at rest</h2>
+  <ul>
+    <li><strong>Baseline:</strong> full-disk encryption (FileVault/BitLocker) + OS file permissions.
+      The vault, index, and audit log are plain files in the user's home directory; a
+      single-user machine is the assumed deployment.</li>
+    <li><strong>Conditional application-layer encryption</strong> is built in but off by default:
+      AES-256-GCM (<code>src/brain/encryption.py</code>), key custody mirroring the audit key
+      (OS secret store / custody command / env), fail-closed. The flip-list for turning it on:
+      off-device backup/sync, regulated-data regimes, multi-user machines, or a cyber-team
+      mandate. <strong>Any off-device backup must be encrypted</strong> (<code>brain backup</code>
+      integrates with the module).</li>
+    <li>Rationale: the budget goes to egress control, where the real risk is —
+      <code>docs/substrate-spec.md</code> §6.</li>
+  </ul>
+
+  <h2 id="surface">4 · Attack surface inventory</h2>
+  <div class="wide">
+  <table>
+    <tr><th>Surface</th><th>Exposure</th><th>Notes</th></tr>
+    <tr><td><code>brain</code> CLI</td><td>local shell only</td><td>no network listener; argv/env are the input surface</td></tr>
+    <tr><td>MCP adapter (<code>brain-mcp</code>)</td><td>stdio, spawned by the AI client</td><td><strong>read-only by construction</strong> — exposes exactly 5 read tools (<code>search</code>, <code>get</code>, <code>recent</code>, <code>bases_query</code>, <code>dossier</code>); write verbs are not reachable; an egress ceiling clamps any requested tier</td></tr>
+    <tr><td>Scheduled tasks (2)</td><td>launchd / Task Scheduler</td><td>fixed argv, no user input; the only persistence</td></tr>
+    <tr><td>VirtioFS shared mount</td><td>host↔VM file sharing</td><td>the VM sees the vault folder; containment for sensitive tiers is <code>brain project</code> (a filtered copy that physically omits them) — the gate alone is an egress <em>decision</em>, not containment</td></tr>
+    <tr><td>Inbox ingestion</td><td>file parsing</td><td>PDF/DOCX/PPTX/XLSX/image parsers run on untrusted files (§6.4); unknown extensions quarantine rather than parse</td></tr>
+    <tr><td>Model downloads</td><td>outbound HTTPS (Hugging Face)</td><td>only on explicit <code>brain warmup</code> / first semantic use; the hash embedder needs no download at all</td></tr>
+    <tr><td>Update path</td><td>PyPI / installer scripts</td><td>standard supply-chain exposure (§6.5)</td></tr>
+  </table>
+  </div>
+  <p><strong>Not present:</strong> HTTP APIs, sockets, browser components, telemetry, credential
+    storage for third-party services.</p>
+
+  <h2 id="threat">5 · Threat model</h2>
+  <p><strong>Assets:</strong> the vault content (up to MNPI tier), the audit signing key, the
+    integrity of the audit history.</p>
+  <p><strong>Adversaries considered:</strong></p>
+  <ul>
+    <li><strong>A1 — malicious/compromised content</strong> entering via capture (a poisoned PDF, a
+      web clip carrying prompt-injection text) trying to make an AI agent exfiltrate vault
+      content or perform destructive actions.</li>
+    <li><strong>A2 — a compromised or manipulated AI agent process</strong> (any harness with shell
+      access on the host).</li>
+    <li><strong>A3 — the sandbox VM</strong> treated as hostile (EDR-blind, ephemeral, runs
+      model-directed code).</li>
+    <li><strong>A4 — supply chain</strong> (PyPI dependencies, ONNX model artifacts, installer
+      scripts).</li>
+    <li><strong>A5 — local attacker / other OS user</strong> (device theft, snooping).</li>
+  </ul>
+  <p><strong>Out of scope by design:</strong> a fully-compromised host OS or user account
+    (root/owner malware) — at that point every local-first system is lost; FDE + OS hygiene are
+    the controls, not Brainiac.</p>
+
+  <h2 id="risks">6 · Known vulnerabilities &amp; residual risks (the honest list)</h2>
+
+  <div class="risk">
+    <h3>6.1 Prompt injection remains the top residual risk (A1 → A2)</h3>
+    <p>The “data, never instructions” contract is policy enforced by the <em>model's</em>
+      compliance, not by a mechanism. A sufficiently persuasive injected instruction inside
+      captured content could still steer an agent that has both vault read access and an
+      outbound channel (e.g. its own web-search tool).
+      <strong>Mitigations in place:</strong> the trifecta split (the leg that reads wild content is
+      the capped VM), the classification gate limits what such an agent can read at all, human
+      gates on Restricted/MNPI elevation, and drafts are inert until host-validated.
+      <strong>Not eliminated:</strong> a host-side agent with full-tier default egress that also
+      holds a web tool is the residual path — see §6.2.</p>
+  </div>
+
+  <div class="risk">
+    <h3>6.2 Outbound egress through the model's own channels</h3>
+    <p>Brainiac gates what the <em>model reads</em>; it cannot gate what the <em>model then does</em>.
+      Two concrete leaks the design acknowledges:</p>
+    <ul>
+      <li><strong>The model call itself.</strong> Surfaced content flows to the assistant vendor.
+        The stated control is contractual (enterprise no-train / zero-data-retention terms) — a
+        policy control, not a technical one.</li>
+      <li><strong>Web-search query leakage.</strong> A query string containing an internal term
+        (deal codename, counterparty) IS an egress event to a public search engine. The standing
+        rule (“never leak internal topics into web search”) lives in <code>AGENTS.md</code> and is
+        model-followed, not enforced.</li>
+    </ul>
+    <p>A cyber review should treat <strong>the AI harness's tool policy</strong> (which tools an
+      agent may hold alongside vault access) as part of this system's control set.</p>
+  </div>
+
+  <div class="risk">
+    <h3>6.3 The trusted host default is wide by deliberate choice</h3>
+    <p>Since 2026-07-10 the host default egress cap is the <strong>full vault</strong> (the old
+      <code>Internal</code> default starved real queries; elevation friction pushed users to worse
+      channels). Consequence: any process able to run <code>brain</code> as the user on the host
+      reads up to MNPI. The compensating controls are OS-level (who can execute as the user) and
+      the audit chain (writes are signed), <strong>not</strong> the gate. A deployment needing a
+      narrower host default sets <code>$BRAIN_DEFAULT_MAX_TIER</code> per machine — a conscious
+      owner policy decision, documented as such.</p>
+    <p>Two corollaries a reviewer should log explicitly: (a) the <strong>MCP read surface ships the
+      same MNPI (full-vault) default</strong> — set <code>$BRAIN_MAX_EGRESS_TIER</code> to
+      <code>Internal</code> or below, via managed config the AI client cannot edit, for a capped MCP
+      server; and (b) because <code>--max-tier</code> overrides the role default (§2.1), a
+      narrowed default is a floor a caller can still raise unless the surface is a separately-built
+      capped binary. For an untrusted leg, rely on <code>brain project</code> (physical omission),
+      not the cap.</p>
+  </div>
+
+  <div class="risk">
+    <h3>6.4 Document parsers process hostile input</h3>
+    <p>Ingestion runs <code>pypdf</code>, <code>python-docx</code>, <code>python-pptx</code>,
+      <code>openpyxl</code>, <code>Pillow</code> over files dropped in the inbox — historically
+      CVE-bearing parser families. Mitigations: parsing happens on the host as the user (no
+      privilege boundary is crossed), unknown extensions are quarantined not parsed, symlinks
+      are rejected (§6.8), and originals are archived immutably. Residual: a parser RCE =
+      user-level code execution. These five libraries are the main third-party attack surface —
+      the hash-pinned lock + weekly CVE audit below keep them patched, but a managed baseline
+      should run ingestion in a sandboxed low-privilege worker (still open — §8 conditions).</p>
+  </div>
+
+  <div class="risk">
+    <h3>6.5 Supply chain <span style="font-weight:400;font-size:.85em">(partly hardened 2026-07-12)</span></h3>
+    <ul>
+      <li><strong>Dependencies — now hash-pinned + CVE-gated.</strong> <code>requirements.lock</code>
+        is the full transitive runtime closure with per-artifact SHA-256 hashes
+        (<code>uv pip compile --generate-hashes</code>; <code>make lock</code> regenerates it). CI
+        (<code>.github/workflows/supply-chain.yml</code>) fails the build if the lock drifts from
+        <code>pyproject.toml</code>, runs <code>pip-audit</code> against it on every PR/push
+        <em>and weekly</em> (catching a newly-disclosed CVE in an already-pinned dep), and publishes
+        a CycloneDX SBOM. Managed installs should resolve against the lock, from an internal mirror,
+        not pyproject's open <code>&gt;=</code> ranges.</li>
+      <li><strong>Model artifacts — now revision-pinned.</strong> The default model download is
+        pinned to an exact Hugging Face commit (<code>E5_SMALL_ONNX_REVISION</code>), so the bytes
+        are reproducible rather than "whatever <code>main</code> points at today"; override with
+        <code>$BRAIN_EMBED_REVISION</code> (e.g. an internal mirror pin) or bypass downloads entirely
+        with a pre-staged <code>$BRAIN_MODEL_CACHE</code> / the hash embedder. Residual: integrity
+        still rests on the HF channel unless you stage + checksum + sign the bundle internally
+        (recommended for managed endpoints).</li>
+      <li><strong>Installers.</strong> <code>install.sh</code> / <code>install.ps1</code> /
+        <code>npx brainiac-install</code> invoke package managers directly (uv → pipx → pip); they
+        are <em>not</em> remote-script pipes, but they resolve unpinned public packages. For managed
+        endpoints, install from the lock via an approved internal index and set
+        <code>$BRAIN_MANAGED=1</code> (§6.6) to disable self-update.</li>
+    </ul>
+  </div>
+
+  <div class="risk">
+    <h3>6.6 Key custody commands use <code>shell=True</code> — disabled by managed mode</h3>
+    <p><code>$BRAIN_AUDIT_KEY_CMD</code> / <code>$BRAIN_ENCRYPTION_KEY_CMD</code> values are executed
+      via the shell so an operator can plug in a custody pipeline. Every scanner flags this; the
+      triage (and why it adds no attack surface beyond “attacker controls your environment”,
+      which is already a full compromise) is documented per-site in
+      <code>docs/SECURITY_NOTES.md</code>. Reviewers should confirm the environment of the
+      scheduled tasks is not writable by other OS users.</p>
+    <p><strong>Managed mode (added 2026-07-12):</strong> set <code>$BRAIN_MANAGED=1</code> (via
+      MDM/endpoint policy) and the env + shell key-custody sources
+      (<code>BRAIN_AUDIT_KEY_PEM/CMD</code>, <code>BRAIN_ENCRYPTION_KEY/CMD</code>) are <em>ignored</em>
+      — only the OS keystore (Keychain / Credential Manager) can provide a key — and
+      <code>brain update</code> self-update is refused (updates are deployed centrally). This is the
+      recommended corporate baseline; keys should be non-exportable keystore/HSM-backed entries.
+      Tests: <code>tests/test_security_hardening_2026_07.py::TestManagedMode</code>.</p>
+  </div>
+
+  <div class="risk">
+    <h3>6.7 The VM leg is EDR-blind by nature</h3>
+    <p>Anything the model does <em>inside</em> the Cowork sandbox is invisible to host security
+      tooling. That is exactly why the VM was stripped to read+draft: the things worth logging
+      (writes, signing, promotion) can only happen on the EDR-visible host, and every one lands
+      in the signed audit chain. Residual: VM-side <em>reads</em> of snapshot content
+      (≤ Internal by default) are unlogged.</p>
+  </div>
+
+  <div class="risk">
+    <h3>6.8 Miscellaneous, known and accepted</h3>
+    <ul>
+      <li><code>.brain/memory/</code> (session handoff notes) is host-only, gitignored, never
+        indexed — but it is plaintext on disk; treat like the vault (FDE).</li>
+      <li>The SQLite index and snapshot duplicate note content outside <code>vault/</code>. They rely
+        on the FDE baseline. <strong>Correction (was overstated):</strong> the conditional
+        application-layer encryption module (<code>encryption.py</code>) is <em>not</em> wired to the
+        index, snapshot, vault, or audit log — its only production caller is
+        <code>brain backup</code>. So “app-layer encryption” today means <em>encrypted backups only</em>;
+        live-store confidentiality is FDE + OS permissions. A managed baseline should mandate
+        FileVault/BitLocker and disable the plaintext-backup option.</li>
+      <li>The audit log is plaintext JSONL and proves <em>integrity</em> (now including committed
+        note bytes — §2.3), never <em>confidentiality</em>.</li>
+      <li>Availability is best-effort: watchdogs detect a dead scheduler, but there is no HA
+        story — acceptable for a single-user local tool.</li>
+    </ul>
+    <p style="margin:.6rem 0 0"><strong>Fixed in the 2026-07-12 hardening pass</strong> (previously
+      would have appeared here): <code>brain project --dest</code> now refuses to recursively delete
+      the vault, home, an ancestor, or any non-projection directory; inbox ingestion now rejects and
+      quarantines top-level symlinks (they otherwise followed to files outside the vault); and the
+      audit chain now binds a content hash (§2.3). Tests: <code>tests/test_security_hardening_2026_07.py</code>.</p>
+  </div>
+
+  <h2 id="checklist">7 · What a cyber review should verify (suggested checklist)</h2>
+  <ol>
+    <li><strong>Gate conformance:</strong> run <code>brain search</code>/<code>get</code> under
+      <code>--role vm</code> and with <code>--max-tier</code> variations; confirm withheld counts and
+      that unlabelled notes never surface. (Tests: <code>tests/test_egress_per_subcommand.py</code>.)</li>
+    <li><strong>VM write refusal:</strong> attempt <code>brain write</code> / <code>supersede</code> /
+      <code>ingest</code> with <code>BRAIN_ROLE=vm</code>; confirm refusal precedes any key/index
+      access. (Tests: <code>tests/test_integration.py</code>.)</li>
+    <li><strong>Audit chain:</strong> commit a note, tamper with a JSONL entry, confirm
+      <code>brain verify-audit</code> fails; confirm promotion is blocked with the key removed from
+      the secret store.</li>
+    <li><strong>Scheduled-task hygiene:</strong> review the two launchd / Task Scheduler entries'
+      argv + environment file permissions (relevant to §6.6).</li>
+    <li><strong>Harness tool policy:</strong> review which AI harnesses hold BOTH vault access and
+      outbound tools (web search, arbitrary shell) — this is the §6.1/§6.2 residual path and is
+      configured <em>outside</em> Brainiac.</li>
+    <li><strong>Dependency posture:</strong> <code>pip audit</code> (or equivalent) on the ~10 runtime
+      deps, with special attention to the five document parsers (§6.4).</li>
+    <li><strong>Static-scan triage:</strong> <code>docs/SECURITY_NOTES.md</code> records every accepted
+      scanner finding with per-site rationale; re-verify rather than re-accept.</li>
+  </ol>
+
+  <h2 id="config">8 · Security-relevant configuration reference</h2>
+  <div class="wide">
+  <table>
+    <tr><th>Knob</th><th>Effect</th><th>Default</th></tr>
+    <tr><td><code>BRAIN_MANAGED=1</code></td><td>corporate lockdown: ignores env/shell key custody (keystore-only), refuses <code>brain update</code> self-update</td><td>off</td></tr>
+    <tr><td><code>--role vm</code> / <code>BRAIN_ROLE=vm</code></td><td>read+draft-only mode, snapshot reads, <code>Internal</code> cap</td><td>host role</td></tr>
+    <tr><td><code>--max-tier</code> / <code>BRAIN_DEFAULT_MAX_TIER</code></td><td>egress ceiling per call / per machine. Note: an explicit <code>--max-tier</code> overrides the role default on either role (not a hard gate — §2.1)</td><td>host: full vault (MNPI); vm: Internal</td></tr>
+    <tr><td><code>BRAIN_MAX_EGRESS_TIER</code> (MCP)</td><td>hard server-side ceiling for the MCP read surface; an unset/invalid value falls back to the default</td><td><strong>MNPI (full vault)</strong> — set to <code>Internal</code> or below for a capped MCP surface</td></tr>
+    <tr><td><code>BRAIN_AUDIT_KEY_CMD</code></td><td>external signing-key custody command (shell) — disable on managed builds (§6.6)</td><td>Keychain / Credential Manager</td></tr>
+    <tr><td><code>BRAIN_ENCRYPTION_KEY_CMD</code> + module enable</td><td>AES-256-GCM — <strong>backups only</strong> today, not the live index/vault (§6.8)</td><td>off (FDE baseline)</td></tr>
+    <tr><td><code>BRAIN_EMBEDDER=hash</code></td><td>fully-offline embedder (no model download)</td><td><code>auto</code> (e5-small)</td></tr>
+    <tr><td><code>BRAIN_REQUIRE_REAL_EMBEDDER</code></td><td>fail-closed if the real model is absent (semantic paths only)</td><td>on for vm role</td></tr>
+    <tr><td><code>brain project --dest --max-tier</code></td><td>filtered workspace copy that physically omits higher tiers (the real containment for an untrusted leg); refuses destructive/ancestor dests (§6.8)</td><td>vm cap: Internal</td></tr>
+  </table>
+  </div>
+
+  <style>.related{margin-top:2.2rem;padding-top:1rem;border-top:1px solid var(--line);color:var(--muted);font-size:.85rem}.related a{color:var(--accent);text-decoration:none}.related a:hover{text-decoration:underline}</style>
+  <p class="related"><strong>Related:</strong>
+    <a href="install-guide.html">Install guide</a> ·
+    <a href="architecture-overview.html">Architecture</a> ·
+    <a href="security-overview.html">Security &amp; threat model</a> ·
+    <a href="deployment-authorization-memo.html">Authorization memo</a> ·
+    <a href="managed-deployment-runbook.html">Managed deployment</a> · full doc map: <code>docs/README.md</code>.</p>
+</main>
+</body>
+</html>

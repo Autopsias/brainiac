@@ -1,7 +1,7 @@
 # Substrate specification — Profile A second brain
 
 **Status:** spec of record for SESSION S01 (SUB-01 / SUB-02).
-**Derived from:** `99 Workspace/_design_profile_a_architecture_v5_2026-06-27.md`
+**Derived from:** the project's internal architecture design note (v5).
 (canonical; v1–v4 superseded but readable for rationale).
 **Decision (2026-06-27, maintainer):** Profile A **supersedes** Obsidian + Smart
 Connections as the retrieval substrate. "Beats today" = beats the current

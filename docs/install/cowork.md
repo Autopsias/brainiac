@@ -155,8 +155,8 @@ extras:  curation.skill  improve.skill  task-registrar.skill  autoresearch.skill
 Plugins tab can sync the marketplace directly — verified live the same day
 (all three plugins visible: "Brainiac Manager — host lifecycle", "Profile A
 — Kernel Skills", "Profile A — Extras"). In Cowork: Customize → Plugins →
-add marketplace `Autopsias/brainiac` → install `profile-a-kernel` (and
-`profile-a-extras` if wanted); `/plugin marketplace update` inside that
+add marketplace `Autopsias/brainiac` → install `brainiac-kernel` (and
+`brainiac-extras` if wanted); `/plugin marketplace update` inside that
 session then keeps it current — see the
 [ADR-0002 addendum](../adr/0002-cowork-plugin-skill-delivery.md). This is a
 genuinely convenient path **when you're already in the session**, but it's a

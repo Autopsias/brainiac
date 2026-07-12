@@ -3,8 +3,11 @@ table across every Brainiac surface.
 
 Pure inspection: this module never writes a file, never calls a subprocess
 that mutates state, and never reaches the network beyond a local
-``git rev-list`` against the already-cloned marketplace checkout (no fetch).
-Safe to run anywhere, any number of times.
+``git rev-list`` against the already-cloned marketplace checkout (no fetch) —
+EXCEPT the OPT-IN "PyPI registry drift" row (``run_doctor(registry_fetch=...)``
+/ ``brain doctor --check-registry``), which is skipped by default (``None``)
+and even then only ever calls an injected fetcher, never touches the network
+directly in a fixture test. Safe to run anywhere, any number of times.
 
 Status classes (ADR-0005 Ruling 2): every row gets exactly one of
 ``current | stale | unmanaged | manual-required | not-detectable | unknown``.
@@ -26,9 +29,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 CURRENT = "current"
 STALE = "stale"
@@ -138,31 +142,84 @@ def check_committed_stamp(repo_root: Path, ssot: str) -> dict:
 
 
 # --------------------------------------------------------------------------
-# Surface 3 — host engine venv (~/.brainiac/venv/bin/brain --version)
+# Install channel detection (PYP-04c). Post-S07, a host install may land via
+# any of four channels — the legacy editable dev checkout (`~/.brainiac/venv`,
+# pre-PyPI / --dev / offline), or one of the three PyPI channels `install.sh`/
+# `install.ps1` try in order: `uv tool install`, `pipx install`,
+# `pip install --user`. Detection is a pure, offline path-substring heuristic
+# (ponytail: good enough for a doctor hint, never a hard guarantee) so it
+# stays fully unit-testable with a fabricated Path — no real PATH probing
+# inside the pure function itself; callers resolve the live `brain` binary
+# and pass it in.
 # --------------------------------------------------------------------------
 
-def check_host_venv(brainiac_home: Path, ssot: str) -> dict:
-    brain_bin = brainiac_home / "venv" / "bin" / "brain"
-    if not brain_bin.exists():
+CHANNEL_EDITABLE = "editable-checkout"
+CHANNEL_PYPI_UV = "pypi-uv"
+CHANNEL_PIPX = "pipx"
+CHANNEL_PIP_USER = "pip-user"
+CHANNEL_UNKNOWN = "unknown"
+
+# The command that moves each channel's installed version forward — the
+# PACKAGE name (brainiac-cli), never the bare `uvx <pypi-name>` form (that
+# fails when the console command, `brain`, differs from the distribution
+# name). Editable-checkout has no single command (checkout-path-dependent);
+# `/brainiac-update` resolves it.
+_CHANNEL_UPGRADE_CMD = {
+    CHANNEL_PYPI_UV: "uv tool upgrade brainiac-cli",
+    CHANNEL_PIPX: "pipx upgrade brainiac-cli",
+    CHANNEL_PIP_USER: "python3 -m pip install --user --upgrade 'brainiac-cli[mcp]'",
+    CHANNEL_EDITABLE: "git pull in the checkout, then: pip install --upgrade -e '<checkout>[mcp]'",
+}
+
+
+def detect_install_channel(brain_bin: Optional[Path]) -> str:
+    """Best-effort, offline channel classification from a resolved `brain`
+    executable path. Pure function — no PATH/network probing here."""
+    if brain_bin is None:
+        return CHANNEL_UNKNOWN
+    p = str(brain_bin)
+    if re.search(r"\.brainiac[/\\]+venv", p):
+        return CHANNEL_EDITABLE
+    if re.search(r"[/\\]uv[/\\]tools[/\\]", p) or re.search(r"[/\\]uv[/\\]bin[/\\]", p):
+        return CHANNEL_PYPI_UV
+    if "pipx" in p:
+        return CHANNEL_PIPX
+    return CHANNEL_PIP_USER
+
+
+# --------------------------------------------------------------------------
+# Surface 3 — host engine install (channel-aware: editable dev checkout OR
+# one of the three PyPI channels — PYP-04). ``resolved_brain`` is the live
+# PATH-resolved `brain` binary, passed in by ``run_doctor()`` (never resolved
+# inside this pure-ish function, so tests stay deterministic regardless of
+# what's on the live PATH — see test_host_venv_* in tests/test_doctor.py).
+# --------------------------------------------------------------------------
+
+def check_host_venv(brainiac_home: Path, ssot: str, resolved_brain: Optional[Path] = None) -> dict:
+    legacy_bin = brainiac_home / "venv" / "bin" / "brain"
+    brain_bin = legacy_bin if legacy_bin.exists() else resolved_brain
+    if brain_bin is None or not Path(brain_bin).exists():
         return _row("Host engine venv", NOT_DETECTABLE,
-                    f"{brain_bin} not found (no host install here)",
+                    f"no `brain` found (legacy venv {legacy_bin}, or on PATH)",
                     remediation="/brainiac-install")
+    channel = detect_install_channel(Path(brain_bin))
     try:
         out = subprocess.run(
             [str(brain_bin), "--version"], capture_output=True, text=True, timeout=15,
         )
     except Exception as exc:
-        return _row("Host engine venv", UNKNOWN, f"{type(exc).__name__}: {exc}")
+        return _row("Host engine venv", UNKNOWN, f"{type(exc).__name__}: {exc}",
+                    raw={"channel": channel})
     text = (out.stdout or out.stderr or "").strip()
     m = re.search(r"(\d+\.\d+\.\d+\S*)", text)
     installed = m.group(1) if m else text
     if not installed:
-        return _row("Host engine venv", UNKNOWN, "empty --version output")
+        return _row("Host engine venv", UNKNOWN, "empty --version output", raw={"channel": channel})
     if installed == ssot:
-        return _row("Host engine venv", CURRENT, f"{installed} == SSOT {ssot}",
-                    raw={"installed": installed})
-    return _row("Host engine venv", STALE, f"installed {installed} != SSOT {ssot}",
-                remediation="/brainiac-update", raw={"installed": installed})
+        return _row("Host engine venv", CURRENT, f"{installed} == SSOT {ssot} (channel: {channel})",
+                    raw={"installed": installed, "channel": channel})
+    return _row("Host engine venv", STALE, f"installed {installed} != SSOT {ssot} (channel: {channel})",
+                remediation="/brainiac-update", raw={"installed": installed, "channel": channel})
 
 
 # --------------------------------------------------------------------------
@@ -189,7 +246,7 @@ def check_dist_compat(repo_root: Path, ssot: str) -> dict:
 # Surface 5 — CLI plugin manifests (plugins/*/.claude-plugin/plugin.json)
 # --------------------------------------------------------------------------
 
-PLUGIN_NAMES = ("brainiac-manager", "profile-a-kernel", "profile-a-extras")
+PLUGIN_NAMES = ("brainiac-manager", "brainiac-kernel", "brainiac-extras")
 
 
 def check_plugin_manifests(repo_root: Path, ssot: str) -> list[dict]:
@@ -219,7 +276,7 @@ def check_plugin_manifests(repo_root: Path, ssot: str) -> list[dict]:
 # --------------------------------------------------------------------------
 
 def check_installed_cli_plugins(
-    claude_home: Path, ssot: str, marketplace_name: str = "profile-a-marketplace",
+    claude_home: Path, ssot: str, marketplace_name: str = "brainiac",
 ) -> list[dict]:
     rows = []
     marketplace_dir = claude_home / "plugins" / "marketplaces" / marketplace_name
@@ -279,6 +336,124 @@ def check_installed_cli_plugins(
 
 
 # --------------------------------------------------------------------------
+# Surface — stale-name plugin/marketplace install (NAM-03). Anyone who
+# installed before the profile-a-marketplace/profile-a-kernel/profile-a-extras
+# -> brainiac/brainiac-kernel/brainiac-extras rename has old names registered
+# in known_marketplaces.json / installed_plugins.json. This is a
+# plugin-INDEPENDENT surface (pure Python reading Claude Code's own state
+# files) — it survives even if the plugin surface itself is broken, so the
+# fix instructions here are the recovery-of-last-resort, not just a nicety.
+# --------------------------------------------------------------------------
+
+OLD_MARKETPLACE_NAME = "profile-a-marketplace"
+OLD_TO_NEW_PLUGIN_NAMES = {
+    "profile-a-kernel": "brainiac-kernel",
+    "profile-a-extras": "brainiac-extras",
+}
+# The verbatim 2-command recovery (also in README's Updating section + the
+# CHANGELOG rename entry) — add-new-before-remove-old, never the reverse.
+STALE_NAME_RECOVERY = (
+    "claude plugin marketplace add Autopsias/brainiac && "
+    "claude plugin install brainiac-manager@brainiac  # then run /brainiac-update "
+    "to finish migrating off the old names"
+)
+
+
+def check_stale_name_plugins(claude_home: Path) -> list[dict]:
+    rows = []
+    surface = "Stale-name plugin/marketplace install"
+    # known_marketplaces.json is a FLAT dict keyed by marketplace name
+    # (verified on-machine 2026-07-11: {"<name>": {"source": ..., "installLocation": ...}, ...}
+    # — no "marketplaces" wrapper key).
+    known_mkt = _read_json(claude_home / "plugins" / "known_marketplaces.json") or {}
+    installed = _read_json(claude_home / "plugins" / "installed_plugins.json") or {}
+    has_old_marketplace = bool(
+        isinstance(known_mkt, dict) and OLD_MARKETPLACE_NAME in known_mkt
+    )
+    old_plugin_specs = [
+        spec for spec in (installed.get("plugins") or {})
+        if isinstance(spec, str) and spec.split("@", 1)[0] in OLD_TO_NEW_PLUGIN_NAMES
+    ]
+    if not has_old_marketplace and not old_plugin_specs:
+        rows.append(_row(surface, NOT_DETECTABLE,
+                         "no old-name marketplace or plugin registrations found"))
+        return rows
+    found = []
+    if has_old_marketplace:
+        found.append(f"marketplace '{OLD_MARKETPLACE_NAME}'")
+    found.extend(f"plugin '{spec}'" for spec in old_plugin_specs)
+    rows.append(_row(surface, STALE,
+                     f"old-name registration(s) found: {', '.join(found)}",
+                     remediation=STALE_NAME_RECOVERY,
+                     raw={"old_marketplace": has_old_marketplace, "old_plugins": old_plugin_specs}))
+    return rows
+
+
+# --------------------------------------------------------------------------
+# Surface — Desktop MCP registration collision (SUI-03 hardening addendum).
+# A user can end up with BOTH the .mcpb-installed extension (Settings ->
+# Extensions -> Advanced -> Install Extension, or double-click) AND a
+# claude_desktop_config.json `mcpServers` stanza (written by `brain connect
+# --client claude-desktop`) registering brainiac's MCP server at once —
+# Desktop does not reconcile the two, so this is a "pick ONE" hygiene
+# warning, not a version-staleness problem: UNMANAGED, never gates the exit
+# code (ADR-0005 Ruling 2 — only STALE/UNKNOWN gate).
+#
+# Ground-truthed on-machine 2026-07-11 (S10 recon): Desktop's
+# ``extensions-installations.json`` is ``{"extensions": {<id>: {"manifest":
+# {"name": ..., ...}, ...}}}`` — matched on ``manifest.name`` rather than the
+# ``id`` key, since built-in directory extensions use an ``ant.dir.*`` id
+# scheme that a locally side-loaded .mcpb won't share.
+# --------------------------------------------------------------------------
+
+def check_mcpb_desktop_collision(
+    app_support_dir: Path, config_path: Optional[Path] = None, name: str = "brainiac",
+) -> dict:
+    surface = "Desktop MCP registration (mcpb vs claude_desktop_config.json)"
+    if config_path is None:
+        # Reuse the SAME platform-aware resolver connect.py's own
+        # `brain connect --client claude-desktop` writer uses (win32/darwin/
+        # linux) instead of hardcoding the macOS path here too — a second,
+        # divergent macOS-only guess is exactly how this check went blind on
+        # Windows (%APPDATA%\Claude) despite the .mcpb itself supporting
+        # win32 (manifest.json compatibility.platforms).
+        from . import connect
+
+        config_path = connect.claude_desktop_config_path()
+    config_data = _read_json(config_path) or {}
+    config_present = bool(
+        isinstance(config_data, dict) and (config_data.get("mcpServers") or {}).get(name)
+    )
+
+    installations = _read_json(app_support_dir / "extensions-installations.json") or {}
+    exts = installations.get("extensions") if isinstance(installations, dict) else None
+    mcpb_present = False
+    if isinstance(exts, dict):
+        for entry in exts.values():
+            manifest = (entry or {}).get("manifest") or {}
+            if manifest.get("name") == name:
+                mcpb_present = True
+                break
+
+    if config_present and mcpb_present:
+        return _row(
+            surface, UNMANAGED,
+            f"BOTH registered: claude_desktop_config.json mcpServers.{name} AND "
+            "a .mcpb extension — Claude Desktop does not reconcile them, pick ONE",
+            remediation=(
+                "remove ONE: `brain connect --client claude-desktop --remove` "
+                f"(drops the config.json stanza) OR Claude Desktop -> Settings -> "
+                f"Extensions -> {name} -> Remove (drops the .mcpb)"),
+            raw={"config_present": config_present, "mcpb_present": mcpb_present})
+    if not app_support_dir.exists():
+        return _row(surface, NOT_DETECTABLE,
+                    f"{app_support_dir} not found — Claude Desktop not installed here")
+    return _row(surface, CURRENT,
+                f"no collision (config.json entry: {config_present}, .mcpb extension: {mcpb_present})",
+                raw={"config_present": config_present, "mcpb_present": mcpb_present})
+
+
+# --------------------------------------------------------------------------
 # Surface 11 — Desktop / Cowork plugin-skill store (best-effort, ALWAYS
 # manual-required, NEVER gates the exit code — ADR-0005 Ruling 2/4).
 # --------------------------------------------------------------------------
@@ -309,7 +484,7 @@ def check_desktop_plugin_store(
             continue
         candidates: list[tuple[float, Path]] = []
         try:
-            for pjson in sessions_root.glob(f"*/*/rpm/plugin_*/.claude-plugin/plugin.json"):
+            for pjson in sessions_root.glob("*/*/rpm/plugin_*/.claude-plugin/plugin.json"):
                 data = _read_json(pjson)
                 if data and data.get("name") == pname:
                     candidates.append((pjson.stat().st_mtime, pjson))
@@ -536,6 +711,80 @@ def check_marketplace_cache(marketplace_dir: Path) -> dict:
 
 
 # --------------------------------------------------------------------------
+# Registry-drift visibility (PyPI publish addendum). OPT-IN ONLY (see
+# run_doctor's ``registry_fetch`` param) — this is the one surface allowed to
+# touch the network, and even then only via an injected fetcher, a single
+# cached HTTPS metadata read, never by default and never inside a fixture
+# test. Compares three numbers: the repo's latest git release tag, the
+# locally-installed engine version, and the latest published PyPI version.
+# Degrades to NOT_DETECTABLE/UNKNOWN silently offline — never raises, never
+# gates (informational: a human decides whether "marketplace ahead of
+# published engine" matters right now).
+# --------------------------------------------------------------------------
+
+def _latest_git_tag(repo_root: Path) -> Optional[str]:
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(repo_root), "tag", "--list", "v*", "--sort=-v:refname"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception:
+        return None
+    for line in (out.stdout or "").splitlines():
+        line = line.strip()
+        if line:
+            return line.lstrip("v")
+    return None
+
+
+def fetch_pypi_latest_version(dist_name: str = "brainiac-cli", timeout: float = 3.0) -> Optional[str]:
+    """Real HTTPS fetcher — the one function in this module allowed to reach
+    the network, and only ever called when a caller explicitly opts in
+    (``brain doctor --check-registry``). Any failure (offline, DNS, 404
+    pre-publish) degrades to ``None``, never an exception."""
+    import urllib.request
+
+    url = f"https://pypi.org/pypi/{dist_name}/json"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310 - fixed https host
+            data = json.loads(resp.read().decode("utf-8"))
+        return data.get("info", {}).get("version")
+    except Exception:
+        return None
+
+
+def check_pypi_registry_drift(
+    repo_root: Path, installed_version: str, *, fetch: Callable[[], Optional[dict]],
+) -> dict:
+    """``fetch`` returns a dict ``{"pypi_version": str|None}`` (or None on
+    total failure) — injected so this stays testable without a live network
+    call; ``brain doctor --check-registry`` wires up a real fetcher built on
+    ``fetch_pypi_latest_version``."""
+    surface = "PyPI registry drift"
+    repo_tag = _latest_git_tag(repo_root)
+    try:
+        result = fetch() or {}
+    except Exception as exc:
+        return _row(surface, NOT_DETECTABLE, f"fetch failed: {type(exc).__name__}: {exc}",
+                    raw={"repo_tag": repo_tag, "installed": installed_version})
+    pypi_version = result.get("pypi_version")
+    if pypi_version is None:
+        return _row(surface, NOT_DETECTABLE,
+                    "no PyPI metadata (offline, or brainiac-cli not yet published — "
+                    "use the clone/dev install until it is)",
+                    raw={"repo_tag": repo_tag, "installed": installed_version})
+    detail = (f"repo tag {repo_tag or 'none'} / installed {installed_version} / "
+              f"PyPI latest {pypi_version}")
+    if _compare(repo_tag or "0.0.0", pypi_version) > 0 or _compare(installed_version, pypi_version) > 0:
+        return _row(surface, UNMANAGED,
+                    f"{detail} — marketplace/skills are AHEAD of the published PyPI engine; "
+                    "do not publish clean-room export docs referencing an unpublished version",
+                    raw={"repo_tag": repo_tag, "installed": installed_version, "pypi": pypi_version})
+    return _row(surface, CURRENT if installed_version == pypi_version else UNMANAGED, detail,
+                raw={"repo_tag": repo_tag, "installed": installed_version, "pypi": pypi_version})
+
+
+# --------------------------------------------------------------------------
 # VM leg (role-aware doctor, 2026-07-07 addendum to ADR-0005 Ruling 2) — the
 # Cowork VM only ever sees the staged zero-install copy
 # (cowork_workspace_install.sh: src/brain -> .brain/engine/brain, plus
@@ -741,13 +990,20 @@ def run_doctor(
     app_support_dir: Optional[Path] = None,
     registry_entries: Optional[list[dict]] = None,
     marketplace_dir: Optional[Path] = None,
-    marketplace_name: str = "profile-a-marketplace",
+    marketplace_name: str = "brainiac",
+    registry_fetch: Optional[Callable[[], Optional[dict]]] = None,
 ) -> dict[str, Any]:
     """Run every ADR-0005 Ruling 2 surface check and return a report dict.
 
     All path-ish parameters default to the real machine locations but accept
     overrides — tests pass fixture directories so this NEVER needs the live
     machine to be exercised.
+
+    ``registry_fetch`` is OPT-IN (default ``None`` = the row is skipped
+    entirely, exactly the pre-S07 row set — zero risk to every existing
+    fixture test and zero network in the default/test path). Pass a callable
+    (see ``fetch_pypi_latest_version``) to add the "PyPI registry drift" row;
+    ``brain doctor --check-registry`` wires up the real HTTPS fetcher.
     """
     from . import __version__ as _unused  # noqa: F401 (import proves module loads)
     from .index import SCHEMA_VERSION
@@ -755,7 +1011,18 @@ def run_doctor(
     repo_root = repo_root or Path(__file__).resolve().parent.parent.parent
     brainiac_home = brainiac_home or Path(os.environ.get("BRAINIAC_HOME", Path.home() / ".brainiac"))
     claude_home = claude_home or (Path.home() / ".claude")
-    app_support_dir = app_support_dir or (Path.home() / "Library" / "Application Support" / "Claude")
+    if app_support_dir is None:
+        # Platform-aware (win32/darwin/linux) — same resolver connect.py's
+        # `brain connect --client claude-desktop` writer uses, instead of a
+        # second macOS-only guess here. Desktop's own per-user data dir is
+        # the parent of claude_desktop_config.json on every platform (Electron
+        # userData convention: %APPDATA%\Claude on Windows, ~/Library/
+        # Application Support/Claude on macOS) — this also fixes the
+        # extensions-installations.json lookup (check_mcpb_desktop_collision /
+        # check_desktop_plugin_store both key off this same dir).
+        from . import connect
+
+        app_support_dir = connect.claude_desktop_config_path().parent
     marketplace_dir = marketplace_dir or (claude_home / "plugins" / "marketplaces" / marketplace_name)
 
     registry_unavailable = False
@@ -786,12 +1053,15 @@ def run_doctor(
     else:
         rows.append(_row("Version SSOT (pyproject.toml)", CURRENT, ssot, raw={"version": ssot}))
 
+    resolved_brain = shutil.which("brain")
     rows.append(check_committed_stamp(repo_root, ssot))
-    rows.append(check_host_venv(brainiac_home, ssot))
+    rows.append(check_host_venv(brainiac_home, ssot,
+                                resolved_brain=Path(resolved_brain) if resolved_brain else None))
     rows.append(check_embedder_liveness())  # DV-03: the host also builds/queries
     rows.append(check_dist_compat(repo_root, ssot))
     rows.extend(check_plugin_manifests(repo_root, ssot))
     rows.extend(check_installed_cli_plugins(claude_home, ssot, marketplace_name))
+    rows.extend(check_stale_name_plugins(claude_home))
     if registry_unavailable:
         rows.append(_row(
             "Workspace registry (tools/workspace_registry.py)", NOT_DETECTABLE,
@@ -804,6 +1074,9 @@ def run_doctor(
     rows.extend(check_staged_skill_bundles(registry_entries, ssot))
     rows.extend(check_workspace_schema(registry_entries, SCHEMA_VERSION))
     rows.append(check_marketplace_cache(marketplace_dir))
+    if registry_fetch is not None:
+        rows.append(check_pypi_registry_drift(repo_root, ssot, fetch=registry_fetch))
+    rows.append(check_mcpb_desktop_collision(app_support_dir))
     # Surface 11 — always LAST, always manual-required, never gates.
     rows.extend(check_desktop_plugin_store(app_support_dir, ssot))
 
@@ -868,7 +1141,7 @@ def _demo() -> None:
             repo_root=root, brainiac_home=root / "brainiac_home",
             claude_home=claude_home, app_support_dir=app_support,
             registry_entries=[],
-            marketplace_dir=claude_home / "plugins" / "marketplaces" / "profile-a-marketplace",
+            marketplace_dir=claude_home / "plugins" / "marketplaces" / "brainiac",
         )
         assert report["ssot_version"] == "1.2.3"
         stamp_row = next(r for r in report["rows"] if "Committed stamp" in r["surface"])

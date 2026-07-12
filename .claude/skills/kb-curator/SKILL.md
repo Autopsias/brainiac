@@ -14,8 +14,8 @@ content** — a deployment that needs extra checks layers them in an overlay
 SKILL.md at the same path, per the override pattern below.
 
 This kernel **supersedes** the Smart-Connections/Obsidian-Bases version of
-kb-curator. Every check that used to read `.smart-env/*.ajson` vectors or
-`90 System/Bases/*.base` files now goes through the `brain` CLI instead — see
+kb-curator. Every check that used to read `.smart-env/*.ajson` vectors or the legacy
+Obsidian Bases (`*.base`) files now goes through the `brain` CLI instead — see
 AGENTS.md §5/§6 in this repo for the retrieval-tool + trust-split mapping
 this skill implements.
 

@@ -1,0 +1,4 @@
+# SUI-03 — dev-time build/test tooling never ships inside the .mcpb; only
+# manifest.json + server/ are needed at runtime by Claude Desktop.
+build.sh
+smoke_handshake.py

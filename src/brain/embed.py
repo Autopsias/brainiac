@@ -1,10 +1,11 @@
-"""Embedder ADAPTER INTERFACE + the real Arctic-embed embedder + an offline fallback.
+"""Embedder ADAPTER INTERFACE + the shipped ONNX embedders + an offline fallback.
 
-Design of record (IDX-01) is Snowflake **Arctic-embed-m-v2.0** (305M, 768-d,
-Apache-2.0) run **locally over ONNX Runtime via fastembed — NO PyTorch** (install
-footprint + a Windows Defender win). Vectors are truncated to **MRL-256** for
-storage (Matryoshka Representation Learning: the first 256 dims of the 768-d
-vector carry most of the signal; we re-normalise after truncation).
+**Shipped default (`auto`): `intfloat/multilingual-e5-small`** run locally via
+direct ONNX Runtime (`OnnxEmbedder`, Xenova ONNX export, ~465 MB one-time
+download, 384-d) — NO PyTorch, NO fastembed in the core install. The original
+design-of-record (IDX-01) was Snowflake Arctic-embed-m-v2.0 (305M, 768-d,
+MRL-256 truncation) via fastembed; `ArcticEmbedder` remains available behind
+the `[embed]` extra, but e5-small is what `get_embedder("auto")` resolves.
 
 Two implementations satisfy the ``Embedder`` protocol:
 
@@ -359,6 +360,14 @@ E5_SMALL_ONNX_REPO = "Xenova/multilingual-e5-small"
 E5_SMALL_ONNX_FILE = "onnx/model.onnx"
 E5_SMALL_MODEL_ID = "intfloat/multilingual-e5-small"
 E5_SMALL_DIM = 384
+# Pinned HF revision (commit SHA) for the default model download — supply-chain
+# hardening: a bare `snapshot_download(repo)` resolves whatever `main` points at
+# TODAY, so the model bytes are not reproducible. Pin the exact commit so every
+# machine fetches the same artifact; override with $BRAIN_EMBED_REVISION (e.g.
+# to an internally-mirrored pin), or bypass downloads entirely with a staged
+# $BRAIN_MODEL_CACHE. Only applied to the known repo above; a custom hf_repo
+# keeps its own revision semantics.
+E5_SMALL_ONNX_REVISION = "761b726dd34fb83930e26aab4e9ac3899aa1fa78"
 
 # int8-quantized variant (S09/PF-01 — latency optimization). Produced OFFLINE
 # by ``eval/int8_quantize_e5.py`` (onnxruntime.quantization.quantize_dynamic,
@@ -426,6 +435,13 @@ class OnnxEmbedder:
         self.model_id = model_id or default_model_id
         self.dim = int(dim if dim is not None else os.environ.get("BRAIN_EMBED_DIM", E5_SMALL_DIM))
         self._hf_repo = hf_repo or E5_SMALL_ONNX_REPO
+        # Pin the download to a reproducible revision for the known repo
+        # (overridable via $BRAIN_EMBED_REVISION); a custom repo pins nothing
+        # unless the caller sets the env var.
+        self._revision = (
+            os.environ.get("BRAIN_EMBED_REVISION")
+            or (E5_SMALL_ONNX_REVISION if self._hf_repo == E5_SMALL_ONNX_REPO else None)
+        )
         self._onnx_file = onnx_file or default_onnx_file
         self._local_dir = (
             local_dir
@@ -528,6 +544,7 @@ class OnnxEmbedder:
 
                 base = snapshot_download(
                     self._hf_repo, cache_dir=self._local_dir, allow_patterns=pat,
+                    revision=self._revision,
                 )
                 return os.path.join(base, self._onnx_file), base
             raise EmbedderUnavailable(
@@ -536,7 +553,7 @@ class OnnxEmbedder:
             )
         from huggingface_hub import snapshot_download
 
-        base = snapshot_download(self._hf_repo, allow_patterns=pat)
+        base = snapshot_download(self._hf_repo, allow_patterns=pat, revision=self._revision)
         return os.path.join(base, self._onnx_file), base
 
     def _encode_raw(self, texts: list[str]) -> list[list[float]]:
@@ -582,12 +599,6 @@ class OnnxEmbedder:
         self, texts: Sequence[str], *, is_query: bool = False
     ) -> list[list[float]]:
         return self._encode(list(texts), is_query)
-
-
-def is_qwen_model(model_id: str) -> bool:
-    """True if the model id names a Qwen3-Embedding model (the qwen3-embed lib path)."""
-    low = (model_id or "").lower()
-    return "qwen3-embedding" in low or "qwen3-embed" in low or "qwen-embed" in low
 
 
 class QwenEmbedder:
@@ -813,3 +824,51 @@ def probe_auto_embedder() -> tuple[str, str]:
     if ArcticEmbedder.available():
         return ("real", "arctic")
     return ("implicit-hash", "no-real-embedder")
+
+
+# Approximate download size for the install/warmup UX hint ONLY (never a perf
+# or capability claim) — the plan's own "~300 MB" figure for the fp32 e5-small
+# ONNX export. Not read anywhere that affects behaviour.
+ONNX_MODEL_SIZE_HINT = "~300 MB"
+
+
+def model_cache_ready(embedder: "Embedder | None" = None) -> bool | None:
+    """Non-network probe (S02/CS-01): are the resolved embedder's model weights
+    ALREADY present on disk, i.e. would a warmup/first embed call run offline?
+
+    Returns ``True`` (cached, ready), ``False`` (would trigger a download —
+    pending), or ``None`` when the question doesn't apply (the explicit
+    HashEmbedder never downloads anything, or the embedder shape is unknown).
+    NEVER downloads and NEVER constructs an ONNX session — safe to call from
+    ``brain status`` on every invocation.
+    """
+    e = embedder if embedder is not None else get_embedder(
+        os.environ.get("BRAIN_EMBEDDER", "auto")
+    )
+    if isinstance(e, HashEmbedder):
+        return None
+    if not isinstance(e, OnnxEmbedder):
+        return None  # Arctic/Catalog/Qwen: not the S02 auto-default; not probed
+    local_dir = e._local_dir
+    onnx_file = e._onnx_file
+    if local_dir:
+        # Bundled/staged/VM layout (S06/INT-02): files are expected directly
+        # on disk, no HF cache semantics.
+        direct = os.path.join(local_dir, onnx_file)
+        if os.path.exists(direct) and os.path.exists(
+            os.path.join(local_dir, "tokenizer.json")
+        ):
+            return True
+    try:
+        from huggingface_hub import snapshot_download
+    except Exception:
+        return None
+    pat = [onnx_file, onnx_file + "_data", "tokenizer*", "*.json"]
+    try:
+        snapshot_download(
+            e._hf_repo, cache_dir=local_dir, allow_patterns=pat,
+            local_files_only=True,
+        )
+        return True
+    except Exception:
+        return False

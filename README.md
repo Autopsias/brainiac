@@ -16,92 +16,88 @@ deny-by-default classification filter (the **egress gate** — see
 allowed to see, note by note. See `AGENTS.md` for the full conventions and
 security model.
 
-## Installing Brainiac for the first time
+## Install
 
-**Installing? → [`docs/install/README.md`](docs/install/README.md) (pick your
-platform: Claude Code, Cowork, Codex, or Gemini CLI).**
+Brainiac is **one engine install + one setup command.** That setup command —
+`brain init --full --apply` — is the workhorse: in a single call it creates your
+vault, seeds a few sample notes, builds the search index, provisions the audit
+signing key, and registers nightly maintenance. Everything else in the docs
+(plugins, PowerShell, the pip/uv/npx variants) is just a different way to run
+those two steps. Pick the one that matches how you work:
 
-The single most common path (Claude Code, on your own machine):
+### 1 · Let your AI assistant do it — easiest
+
+Paste this into any assistant that can run commands on your machine (Claude
+Code, Codex, Gemini CLI, …). It detects your setup, installs, verifies, and
+asks you at most a question or two:
 
 ```text
-claude> /plugin marketplace add Autopsias/brainiac
-claude> /plugin install brainiac-manager@profile-a-marketplace
-claude> /brainiac-install <path-to-your-vault>
+Install Brainiac for me. Fetch and follow this exactly, asking me only what it says to:
+https://raw.githubusercontent.com/Autopsias/brainiac/main/docs/install/LLM-INSTALL.md
 ```
 
-**Or the one-command way** (needs Python 3.9+ and git; the repo is public —
-no login needed):
+### 2 · Claude Code plugin — one-time, then managed for you
+
+```text
+/plugin marketplace add Autopsias/brainiac
+/plugin install brainiac-manager@brainiac
+/brainiac-install ~/brain
+```
+
+### 3 · By hand — any OS
 
 ```bash
-git clone https://github.com/Autopsias/brainiac.git
-cd brainiac
-./install.sh
+npx brainiac-install --vault ~/brain      # Node 18+ — installs the engine AND sets up the vault in one shot
 ```
 
-The installer creates a private Python environment (nothing touches your
-system Python), installs the **full-capacity** `brain` CLI — semantic
-search, fast vector backend, signed audit chain, no options to pick —
-puts `brain` on your PATH, and builds the index for the bundled sample
-vault. The first run downloads a small embedding model (a few hundred MB,
-one time), so it needs network access once.
-
-Then ask your first question:
+…or with Python tooling (two commands):
 
 ```bash
-brain search "arctic-embed vs e5" --json
+uv tool install 'brainiac-cli[mcp]'       # or: pipx install 'brainiac-cli[mcp]'  /  pip install --user 'brainiac-cli[mcp]'
+BRAIN_VAULT=~/brain/vault brain init --full --apply
 ```
 
-Every search hit carries the note's file path and its classification tier,
-and an `egress` block reports how many notes were withheld by the
-classification filter.
+No `uv`? Download the bootstrap script, run it, then run the `brain init` line above:
 
-(Prefer plain pip? `pip install -e .` from the repo root does the same full
-install without the venv/PATH/first-index conveniences.)
-
-Two things worth knowing about where files live:
-
-- **Your notes** live in the vault (`vault/` by default — plain Markdown, the
-  single source of truth).
-- **The search index** lives in your per-user app-data folder
-  (`~/Library/Application Support/profile-a-brain` on macOS,
-  `%LOCALAPPDATA%\profile-a-brain` on Windows, `~/.local/share/...` on
-  Linux). It is a derived cache — deleting it loses nothing; `brain rebuild`
-  recreates it from the vault.
-
-Per-client walkthroughs (Claude Code vs Codex vs Cowork):
-`docs/install/README.md`. Run `brain --help` any time — the CLI is self-describing and is the one
-source of truth for what's shipped.
-
-## Updating an existing install
-
-Already installed? Don't re-run the first-time setup — update in place.
-
-**Check where you stand (read-only).** In your terminal:
-
-```
-brain doctor
+```bash
+# macOS/Linux
+curl -fsSL https://raw.githubusercontent.com/Autopsias/brainiac/main/install.sh -o /tmp/brainiac-install.sh && bash /tmp/brainiac-install.sh
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/Autopsias/brainiac/main/install.ps1 -OutFile install.ps1; .\install.ps1
 ```
 
-prints one health + version table across every surface — engine venv, CLI
-plugins, staged Cowork workspaces, marketplace cache, and the Desktop/Cowork
-store — each ✅/⚠️ with the exact command to fix anything stale. It changes
-nothing and exits non-zero when a required surface is behind. (Available from
-v0.10.0 onward.)
+**Then search:**
 
-**Bring everything current.** In Claude Code on the host:
-
-```
-/brainiac-update
+```bash
+brain search "welcome" --json
 ```
 
-now **runs** the update instead of printing a checklist: marketplace refresh →
-downgrade-safe CLI-plugin reinstall → engine venv reinstall → every registered
-Cowork workspace re-staged → a final `brain doctor` verify — then a before→after
-version table and one pass/fail. It handles the reconciliation downgrade
-(installed newer than the marketplace) automatically and never touches your
-notes, audit chain, or runtime state. Prefer the terminal? `brain update` is the
-same flow — add `--dry-run` to preview every decision without mutating anything.
-Full detail: **`docs/install/README.md`** (§ Updating).
+**Good to know**
+
+- Your **notes** live in the vault (`~/brain/vault` above — plain Markdown, the
+  source of truth). The **index** is a rebuildable cache in your app-data folder
+  (`brain rebuild` recreates it any time).
+- Semantic search downloads its model (multilingual-e5-small, ~465 MB, one-time)
+  on first use — or `brain warmup` up front.
+- Pointing `brain init` at a folder that **already has notes**? It won't reindex
+  a non-empty vault — run `brain rebuild` once afterward or the first search is empty.
+
+Platform-by-platform detail: [`docs/install/README.md`](docs/install/README.md).
+Run `brain --help` any time — the CLI is self-describing.
+
+## Update
+
+One command, whatever you installed with:
+
+```bash
+brain update            # add --dry-run to preview; never touches your notes
+```
+
+It detects your install channel (uv / pipx / pip / editable), upgrades the
+engine, refreshes the Claude Code plugins if present, and verifies with
+`brain doctor`. In Claude Code, `/brainiac-update` runs the same thing. Just want
+a read-only health check? `brain doctor` prints a ✅/⚠️ table with the exact fix
+for anything stale.
 
 ## Using it with a new project (second vault, third, ...)
 
@@ -111,8 +107,18 @@ vault automatically gets its own index and audit chain (no configuration):
 
 ```bash
 export BRAIN_VAULT=~/vaults/my-new-project   # which vault to use
-brain init --full                             # once per vault: scaffold overlay etc.
-brain rebuild                                 # build this vault's index
+brain init --full --apply                     # once per vault: scaffold + seed + index
+```
+
+**Pointing at a folder that already has notes?** `init --apply` seeds and
+indexes only an *empty* vault — on a non-empty one it scaffolds but skips
+indexing, so run `brain rebuild` once afterwards or the first search comes
+back empty:
+
+```bash
+export BRAIN_VAULT=~/vaults/existing-notes
+brain init --full --apply    # scaffold/validate only (vault not empty)
+brain rebuild                # REQUIRED once: index the existing notes
 ```
 
 Full detail (per-vault overlay, the scheduled-task gotcha):
@@ -120,32 +126,45 @@ Full detail (per-vault overlay, the scheduled-task gotcha):
 
 ## For technical & security teams
 
-A plain summary of what this repo does and doesn't do, for a corporate
-review:
+**Read these three, in order** — plain-language, browser-rendered, and kept
+in sync with the code:
+
+1. [`docs/architecture-overview.html`](docs/architecture-overview.html) — how
+   it's built (components, data flows, trust model).
+2. [`docs/security-overview.html`](docs/security-overview.html) — the
+   controls, threat model, and an **honest residual-risk list**.
+3. [`docs/deployment-authorization-memo.html`](docs/deployment-authorization-memo.html)
+   — the conditional-authorize decision + sign-off. Managed rollout steps:
+   [`docs/managed-deployment-runbook.html`](docs/managed-deployment-runbook.html).
+
+The one-paragraph version:
 
 - **All data stays on the local disk.** Notes are plain Markdown; the index
   is a local SQLite file. There is no server, no telemetry, no cloud sync,
   and the project holds **no model API keys** — the only egress is whatever
   LLM client the owner already runs.
 - **Deny-by-default egress gate.** Every read command filters notes by their
-  `classification` tier before printing; a note with a missing or unknown
-  label is treated as most-restrictive and withheld. Scheme:
-  `docs/classification-scheme.md`.
+  `classification` tier before printing; an unlabelled note is treated as
+  most-restrictive. (Note: on the trusted-host full-vault default this means
+  such a note ranks as MNPI and is *surfaced*; it hides only under a narrowed
+  cap — see the security overview §2.1.) Scheme: `docs/classification-scheme.md`.
 - **Signed audit chain.** Every committed write is Ed25519-signed and
-  hash-chained; the key lives in the OS secret store, fail-closed (no file
-  fallback). Rotation runbook and stated limitations: `SECURITY.md`.
+  hash-chained, and now binds a content hash (`verify-audit --check-content`
+  detects post-commit edits). Key in the OS secret store, fail-closed.
+  Rotation + limits: `SECURITY.md`.
 - **Trust split.** Untrusted/sandboxed legs (the Cowork Linux VM) get a
   read-only snapshot and a draft inbox — they can never sign, index, or
   mutate the canonical store. `AGENTS.md` §6.
-- **Dependencies.** The default install pulls a small, auditable set
-  (onnxruntime, tokenizers, numpy, sqlite-vec, huggingface-hub,
-  cryptography, PyYAML, regex — see `pyproject.toml`, which documents why
-  each exists). The code degrades gracefully without any of them, so a
-  constrained deployment (Intune, air-gapped) can install with
-  `pip install --no-deps .` and re-add only what policy allows; an SBOM
-  generator ships at `tools/generate_sbom.py`. Offline model provisioning:
-  set `$BRAIN_MODEL_CACHE` to a pre-fetched model dir and no download is
-  attempted.
+- **Dependencies + supply chain.** Default runtime deps: `onnxruntime`,
+  `tokenizers`, `numpy`, `sqlite-vec`, `huggingface-hub`, `cryptography`,
+  `PyYAML`, `regex`, plus the document parsers `pypdf`, `python-docx`,
+  `python-pptx`, `openpyxl`, `Pillow` (the main third-party attack surface —
+  keep patched). `requirements.lock` is the hash-pinned closure; CI
+  (`.github/workflows/supply-chain.yml`) fails on lock drift, runs `pip-audit`
+  weekly, and emits a CycloneDX SBOM (the provenance-rich manifest is
+  `tools/generate_sbom.py`). For a managed/air-gapped install, follow the
+  managed runbook (install from the lock, `$BRAIN_MODEL_CACHE` for the model,
+  `$BRAIN_MANAGED=1` to disable self-update + ad-hoc key custody).
 - **License & provenance.** Apache-2.0. Built clean-room; the AGPL project
   consulted as a design reference was never forked or vendored — log and
   audit gate: `docs/clean-room-log.md`, `tools/code_origin_audit.py`.
@@ -164,13 +183,12 @@ deletable `brain-mcp` bridge. Full matrix: `docs/harness-wiring.md`.
 
 ## More
 
+- **Full documentation map → [`docs/README.md`](docs/README.md)** — every
+  doc grouped by what you're doing (install · understand · operate), with the
+  audience and whether it's plain or technical.
 - **`AGENTS.md`** — the conventions/schema every harness reads at startup:
   note shape, link style, capture rules, the four agent-facing verbs
   (search/get/recent/draft-capture), and the security posture.
-- **`docs/install/`** — installation, starting at the
-  [platform picker](docs/install/README.md) (Claude Code, Cowork — the Claude
-  Desktop Linux VM sandbox client — Codex, Gemini CLI) and
-  `docs/install/new-owner.md` for the five-minute "what runs where" mental model.
 - **`docs/glossary.md`** — one-line definitions for the jargon used across
   these docs (PARA, MNPI, egress gate, Cowork, host-broker, overlay, ...).
 - **`SECURITY.md`** — vulnerability reporting, supported versions, audit-key

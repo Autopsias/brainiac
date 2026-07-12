@@ -64,6 +64,10 @@ NON_CONTENT_SUBCOMMANDS: tuple[str, ...] = (
     "check", "health", "maintain",
     # TMP-02: two note ids + a status/audit summary — no note bodies returned.
     "supersede",
+    # SUI-02: per-client wiring status (diff/confirm/write report) — no note
+    # bodies, no BrainCore construction at all. Host-only (refused at the
+    # VM_ALLOWED gate in cli.py before this command ever dispatches).
+    "connect",
 )
 
 

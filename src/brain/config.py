@@ -34,6 +34,20 @@ INDEX_FILENAME = "index.sqlite"
 ROLE_HOST = "host"
 ROLE_VM = "vm"
 
+MANAGED_ENV = "BRAIN_MANAGED"
+
+
+def is_managed() -> bool:
+    """Corporate lockdown mode (``$BRAIN_MANAGED=1``, set by MDM/endpoint policy).
+
+    When on, the endpoint cannot self-modify or accept ad-hoc key custody:
+    ``brain update`` self-update is refused, and the env/shell key-custody
+    sources (``BRAIN_AUDIT_KEY_PEM/CMD``, ``BRAIN_ENCRYPTION_KEY/CMD``) are
+    ignored so ONLY the OS keystore (Keychain / Credential Manager) can provide
+    a key. Addresses the cross-family review's supply-chain + shell-custody
+    conditions. A no-op (default off) on an unmanaged personal machine."""
+    return os.environ.get(MANAGED_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+
 
 def role(explicit: str | None = None) -> str:
     """Resolve the trust role: explicit arg > ``$BRAIN_ROLE`` > ``host``."""
@@ -170,9 +184,12 @@ def vault_root(explicit: str | os.PathLike[str] | None = None) -> Path:
     if not (cwd_vault / ".brain").is_dir():
         import sys as _sys
         print(
-            f"brain: WARNING no --vault/$BRAIN_VAULT given; falling back to {cwd_vault}, "
-            "which is not yet a vault. Pass --vault to be explicit; otherwise brain "
-            "creates/uses a vault here.",
+            f"brain: WARNING no --vault/$BRAIN_VAULT given; resolved to {cwd_vault}, "
+            f"which is not yet a vault (no {cwd_vault / '.brain'}). This is the "
+            f"CWD/vault fallback ({Path.cwd()} + 'vault'), not an error -- but if this "
+            f"isn't the vault you meant, pin it: export BRAIN_VAULT={cwd_vault} "
+            "(or pass --vault explicitly on every call). Otherwise brain creates/uses "
+            "a vault at the path above.",
             file=_sys.stderr,
         )
     return cwd_vault
@@ -303,6 +320,55 @@ def graph_build_failed_marker_path(vault: str | os.PathLike[str] | None = None) 
     """A failed/partial build's marker — NEVER the consumable ``graph.json``
     path, so a partial build can never be mistaken for a valid publish."""
     return graph_dir(vault) / "BUILD_FAILED.json"
+
+
+def _health_history_root(vault: str | os.PathLike[str] | None = None) -> Path:
+    """Directory holding ``health-history.jsonl`` + its lock + archive
+    segments. Honors ``$BRAIN_HEALTH_HISTORY`` (the override's PARENT dir
+    becomes this root) so the lock and archive dir never drift from the
+    actual history file location — fix for review finding [5]: they used to
+    always resolve under ``brain_runtime_dir`` even when the history file
+    itself was overridden elsewhere (e.g. in tests), so a test pointing
+    ``$BRAIN_HEALTH_HISTORY`` at a tmp path still rotated/locked against the
+    real vault's ``.brain/`` dir."""
+    override = os.environ.get("BRAIN_HEALTH_HISTORY")
+    if override:
+        return Path(override).expanduser().parent
+    return brain_runtime_dir(vault)
+
+
+def health_history_path(vault: str | os.PathLike[str] | None = None) -> Path:
+    """OBS-01 per-run health-metrics JSONL — one record per ``maintain`` run.
+    Rotated at ~1MB into ``health_archive_dir``."""
+    override = os.environ.get("BRAIN_HEALTH_HISTORY")
+    if override:
+        return Path(override).expanduser()
+    return brain_runtime_dir(vault) / "health-history.jsonl"
+
+
+def health_history_lock_path(vault: str | os.PathLike[str] | None = None) -> Path:
+    """Dedicated short-lived exclusive lock serializing append+rotation
+    (OBS-01 correction 3) — separate from ``maintain_lock_path`` because a
+    stale/broken maintain lock must never also jam health-history writes."""
+    return _health_history_root(vault) / "health-history.lock"
+
+
+def health_archive_dir(vault: str | os.PathLike[str] | None = None) -> Path:
+    """Rotated health-history segments — ``.brain/archive/health-history-*.jsonl``
+    (or alongside an overridden ``$BRAIN_HEALTH_HISTORY`` file's own dir)."""
+    return _health_history_root(vault) / "archive"
+
+
+def health_sparse_path(vault: str | os.PathLike[str] | None = None) -> Path:
+    """Never-rotated sidecar holding ONLY the sparse health metrics
+    (``golden_score``, ``synthesis_cost_usd``) whenever they are non-null —
+    review finding [7]. The main ``health-history.jsonl`` read is bounded to a
+    ~14-day window (fix [6]) which would silently truncate a sparse metric's
+    prior observation older than that (golden scores land on a >quarterly
+    cadence), disabling its regression check. This sidecar grows ~one line per
+    week and is trivially small forever, so it is never windowed or rotated —
+    ``health_trend`` reads it in full for the sparse comparisons."""
+    return _health_history_root(vault) / "health-sparse.jsonl"
 
 
 def anchor_dir() -> Path | None:

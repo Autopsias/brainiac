@@ -1,0 +1,38 @@
+{
+  "name": "brainiac-install",
+  "version": "0.16.1",
+  "description": "One-command bootstrap for the Brainiac 'brain' CLI engine — installs brainiac-cli from PyPI (uv/pipx/pip), verifies it, and initializes a vault.",
+  "bin": {
+    "brainiac-install": "bin/cli.js"
+  },
+  "files": [
+    "bin/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Autopsias/brainiac.git",
+    "directory": "packaging/npm/brainiac-install"
+  },
+  "homepage": "https://github.com/Autopsias/brainiac",
+  "bugs": {
+    "url": "https://github.com/Autopsias/brainiac/issues"
+  },
+  "keywords": [
+    "brainiac",
+    "second-brain",
+    "bootstrap",
+    "installer",
+    "cli"
+  ],
+  "author": "Autopsias",
+  "dependencies": {}
+}

@@ -34,6 +34,11 @@ from typing import Iterator, Optional
 JSONL_FORMAT = "brain-audit-chain-jsonl-v1"
 NULL_PREV_HASH = "0" * 64
 _REQUIRED_KEYS = frozenset({"format", "ts", "verb", "path", "reason", "prev_hash", "sig"})
+# Optional signed fields — allowed but not mandatory, so audit logs written
+# before this field existed still verify. `content_sha256` binds the exact
+# bytes written into the signature, making a post-commit edit of the note
+# detectable (AuditChain.content_drift). Backward-compatible by design.
+_OPTIONAL_KEYS = frozenset({"content_sha256"})
 KEYCHAIN_SERVICE_DEFAULT = "profile-a-brain-audit-key"
 
 
@@ -54,7 +59,7 @@ def _require_crypto():
     except ImportError as exc:  # pragma: no cover
         raise AuditError(
             "'cryptography' is required for the audit chain "
-            "(pip install 'profile-a-brain[audit]')"
+            "(pip install 'brainiac-cli[audit]')"
         ) from exc
 
 
@@ -130,6 +135,7 @@ def _pem_from_cmd(cmd: str) -> bytes:
     try:
         # nosec B602 - operator-set env var (BRAIN_AUDIT_KEY_CMD), never untrusted
         # input; see the NOTE above and docs/SECURITY_NOTES.md.
+        # nosemgrep: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true
         out = subprocess.run(cmd, shell=True, capture_output=True, timeout=20)  # noqa: S602
     except (OSError, subprocess.SubprocessError) as exc:
         raise KeyUnavailable(f"BRAIN_AUDIT_KEY_CMD failed to run: {exc}") from exc
@@ -218,11 +224,16 @@ def resolve_signing_key():
     pem: Optional[bytes] = None
     source: Optional[str] = None
 
-    env_pem = os.environ.get("BRAIN_AUDIT_KEY_PEM")
+    # Managed endpoints ignore ad-hoc env/shell key custody — only the OS
+    # keystore below is trusted (no PEM in a process env, no shell pipeline).
+    from . import config as _config
+    allow_env_custody = not _config.is_managed()
+
+    env_pem = os.environ.get("BRAIN_AUDIT_KEY_PEM") if allow_env_custody else None
     if env_pem:
         pem, source = env_pem.encode("utf-8"), "env:BRAIN_AUDIT_KEY_PEM"
 
-    if pem is None and os.environ.get("BRAIN_AUDIT_KEY_CMD"):
+    if pem is None and allow_env_custody and os.environ.get("BRAIN_AUDIT_KEY_CMD"):
         pem, source = _pem_from_cmd(os.environ["BRAIN_AUDIT_KEY_CMD"]), "env:BRAIN_AUDIT_KEY_CMD"
 
     if pem is None:
@@ -342,11 +353,16 @@ class AuditChain:
                 return s
         return None
 
-    def append(self, verb: str, path: str, reason: str, ts: str | None = None) -> dict:
+    def append(self, verb: str, path: str, reason: str, ts: str | None = None,
+               content_sha256: str | None = None) -> dict:
         """Sign + append one entry. Raises KeyUnavailable (fail closed) if no key.
 
         The compute-prev_hash + write section runs under an exclusive cross-process
         lock (F-07) so concurrent writers cannot fork the chain.
+
+        ``content_sha256`` (when given) binds the exact written bytes into the
+        signed payload, so a later edit of the note is detectable via
+        ``content_drift`` even though the entry's own signature stays valid.
         """
         key, source = resolve_signing_key()
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -362,6 +378,8 @@ class AuditChain:
                 "reason": reason.strip(),
                 "prev_hash": prev_hash,
             }
+            if content_sha256 is not None:
+                payload["content_sha256"] = content_sha256.strip()
             sig = base64.urlsafe_b64encode(
                 key.sign(_canonical(payload).encode("utf-8"))
             ).decode("ascii")
@@ -395,9 +413,11 @@ class AuditChain:
                 errors.append({"idx": idx, "error": "parse_failure"})
                 prev_hash = _sha256(s)
                 continue
-            if not isinstance(obj, dict) or set(obj) != set(_REQUIRED_KEYS):
+            keys = set(obj) if isinstance(obj, dict) else set()
+            if not (_REQUIRED_KEYS <= keys <= (_REQUIRED_KEYS | _OPTIONAL_KEYS)):
                 errors.append({"idx": idx, "error": "unexpected_keys"})
-                prev_hash = _sha256(s); continue
+                prev_hash = _sha256(s)
+                continue
             if obj.get("format") != JSONL_FORMAT:
                 errors.append({"idx": idx, "error": "bad_format"})
             if _canonical(obj) != s:
@@ -418,3 +438,44 @@ class AuditChain:
             "entries_checked": checked,
             "errors": errors,
         }
+
+    def content_drift(self, vault: Path) -> list[dict]:
+        """Notes whose CURRENT bytes differ from the last `content_sha256` the
+        chain signed for them — i.e. edited (or deleted) after commit without a
+        new signed write. Entries with no `content_sha256` (legacy) are skipped:
+        the chain never bound their content, so it cannot speak to drift.
+
+        This is what turns the signed hash into a real tamper check: the entry's
+        own signature can be perfectly valid while the file it describes has
+        been changed on disk. Returns one record per drifted/missing path."""
+        vault = Path(vault)
+        latest: dict[str, str] = {}
+        for raw in self._lines():
+            s = raw.strip()
+            if not self._is_entry(s):
+                continue
+            try:
+                obj = json.loads(s)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            csha = obj.get("content_sha256")
+            verb = obj.get("verb")
+            path = obj.get("path")
+            if not isinstance(path, str):
+                continue
+            if verb in ("write", "ingest") and isinstance(csha, str):
+                latest[path] = csha
+            elif verb in ("delete", "write_failed"):
+                latest.pop(path, None)
+        drift: list[dict] = []
+        for path, expected in latest.items():
+            fp = vault / path
+            if not fp.is_file():
+                drift.append({"path": path, "issue": "missing",
+                              "expected_sha256": expected})
+                continue
+            actual = _sha256(fp.read_text(encoding="utf-8"))
+            if actual != expected:
+                drift.append({"path": path, "issue": "content_drift",
+                              "expected_sha256": expected, "actual_sha256": actual})
+        return drift

@@ -16,6 +16,7 @@ boundary — fail-closed, never fail-open.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Iterable, Sequence
 
@@ -26,9 +27,22 @@ RANK: dict[str, int] = {t: i for i, t in enumerate(TIERS)}
 DEFAULT_DENY_TIER = "MNPI"
 DEFAULT_DENY_RANK = RANK[DEFAULT_DENY_TIER]
 
-# Conservative default egress cap for the CLI: surface Public + Internal only.
-# Elevating beyond this is the explicit human gate (--max-tier).
-DEFAULT_MAX_TIER = "Internal"
+# Default egress cap on the TRUSTED HOST: the full vault (owner decision,
+# 2026-07-10 — the old Internal default starved every real query: a curated
+# vault keeps its load-bearing notes at Confidential/Restricted, so the host
+# surface answered from stale low-tier scraps while competitors read
+# everything). $BRAIN_DEFAULT_MAX_TIER narrows it back (e.g. "Internal") for
+# deployments that want the conservative gate; an unrecognised value falls
+# back to the full-vault default. The untrusted VM leg does NOT inherit this:
+# role=vm resolves to VM_DEFAULT_MAX_TIER below (the trifecta break lives at
+# the role boundary, not on the owner's own host).
+DEFAULT_MAX_TIER = os.environ.get("BRAIN_DEFAULT_MAX_TIER", "MNPI")
+if DEFAULT_MAX_TIER not in RANK:
+    DEFAULT_MAX_TIER = "MNPI"
+
+# Conservative default for the untrusted read+draft leg (role=vm): surface
+# Public + Internal only unless a human explicitly elevates with --max-tier.
+VM_DEFAULT_MAX_TIER = "Internal"
 
 
 def normalize(value: object) -> str:

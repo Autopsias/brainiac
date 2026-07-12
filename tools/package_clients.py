@@ -11,8 +11,8 @@ instead of hand-editing three places:
    (Codex's native repo-root skill scan location; no config.toml entry needed
    for auto-load — see ``docs/harness-wiring.md`` / Codex Agent Skills docs).
 2. **Claude Code marketplace** — copies the KERNEL split into
-   ``plugins/profile-a-kernel/skills/`` and the EXTRAS split into
-   ``plugins/profile-a-extras/skills/`` (the two plugins listed in
+   ``plugins/brainiac-kernel/skills/`` and the EXTRAS split into
+   ``plugins/brainiac-extras/skills/`` (the two plugins listed in
    ``.claude-plugin/marketplace.json``).
 3. **Cowork** — zips each kernel+extras skill (ALL_SKILLS) individually into
    ``dist/cowork-skills/<name>.skill`` (a zip with ``<name>/SKILL.md`` at its
@@ -75,14 +75,18 @@ EXTRAS_SKILLS = [
 ]
 ALL_SKILLS = KERNEL_SKILLS + EXTRAS_SKILLS
 
-# brainiac-manager: host-mutating lifecycle skills (own plugin, own sync
-# target). Not part of ALL_SKILLS — host Claude Code/Codex only, never
-# zipped for Cowork (Cowork can't run install.sh/launchd anyway).
+# brainiac-manager: host lifecycle skills (own plugin, own sync target).
+# Not part of ALL_SKILLS — host Claude Code/Codex only, never zipped for
+# Cowork (Cowork can't run install.sh/launchd/brain-doctor-on-the-host
+# anyway). Most of these mutate host state; brainiac-health (OBS-03) is the
+# one read-only exception, grouped here because it's a host-only surface
+# (doctor/status/registry) rather than daily vault work.
 BRAINIAC_SKILLS = [
     "brainiac-install",
     "brainiac-update",
     "brainiac-uninstall",
     "brainiac-cowork-setup",
+    "brainiac-health",
 ]
 
 CLAUDE_SKILLS_DIR = REPO_ROOT / ".claude" / "skills"
@@ -231,7 +235,7 @@ def validate_version_stamp(version: str) -> None:
 # into all of them at package time, and --validate-only hard-fails any skew.
 # ---------------------------------------------------------------------------
 
-PLUGIN_NAMES = ["brainiac-manager", "profile-a-kernel", "profile-a-extras"]
+PLUGIN_NAMES = ["brainiac-manager", "brainiac-kernel", "brainiac-extras"]
 
 
 def write_plugin_versions(version: str) -> list[Path]:
@@ -314,6 +318,82 @@ def sync_agents_skills() -> list[Path]:
 
 
 # ---------------------------------------------------------------------------
+# 1b. Engine wheel assets — mirror repo-root scaffold/registration assets
+#     into src/brain/_assets/ (PYP-02). The _assets tree mirrors the repo-root
+#     LAYOUT so every REPO_ROOT-relative resolution in brain.init and
+#     scripts/register_tasks.py works unchanged when loaded from the wheel.
+# ---------------------------------------------------------------------------
+
+ENGINE_ASSETS_DIR = REPO_ROOT / "src" / "brain" / "_assets"
+
+# Repo-relative files shipped in the wheel. Directories are copied whole.
+ENGINE_ASSET_FILES = [
+    "AGENTS.md",
+    "routines/manifest.json",
+    # task registration (registrar + BOTH host tasks' installer surface —
+    # routines/manifest.json locked_counts host budget = 2):
+    "scripts/register_tasks.py",
+    "scripts/install-brief-mac.sh",
+    "scripts/install-brief-windows.ps1",
+    "scripts/brain-brief-mac.plist",
+    "scripts/brain-brief.sh",
+    "scripts/brain-synthesis.sh",
+    "scripts/brain-synthesis-mac.plist",
+]
+ENGINE_ASSET_DIRS = [
+    "templates",
+    "overlay/template",
+]
+
+
+def _engine_asset_pairs() -> list[tuple[Path, Path]]:
+    """(source, dest) file pairs for the engine asset mirror."""
+    pairs = [(REPO_ROOT / rel, ENGINE_ASSETS_DIR / rel) for rel in ENGINE_ASSET_FILES]
+    for rel in ENGINE_ASSET_DIRS:
+        src_dir = REPO_ROOT / rel
+        if not src_dir.is_dir():
+            raise ValidationError(f"engine asset dir missing: {src_dir}")
+        for f in sorted(src_dir.rglob("*")):
+            if f.is_file():
+                pairs.append((f, ENGINE_ASSETS_DIR / f.relative_to(REPO_ROOT)))
+    return pairs
+
+
+def sync_engine_assets() -> list[Path]:
+    written: list[Path] = []
+    expected: set[Path] = set()
+    for src, dst in _engine_asset_pairs():
+        if not src.is_file():
+            raise ValidationError(f"engine asset source missing: {src}")
+        expected.add(dst)
+        if dst.exists() and dst.read_bytes() == src.read_bytes():
+            continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        written.append(dst)
+    # prune stale mirrored files (a renamed/deleted source must not linger)
+    if ENGINE_ASSETS_DIR.is_dir():
+        for f in sorted(ENGINE_ASSETS_DIR.rglob("*")):
+            if f.is_file() and f not in expected:
+                f.unlink()
+                written.append(f)
+    return written
+
+
+def validate_engine_assets() -> None:
+    """Hard error if src/brain/_assets/ drifts from the repo-root originals."""
+    for src, dst in _engine_asset_pairs():
+        if not src.is_file():
+            raise ValidationError(f"engine asset source missing: {src}")
+        if not dst.is_file():
+            raise ValidationError(
+                f"engine asset mirror missing: {dst} — run tools/package_clients.py")
+        if dst.read_bytes() != src.read_bytes():
+            raise ValidationError(
+                f"engine asset mirror stale: {dst} != {src} — run tools/package_clients.py")
+
+
+# ---------------------------------------------------------------------------
 # 2. Claude Code marketplace plugins
 # ---------------------------------------------------------------------------
 
@@ -321,8 +401,8 @@ def sync_agents_skills() -> list[Path]:
 def sync_plugin_skills() -> list[Path]:
     written: list[Path] = []
     mapping = {
-        "profile-a-kernel": KERNEL_SKILLS,
-        "profile-a-extras": EXTRAS_SKILLS,
+        "brainiac-kernel": KERNEL_SKILLS,
+        "brainiac-extras": EXTRAS_SKILLS,
         "brainiac-manager": BRAINIAC_SKILLS,
     }
     for plugin_name, skills in mapping.items():
@@ -473,8 +553,8 @@ def validate_all_skill_sources() -> None:
         validate_skill_md(CLAUDE_SKILLS_DIR / name / "SKILL.md")
         validate_skill_md(AGENTS_SKILLS_DIR / name / "SKILL.md")
     for plugin_name, skills in (
-        ("profile-a-kernel", KERNEL_SKILLS),
-        ("profile-a-extras", EXTRAS_SKILLS),
+        ("brainiac-kernel", KERNEL_SKILLS),
+        ("brainiac-extras", EXTRAS_SKILLS),
         ("brainiac-manager", BRAINIAC_SKILLS),
     ):
         for name in skills:
@@ -513,6 +593,10 @@ def main() -> int:
             for p in sync_agents_skills():
                 _log(f"  wrote {p.relative_to(REPO_ROOT)}")
 
+            _log("[1b/4] Engine wheel assets — syncing repo-root scaffold/registration assets into src/brain/_assets/ ...")
+            for p in sync_engine_assets():
+                _log(f"  wrote {p.relative_to(REPO_ROOT)}")
+
             _log("[2/4] Claude Code marketplace — syncing kernel + extras + brainiac-manager plugin skills ...")
             for p in sync_plugin_skills():
                 _log(f"  wrote {p.relative_to(REPO_ROOT)}")
@@ -536,6 +620,8 @@ def main() -> int:
         _log("\nValidating ...")
         validate_all_skill_sources()
         _log("  OK: all SKILL.md frontmatter (canonical + .agents/skills + plugin copies)")
+        validate_engine_assets()
+        _log("  OK: src/brain/_assets/ engine asset mirror matches the repo-root originals (PYP-02)")
         validate_marketplace()
         _log("  OK: .claude-plugin/marketplace.json + every plugin.json")
         validate_codex_config()

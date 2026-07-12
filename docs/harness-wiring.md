@@ -4,6 +4,43 @@
 discover and call the `brain` engine **the same way** — via their native shell,
 **no MCP**. The single source of truth is **`AGENTS.md`**.
 
+## `brain connect` — SUI-02, the automated wirer
+
+Everything below this line is what `brain connect --client <c>` does FOR you —
+read it to understand the wiring, but don't hand-copy the four JSON/Markdown
+snippets anymore. `brain connect` (host-only; refused on `--role vm` at the
+same gate as `supersede`/`ingest`) always shows a unified diff of the exact
+change and asks before touching any user config file:
+
+```
+brain connect --client claude-code    # runs `claude plugin marketplace add` +
+                                       # `claude plugin install brainiac-kernel@brainiac`
+                                       # (falls back to printing the two commands,
+                                       # guided not one-command, if the `claude`
+                                       # plugin CLI isn't detected), then offers
+                                       # to append the brain-usage paragraph to
+                                       # the target project's CLAUDE.md
+brain connect --client claude-desktop # merges the brain-mcp stanza into
+                                       # claude_desktop_config.json (never
+                                       # replaces mcpServers — only adds/updates
+                                       # this vault's entry)
+brain connect --client codex          # appends a marked brain-usage block to
+                                       # the target project's AGENTS.md if absent
+brain connect --client gemini         # merge-writes .gemini/settings.json with
+                                       # contextFileName=AGENTS.md, preserving
+                                       # every other key
+```
+
+Idempotent (a second run reports "already connected"), and every wire path has
+an inverse: `brain connect --client <c> --remove` restores the pre-connect
+backup for the two JSON-config clients and strips the marked block for the two
+Markdown-append clients. `--yes` skips the interactive confirmation for
+scripted/CI use; running non-interactively without it prints the diff and
+exits non-zero rather than mutating anything. `brain mcp-config` remains the
+PRINT-ONLY equivalent for the claude-desktop stanza (paste-it-yourself); the
+two never diverge — both build the MCP entry from the same
+`connect.mcp_server_entry` builder.
+
 ## The canonical file + the imports
 
 ```
@@ -27,9 +64,11 @@ reaches that same paragraph; none re-states it.
 | **Claude Desktop — Chat tab** | (cannot run a command) | OPTIONAL thin MCP adapter — see below |
 
 **Prereq for all shell harnesses:** `brain` must be on `PATH`. Local/host:
-`pip install -e .` (installs the `brain` console script). Cowork VM: the binary
-ships in the workspace and PATH is re-exported per session — see
-`cowork-windows-install.md`.
+`./install.sh` / `./install.ps1` (PyPI-first — `uv tool install` / `pipx
+install` / `pip install --user`, whichever succeeds first — installs the
+`brain` console script; `--dev`/`-Dev` for a contributor's editable checkout
+instead). Cowork VM: the binary ships in the workspace and PATH is
+re-exported per session — see `cowork-windows-install.md`.
 
 ## The one exception — the pure Chat tab (INT-03)
 
@@ -37,8 +76,15 @@ The Chat tab is the single surface that **cannot run a shell command**, so it
 gets a thin, **optional, deletable** MCP bridge: `src/brain/mcp_adapter.py`
 (~50 lines) wraps the SAME `BrainCore` + the SAME deny-by-default
 `ClassificationFilter` and exposes only the read verbs. **MCP is never the
-foundation** — delete the adapter and every other harness still works. Run it
-with `pip install -e '.[mcp]'` then `brain-mcp` (or `python -m brain.mcp_adapter`).
+foundation** — delete the adapter and every other harness still works. It's
+already included in a normal PyPI install (`brainiac-cli[mcp]`, what
+`install.sh`/`install.ps1` install by default); a contributor's editable
+checkout needs `pip install -e '.[mcp]'`. Either way, run it with `brain-mcp`
+(or `python -m brain.mcp_adapter`). The packaged delivery for this surface is
+the `.mcpb` extension (`docs/install/README.md` Path G) — a thin Node stdio
+shim that spawns this same host-installed `brain-mcp`; `brain connect
+--client claude-desktop` is the alternative config-stanza route (pick one,
+never both — `brain doctor` flags double registration).
 
 ## Why no MCP for the command-capable surfaces
 

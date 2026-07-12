@@ -27,7 +27,7 @@ the implementer(s) writing the shipped core do NOT read its AGPL source."
 - Architecture was derived from **permissively-licensed / first-party
   references only**:
   - the project's own `AGENTS.md` and `docs/substrate-spec.md` (first-party, S01);
-  - the owner vault's `90 System/_audit_chain.py` (first-party, maintainer-owned) for
+  - a first-party, maintainer-owned audit-chain helper from the owner vault for
     the audit-chain *pattern* — re-implemented, not copied;
   - the Python **stdlib `sqlite3`** docs, **SQLite FTS5** official docs, and the
     **sqlite-vec** public README (permissive);

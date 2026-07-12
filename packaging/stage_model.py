@@ -27,7 +27,25 @@ def main() -> int:
     ap.add_argument("--out", required=True, help="output dir (flat layout)")
     ap.add_argument("--patterns", nargs="+", required=True, help="files to stage")
     ap.add_argument("--cache", default=None, help="local HF cache root (offline)")
+    ap.add_argument(
+        "--revision", default=None,
+        help="pin the online download to an exact HF commit (reproducible bundle). "
+             "Defaults to the runtime-pinned revision for the known e5-small repo, "
+             "so what you stage matches what the engine would fetch; a different "
+             "repo pins nothing unless given.")
     args = ap.parse_args()
+
+    # Reproducibility: pin the online resolve to the SAME revision the runtime
+    # embedder uses (embed.E5_SMALL_ONNX_REVISION), so a staged bundle can't
+    # silently differ from a runtime download.
+    revision = args.revision
+    if revision is None:
+        try:
+            from brain.embed import E5_SMALL_ONNX_REPO, E5_SMALL_ONNX_REVISION
+            if args.repo == E5_SMALL_ONNX_REPO:
+                revision = E5_SMALL_ONNX_REVISION
+        except Exception:  # noqa: BLE001 — staging must not hard-depend on the engine import
+            revision = None
 
     # Resolve the snapshot dir.
     if args.cache:
@@ -49,7 +67,9 @@ def main() -> int:
     except ImportError:
         print("ERROR: huggingface-hub not installed (needed for online download)", file=sys.stderr)
         return 3
-    src = snapshot_download(args.repo, allow_patterns=args.patterns)
+    src = snapshot_download(args.repo, allow_patterns=args.patterns, revision=revision)
+    if revision:
+        print(f"pinned revision {revision}")
     return _stage(src, args.out, args.patterns)
 
 

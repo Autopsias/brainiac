@@ -28,9 +28,10 @@ from pathlib import Path
 from typing import Any
 
 from . import config, frontmatter
+from . import classification as cls_mod
 from .chunk import chunk_text
 from .embed import Embedder, get_embedder
-from .notes import Note, load_note, scan_vault
+from .notes import Note, scan_vault
 from .vectors import SqliteVecBackend, VectorBackend, get_backend
 
 # Optional 3rd-party regex engine (mrab-regex) with a REAL per-call match
@@ -71,6 +72,16 @@ def _env_float(name: str, default: float) -> float:
         return float(os.environ[name])
     except (KeyError, ValueError):
         return default
+
+
+# Temporal-intent detector for query-aware recency weighting (EN + PT — the
+# reference corpus is bilingual). Deliberately coarse: false positives only
+# strengthen a gentle, bounded prior; false negatives fall back to the default.
+_TEMPORAL_INTENT_RE = re.compile(
+    r"\b(latest|newest|current(?:ly)?|recent(?:ly)?|as of|today|now|up[- ]to[- ]date|"
+    r"this (?:week|month|quarter|year)|"
+    r"atual(?:mente)?|mais recentes?|últim[oa]s?|recentes?|hoje|"
+    r"est[ae] (?:semana|mês|trimestre|ano))\b", re.IGNORECASE)
 
 
 def _recency_factor(date_str: str, today: _dt.date, weight: float,
@@ -132,6 +143,13 @@ class Hit:
     snippet: str = ""
     is_latest_version: str = ""  # TMP-02: "true"|"false"|"" — post-egress field,
                                   # never consulted by the classification gate.
+    date: str = ""  # valid-time date (effective_date → document_date → created)
+                    # — lets an agent see at a glance HOW CURRENT each hit is.
+    type: str = ""  # note type (decision|source|note|…) — authority signal:
+                    # a `decision` hit IS the decision layer; a `source` hit is
+                    # material under consideration (2026-07-11: an agent
+                    # promoted a draft memo's scenario into a "decision"
+                    # because the ranked list didn't show which was which).
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -144,6 +162,8 @@ class Hit:
             "source": self.source,
             "snippet": self.snippet,
             "is_latest_version": self.is_latest_version,
+            "date": self.date,
+            "type": self.type,
         }
 
 
@@ -175,9 +195,12 @@ class BrainIndex:
         # $BRAIN_EMBEDDER overrides embedder selection (auto|hash|arctic|catalog);
         # default auto. CI + air-gapped validation force "hash" (offline, no model
         # download), per get_embedder's contract — same one-line swap tests use.
-        self.embedder: Embedder = embedder or get_embedder(
-            os.environ.get("BRAIN_EMBEDDER", "auto")
-        )
+        # None ⇒ resolved LAZILY on first use (the `embedder` property below):
+        # constructing the index must never die on a missing embedder, or
+        # DV-03's fail-closed ($BRAIN_REQUIRE_REAL_EMBEDDER, defaulted on the
+        # VM leg) bites verbs that never embed — capture/draft-capture, grep,
+        # bases-query — instead of only the semantic path as documented.
+        self._embedder: Embedder | None = embedder
         # Cache the reranker on the index instance so the ONNX session is loaded
         # ONCE, not on every _apply_rerank call. Without this, qwen3-embed's
         # TextCrossEncoder reloads the 573MB ONNX model per query (S11 finding),
@@ -195,6 +218,19 @@ class BrainIndex:
         # database) and no ``-wal``/``-shm`` sidecar is ever created.
         self.read_only = read_only
         self._conn: sqlite3.Connection | None = None
+
+    @property
+    def embedder(self) -> Embedder:
+        """The query/index embedder, resolved on FIRST USE, not construction.
+
+        Only the paths that actually embed (search/hybrid-search, rebuild/sync,
+        near-dup scoring) ever touch this — so under DV-03's fail-closed policy
+        an EmbedderUnavailable raises exactly where the semantic contract is
+        exercised, and lexical/draft verbs keep working on a machine with no
+        real embedder (the documented DV-03 scope)."""
+        if self._embedder is None:
+            self._embedder = get_embedder(os.environ.get("BRAIN_EMBEDDER", "auto"))
+        return self._embedder
 
     # -- connection -------------------------------------------------------
     @property
@@ -342,6 +378,7 @@ class BrainIndex:
                 # short, stable disambiguator for a colliding synthetic id), not a
                 # security boundary -- collision resistance / preimage resistance
                 # don't matter for this use. See docs/SECURITY_NOTES.md.
+                # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1
                 row["id"] = f"{row['id']}__{hashlib.sha1(row['path'].encode()).hexdigest()[:8]}"  # nosec B303 B324
             seen.add(row["id"])
         chunks = chunk_text(note.body)
@@ -550,7 +587,7 @@ class BrainIndex:
     # -- retrieval --------------------------------------------------------
     def _note_row(self, rowid: int) -> dict[str, Any] | None:
         r = self.conn.execute(
-            "SELECT id,title,classification,zone,path,body,is_latest_version"
+            "SELECT id,title,classification,zone,path,body,is_latest_version,type"
             " FROM notes WHERE rowid=?",
             (rowid,),
         ).fetchone()
@@ -559,6 +596,7 @@ class BrainIndex:
         return {
             "id": r[0], "title": r[1], "classification": r[2],
             "zone": r[3], "path": r[4], "body": r[5], "is_latest_version": r[6] or "",
+            "type": r[7] or "",
         }
 
     @staticmethod
@@ -566,23 +604,21 @@ class BrainIndex:
         s = " ".join(body.split())
         return s[:n] + ("…" if len(s) > n else "")
 
-    # Default typed-zone authority weights (anti-burial).
-    # PT-02 (s05): curated_weight=2.0 / meetings_damp=0.55 is the CV-SELECTED
-    # candidate from a 5x4=20-point (curated boost x "40 Meetings" damp) grid,
-    # chosen by stratified 5-fold CV on train+dev ONLY (H34) — see
-    # `eval/pt_zonefix_sweep.py` and `docs/eval-bench/pt-fix.md`. All 5 outer
-    # folds independently selected this SAME point (stable, not noise). It
-    # replaces the pre-S05 1.35-only default, which was provably a no-op on
-    # the migrated index (see `_resolve_zone` docstring — the prior needs
-    # BOTH the source_zone fix AND a weight strong enough to move fused RRF
-    # ranks once alive). Damping "40 Meetings" (rather than a bigger uniform
-    # curated boost) is what avoids trading away monolingual_pt / multi_hop,
-    # per `docs/eval-bench/pt-diagnosis.md` §3 E5's own warning.
-    _DEFAULT_ZONE_WEIGHTS = {
-        "10 People": 2.0, "20 Companies": 2.0, "30 Projects": 2.0,
-        "60 Concepts": 2.0, "70 Decisions": 2.0,
-        "40 Meetings": 0.55,
-    }
+    # Zone-authority weights (anti-burial). The shipped default is NEUTRAL —
+    # every zone weighs 1.0 out of the box, so the engine hard-codes no
+    # particular vault's folder taxonomy. A vault configures its own zone
+    # boosts/damps via BRAIN_ZONE_WEIGHTS (a JSON map of `zone -> multiplier`);
+    # unlisted zones stay 1.0.
+    #
+    # Reference tuning (for a curated vault whose notes carry a typed
+    # `source_zone`): boosting the low-volume curated zones (people, companies,
+    # projects, concepts, decisions) to ~2.0 and damping a high-volume
+    # meeting/transcript zone to ~0.55 recovers curated notes buried by
+    # transcript volume. Those values were CV-selected (stratified 5-fold on
+    # train+dev, all 5 folds agreeing) in the PT-02 eval — see
+    # `docs/eval-bench/pt-fix.md`. They live in the OWNER's config now, not in
+    # shipped defaults, because the zone names are vault-specific.
+    _DEFAULT_ZONE_WEIGHTS: "dict[str, float]" = {}
 
     def _zone_weight(self, zone: str) -> float:
         """Authority multiplier for a note's zone (see hybrid_search). Curated
@@ -606,11 +642,12 @@ class BrainIndex:
         """Anti-burial authority KEY for a note (PT-02, s05).
 
         The live migrated index flattens every Johnny-Decimal zone to
-        ``brain``/``raw`` in the ``notes.zone`` column (People pages land in
-        ``brain/areas/`` next to Companies; meeting transcripts land in
-        ``raw/``). ``_zone_weight`` is keyed on the ORIGINAL zone names
-        (``"10 People"``, ``"40 Meetings"``, ...), so on the flattened column
-        it was a no-op — see `docs/eval-bench/pt-diagnosis.md` root cause 1.
+        ``brain``/``raw`` in the ``notes.zone`` column (curated typed pages
+        all land in ``brain/areas/``; meeting transcripts land in ``raw/``).
+        ``_zone_weight`` is keyed on the ORIGINAL (pre-flattening) zone name a
+        note carries in its ``source_zone`` frontmatter, so on the flattened
+        column it was a no-op — see `docs/eval-bench/pt-diagnosis.md` root
+        cause 1.
 
         This is a RETRIEVAL-TIME-ONLY fix (H23/H11 reversibility gate): the
         migration tool (`tools/apply_live_migration.py`) already writes the
@@ -678,7 +715,20 @@ class BrainIndex:
     # for a future corpus / post-embedder-swap re-eval. See
     # `docs/eval-bench/pt-fix.md`.
     _DEFAULT_DEDUP_THRESHOLD: float | None = None
-    _TRANSCRIPT_ZONES = frozenset({"40 Meetings", "raw"})
+    # Zones treated as high-volume transcript zones for near-dup suppression.
+    # Default is the brain-native `raw/` zone (where ingested transcripts land);
+    # no vault-specific folder name is baked in. A vault whose transcripts carry
+    # a different `source_zone` can extend this via BRAIN_TRANSCRIPT_ZONES
+    # (comma-separated). Meeting transcripts flatten to `raw/` at migration, so
+    # the `raw` default already catches them via the column zone.
+    _DEFAULT_TRANSCRIPT_ZONES = frozenset({"raw"})
+
+    def _transcript_zones(self) -> "frozenset[str]":
+        zones = set(self._DEFAULT_TRANSCRIPT_ZONES)
+        raw = os.environ.get("BRAIN_TRANSCRIPT_ZONES")
+        if raw:
+            zones |= {z.strip() for z in raw.split(",") if z.strip()}
+        return frozenset(zones)
 
     def _dedup_params(self) -> tuple[float | None, str]:
         thr = self._DEFAULT_DEDUP_THRESHOLD
@@ -736,9 +786,11 @@ class BrainIndex:
             cr = best_chunk_rowid.get(rid)
             return vecs_by_chunk.get(cr) if cr is not None else None
 
+        _transcript_zones = self._transcript_zones()
+
         def _is_transcript(rid: int) -> bool:
-            return (zmap.get(rid, "") in self._TRANSCRIPT_ZONES
-                    or col_zone.get(rid, "") in self._TRANSCRIPT_ZONES)
+            return (zmap.get(rid, "") in _transcript_zones
+                    or col_zone.get(rid, "") in _transcript_zones)
 
         kept: list[int] = []
         kept_vecs: list[list[float]] = []
@@ -777,6 +829,46 @@ class BrainIndex:
         except sqlite3.OperationalError:
             return []
 
+    def decision_layer_hits(self, query: str, k: int = 8) -> list["Hit"]:
+        """RET-10b: TARGETED lexical probe over the DECISION LAYER — live
+        ``type: decision`` notes BM25-ranked against ``query``. Exists so a
+        dossier's decision layer never depends on decision notes cracking
+        the general semantic top-k (measured: a phrasing shift pushed them
+        below rank 60 and the sweep's decision layer came back empty while
+        the notes plainly existed). Decisions are scarce, FTS is indexed —
+        this probe is one cheap query."""
+        c = self.conn
+        try:
+            toks = [t for t in query.replace('"', " ").split() if t]
+            fts_q = " OR ".join(f'"{t}"' for t in toks) if toks else '""'
+            rowids = [
+                int(r) for (r,) in c.execute(
+                    "SELECT f.rowid FROM notes_fts f JOIN notes n ON n.rowid = f.rowid "
+                    "WHERE f.notes_fts MATCH ? AND n.type = 'decision' "
+                    "AND COALESCE(n.is_latest_version,'') != 'false' "
+                    "ORDER BY f.rank LIMIT ?", (fts_q, k))
+            ]
+        except sqlite3.OperationalError:
+            return []
+        date_expr = ("COALESCE(NULLIF(effective_date,''), "
+                     "NULLIF(document_date,''), created)")
+        hits: list[Hit] = []
+        for rid in rowids:
+            row = self._note_row(rid)
+            if not row:
+                continue
+            (d,) = c.execute(
+                f"SELECT {date_expr} FROM notes WHERE rowid = ?", (rid,)).fetchone()  # nosec B608 — placeholders only
+            hits.append(Hit(
+                id=row["id"], title=row["title"],
+                classification=row["classification"], zone=row["zone"],
+                path=row["path"], score=0.0, source="lexical",
+                snippet=self._snippet(row["body"]),
+                is_latest_version=row.get("is_latest_version", ""),
+                date=str(d or ""), type=row.get("type", ""),
+            ))
+        return hits
+
     def _dense_ranked(
         self, query: str, n: int
     ) -> tuple[list[int], dict[int, str], dict[int, int]]:
@@ -788,7 +880,20 @@ class BrainIndex:
         Embeds the query LAZILY here (with the canonical ``query:`` prefix) — the
         only place a query embedding is computed, so lexical-only tools never pay
         the embed cost. Goes through the ``VectorBackend`` ADAPTER (CORE-01); it
-        never depends on sqlite-vec directly, so brute-force is identical."""
+        never depends on sqlite-vec directly, so brute-force is identical.
+
+        Embedder-pending guard (S02/CS-01): a cold-start install builds the
+        index with an offline placeholder (``BRAIN_EMBEDDER=hash``) so lexical
+        search works without a network model download. If the LIVE embedder
+        (real, once cached) doesn't match what the stored chunk vectors were
+        built with (:meth:`model_matches`), embedding the query with the real
+        model and comparing it against placeholder passage vectors would be
+        pure noise — worse than no dense leg at all. So this degrades to
+        FTS-only (empty dense list) until a rebuild/sync re-embeds with the
+        matching model (``brain warmup`` then `brain sync`, which self-heals
+        via the SAME model-mismatch check `sync()` already applies)."""
+        if not self.model_matches():
+            return [], {}, {}
         c = self.conn
         qvec = self.embedder.embed(query, is_query=True)
         chunk_hits = self.backend.search(c, qvec, n * 4)
@@ -920,12 +1025,17 @@ class BrainIndex:
             # reconciling score scales (same reason RRF uses ranks). Neutral
             # (×1.0) for undated notes, so nothing is penalised for lacking a date.
             # Knobs: BRAIN_RECENCY_WEIGHT (0 disables), BRAIN_RECENCY_HALFLIFE_DAYS.
-            # ponytail: always-on gentle prior; query-intent weighting (heavier
-            # decay for "latest"/"as of <date>" queries) is the upgrade path if
-            # near-ties still slip through.
-            rweight = _env_float("BRAIN_RECENCY_WEIGHT", 0.25)
+            # Query-intent weighting (2026-07-11, the documented upgrade path
+            # after the G&P benchmark): a query that is ABOUT currentness
+            # ("latest", "current", "as of", PT equivalents) doubles the
+            # staleness penalty and halves the half-life, so months-old
+            # near-ties stop outranking the current claim. Env knobs, when
+            # set, override BOTH modes absolutely (unchanged contract).
+            temporal = bool(_TEMPORAL_INTENT_RE.search(query))
+            rweight = _env_float("BRAIN_RECENCY_WEIGHT", 0.5 if temporal else 0.25)
             if rweight > 0:
-                rhalf = _env_float("BRAIN_RECENCY_HALFLIFE_DAYS", 180.0)
+                rhalf = _env_float("BRAIN_RECENCY_HALFLIFE_DAYS",
+                                   90.0 if temporal else 180.0)
                 today = _today()
                 for rid in scores:
                     scores[rid] *= _recency_factor(
@@ -953,12 +1063,48 @@ class BrainIndex:
                     path=row["path"], score=scores[rid], source=_source(rid),
                     snippet=self._snippet(snippet_src),
                     is_latest_version=row.get("is_latest_version", ""),
+                    date=rdate.get(rid, ""),
+                    type=row.get("type", ""),
                 )
             )
 
         if rerank and hits:
             hits = self._apply_rerank(query, hits, reranker, rerank_top)
         return hits[:k]
+
+    def freshness(self, newest_hit_date: str, max_tier: str) -> dict[str, Any]:
+        """RET-09: how much NEWER material the vault holds past
+        ``newest_hit_date`` (valid-time chain: effective_date → document_date
+        → created), respecting the caller's egress cap.
+
+        Motivation (2026-07 G&P benchmark): an agent answering a "latest
+        decisions" question from a coherent set of curated hits has no signal
+        that the vault continues PAST its newest hit — it declares victory on
+        stale material. This is that signal: cheap (one aggregate query),
+        generic (no topic modelling), and honest about the cap (a capped
+        caller learns only counts, consistent with the egress report's
+        existing ``withheld`` counter)."""
+        date_expr = ("COALESCE(NULLIF(effective_date,''), "
+                     "NULLIF(document_date,''), created)")
+        # Only ISO-shaped dates participate: a garbage `created` value like
+        # "unknown" sorts lexicographically above every real date and would
+        # both inflate the count and win the MAX.
+        where = (f"{date_expr} > ? AND {date_expr} GLOB "
+                 "'[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*'")
+        params: list[str] = [newest_hit_date]
+        if max_tier != cls_mod.TIERS[-1]:
+            # Below the MNPI cap, count only notes the caller could actually
+            # surface (unlabelled ranks MNPI, so it is excluded here too).
+            allowed = [t for t in cls_mod.TIERS
+                       if cls_mod.RANK[t] <= cls_mod.RANK.get(max_tier, 0)]
+            where += f" AND classification IN ({','.join('?' * len(allowed))})"
+            params += allowed
+        row = self.conn.execute(
+            f"SELECT COUNT(*), MAX({date_expr}) FROM notes WHERE {where}",  # nosec B608 — placeholders only
+            params).fetchone()
+        return {"newest_hit_date": newest_hit_date,
+                "newer_count": int(row[0] or 0),
+                "vault_newest": row[1] or ""}
 
     # -- multi-hop graph-augmented retrieval (RET-06) --------------------
     def _link_graph_cached(self) -> Any:
@@ -1060,6 +1206,7 @@ class BrainIndex:
             path=row["path"], score=0.0, source="graph",
             snippet=self._snippet(row["body"]),
             is_latest_version=row.get("is_latest_version", ""),
+            type=row.get("type", ""),
         )
 
     def _apply_rerank(
@@ -1145,7 +1292,7 @@ class BrainIndex:
         if regex and not _GREP_HAS_TIMEOUT:
             raise GrepPatternError(
                 "grep --regex requires the 'regex' engine (pip install "
-                "'profile-a-brain[index]') for a bounded match timeout; "
+                "'brainiac-cli[index]') for a bounded match timeout; "
                 "the minimal build has no ReDoS-safe regex path"
             )
         _re = _grep_engine  # the timeout-capable `regex` engine when available, else stdlib re

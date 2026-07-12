@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Brainiac — Install Guide (end to end)</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#1a1f24; --muted:#5b6570; --line:#e3e7ea;
+    --accent:#1f7a4d; --chip:#edf7f1; --code-bg:#f5f7f9; --th:#f0f3f5;
+    --warn-bg:#fff8e6; --warn-line:#e6c96a; --ok-bg:#f0f9f3; --ok-line:#79c298;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#14181c; --fg:#e5e9ec; --muted:#9aa5ae; --line:#2b3238;
+      --accent:#7cc9a0; --chip:#18251d; --code-bg:#1c2126; --th:#1d2329;
+      --warn-bg:#2a2410; --warn-line:#8a7328; --ok-bg:#15231a; --ok-line:#2e5c42;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  main{max-width:54rem;margin:0 auto;padding:2.5rem 1.5rem 5rem}
+  h1{font-size:1.9rem;line-height:1.25;margin:.2rem 0 .4rem}
+  h2{font-size:1.3rem;margin:2.4rem 0 .6rem;padding-top:1rem;border-top:1px solid var(--line)}
+  h3{font-size:1.05rem;margin:1.4rem 0 .4rem}
+  .kicker{color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:.08em;font-size:.75rem}
+  .meta{color:var(--muted);font-size:.9rem;margin-bottom:1.2rem}
+  code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.86em}
+  code{background:var(--code-bg);padding:.12em .35em;border-radius:4px}
+  pre{background:var(--code-bg);padding:.9rem 1rem;border-radius:8px;overflow-x:auto;line-height:1.5}
+  pre code{background:none;padding:0}
+  table{border-collapse:collapse;width:100%;margin:.8rem 0;font-size:.92rem}
+  th,td{border:1px solid var(--line);padding:.45rem .6rem;text-align:left;vertical-align:top}
+  th{background:var(--th)}
+  .box{border:1px solid var(--line);border-radius:10px;padding:1rem 1.2rem;margin:1rem 0}
+  .callout{background:var(--warn-bg);border:1px solid var(--warn-line);border-radius:8px;padding:.7rem 1rem;margin:.9rem 0;font-size:.95rem}
+  .ok{background:var(--ok-bg);border:1px solid var(--ok-line);border-radius:8px;padding:.7rem 1rem;margin:.9rem 0;font-size:.95rem}
+  .toc{columns:2;font-size:.92rem}
+  .toc a{color:var(--accent);text-decoration:none}
+  .toc a:hover{text-decoration:underline}
+  .wide{overflow-x:auto}
+  .num{display:inline-block;background:var(--chip);color:var(--accent);font-weight:700;
+    border-radius:6px;padding:0 .5rem;margin-right:.4rem}
+  .hero{border:2px solid var(--accent);border-radius:12px;padding:1.1rem 1.3rem;margin:1.2rem 0;background:var(--ok-bg)}
+  .hero h2{border:none;margin:.1rem 0 .4rem;padding:0}
+  .info{margin:1.4rem 0}
+  .info svg{width:100%;height:auto;display:block;font-family:inherit}
+  .info figcaption{color:var(--muted);font-size:.85rem;margin-top:.4rem;text-align:center}
+  svg .b{fill:var(--chip);stroke:var(--accent);stroke-width:1.3}
+  svg .b2{fill:var(--code-bg);stroke:var(--line);stroke-width:1.2}
+  svg .bh{fill:var(--ok-bg);stroke:var(--accent);stroke-width:2}
+  svg .t{fill:var(--fg);font-size:13px;font-weight:650}
+  svg .tt{fill:var(--fg);font-size:14px;font-weight:700}
+  svg .ts{fill:var(--muted);font-size:11px;font-weight:400}
+  svg .ta{fill:var(--accent);font-size:11.5px;font-weight:650}
+  svg .a{stroke:var(--muted);stroke-width:1.5;fill:none}
+  svg .ah{fill:var(--muted)}
+  svg text{font-family:inherit}
+  @media print{ body{font-size:12px} h2{break-after:avoid} pre{white-space:pre-wrap} }
+</style>
+</head>
+<body>
+<main>
+  <div class="kicker">Brainiac · install &amp; onboarding</div>
+  <h1>Install Guide — end to end</h1>
+  <div class="meta">Every command below is verified against the shipped code (v0.16, 2026-07).
+    Full reference: <code>docs/install/README.md</code> · AI-driven install: <code>docs/install/ai-install.md</code> ·
+    what you're installing: <code>docs/architecture-overview.html</code>.</div>
+
+  <div class="hero">
+    <h2>⚡ Fastest way: let your AI assistant install it</h2>
+    <p style="margin:.2rem 0 .6rem">Paste this into any AI client that runs commands on your
+    machine (Claude Code, Codex, Gemini CLI, …). It fetches the machine runbook, detects your
+    OS and setup, installs, verifies every step, and asks you <strong>at most four questions</strong>
+    — usually just one: where the vault should live.</p>
+<pre><code>Install Brainiac for me. Your complete instruction set is here — fetch it and
+follow it exactly, asking me only the questions it allows:
+https://raw.githubusercontent.com/Autopsias/brainiac/main/docs/install/LLM-INSTALL.md</code></pre>
+    <p style="margin:.5rem 0 0;color:var(--muted);font-size:.9rem">The runbook
+    (<code>docs/install/LLM-INSTALL.md</code>) covers macOS, Linux, Windows, sandboxed assistants
+    (it refuses to install inside a throwaway VM and hands you the commands instead), existing
+    vaults, imports, and maintenance registration — with verification gates and a failure
+    playbook. The manual paths below do exactly the same things, by hand.</p>
+  </div>
+
+  <div class="box toc">
+    <strong>Contents</strong><br>
+    <a href="#which">0 · Which path do I take?</a><br>
+    <a href="#new-mac">1 · Brand-new machine (macOS/Linux)</a><br>
+    <a href="#windows">2 · Brand-new machine (Windows)</a><br>
+    <a href="#claude">3 · Fastest: 3 commands in Claude Code</a><br>
+    <a href="#existing">4 · Existing machine → new or existing project</a><br>
+    <a href="#model">5 · The embedding model (when the download happens)</a><br>
+    <a href="#verify">6 · Verify, update, uninstall</a><br>
+    <a href="#matrix">7 · What each channel does / doesn't do</a>
+  </div>
+
+  <h2 id="which">0 · Which path do I take?</h2>
+  <div class="wide">
+  <table>
+    <tr><th>You are…</th><th>Take</th></tr>
+    <tr><td>on a new Mac/Linux machine, comfortable with a terminal</td><td><a href="#new-mac">§1</a> — one bootstrap script</td></tr>
+    <tr><td>on Windows</td><td><a href="#windows">§2</a> — same script in PowerShell</td></tr>
+    <tr><td>already living in Claude Code</td><td><a href="#claude">§3</a> — 3 slash-commands, everything managed for you</td></tr>
+    <tr><td>already installed, adding another project/vault</td><td><a href="#existing">§4</a> — no reinstall, ever</td></tr>
+    <tr><td>a Node person</td><td><code>npx brainiac-install</code> — same result as §1, zero prerequisites beyond Node</td></tr>
+    <tr><td>policy-bound to plain PyPI</td><td><code>uv tool install "brainiac-cli[mcp]"</code> (or pipx/pip) — engine only, see <a href="#matrix">§7</a> for what you wire up yourself</td></tr>
+  </table>
+  </div>
+
+  <figure class="info">
+  <svg viewBox="0 0 780 330" role="img" aria-label="Install decision tree">
+    <rect x="300" y="8" width="180" height="34" rx="8" class="b2"/>
+    <text x="390" y="30" text-anchor="middle" class="tt">Install Brainiac</text>
+    <line x1="390" y1="42" x2="390" y2="62" class="a"/><polygon points="386,60 394,60 390,68" class="ah"/>
+    <rect x="215" y="68" width="350" height="40" rx="8" class="b2"/>
+    <text x="390" y="93" text-anchor="middle" class="t">Can your AI assistant run commands on your machine?</text>
+    <path d="M300 108 L180 108 L180 142" class="a" fill="none"/><polygon points="176,140 184,140 180,148" class="ah"/>
+    <text x="232" y="102" class="ta">YES (recommended)</text>
+    <path d="M480 108 L590 108 L590 132" class="a" fill="none"/><polygon points="586,130 594,130 590,138" class="ah"/>
+    <text x="497" y="102" class="ta">no / prefer manual</text>
+    <rect x="30" y="148" width="300" height="86" rx="10" class="bh"/>
+    <text x="180" y="174" text-anchor="middle" class="tt">★ Paste the 2-line prompt</text>
+    <text x="180" y="194" text-anchor="middle" class="ts">the AI detects, installs, verifies —</text>
+    <text x="180" y="209" text-anchor="middle" class="ts">and asks you at most 4 questions</text>
+    <text x="180" y="226" text-anchor="middle" class="ta">docs/install/LLM-INSTALL.md</text>
+    <rect x="430" y="138" width="320" height="34" rx="8" class="b"/>
+    <text x="445" y="160" class="t">macOS / Linux</text><text x="740" y="160" text-anchor="end" class="ts">bash install.sh</text>
+    <rect x="430" y="180" width="320" height="34" rx="8" class="b"/>
+    <text x="445" y="202" class="t">Windows</text><text x="740" y="202" text-anchor="end" class="ts">.\install.ps1 (PowerShell)</text>
+    <rect x="430" y="222" width="320" height="34" rx="8" class="b"/>
+    <text x="445" y="244" class="t">Inside Claude Code</text><text x="740" y="244" text-anchor="end" class="ts">3 /plugin commands</text>
+    <path d="M180 234 L180 262 L370 262" class="a" fill="none"/>
+    <path d="M590 256 L590 262 L410 262" class="a" fill="none"/>
+    <line x1="390" y1="262" x2="390" y2="270" class="a"/><polygon points="386,268 394,268 390,276" class="ah"/>
+    <rect x="180" y="276" width="420" height="42" rx="8" class="b2"/>
+    <text x="390" y="294" text-anchor="middle" class="t">brain init --full --apply</text>
+    <text x="390" y="310" text-anchor="middle" class="ts">empty vault: done, searchable · existing notes: run `brain rebuild` once</text>
+  </svg>
+  <figcaption>Every path converges on the same two commands — the AI path just runs them for you.</figcaption>
+  </figure>
+
+  <h2 id="new-mac">1 · Brand-new machine — macOS / Linux, from nothing</h2>
+<pre><code># 1. install the engine (tries uv → pipx → pip, first success wins; tells you which)
+curl -fsSL https://raw.githubusercontent.com/Autopsias/brainiac/main/install.sh -o /tmp/brainiac-install.sh
+bash /tmp/brainiac-install.sh
+
+# 2. create your vault (pick any folder; created if missing)
+BRAIN_VAULT=~/my-brain/vault brain init --full --apply
+
+# 3. first search — works immediately, no model download needed yet
+BRAIN_VAULT=~/my-brain/vault brain search "welcome" --json</code></pre>
+  <div class="ok"><strong>That's it.</strong> Step 2, on an empty vault, scaffolds the folder
+    structure, seeds three sample notes, <em>and indexes them</em> — so step 3 returns results
+    right away (lexical mode). Semantic search arrives with the model in <a href="#model">§5</a>.</div>
+  <p>Make it permanent for a shell: <code>export BRAIN_VAULT=~/my-brain/vault</code> in your profile,
+    then plain <code>brain search "…"</code> works everywhere.</p>
+
+  <h2 id="windows">2 · Brand-new machine — Windows (PowerShell, no WSL)</h2>
+<pre><code># 1. install (same channel chain; adds `brain` to your User PATH if needed)
+irm https://raw.githubusercontent.com/Autopsias/brainiac/main/install.ps1 -OutFile install.ps1
+.\install.ps1
+# → if it says PATH was updated, open a NEW terminal before continuing
+
+# 2. vault + first search
+$env:BRAIN_VAULT = 'C:\ws\vault'; brain init --full --apply
+$env:BRAIN_VAULT = 'C:\ws\vault'; brain search "welcome" --json
+
+# 3. register the hourly maintenance task for this vault
+.\scripts\install-brief-windows.ps1 -VaultPath C:\ws\vault</code></pre>
+  <div class="callout"><strong>Known gap on Windows:</strong> the weekly <code>brain-synthesis</code>
+    task is not auto-registered (only the hourly umbrella is). Everything else — capture, search,
+    maintenance folds — is at parity.</div>
+
+  <h2 id="claude">3 · Fastest path: 3 commands inside Claude Code</h2>
+<pre><code>/plugin marketplace add Autopsias/brainiac
+/plugin install brainiac-manager@brainiac
+/brainiac-install ~/my-brain</code></pre>
+  <p>The manager plugin's install skill does everything §1 does <em>plus</em> the surrounding
+    lifecycle: engine install, vault init + index, the hourly maintenance task, audit-key
+    provisioning in your OS keychain, and the workspace registry entry. Later:
+    <code>/brainiac-update</code>, <code>/brainiac-health</code>, <code>/brainiac-uninstall</code>.</p>
+
+  <h2 id="existing">4 · Existing machine → another project (second vault, third, …)</h2>
+  <p>The install is <strong>per machine</strong>; vaults are <strong>per project</strong>. You never
+    reinstall — you point the same <code>brain</code> at a different folder, and each vault
+    automatically gets its own index and audit chain:</p>
+
+  <h3>4a · New (empty) project vault</h3>
+<pre><code>export BRAIN_VAULT=~/vaults/new-project
+brain init --full --apply        # scaffold + seed + index — searchable immediately</code></pre>
+
+  <h3>4b · A folder that ALREADY has notes</h3>
+<pre><code>export BRAIN_VAULT=~/vaults/existing-notes
+brain init --full --apply        # scaffolds/validates — but SKIPS indexing (vault not empty)
+brain rebuild                    # REQUIRED once: index the existing notes</code></pre>
+  <div class="callout"><strong>The one gotcha worth memorizing:</strong> <code>init --apply</code>
+    seeds-and-indexes only an <em>empty</em> vault. Point it at a folder that already contains
+    notes and it deliberately won't touch them — so the index starts empty and the first search
+    returns nothing until you run <code>brain rebuild</code> once.</div>
+
+  <h3>4c · Import an external notes folder (Obsidian export, etc.)</h3>
+<pre><code>brain init --full --import-from ~/ObsidianVault --yes   # host-only; stages, ingests, signs
+brain rebuild                                            # if importing into a non-empty vault</code></pre>
+  <p>Without <code>--yes</code> it shows a dry-run manifest and asks before ingesting. Imported
+    notes without a <code>classification:</code> label are <strong>invisible to search</strong> until
+    classified (deny-by-default) — mass-classification is part of a real migration, not polish.</p>
+
+  <h2 id="model">5 · The embedding model — when the ~465 MB download happens</h2>
+  <p>Brainiac separates “installed and searchable” from “semantic search at full quality”, so
+    installation never blocks on a big download:</p>
+  <div class="wide">
+  <table>
+    <tr><th>Stage</th><th>What runs</th><th>Network</th></tr>
+    <tr><td>install + init</td><td>index built with the offline placeholder embedder (hash) — lexical search works</td><td>none</td></tr>
+    <tr><td><code>brain warmup</code> (or first real semantic use)</td><td>downloads <code>multilingual-e5-small</code> (ONNX, ~465&nbsp;MB, one-time, cached)</td><td>Hugging Face, once</td></tr>
+    <tr><td><code>brain sync</code> after warmup</td><td>re-embeds the index with the real model</td><td>none</td></tr>
+  </table>
+  </div>
+  <figure class="info">
+  <svg viewBox="0 0 780 185" role="img" aria-label="Model staging timeline">
+    <rect x="16" y="28" width="220" height="92" rx="10" class="b"/>
+    <text x="126" y="52" text-anchor="middle" class="tt">1 · install + init</text>
+    <text x="126" y="72" text-anchor="middle" class="ts">offline placeholder embedder —</text>
+    <text x="126" y="87" text-anchor="middle" class="ts">lexical search works immediately</text>
+    <rect x="61" y="97" width="130" height="17" rx="8" class="b2"/>
+    <text x="126" y="109" text-anchor="middle" class="ta">network: none</text>
+    <line x1="240" y1="74" x2="272" y2="74" class="a"/><polygon points="270,70 270,78 278,74" class="ah"/>
+    <rect x="282" y="28" width="220" height="92" rx="10" class="b"/>
+    <text x="392" y="52" text-anchor="middle" class="tt">2 · brain warmup</text>
+    <text x="392" y="72" text-anchor="middle" class="ts">downloads multilingual-e5-small</text>
+    <text x="392" y="87" text-anchor="middle" class="ts">(ONNX, one-time, cached)</text>
+    <rect x="317" y="97" width="150" height="17" rx="8" class="b2"/>
+    <text x="392" y="109" text-anchor="middle" class="ta">network: ~465 MB, once</text>
+    <line x1="506" y1="74" x2="538" y2="74" class="a"/><polygon points="536,70 536,78 544,74" class="ah"/>
+    <rect x="548" y="28" width="220" height="92" rx="10" class="b"/>
+    <text x="658" y="52" text-anchor="middle" class="tt">3 · brain sync</text>
+    <text x="658" y="72" text-anchor="middle" class="ts">re-embeds the index —</text>
+    <text x="658" y="87" text-anchor="middle" class="ts">semantic search at full quality</text>
+    <rect x="593" y="97" width="130" height="17" rx="8" class="b2"/>
+    <text x="658" y="109" text-anchor="middle" class="ta">network: none</text>
+    <line x1="126" y1="150" x2="626" y2="150" class="a"/><polygon points="624,146 624,154 632,150" class="ah"/>
+    <text x="126" y="170" text-anchor="middle" class="ts">brain status → embedder: pending</text>
+    <text x="658" y="170" text-anchor="middle" class="ta">embedder: ready</text>
+  </svg>
+  <figcaption>Install never blocks on the download — you choose when stage 2 happens.</figcaption>
+  </figure>
+
+<pre><code>brain warmup          # explicit one-time download (progress on stderr)
+brain sync            # re-embed the existing index with the real model
+brain status          # shows embedder: ready | pending</code></pre>
+  <p>Air-gapped? Stay on <code>BRAIN_EMBEDDER=hash</code> (lexical only, zero downloads) or point
+    <code>$BRAIN_MODEL_CACHE</code> at a pre-staged model directory.</p>
+
+  <h2 id="verify">6 · Verify, update, uninstall</h2>
+<pre><code>brain doctor            # install + registry health check (--json for machines)
+brain status            # index stats, snapshot age, pending drafts, embedder state
+brain --help            # the always-current command contract
+
+# update
+bash /tmp/brainiac-install.sh     # re-run the installer, or in Claude Code: /brainiac-update
+brain update --dry-run            # see what would change first
+
+# uninstall (Claude Code)
+/brainiac-uninstall               # removes engine, tasks, wiring — never your vault</code></pre>
+
+  <h2 id="matrix">7 · What each channel does / doesn't do</h2>
+  <div class="wide">
+  <table>
+    <tr><th>Channel</th><th>Engine</th><th>PATH wiring</th><th>Vault init</th><th>Hourly task</th><th>Audit key</th><th>Client wiring</th></tr>
+    <tr><td><code>install.sh</code> / <code>install.ps1</code></td><td>✔ (uv→pipx→pip)</td><td>✔</td><td>prints the command</td><td>—</td><td>—</td><td>—</td></tr>
+    <tr><td><code>npx brainiac-install</code></td><td>✔ (same chain)</td><td>✔</td><td>✔ (<code>--vault</code>)</td><td>—</td><td>—</td><td>✔ (<code>--client</code>)</td></tr>
+    <tr><td>Claude Code <code>/brainiac-install</code></td><td>✔</td><td>✔</td><td>✔</td><td>✔</td><td>✔</td><td>✔</td></tr>
+    <tr><td>plain <code>uv tool install "brainiac-cli[mcp]"</code></td><td>✔</td><td>via uv/pipx</td><td>you run it</td><td>you register it</td><td>provisioned on first signed write</td><td><code>brain connect</code></td></tr>
+  </table>
+  </div>
+  <p>Whichever channel installed the engine, wiring an AI client to a vault is always the same
+    one command afterwards:</p>
+<pre><code>brain connect claude-code      # or: claude-desktop | codex | gemini
+brain connect claude-desktop --remove   # undo</code></pre>
+  <p>Claude Desktop's <em>chat</em> tab (the one surface that can't run a shell) uses the
+    <code>.mcpb</code> bundle (<code>dist/brainiac.mcpb</code>) — a thin bridge that spawns the host's
+    read-only <code>brain-mcp</code>; it never bundles a second engine.</p>
+
+  <style>.related{margin-top:2.2rem;padding-top:1rem;border-top:1px solid var(--line);color:var(--muted);font-size:.85rem}.related a{color:var(--accent);text-decoration:none}.related a:hover{text-decoration:underline}</style>
+  <p class="related"><strong>Related:</strong>
+    <a href="install-guide.html">Install guide</a> ·
+    <a href="architecture-overview.html">Architecture</a> ·
+    <a href="security-overview.html">Security &amp; threat model</a> ·
+    <a href="deployment-authorization-memo.html">Authorization memo</a> ·
+    <a href="managed-deployment-runbook.html">Managed deployment</a> · full doc map: <code>docs/README.md</code>.</p>
+</main>
+</body>
+</html>

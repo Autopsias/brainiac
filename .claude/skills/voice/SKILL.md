@@ -195,11 +195,9 @@ Verdict: [N/M pass]
   scaffold (`overlay/template/`)
 - `docs/adr/0003-parity-architecture.md` Ruling 7 (this skill's contract) and
   Ruling e (overlay-data egress tier)
-- The reference vault's `99 Workspace/_skill_packages/voice/SKILL.md` —
-  mode-structure reference only (DRAFT/REWRITE/CHECK, the checklist +
-  self-eval idea); not itself pinned by ADR-0003 Appendix B (that pins the
-  voice-profile/craft *data* files under `90 System/`, not the skill
-  package) — its embedded profile, banned-word list, and samples are
-  reference-owner content and were never ported here
+- The reference vault's own version of this skill informed the mode
+  structure here (DRAFT/REWRITE/CHECK, the checklist + self-eval idea) —
+  but its embedded voice profile, banned-word list, and samples are
+  reference-owner content and were never ported into this generic skill
 - `src/brain/overlay.py` — `overlay_dir()` resolution, `brain init
   --validate-overlay`

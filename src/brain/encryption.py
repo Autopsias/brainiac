@@ -71,7 +71,7 @@ def _require_crypto():
     except ImportError as exc:  # pragma: no cover
         raise EncryptionError(
             "'cryptography' is required for the encryption module "
-            "(pip install 'profile-a-brain[audit]')"
+            "(pip install 'brainiac-cli[audit]')"
         ) from exc
 
 
@@ -133,11 +133,15 @@ def resolve_encryption_key() -> tuple[bytes, str]:
         or os.environ.get("USER") or os.environ.get("USERNAME") or "default"
     )
 
-    env_key = os.environ.get("BRAIN_ENCRYPTION_KEY")
+    # Managed endpoints ignore ad-hoc env/shell key custody (see config.is_managed).
+    from . import config as _config
+    allow_env_custody = not _config.is_managed()
+
+    env_key = os.environ.get("BRAIN_ENCRYPTION_KEY") if allow_env_custody else None
     if env_key:
         return _decode_key(env_key.encode("utf-8"), "env:BRAIN_ENCRYPTION_KEY"), "env:BRAIN_ENCRYPTION_KEY"
 
-    cmd = os.environ.get("BRAIN_ENCRYPTION_KEY_CMD")
+    cmd = os.environ.get("BRAIN_ENCRYPTION_KEY_CMD") if allow_env_custody else None
     if cmd:
         try:
             # `cmd` is an OPERATOR-controlled env var (BRAIN_ENCRYPTION_KEY_CMD),
@@ -145,7 +149,8 @@ def resolve_encryption_key() -> tuple[bytes, str]:
             # KEY_CMD rationale. shell=True is intentional so custody backends
             # can use a pipeline (e.g. `age -d -i id key.pem.age`); anyone able
             # to set this env var already has code execution, so shell=True adds
-            # no attack surface. nosec B602 - see docs/SECURITY_NOTES.md.
+            # no attack surface. nosec B602 - see docs/SECURITY_NOTES.md §1.
+            # nosemgrep: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
             out = subprocess.run(cmd, shell=True, capture_output=True, timeout=20)  # noqa: S602
         except (OSError, subprocess.SubprocessError) as exc:
             raise EncryptionKeyUnavailable(f"BRAIN_ENCRYPTION_KEY_CMD failed: {exc}") from exc

@@ -117,8 +117,8 @@ CLI/config/import, so the host can only guarantee the staged path):**
   is the one path a host re-run can always refresh and verify (cw-02);
   re-running this skill later keeps it current with zero extra steps.
 - **Optional, from inside a live Cowork session:** Customize → Plugins → add
-  marketplace `Autopsias/brainiac` → install `profile-a-kernel` (and
-  `profile-a-extras` if wanted). `Autopsias/brainiac` is public, and this
+  marketplace `Autopsias/brainiac` → install `brainiac-kernel` (and
+  `brainiac-extras` if wanted). `Autopsias/brainiac` is public, and this
   sync was verified live 2026-07-04 — see
   `docs/adr/0002-cowork-plugin-skill-delivery.md` addendum. Convenient if
   you're already there, but it's a manual click-through the host cannot

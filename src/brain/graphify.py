@@ -31,7 +31,7 @@ graphify-discovery) on two grounds, both closed by this module's design:
          (target <=60s at the current corpus scale, ADR-0003 Ruling 6).
 
 Provenance note (session s10): ADR-0003 Appendix B pins ONLY
-``90 System/_ppr/ppr.py`` from the reference vault (already reused by s08's
+a Personalized-PageRank helper vendored from the reference vault (already reused by s08's
 whole-corpus PageRank in ``brain.graph.revisit_sample``) — no
 ``_graphify``-named script is in the fingerprint list. Per the session brief
 this build therefore ports the DESIGN directly from Ruling 6 (this module has

@@ -19,7 +19,13 @@ try:
     # (brain status / /brainiac-update Step 2) depend on. ADR-0005 Ruling 1.
     from importlib.metadata import version as _pkg_version
 
-    __version__ = _pkg_version("profile-a-brain")
+    try:
+        # PYP-01: distribution renamed to `brainiac-cli` (`brainiac` is taken
+        # on PyPI); the import package stays `brain`.
+        __version__ = _pkg_version("brainiac-cli")
+    except Exception:
+        # pre-rename install metadata (an old editable/venv install)
+        __version__ = _pkg_version("profile-a-brain")
 except Exception:  # PackageNotFoundError or metadata missing
     try:
         # Fallback: the COMMITTED stamp written by tools/package_clients.py in

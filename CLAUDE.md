@@ -13,9 +13,10 @@
 Retrieval, capture, and indexing are owned by the **`brain` CLI** — call it from
 your native shell, **never via MCP**. Read tools: `brain search "<q>" --json`,
 `brain get <id> --json`, `brain recent --json`, plus `grep` / `bases-query` /
-`graph-expand` (compose them; lexical-first, embed lazily). Every read applies a
-**deny-by-default classification filter** before stdout (unlabelled ⇒ MNPI ⇒
-withheld; elevate with `--max-tier`, the human gate). Capture with
+`graph-expand` (compose them; lexical-first, embed lazily). Every read applies the
+**classification filter** before stdout (unlabelled ⇒ ranked MNPI; host
+default cap = full vault, `--role vm` default = Internal; narrow with
+`--max-tier` / `$BRAIN_DEFAULT_MAX_TIER`). Capture with
 `brain draft-capture` (stages a draft; the host signs + indexes it later). Run
 `brain --help` for the always-current contract. On the **Cowork Linux VM** add
 `--role vm` (or `export BRAIN_ROLE=vm`): a read + draft surface that reads only

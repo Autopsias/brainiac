@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- brain-synthesis — the SECOND sanctioned host scheduled task
+     (routines/manifest.json id brain-synthesis-weekly; THE LOCK host=2).
+     ONE per HOST, not per vault: scripts/brain-synthesis.sh iterates every
+     host vault in ~/.brainiac/workspaces.json, so a newly installed vault is
+     covered with zero extra wiring. Weekly Sun 08:00, one hour after the
+     hourly umbrella has refreshed promote-scan/digest output. Requires the
+     `claude` CLI + a kb-curator skill in the workspace; skips loudly
+     otherwise (see the script header). -->
+<dict>
+    <key>Label</key>
+    <string>com.brainiac.synthesis</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>SCRIPTS_DIR/brain-synthesis.sh</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>BRAIN_LOG_DIR</key>
+        <string>HOME_DIR/.brain/logs</string>
+        <key>PATH</key>
+        <string>HOME_DIR/.local/bin:HOME_DIR/.brainiac/venv/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>8</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>HOME_DIR/.brain/logs/launchd-synthesis-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>HOME_DIR/.brain/logs/launchd-synthesis-stderr.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

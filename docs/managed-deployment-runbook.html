@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Brainiac — Managed Deployment Runbook</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#1a1f24; --muted:#5b6570; --line:#e3e7ea;
+    --accent:#0b5fa5; --chip:#eef4f9; --code-bg:#f5f7f9; --th:#f0f3f5;
+    --ok:#1f7a4d; --ok-bg:#f0f9f3; --ok-line:#79c298;
+    --warn-bg:#fff8e6; --warn-line:#e6c96a; --warn-fg:#8a6d1a;
+    --org-bg:#eef4f9; --org-fg:#0b5fa5;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#14181c; --fg:#e5e9ec; --muted:#9aa5ae; --line:#2b3238;
+      --accent:#6db3e8; --chip:#1d2731; --code-bg:#1c2126; --th:#1d2329;
+      --ok:#7cc9a0; --ok-bg:#15231a; --ok-line:#2e5c42;
+      --warn-bg:#2a2410; --warn-line:#8a7328; --warn-fg:#d8be6a;
+      --org-bg:#1d2731; --org-fg:#6db3e8;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:15.5px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  main{max-width:52rem;margin:0 auto;padding:2.4rem 1.5rem 5rem}
+  h1{font-size:1.7rem;line-height:1.25;margin:.2rem 0 .3rem}
+  h2{font-size:1.2rem;margin:2rem 0 .5rem;padding-top:.9rem;border-top:1px solid var(--line)}
+  h3{font-size:1rem;margin:1.2rem 0 .3rem}
+  .kicker{color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:.08em;font-size:.72rem}
+  .meta{color:var(--muted);font-size:.88rem;margin:.3rem 0 0}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.86em;background:var(--code-bg);padding:.1em .35em;border-radius:4px}
+  pre{background:var(--code-bg);padding:.85rem 1rem;border-radius:8px;overflow-x:auto;line-height:1.45;font-size:.84rem}
+  pre code{background:none;padding:0}
+  table{border-collapse:collapse;width:100%;margin:.7rem 0;font-size:.9rem}
+  th,td{border:1px solid var(--line);padding:.45rem .6rem;text-align:left;vertical-align:top}
+  th{background:var(--th)}
+  .callout{background:var(--warn-bg);border:1px solid var(--warn-line);border-radius:8px;padding:.7rem 1rem;margin:.9rem 0;font-size:.92rem}
+  .callout strong{color:var(--warn-fg)}
+  .org{background:var(--org-bg);border-radius:6px;padding:.6rem .9rem;margin:.5rem 0;font-size:.9rem;color:var(--fg)}
+  .org b{color:var(--org-fg)}
+  .toc{border:1px solid var(--line);border-radius:10px;padding:.9rem 1.1rem;font-size:.92rem;columns:2}
+  .toc a{color:var(--accent);text-decoration:none}
+  .toc a:hover{text-decoration:underline}
+  .maps{color:var(--muted);font-size:.82rem;margin:.1rem 0 .5rem}
+  ul{margin:.3rem 0;padding-left:1.2rem} li{margin:.15rem 0}
+  @media print{ body{font-size:11px} h2{break-after:avoid} pre{white-space:pre-wrap} .toc{columns:1} }
+</style>
+</head>
+<body>
+<main>
+  <div class="kicker">Brainiac · endpoint operations · defensive configuration hardening</div>
+  <h1>Managed Deployment Runbook</h1>
+  <p class="meta">Turns the “ORG” conditions of the
+    <code>deployment-authorization-memo.html</code> into concrete, copy-paste MDM steps for
+    company-managed laptops. Everything here is <strong>defensive endpoint hardening of your own
+    machines</strong> — locking down install/update, key custody, and egress. Applies to
+    <code>v0.16.0+</code>. Steps that need infrastructure you own (an internal package index, a
+    code-signing certificate) are marked <span class="org"><b>ORG-INFRA</b></span>; the commands are
+    provided, the infrastructure is yours.</p>
+
+  <div class="callout"><strong>Read first — the model this hardens:</strong> Brainiac's controls run
+    in user space over plaintext files. This runbook does <em>not</em> make the vault a secrets vault;
+    it makes the <em>endpoint</em> a managed, non-self-modifying, keystore-only, capped install. Pair
+    it with the authorization memo's GATE conditions (FDE + the entitlement policy), which are what
+    actually bound the blast radius.</div>
+
+  <div class="toc">
+    <strong>Steps</strong><br>
+    <a href="#s0">0 · Prerequisites (ORG-INFRA)</a><br>
+    <a href="#s1">1 · Full-disk encryption + ACLs</a><br>
+    <a href="#s2">2 · Install from the pinned lock</a><br>
+    <a href="#s3">3 · Stage the model offline</a><br>
+    <a href="#s4">4 · Enable managed mode</a><br>
+    <a href="#s5">5 · Keystore-only audit key</a><br>
+    <a href="#s6">6 · Cap the MCP surface</a><br>
+    <a href="#s7">7 · Verify (acceptance checklist)</a><br>
+    <a href="#s8">8 · Update &amp; rollback</a>
+  </div>
+
+  <h2 id="s0">0 · Prerequisites you provide once <span style="font-size:.7em;color:var(--muted)">(ORG-INFRA)</span></h2>
+  <ul>
+    <li><strong>An approved internal package index</strong> (Artifactory / Nexus / Azure Artifacts)
+      mirroring PyPI, so endpoints never resolve packages from the public internet.</li>
+    <li><strong>A reviewed, internally-built <code>brainiac-cli</code> wheel</strong>, code-signed per
+      your policy, published to that index (build: <code>python -m build</code> from a reviewed tag).</li>
+    <li><strong>A staged model bundle</strong> — the reviewed, checksummed
+      <code>multilingual-e5-small</code> ONNX + tokenizer (see §3), distributed via MDM.</li>
+    <li><strong>MDM tooling</strong> (Jamf / Intune) to push env vars, files, and the scheduled task,
+      and to enforce FDE.</li>
+  </ul>
+  <p class="maps">Maps to memo conditions 3.3 / 3.4.</p>
+
+  <h2 id="s1">1 · Full-disk encryption + owner-only ACLs <span style="font-size:.7em;color:var(--muted)">(memo 3.2 — GATE)</span></h2>
+  <p>The live vault, index, snapshot, and audit log are plaintext on disk; their at-rest confidentiality
+    is FDE. Enforce it by MDM policy, not per-user opt-in.</p>
+  <ul>
+    <li><strong>macOS:</strong> Jamf → FileVault enforced, institutional recovery key escrowed.</li>
+    <li><strong>Windows:</strong> Intune → BitLocker, TPM-backed, recovery key escrowed to AAD.</li>
+    <li>Vault directory permissions <strong>owner-only</strong> (macOS <code>chmod 700 ~/brain</code>;
+      Windows: remove inherited ACLs, grant the user only).</li>
+  </ul>
+
+  <h2 id="s2">2 · Install the engine from the pinned lock <span style="font-size:.7em;color:var(--muted)">(memo 3.3)</span></h2>
+  <p>Do <strong>not</strong> use <code>install.sh</code> / <code>npx</code> / self-update on managed
+    endpoints. Install the internally-built wheel with dependencies pinned + hash-enforced from
+    <code>requirements.lock</code>, all from your internal index:</p>
+<pre><code># point pip/uv at the internal index (example — set via MDM env, not per-user)
+export PIP_INDEX_URL=https://pkgs.corp.example/pypi/simple
+export PIP_NO_INDEX=            # allow ONLY the internal index; no public fallback
+
+# 1) install the exact, hash-verified dependency closure
+python -m pip install --require-hashes -r requirements.lock
+
+# 2) install the reviewed, signed engine wheel WITHOUT re-resolving deps
+python -m pip install --no-deps brainiac_cli-0.16.0-py3-none-any.whl
+
+brain --version        # expect: brain 0.16.0</code></pre>
+  <div class="callout"><strong>Why two steps:</strong> <code>--require-hashes -r requirements.lock</code>
+    guarantees every dependency matches a reviewed SHA-256; <code>--no-deps &lt;wheel&gt;</code> installs the
+    engine itself without letting pip pull anything unpinned. The wheel's integrity comes from your
+    code-signing + internal-index review, not a public hash.</div>
+  <p class="org"><b>ORG-INFRA:</b> CI already fails a PR if <code>requirements.lock</code> drifts from
+    <code>pyproject.toml</code> and audits it weekly (<code>.github/workflows/supply-chain.yml</code>).
+    Mirror that gate in your internal pipeline before publishing the wheel.</p>
+
+  <h2 id="s3">3 · Stage the embedding model offline <span style="font-size:.7em;color:var(--muted)">(memo 3.4)</span></h2>
+  <p>Prevent any runtime Hugging Face download. Stage the reviewed model once, distribute it by MDM, and
+    point every install at it. The default download is revision-pinned, so what you stage is
+    reproducible.</p>
+<pre><code># --- build the bundle ONCE on a reviewer's box (has network) ---
+# --revision defaults to the runtime-pinned commit, so the bundle is reproducible.
+python packaging/stage_model.py \
+    --repo Xenova/multilingual-e5-small \
+    --out ./e5-small-bundle \
+    --patterns onnx/model.onnx tokenizer.json tokenizer_config.json special_tokens_map.json config.json
+sha256sum -b ./e5-small-bundle/onnx/model.onnx &gt; e5-small-bundle.SHA256   # record for review
+
+# --- on each managed endpoint (MDM copies the bundle in, read-only) ---
+export BRAIN_MODEL_CACHE=/opt/brainiac/models/e5-small        # points at the staged bundle
+export BRAIN_EMBEDDER=auto                                     # uses the cache; no download
+
+# air-gapped alternative (no model at all): lexical-only search
+# export BRAIN_EMBEDDER=hash</code></pre>
+  <div class="callout"><strong>Cache layout note:</strong> <code>$BRAIN_MODEL_CACHE</code> accepts either
+    a flat snapshot dir (containing <code>onnx/model.onnx</code> + the tokenizer files, as staged above)
+    or an HF cache root. Verify the recorded <code>.SHA256</code> on each endpoint before trusting the
+    bundle.</div>
+  <p class="org"><b>ORG-INFRA:</b> review + checksum + (ideally) sign the bundle; verify the recorded
+    SHA-256 on each endpoint before trusting it. Pin an internal mirror revision with
+    <code>$BRAIN_EMBED_REVISION</code> if you re-host the model.</p>
+
+  <h2 id="s4">4 · Enable managed mode <span style="font-size:.7em;color:var(--muted)">(memo 3.6)</span></h2>
+  <p>The corporate lockdown switch. Set it in the <em>machine</em> environment (MDM), for both
+    interactive shells and the scheduled task:</p>
+<pre><code>BRAIN_MANAGED=1</code></pre>
+  <p>With it on, the endpoint <strong>refuses <code>brain update</code></strong> (updates come from your
+    pipeline) and <strong>ignores env/shell key custody</strong> — the OS keystore is the only key
+    source (§5).</p>
+  <div class="callout"><strong>Critical interaction — the scheduled task's key.</strong> The default
+    launchd/Task-Scheduler template injects the signing key as a <code>BRAIN_AUDIT_KEY_PEM</code> env
+    literal in the task. Under <code>BRAIN_MANAGED=1</code> that source is ignored, so the signing task
+    must get its key from the keystore instead. When you register the maintenance task on a managed
+    endpoint:
+    <ul>
+      <li><strong>Remove</strong> the <code>BRAIN_AUDIT_KEY_PEM</code> entry from the generated task
+        (macOS: delete that key/string pair from the <code>.plist</code>'s
+        <code>EnvironmentVariables</code>; Windows: don't set it on the task).</li>
+      <li><strong>Add</strong> <code>BRAIN_MANAGED=1</code> to the task's environment.</li>
+      <li>Ensure the audit key is in the keystore for the account the task runs as (§5), or the signing
+        step fails closed (drafts stay staged, never committed unsigned — visible in
+        <code>brain status</code>).</li>
+    </ul>
+    A no-PEM-in-plist task template is the right long-term shape; until a
+    <code>register_tasks --managed</code> flag ships, do this edit at registration time.</div>
+
+  <h2 id="s5">5 · Provision the audit key in the OS keystore <span style="font-size:.7em;color:var(--muted)">(memo 3.5/3.6)</span></h2>
+  <p>Managed endpoints resolve the Ed25519 signing key <strong>only</strong> from the OS secret store.
+    Use a non-exportable, ACL-bound entry (HSM/Secure-Enclave-backed where available).</p>
+<pre><code># macOS — store the reviewer-generated PEM in the login keychain, ACL-bound
+security add-generic-password -s profile-a-brain-audit-key -a "$USER" -w "&lt;PEM&gt;" -T ""
+# ( -T "" grants NO other app access; the user approves brain on first use )
+
+# Windows — Credential Manager (generic credential), or your HSM/CNG provider
+#   Target: profile-a-brain-audit-key   User: %USERNAME%   Secret: &lt;PEM&gt;</code></pre>
+  <p>The key <em>signs</em> every committed note so the write history is tamper-evident; it is never an
+    encryption key and never leaves the keystore. Rotation runbook: <code>SECURITY.md</code>.</p>
+
+  <h2 id="s6">6 · Cap the MCP / egress surface <span style="font-size:.7em;color:var(--muted)">(memo 3.8)</span></h2>
+  <p>The MCP read surface and the CLI both default to the full vault on the host. For a capped
+    deployment, set a hard ceiling via managed config the AI client cannot edit:</p>
+<pre><code># machine env (MDM) — a hard ceiling for the MCP server
+BRAIN_MAX_EGRESS_TIER=Internal        # or Confidential, per policy
+
+# and/or a per-machine default cap for the CLI
+BRAIN_DEFAULT_MAX_TIER=Internal
+
+# when wiring Claude Desktop, bake the ceiling into the MCP stanza:
+brain connect --client claude-desktop --max-tier Internal</code></pre>
+  <div class="callout"><strong>Honest limit (from the review):</strong> <code>--max-tier</code> is not a
+    hard human gate — a caller can raise its own cap. The <em>real</em> containment for an untrusted
+    consumer is a physically-filtered projection: <code>brain project --dest &lt;dir&gt; --max-tier
+    Internal</code> ships only the allowed tiers. Prefer that over the cap wherever a surface is not
+    fully trusted. (The sandbox-VM leg stays out of scope per memo 3.9.)</div>
+
+  <h2 id="s7">7 · Verify — endpoint acceptance checklist <span style="font-size:.7em;color:var(--muted)">(run post-deploy)</span></h2>
+<pre><code>brain --version                       # expect 0.16.0 from the internal wheel
+brain doctor --json                   # no FAIL lines; reports install channel
+brain status                          # index + snapshot + embedder: ready|pending
+
+# managed mode is active — self-update refused:
+brain update && echo UNEXPECTED       # expect exit 1, "disabled on a managed endpoint"
+
+# no network model pull (staged cache in use):
+brain search "smoke test" --json | head        # returns results/egress, no HF download
+
+# audit integrity, including post-commit edits:
+brain verify-audit --check-content --json       # status ok / content_drift, 0 drift
+
+# egress cap honored:
+brain recent --json | grep -o '"withheld":[0-9]*'   # &gt;0 if higher-tier notes exist</code></pre>
+  <p>Pass criteria: engine is the internal build, <code>brain update</code> is refused, no outbound
+    HF/PyPI traffic at runtime (confirm on the network egress logs), audit verifies, and the egress cap
+    withholds above-tier notes.</p>
+
+  <h2 id="s8">8 · Update &amp; rollback</h2>
+  <ul>
+    <li><strong>Update</strong> is a re-deploy, not a self-update: publish a new reviewed wheel +
+      regenerated lock to the internal index, then push §2 again via MDM. <code>brain update</code>
+      stays disabled on the endpoint.</li>
+    <li><strong>Rollback:</strong> re-run §2 pinning the previous wheel version + its lock. The vault and
+      audit chain are untouched by an engine downgrade (the index is a rebuildable cache —
+      <code>brain rebuild</code> if the on-disk index format changed).</li>
+    <li><strong>Uninstall:</strong> remove the scheduled task, <code>pip uninstall brainiac-cli</code>,
+      delete the keystore entry. Never deletes a vault or its notes — archive those deliberately.</li>
+  </ul>
+
+  <hr style="border:none;border-top:1px solid var(--line);margin:2rem 0 1rem">
+  <p class="meta">Companion docs: <code>deployment-authorization-memo.html</code> (the decision) ·
+    <code>security-overview.html</code> (controls + residual risks) ·
+    <code>architecture-overview.html</code> (components). This runbook covers configuration of your own
+    managed fleet only — no offensive tooling, no third-party systems.</p>
+</main>
+</body>
+</html>

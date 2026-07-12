@@ -46,11 +46,9 @@ import re
 import sqlite3
 import unicodedata
 from dataclasses import dataclass
-from typing import Callable
 
 from .graph import (
     LinkGraph,
-    build_graph,
     personalized_pagerank,
     wikilink_bfs,
 )

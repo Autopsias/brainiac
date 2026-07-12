@@ -78,7 +78,7 @@ def _skill_targets(
     targets: dict[str, list[tuple[str, Path]]] = {}
     for name in kernel_skills + extras_skills:
         mirrors = [(".agents/skills", agents_skills_dir / name)]
-        plugin_name = "profile-a-kernel" if name in kernel_skills else "profile-a-extras"
+        plugin_name = "brainiac-kernel" if name in kernel_skills else "brainiac-extras"
         mirrors.append((f"plugins/{plugin_name}/skills", plugins_dir / plugin_name / "skills" / name))
         targets[name] = mirrors
     for name in brainiac_skills:

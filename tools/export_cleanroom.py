@@ -32,7 +32,38 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-EXCLUDE_PREFIXES = ("_archive/", "_plans/", "_evidence/", "_workspace/")
+EXCLUDE_PREFIXES = (
+    "_archive/", "_plans/", "_evidence/", "_workspace/",
+    # Internal-only, corpus-derived (excluded 2026-07-12): the test suite and
+    # the eval golden set were built USING the owner's real vault as example
+    # data, so they carry vault-shaped content that is not needed publicly and
+    # is a standing contamination risk. Tests aren't needed to run the package;
+    # the golden set is the owner's private vault. The generic eval harness
+    # (harness/gate/stats/capture_run/path_normalize) stays — it's clean.
+    "tests/",
+    "eval/build_golden_set.py",
+    # One-time, owner-specific corpus-migration scripts + doc (excluded
+    # 2026-07-12, owner decision): they map the owner's real Obsidian vault
+    # taxonomy and are not general-purpose. Not useful
+    # publicly, and they carry vault-shaped content.
+    "docs/corpus-migration.md",
+    "tools/migrate_corpus.py",
+    "tools/apply_live_migration.py",
+    # Owner-cutover artifacts carrying real vault provenance (excluded
+    # 2026-07-12, owner decision): a corpus-cutover checklist and an ADR whose
+    # provenance table lists real vault file paths + content hashes. Kept in
+    # the private repo as the internal record; not shipped publicly.
+    "docs/dependency-inventory.md",
+    "docs/adr/0003-parity-architecture.md",
+)
+
+# Suffix excludes (fixed 2026-07-12): session evidence artifacts carry raw
+# operational content (real names/counterparties) and are internal-only — the
+# `_evidence/` dir is already prefix-excluded, but sibling `*-evidence.md`
+# files landed under `docs/operations/` (tracked by build sessions) and leaked
+# real terms into the export tree. Any `-evidence.md` is an internal artifact;
+# never ship it. (Root-cause fix accompanies scrubbing the tracked files.)
+EXCLUDE_SUFFIXES = ("-evidence.md",)
 
 # The one gitignored allowlist exception: release-contract Cowork bundles,
 # regenerated fresh at export time rather than shipped stale.
@@ -46,7 +77,9 @@ def tracked_files(repo_root: Path) -> list[str]:
         capture_output=True,
     ).stdout
     paths = [p for p in out.decode("utf-8").split("\0") if p]
-    return [p for p in paths if not p.startswith(EXCLUDE_PREFIXES)]
+    return [p for p in paths
+            if not p.startswith(EXCLUDE_PREFIXES)
+            and not p.endswith(EXCLUDE_SUFFIXES)]
 
 
 def build_cowork_zips(repo_root: Path) -> list[Path]:

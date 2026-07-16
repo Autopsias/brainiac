@@ -526,8 +526,32 @@ class BrainIndex:
             for r in c.execute("SELECT path, rowid, content_hash FROM notes").fetchall()
         }
 
-        added = updated = unchanged = deleted = 0
+        added = updated = unchanged = deleted = rebased = 0
         chunk_rowid = self._next_rowid("chunks")
+
+        # Field bug 3 — content-hash-first REBASE, BEFORE any path-keyed pass.
+        # A vault move (or bulk rename) changes every path but not the bytes.
+        # Match a moved-but-identical note — its NEW path is absent from the
+        # index, but its content_hash equals an indexed row whose OLD path is
+        # gone from disk — and just UPDATE the stored path, keeping the note
+        # rowid, its chunks and its VECTORS. So a wholesale move is a metadata
+        # rebase, not a full re-embed (which once ran >45min at ~680% CPU).
+        gone: dict[str, list[tuple[str, int]]] = {}  # content_hash -> [(old_path, rowid)]
+        for path, (note_rowid, h) in indexed.items():
+            if path not in on_disk and h:
+                gone.setdefault(h, []).append((path, note_rowid))
+        if gone:
+            for path, note in on_disk.items():
+                if path in indexed:
+                    continue  # path unchanged — normal passes handle it
+                cands = gone.get(note.content_hash)
+                if not cands:
+                    continue  # new or genuinely-changed content — must re-embed
+                old_path, note_rowid = cands.pop()
+                c.execute("UPDATE notes SET path=? WHERE rowid=?", (path, note_rowid))
+                del indexed[old_path]
+                indexed[path] = (note_rowid, note.content_hash)
+                rebased += 1
 
         # Delete-propagation FIRST (H-2): a renamed/moved note keeps its id but
         # gets a new path, landing in both "path not in on_disk" (old path,
@@ -576,6 +600,7 @@ class BrainIndex:
             "updated": updated,
             "unchanged": unchanged,
             "deleted": deleted,
+            "rebased": rebased,
             "indexed": added + updated + unchanged,
             "chunks": total_chunks,
             "backend": self.backend.name,

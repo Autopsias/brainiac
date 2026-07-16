@@ -41,18 +41,29 @@ PYTHONPATH="$DIR/vendor/$ARCH:$DIR/engine${PYTHONPATH:+:$PYTHONPATH}" exec pytho
 
 
 def _has_deps(arch_dir: Path) -> bool:
-    return (arch_dir / "tokenizers" / "tokenizers.abi3.so").exists() and (
-        arch_dir / "sqlite_vec" / "vec0.so"
-    ).exists()
+    return (
+        (arch_dir / "tokenizers" / "tokenizers.abi3.so").exists()
+        and (arch_dir / "sqlite_vec" / "vec0.so").exists()
+        and (arch_dir / "onnxruntime").is_dir()
+        and (arch_dir / "numpy").is_dir()
+    )
 
 
 def _download_and_unpack(arch: str, arch_dir: Path, python_exe: str) -> bool:
     plat = f"manylinux2014_{arch}"
     common = [python_exe, "-m", "pip", "download", "--no-deps", "--only-binary=:all:",
               "--platform", plat, "--python-version", "310"]
+    # onnxruntime ships no abi3 wheels, so it (and its closure: numpy etc.) must
+    # match the VM python's exact minor — the Cowork base image is bookworm,
+    # python 3.11. The base image does NOT ship onnxruntime (field finding
+    # 2026-07-13: EmbedderUnavailable in-VM), so we vendor the full closure.
+    onnx_plat = f"manylinux_2_28_{arch}"
+    onnx = [python_exe, "-m", "pip", "download", "--only-binary=:all:",
+            "--platform", onnx_plat, "--python-version", "311", "onnxruntime"]
     jobs = (
         [*common, "--implementation", "cp", "--abi", "abi3", "tokenizers"],
         [*common, "sqlite-vec"],
+        onnx,
     )
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
@@ -62,7 +73,9 @@ def _download_and_unpack(arch: str, arch_dir: Path, python_exe: str) -> bool:
         if arch_dir.exists():
             shutil.rmtree(arch_dir)
         arch_dir.mkdir(parents=True, exist_ok=True)
-        for whl in tmp.glob(f"*{arch}*.whl"):
+        # extract every downloaded wheel — pure-python wheels (*-none-any) carry
+        # no arch tag, so a *{arch}* glob would silently drop onnxruntime's deps
+        for whl in tmp.glob("*.whl"):
             with zipfile.ZipFile(whl) as zf:
                 zf.extractall(arch_dir)
     return _has_deps(arch_dir)

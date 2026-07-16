@@ -208,7 +208,7 @@ def _existing_brain_note_count(vault: str | os.PathLike[str] | None) -> int:
     """Notes under ``vault/brain/`` excluding the top-level index.md and any
     generated file (backlinks.md, catalog.md) -- the "is this vault actually
     empty" check ``seed_sample_notes`` gates on."""
-    brain_dir = config.vault_root(vault) / "brain"
+    brain_dir = config.vault_root(vault, allow_missing=True) / "brain"
     if not brain_dir.is_dir():
         return 0
     count = 0
@@ -343,7 +343,7 @@ def seed_sample_notes(vault: str | os.PathLike[str] | None) -> dict[str, Any]:
     minimal top-level ``brain/index.md`` create-if-absent (never overwrites
     an existing one) so the freshly seeded vault passes
     ``tools/validate.py``'s hard ``index.md missing`` gate."""
-    v = config.vault_root(vault)
+    v = config.vault_root(vault, allow_missing=True)
     existing = _existing_brain_note_count(v)
     if existing > 0:
         return {"performed": False,
@@ -414,7 +414,7 @@ def validate_import_overlap(
       part of the very traversal source being walked.
     """
     imp = _realpath(import_dir)
-    vlt = _realpath(config.vault_root(vault))
+    vlt = _realpath(config.vault_root(vault, allow_missing=True))
     if not imp.is_dir():
         raise ImportSafetyError(f"--import-from {imp} is not a directory")
     try:
@@ -526,7 +526,7 @@ def stage_import_files(
 ) -> list[str]:
     """Copy (never move) every file the dry-run manifest found into
     ``vault/inbox/``. The user's original folder is never touched."""
-    v = config.vault_root(vault)
+    v = config.vault_root(vault, allow_missing=True)
     imp = Path(import_from)
     inbox = v / "inbox"
     inbox.mkdir(parents=True, exist_ok=True)

@@ -36,7 +36,12 @@ from typing import Any, Iterable
 # Alias text is matched non-greedily and right-anchored to the FINAL ]] so an
 # alias containing nested brackets (e.g. "display [x]") doesn't truncate the
 # match at the first ']' and drop the link entirely (M-5).
-_WIKILINK = re.compile(r"\[\[([^\]\|#]+)(?:#[^\]\|]+)?(?:\|.+?)?\]\]")
+# Target and heading classes exclude newlines (\n\r) so an UNTERMINATED "[[X"
+# can't run away across lines and borrow a later link's closing "]]" — that
+# runaway match both invented garbage stale targets and destroyed the real
+# link whose "]]" it stole (field bug 2, 2026-07-13). The alias branch uses
+# "." which already excludes newlines without re.DOTALL, so it needs no change.
+_WIKILINK = re.compile(r"\[\[([^\]\|#\n\r]+)(?:#[^\]\|\n\r]+)?(?:\|.+?)?\]\]")
 
 PROVENANCE = "graph-derived (discovery-only)"
 

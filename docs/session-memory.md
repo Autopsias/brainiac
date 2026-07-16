@@ -11,12 +11,16 @@ by two Claude Code CLI hooks (`docs/harness-wiring.md` §"Session hooks").
 ```
 <vault>/.brain/memory/
 ├── handoff.md                    ← live handoff — REWRITTEN (not appended) at session end
-├── hot.md                        ← judgment-call queue — APPENDED, cleared by the owner
+├── hot.md                        ← fold LOG — APPENDED (a record a human MAY read, not a must-clear queue)
+├── inbox.jsonl                   ← Tier-2 owner-decision queue — PUSHED to sessions, answered via /brain-inbox
 ├── lessons.md                    ← durable lessons — APPENDED
 ├── recommendations-open.jsonl    ← open-recommendations lifecycle (MEM-03, s08)
 ├── recommendations-log.md        ← resolved recommendations — APPENDED (MEM-03, s08)
 └── archive/                      ← rotated handoff snapshots (never edited after creation)
 ```
+
+`<vault>/.brain/engine-feedback/` (sibling of `memory/`) holds retro-fold
+engine-bug prompts — see "PUSH interaction model" below.
 
 `<vault>` resolves the same way `brain.config.vault_root()` does: `$BRAIN_VAULT`
 env var, else `<project>/vault`.
@@ -61,20 +65,65 @@ creation, forensic record only. The 15 KB threshold matches the ported
 reference-vault convention (`freshness-discipline.md`'s 3-strike compression trigger),
 reused as-is rather than re-derived.
 
-## `hot.md` — judgment-call queue
+## `hot.md` — fold LOG (PUSH redesign, 2026-07-13)
 
-Append-only. One dated entry per item awaiting an owner decision:
+**`hot.md` is a LOG a human MAY read, not a queue they MUST clear.** After a
+week of live operation the pull model (owner opens `hot.md`, runs `brain
+curate`, clears entries by hand) proved dead on arrival — `hot.md` grew to
+32 KB unread. The folds now AUTO-RESOLVE everything they competently can and
+leave a one-line record here. One dated, idempotency-keyed entry per fold
+result:
 
 ```markdown
+<!-- idempotency-key: maintain:<branch>:<hash-or-date> -->
 ## 2026-07-05 — <short title>
-- **Context:** what came up and why it needs a human call.
-- **Question:** the specific decision needed.
-- **Owner input needed:** what an answer would unblock.
+- **Context:** what the fold found.
+- **Tier-1 (auto-resolved by the weekly synthesis session):** what it did on
+  the audited path. This is the log line, not an "owner input needed" prompt.
 ```
 
-Etiquette: append, never edit another session's entry in place; the owner
-clears an entry (deletes it or marks it resolved) once decided. This is a
-queue, not a log — unlike `lessons.md` it is expected to shrink to zero.
+Append with an idempotency-key comment (prefer a CONTENT hash over a run date
+so an unchanged finding isn't re-logged weekly — field bug 2). Never edit
+another session's entry in place. Unlike a queue, `hot.md` is not expected to
+shrink to zero — it is a rolling log.
+
+## `inbox.jsonl` — Tier-2 owner-decision queue (PUSH)
+
+The ONLY surface the owner must act on, and it is PUSHED to them (never
+pulled). Only a **genuinely owner-only** decision reaches it — credentials/
+spend, deleting a possibly-sole-copy, a real business call, or a low-confidence
+Tier-1 escalation — as ONE decidable question with enumerated **options + a
+stated default**. One JSON object per line:
+
+```json
+{"key":"a2aee1c5","created":"2026-07-13","source":"quarantine:X","question":"Delete duplicate raw source X? Hash-identical to raw/originals/Y.","options":["keep both","delete the newer copy","ask me later"],"default":"ask me later","context":"quarantine triage, hash-verified dup","status":"open","answer":null,"answered":null}
+```
+
+- **Enqueue** (headless synthesis session, which cannot ask): validate + append
+  via `brain.inbox.enqueue` or `BrainCore.enqueue_question` — refuses an entry
+  without ≥2 options and a default that is one of them. Idempotent on
+  `(source, question)`.
+- **Push** (every session): the SessionStart hook injects `OWNER INBOX: N
+  pending` (count only — the raw question bodies stay out of injected context;
+  they came from a model reading vault content). Optionally a macOS
+  `display notification` when the count goes non-empty (inside the existing
+  nightly — no third scheduled task).
+- **Answer** (interactive `/brain-inbox` session): `brain inbox` lists,
+  `brain inbox --answer KEY --value TEXT` records the owner's choice. Answering
+  is plain host queue state, NOT an index write.
+- **Consume** (next fold): reads answered entries and executes them through the
+  audited `write_note`/host-broker path. The queue is capped (~5); overflow
+  aggregates into one summary question.
+
+## `engine-feedback/` — retro-fold engine-bug prompts
+
+`brain retro` (weekly) scans this vault's own maintenance output for engine
+failure signatures — future-dated folds, absolute-path leakage, duplicate
+findings under fresh keys, hot.md bloat — and writes one ready-to-run prompt
+per signature into `<vault>/.brain/engine-feedback/<date>-<signature>.md`
+(idempotent, one per signature per day). The SessionStart hook surfaces
+`ENGINE FEEDBACK: M waiting`; any session (or the owner) fires them at the
+Brainiac engine repo. Delete a prompt once its bug is fixed.
 
 ## `lessons.md` — durable lessons
 

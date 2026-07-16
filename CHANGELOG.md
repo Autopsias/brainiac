@@ -7,6 +7,52 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-07-16
+### Added
+- **Chief-of-staff (COS) host engine — the `brain cos-*` verb family.**
+  `cos-propose` (VM-side unsigned proposal drop — the only COS verb on the VM
+  surface), `cos-broker` (host broker fold: drains proposals through the
+  audited write path), `cos-correct` (morning corrections), `cos-evidence`,
+  `cos-priority-map` (overlay-driven who/what-matters), `cos-report`
+  (shadow-mode calibration report for the 10-round trust gate),
+  `cos-ingest-sweep` (host sweeper for VM-manifested browser downloads), and
+  `cos-hold` (hold store for held/deferred actions). All host-broker-only
+  except `cos-propose`; owner risk-acceptance override for the trifecta
+  preflight with a two-layer acceptance check (calendar-write PRESENCE never
+  HALTs under a valid acceptance record).
+- **Commitment spine (SP-01/SP-02).** New `src/brain/spine.py` event-sourced
+  commitment ledger (stable identity independent of due date, deterministic
+  reducer) with hybrid capture wired into `consume_answers` (keeper vs
+  spine-only). `spine.radar()` renders aging/at-risk (48h) into
+  `shared/spine-summary.md` on every broker fold; the COS kernel's late+radar
+  phase reads it first.
+- **Auto-capture for accepted ingestion patterns (ING-04).** Pattern-level
+  auto-capture criteria (min-volume / zero-defect / Wilson-lower-bound,
+  bundle_version-scoped) in the broker fold, routing eligible candidates into
+  the hold store with a status-surfaced daily digest and one-word revert.
+- **Chief-of-staff kernel skill (v1 → v4.0).** Generic, overlay-driven nightly
+  COS run shipped via `package_clients` (Cowork upload kit): shadow read-tier
+  (ACT/READ/NOISE × P0-P3) with a 10-round calibration gate, guarded
+  auto-archive promotion (seven per-row guard conditions incl. a tested undo
+  canary), REST-in-page archive execution with proven-DOM fallback,
+  verified-batch mutations, ingestion proposal engine (evidence-required,
+  classified, secret-scrubbed), and the v4.0 auto-capture + commitment-spine
+  phases.
+- **PUSH owner-interaction model.** Auto-resolve by default; genuinely
+  owner-only decisions land in `inbox.jsonl` (Tier-2, capped, answered via
+  `brain inbox`); weekly retro fold self-reports engine failure signatures to
+  `.brain/engine-feedback/`.
+
+### Fixed
+- **CWD/vault fallback fails closed** instead of creating a phantom vault.
+- **Ingestion candidates default to MNPI**, not the generic Internal capture
+  default.
+- **Maintenance field bugs 1-3:** future-date guard, wikilink runaway,
+  move-rebase.
+- COS skill frontmatter description kept ≤1024 chars (Cowork upload cap);
+  host sweeper accepts kernel manifest field names; onnxruntime + closure
+  staged for the Cowork VM (base image lacks it).
+
 ## [0.16.1] — 2026-07-12
 ### Security
 - **Pre-release contamination scrub + gate repair.** The clean-room export's

@@ -457,6 +457,151 @@ def build_parser() -> argparse.ArgumentParser:
     add_common(sp)
 
     sp = sub.add_parser(
+        "inbox",
+        help="the Tier-2 owner-decision queue: list open questions, or record "
+             "an answer (--answer KEY --value TEXT). HOST-ONLY.",
+    )
+    sp.add_argument("--answer", default=None, metavar="KEY",
+                    help="record an answer to the open question with this key")
+    sp.add_argument("--value", default=None, metavar="TEXT",
+                    help="the answer text (required with --answer)")
+    add_common(sp)
+
+    sp = sub.add_parser(
+        "retro",
+        help="retro fold: scan this vault's maintenance output for engine "
+             "failure signatures and write engine-feedback prompts. HOST-ONLY.",
+    )
+    add_common(sp)
+
+    # -- COS host-engine capabilities (CUT-01E) ----------------------------
+    sp = sub.add_parser(
+        "cos-propose",
+        help="VM-ALLOWED: drop ONE unsigned COS proposal into the proposal-drop "
+             "dir (which `brain sync` NEVER reads). Only the host broker's "
+             "validate -> owner-inbox-batch -> accept flow can move it toward "
+             "the signed write path. --kind correction drops a correction "
+             "request (JSON: round, msg_key, corrected_bucket, corrected_tier) "
+             "into verdict-drop/ instead.",
+    )
+    sp.add_argument("--id", default=None, help="note id (default: frontmatter or content hash)")
+    sp.add_argument("--kind", default="proposal", choices=("proposal", "correction"))
+    sp.add_argument("--content", default=None, help="content (default: read stdin)")
+    sp.add_argument("--json", action="store_true")
+
+    sp = sub.add_parser(
+        "cos-broker",
+        help="HOST broker step (also wired into `brain maintain`): claim + "
+             "validate proposal drops, expire/requeue, consume owner-inbox "
+             "answers (only ACCEPTED candidates move to capture-inbox for "
+             "signing), release due holds, enqueue at most one signed batch, GC.",
+    )
+    sp.add_argument("--json", action="store_true")
+
+    sp = sub.add_parser(
+        "cos-correct",
+        help="HOST-only correction of record: append ONE correction_events row "
+             "(round, msg_key, corrected_bucket, corrected_tier). Append-only; "
+             "rejects unknown (un-ledgered) and duplicate keys.",
+    )
+    sp.add_argument("--round", type=int, required=True, dest="round_")
+    sp.add_argument("--msg-key", required=True)
+    sp.add_argument("--bucket", required=True, help="corrected_bucket")
+    sp.add_argument("--tier", required=True, help="corrected_tier")
+    sp.add_argument("--json", action="store_true")
+
+    sp = sub.add_parser(
+        "cos-evidence",
+        help="HOST-only trust-gate evidence signer: `sign` writes a bundle + "
+             "Ed25519-signed versioned manifest (bundle/model version, snapshot "
+             "generation, dataset window, source-ledger hash) under the "
+             "host-private evidence dir; `verify` re-checks signature + hashes "
+             "(a stale/edited JSON fails).",
+    )
+    sp.add_argument("action", choices=("sign", "verify"))
+    sp.add_argument("--bundle-version", default=None)
+    sp.add_argument("--model-version", default=None)
+    sp.add_argument("--dataset-window", default=None)
+    sp.add_argument("--file", action="append", default=[], dest="files",
+                    help="payload file to include (repeatable)")
+    sp.add_argument("--name", default="evidence")
+    sp.add_argument("--dir", default=None, help="[verify] bundle dir to verify")
+    sp.add_argument("--json", action="store_true")
+
+    sp = sub.add_parser(
+        "cos-priority-map",
+        help="HOST-only: generate the VM-readable shared/priority-map.md from "
+             "type:person/company notes via a host-produced filtered projection "
+             "(default tier policy: the FULL vault, NOT capped to Internal) + "
+             "owner overrides from the overlay cos/ category.",
+    )
+    sp.add_argument("--max-tier", default=None, choices=cls.TIERS)
+    sp.add_argument("--json", action="store_true")
+
+    sp = sub.add_parser(
+        "cos-report",
+        help="HOST-only: shadow-mode calibration report — rounds completed, "
+             "per-bucket precision, from the verdict-drop shadow ledger x "
+             "correction_events (calibration = reduce(verdicts, corrections)).",
+    )
+    sp.add_argument("--json", action="store_true")
+
+    sp = sub.add_parser(
+        "cos-ingest-sweep",
+        help="HOST-only (also wired into `brain maintain`): claim VM "
+             "ingest-manifest lines (drop/ingest-manifest/) and MOVE "
+             "exact-filename matches from the host downloads dir (default "
+             "~/Downloads, or $BRAIN_COS_DOWNLOADS_DIR) into <vault>/inbox/ "
+             "for normal signed ingest. Basename-only filenames, symlinks "
+             "refused, 200MB cap, append-only claims (idempotent); files the "
+             "manifest does not name are never touched.",
+    )
+    sp.add_argument("--downloads-dir", default=None,
+                    help="host downloads dir to sweep (default: ~/Downloads)")
+    sp.add_argument("--dry-run", action="store_true",
+                    help="report matches without moving or claiming anything")
+    sp.add_argument("--json", action="store_true")
+
+    sp = sub.add_parser(
+        "cos-hold",
+        help="HOST-only auto-capture hold store: `add` parks an item UNSIGNED "
+             "until --not-before; a due item enters capture-inbox (then the "
+             "signed drain) only after expiry. `cancel` is atomic against a "
+             "concurrent release. `release-due` is also run by the broker fold.",
+    )
+    sp.add_argument("action", choices=("add", "list", "cancel", "release-due"))
+    sp.add_argument("--id", default=None)
+    sp.add_argument("--not-before", default=None,
+                    help="[add] ISO timestamp before which the item must NOT be signed")
+    sp.add_argument("--content", default=None, help="[add] content (default: read stdin)")
+    sp.add_argument("--json", action="store_true")
+
+    sp = sub.add_parser(
+        "cos-spine",
+        help="HOST-only commitment spine (SP-01/SP-02): `record` appends ONE "
+             "event (created/rescheduled/completed/cancelled/corrected/"
+             "reopened) — commitment-kind ingestion candidates are recorded "
+             "automatically on owner acceptance; this is for the other two "
+             "named sources (calendar follow-ups, drafts ledger). `radar` "
+             "prints late/at-risk open commitments. `render` regenerates the "
+             "VM-readable shared/spine-summary.md projection (also run every "
+             "broker fold).",
+    )
+    sp.add_argument("action", choices=("record", "radar", "render"))
+    sp.add_argument("--event", default="created", choices=(
+        "created", "rescheduled", "completed", "cancelled", "corrected", "reopened"))
+    sp.add_argument("--id", dest="commitment_id", default=None,
+                    help="[record] existing commitment id (any event but 'created')")
+    sp.add_argument("--direction", default=None, choices=("owed_by_me", "owed_to_me"))
+    sp.add_argument("--counterparty", default=None)
+    sp.add_argument("--text", default=None)
+    sp.add_argument("--topic", default=None)
+    sp.add_argument("--due", default=None, help="ISO timestamp")
+    sp.add_argument("--source-ref", default=None)
+    sp.add_argument("--note", default=None)
+    sp.add_argument("--json", action="store_true")
+
+    sp = sub.add_parser(
         "draft-capture",
         help="VM-side capture: stage a candidate note as a plain DRAFT "
              "(no sign, no index, no WAL) for the host to drain later",
@@ -693,6 +838,9 @@ def build_parser() -> argparse.ArgumentParser:
                          "read-only health/integrity probes for any due branch")
     sp.add_argument("--date", default=None,
                     help="YYYY-MM-DD override for date-gate testing (default: today)")
+    sp.add_argument("--allow-future-date", action="store_true",
+                    help="permit a --date AFTER the wall clock (needed only for "
+                         "deliberate future date-gate exercises; default: refuse)")
     sp.add_argument("--min-score", type=float, default=0.95,
                     help="near-dup cosine threshold on a due Tuesday branch (default: 0.95)")
     sp.add_argument("--json", action="store_true")
@@ -923,6 +1071,11 @@ VM_ALLOWED = frozenset({
     "search", "hybrid-search", "dossier", "grep", "bases-query", "graph-expand",
     "get", "read", "recent", "status", "draft-capture",
     "capture", "brief", "digest",
+    # CUT-01E: the ONE COS ingress a VM holds — an UNSIGNED drop into a dir
+    # `sync` never reads. Every other cos-* verb (broker, correct, evidence,
+    # ingest-sweep (v2.1 host downloads sweeper),
+    # priority-map, hold) is host-broker only and refused here.
+    "cos-propose",
 })
 
 
@@ -1330,6 +1483,240 @@ def _main(argv: list[str] | None = None) -> int:
             _emit(None, False, "\n".join(lines))
         return 0
 
+    if cmd == "inbox":
+        if args.answer is not None:
+            if not args.value:
+                _emit(None, False, "error: --answer KEY requires --value TEXT")
+                return 2
+            matched = core.answer_question(args.answer, args.value)
+            if args.json:
+                _emit({"answered": matched, "key": args.answer}, True)
+            else:
+                _emit(None, False,
+                      (f"recorded answer to {args.answer}" if matched
+                       else f"no open question with key {args.answer}"))
+            return 0 if matched else 1
+        questions = core.open_questions()
+        if args.json:
+            _emit({"open": questions, "count": len(questions)}, True)
+        elif not questions:
+            _emit(None, False, "inbox: 0 owner decisions pending.")
+        else:
+            lines = [f"{len(questions)} owner decision(s) pending:\n"]
+            for q in questions:
+                lines.append(f"[{q.get('key')}] {q.get('question')}")
+                if q.get("context"):
+                    lines.append(f"    context: {q['context']}")
+                for opt in q.get("options", []):
+                    mark = " (default)" if opt == q.get("default") else ""
+                    lines.append(f"    - {opt}{mark}")
+                lines.append(f"    answer: brain inbox --answer {q.get('key')} --value '<option>'\n")
+            _emit(None, False, "\n".join(lines))
+        return 0
+
+    if cmd == "retro":
+        res = core.retro()
+        if args.json:
+            _emit(res, True)
+        else:
+            fnd = res["findings"]
+            if not fnd:
+                _emit(None, False, "retro: no engine failure signatures found.")
+            else:
+                lines = [f"retro: {len(fnd)} signature(s) found:"]
+                for sig, ev in fnd.items():
+                    lines.append(f"  - {sig}: {len(ev)} instance(s)")
+                if res["feedback_written"]:
+                    lines.append(f"wrote engine-feedback: {', '.join(res['feedback_written'])}")
+                _emit(None, False, "\n".join(lines))
+        return 0
+
+    if cmd == "cos-propose":
+        content = args.content if args.content is not None else sys.stdin.read()
+        try:
+            if args.kind == "correction":
+                res = core.cos_propose_correction(json.loads(content))
+            else:
+                res = core.cos_propose(content, ident=args.id)
+        except (ValueError, TypeError) as exc:  # unsafe id / bad payload -> fail closed
+            _emit({"error": type(exc).__name__, "detail": str(exc)} if args.json
+                  else f"cos-propose refused ({type(exc).__name__}): {exc}", args.json)
+            return 3
+        _emit(res if args.json else
+              f"dropped unsigned {args.kind} -> {res.get('proposal') or res.get('drop')} "
+              f"(the host broker + owner inbox gate what gets signed)", args.json)
+        return 0
+
+    if cmd == "cos-broker":
+        try:
+            res = core.cos_broker_fold()
+        except Exception as exc:  # RoleError -> fail closed
+            _emit({"error": type(exc).__name__, "detail": str(exc)} if args.json
+                  else f"cos-broker refused ({type(exc).__name__}): {exc}", args.json)
+            return 3
+        if args.json:
+            _emit(res, True)
+        else:
+            claimed = res.get("claimed", {}) or {}
+            consumed = res.get("consumed", {}) or {}
+            batch = res.get("batch", {}) or {}
+            _emit(None, False,
+                  f"cos-broker: claimed={len(claimed.get('claimed', []))} "
+                  f"rejected={len(claimed.get('rejected', []))} "
+                  f"accepted->capture-inbox={len(consumed.get('accepted', []))} "
+                  f"holds-released={len(res.get('holds_released', []))} "
+                  f"batch-enqueued={batch.get('enqueued', False)} "
+                  f"errors={len(res.get('errors', []))}")
+        return 0 if not res.get("errors") else 1
+
+    if cmd == "cos-ingest-sweep":
+        try:
+            res = core.cos_ingest_sweep(downloads_dir=args.downloads_dir,
+                                        dry_run=args.dry_run)
+        except Exception as exc:  # RoleError -> fail closed
+            _emit({"error": type(exc).__name__, "detail": str(exc)} if args.json
+                  else f"cos-ingest-sweep refused ({type(exc).__name__}): {exc}",
+                  args.json)
+            return 3
+        _emit(res if args.json else
+              f"cos-ingest-sweep{' (dry-run)' if args.dry_run else ''}: "
+              f"moved={len(res['moved'])} unmatched={len(res['unmatched'])} "
+              f"refused={len(res['refused'])} "
+              f"already-claimed={res['already_claimed']}", args.json)
+        return 0
+
+    if cmd == "cos-correct":
+        try:
+            res = core.cos_correct(args.round_, args.msg_key, args.bucket, args.tier)
+        except Exception as exc:  # RoleError / ValueError -> fail closed
+            _emit({"error": type(exc).__name__, "detail": str(exc)} if args.json
+                  else f"cos-correct refused ({type(exc).__name__}): {exc}", args.json)
+            return 3
+        _emit(res if args.json else
+              f"correction recorded: round={res['round']} msg={res['msg_key']} "
+              f"-> {res['corrected_bucket']}/{res['corrected_tier']}", args.json)
+        return 0
+
+    if cmd == "cos-evidence":
+        try:
+            if args.action == "sign":
+                missing = [f for f in ("bundle_version", "model_version", "dataset_window")
+                           if not getattr(args, f)]
+                if missing:
+                    raise ValueError(f"sign requires --{missing[0].replace('_', '-')}")
+                from pathlib import Path as _P
+                res = core.cos_evidence_sign(
+                    bundle_version=args.bundle_version,
+                    model_version=args.model_version,
+                    dataset_window=args.dataset_window,
+                    files=[_P(f) for f in args.files], name=args.name)
+            else:
+                if not args.dir:
+                    raise ValueError("verify requires --dir")
+                res = core.cos_evidence_verify(args.dir)
+        except Exception as exc:
+            _emit({"error": type(exc).__name__, "detail": str(exc)} if args.json
+                  else f"cos-evidence refused ({type(exc).__name__}): {exc}", args.json)
+            return 3
+        if args.action == "verify":
+            _emit(res if args.json else
+                  f"evidence: {'VALID' if res['ok'] else 'INVALID'} "
+                  f"({len(res['errors'])} error(s))"
+                  + ("".join(f"\n  - {e}" for e in res["errors"])), args.json)
+            return 0 if res["ok"] else 1
+        _emit(res if args.json else
+              f"signed evidence bundle -> {res['dir']}", args.json)
+        return 0
+
+    if cmd == "cos-priority-map":
+        try:
+            res = core.cos_priority_map(max_tier=args.max_tier)
+        except Exception as exc:
+            _emit({"error": type(exc).__name__, "detail": str(exc)} if args.json
+                  else f"cos-priority-map refused ({type(exc).__name__}): {exc}", args.json)
+            return 3
+        _emit(res if args.json else
+              f"priority map -> {res['path']} ({res['people']} people, "
+              f"{res['companies']} companies, {res['withheld']} withheld at "
+              f"max-tier={res['max_tier']})", args.json)
+        return 0
+
+    if cmd == "cos-report":
+        try:
+            res = core.cos_report()
+        except Exception as exc:
+            _emit({"error": type(exc).__name__, "detail": str(exc)} if args.json
+                  else f"cos-report refused ({type(exc).__name__}): {exc}", args.json)
+            return 3
+        _emit(res if args.json else
+              f"cos-report: rounds={res['rounds_completed']} "
+              f"verdicts={res['verdicts']} corrections={res['corrections']} "
+              f"overall-bucket-precision={res['overall_bucket_precision']}", args.json)
+        return 0
+
+    if cmd == "cos-hold":
+        try:
+            if args.action == "add":
+                if not getattr(args, "not_before", None):
+                    raise ValueError("add requires --not-before <ISO timestamp>")
+                content = args.content if args.content is not None else sys.stdin.read()
+                res: Any = core.cos_hold_add(content, not_before=args.not_before,
+                                             ident=args.id)
+                human = (f"held {res['id']} until {res['not_before']} "
+                         f"(unsigned; enters capture-inbox only after expiry)")
+            elif args.action == "list":
+                res = {"holds": core.cos_hold_list()}
+                human = "\n".join(
+                    f"{h.get('id')}  not_before={h.get('not_before')}  due={h.get('due')}"
+                    for h in res["holds"]) or "no holds"
+            elif args.action == "cancel":
+                if not args.id:
+                    raise ValueError("cancel requires --id")
+                ok = core.cos_hold_cancel(args.id)
+                res = {"cancelled": ok, "id": args.id}
+                human = (f"cancelled hold {args.id}" if ok
+                         else f"no cancellable hold {args.id} (already released or cancelled)")
+            else:  # release-due
+                released = core.cos_hold_release_due()
+                res = {"released": released}
+                human = (f"released {len(released)} due hold(s) into capture-inbox"
+                         if released else "no due holds")
+        except Exception as exc:
+            _emit({"error": type(exc).__name__, "detail": str(exc)} if args.json
+                  else f"cos-hold refused ({type(exc).__name__}): {exc}", args.json)
+            return 3
+        _emit(res if args.json else human, args.json)
+        if args.action == "cancel" and not res.get("cancelled"):
+            return 1
+        return 0
+
+    if cmd == "cos-spine":
+        try:
+            if args.action == "record":
+                res = core.cos_spine_record(
+                    event=args.event, direction=args.direction,
+                    counterparty=args.counterparty, text=args.text, topic=args.topic,
+                    due=args.due, source_ref=args.source_ref, note=args.note,
+                    commitment_id=args.commitment_id)
+                human = (f"{res['id']}: {args.event} -> status={res['status']} "
+                         f"due={res.get('due')}")
+            elif args.action == "radar":
+                res = core.cos_spine_radar()
+                human = (f"late={len(res['late'])} at_risk={len(res['at_risk'])}" +
+                         "".join(f"\n  LATE  {r['id']} {r['counterparty']} due={r['due']}"
+                                for r in res["late"]) +
+                         "".join(f"\n  RISK  {r['id']} {r['counterparty']} due={r['due']}"
+                                for r in res["at_risk"]))
+            else:  # render
+                res = core.cos_spine_render()
+                human = f"rendered {res['path']} (open={res['open']} late={res['late']} at_risk={res['at_risk']})"
+        except Exception as exc:
+            _emit({"error": type(exc).__name__, "detail": str(exc)} if args.json
+                  else f"cos-spine refused ({type(exc).__name__}): {exc}", args.json)
+            return 3
+        _emit(res if args.json else human, args.json)
+        return 0
+
     if cmd == "draft-capture":
         content = args.content if args.content is not None else sys.stdin.read()
         try:
@@ -1402,11 +1789,14 @@ def _main(argv: list[str] | None = None) -> int:
             d = res.get("drain", {})
             snap = res.get("snapshot")
             tail = (f"; snapshot gen {snap['generation']}" if snap else "")
+            reb = res.get("rebased", 0)
+            reb_note = (f"; vault root changed — rebased {reb} path(s), no re-embed"
+                        if reb else "")
             _emit(None, False,
                   f"sync [{res['mode']}]: +{res.get('added',0)} ~{res.get('updated',0)} "
                   f"-{res.get('deleted',0)} ={res.get('unchanged',0)} "
                   f"({res['chunks']} chunks); drained {d.get('promoted',0)} "
-                  f"(skipped {d.get('skipped',0)})" + tail)
+                  f"(skipped {d.get('skipped',0)})" + reb_note + tail)
         return 0
 
     if cmd == "snapshot":
@@ -1875,6 +2265,22 @@ def _main(argv: list[str] | None = None) -> int:
         if args.date:
             import datetime as _dt
             parsed_date = _dt.date.fromisoformat(args.date)
+            # Field bug 1 (2026-07-13): a `brain maintain --date <future>` run
+            # against a LIVE vault stamped future-dated hot.md idempotency keys,
+            # briefs and digests — which then SUPPRESS the legitimate real run
+            # for that date and shadow its outputs. A future --date is only ever
+            # a deliberate date-gate exercise; refuse it by default so the leak
+            # can't happen by accident. (A stuck OS clock can't be caught here —
+            # date.today() would already be wrong — but that produces one bad
+            # date, not the observed sequence, which was --date leakage.)
+            if parsed_date > _dt.date.today() and not args.allow_future_date:
+                _emit(None, False,
+                      f"refusing --date {parsed_date.isoformat()}: it is AFTER the "
+                      f"wall-clock date {_dt.date.today().isoformat()}. A future date "
+                      f"would poison hot.md/brief/digest for that day and suppress the "
+                      f"real run. Pass --allow-future-date only for a deliberate "
+                      f"date-gate exercise on a throwaway vault.")
+                return 2
         res = core.maintain(dry_run=args.dry_run, today=parsed_date, min_score=args.min_score)
         if args.json:
             _emit(res, True)

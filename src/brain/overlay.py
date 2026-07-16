@@ -33,6 +33,14 @@ from . import frontmatter
 
 CATEGORIES: tuple[str, ...] = ("voice", "brand", "keywords", "people")
 
+# CUT-01E: OPTIONAL categories — validated when present, never required.
+# ``cos/`` carries the owner's chief-of-staff priority overrides (body list
+# lines ``- <note-id>: high|normal|low|exclude``, read by `brain
+# cos-priority-map`). MIGRATION: a pre-0.17 overlay simply has no cos/ dir and
+# stays exactly as valid as before — adding the dir later needs no other
+# change, and removing it is the complete rollback.
+OPTIONAL_CATEGORIES: tuple[str, ...] = ("cos",)
+
 # AUT-01/AUT-03 (ADR-0003 Ruling c/e): the HTML brief/digest renderers are
 # pure-render — all overlay I/O happens here, once, before the render call.
 # Two OPTIONAL frontmatter keys on a brand/*.md file (alongside the existing
@@ -126,6 +134,23 @@ def validate_overlay(path: Path) -> dict[str, Any]:
             for f in md_files:
                 issues.extend(_validate_category_file(f, cat))
         categories[cat] = {"present": present, "file_count": file_count, "issues": issues}
+        errors.extend(f"{cat}: {issue}" for issue in issues)
+
+    # Optional categories: shape-checked ONLY when present — a missing
+    # optional dir is never an issue (backward-compatible with every
+    # pre-existing overlay; see OPTIONAL_CATEGORIES).
+    for cat in OPTIONAL_CATEGORIES:
+        cat_dir = path / cat
+        if not cat_dir.is_dir():
+            categories[cat] = {"present": False, "file_count": 0,
+                               "issues": [], "optional": True}
+            continue
+        issues = []
+        md_files = sorted(cat_dir.glob("*.md"))
+        for f in md_files:
+            issues.extend(_validate_category_file(f, cat))
+        categories[cat] = {"present": True, "file_count": len(md_files),
+                           "issues": issues, "optional": True}
         errors.extend(f"{cat}: {issue}" for issue in issues)
 
     return {

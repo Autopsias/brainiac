@@ -89,20 +89,84 @@ def _app_data_base() -> Path:
     return Path(base) / APP_NAME
 
 
+def _vault_id_path(vault: str | os.PathLike[str] | None = None) -> Path:
+    return vault_root(vault) / ".brain" / "vault-id"
+
+
+def vault_id(vault: str | os.PathLike[str] | None = None, *, create: bool = False) -> str | None:
+    """A stable per-vault identity persisted at ``<vault>/.brain/vault-id``.
+
+    The app-data index+audit dir is keyed on this instead of the vault's
+    ABSOLUTE PATH (field bug 3): the path changes when the vault folder moves,
+    this id does not — so the index and the hash-chained audit log survive a
+    move (no full re-embed, no silent audit-chain fork). ``.brain/`` travels
+    WITH the vault folder, so the id persists across a move. Returns ``None``
+    if absent and ``create`` is False; best-effort on a read-only vault."""
+    p = _vault_id_path(vault)
+    try:
+        vid = p.read_text(encoding="utf-8").strip()
+        if vid:
+            return vid
+    except OSError:
+        pass
+    if not create:
+        return None
+    import secrets
+    vid = secrets.token_hex(8)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(vid + "\n", encoding="utf-8")
+    except OSError:
+        return None  # read-only vault — caller falls back to the legacy slug
+    return vid
+
+
+def _legacy_index_slug(v: Path) -> str:
+    return f"{v.name}-{hashlib.sha256(str(v).encode()).hexdigest()[:8]}"
+
+
 def index_dir(vault: str | os.PathLike[str] | None = None) -> Path:
     """Per-vault app-data directory holding this vault's index + audit chain.
 
     ``$BRAIN_INDEX_DIR`` overrides completely (returned as-is, no per-vault
-    nesting — tests and constrained deployments rely on that). Otherwise each
-    resolved vault path maps to its own ``vaults/<name>-<hash8>/`` subdir, so
-    any number of vaults coexist without sharing an index or audit chain.
+    nesting — tests and constrained deployments rely on that). Otherwise the
+    dir is keyed on the persistent ``vault-id`` (move-stable, field bug 3) when
+    one exists, else on the legacy absolute-path hash — so an existing install
+    keeps pointing at its current dir until ``migrate_index_location`` mints an
+    id and renames it. Any number of vaults coexist without sharing state.
     """
     override = os.environ.get("BRAIN_INDEX_DIR")
     if override:
         return Path(override).expanduser()
     v = vault_root(vault)
-    slug = f"{v.name}-{hashlib.sha256(str(v).encode()).hexdigest()[:8]}"
+    vid = vault_id(v)
+    slug = f"{v.name}-{vid[:8]}" if vid else _legacy_index_slug(v)
     return _app_data_base() / "vaults" / slug
+
+
+def migrate_index_location(vault: str | os.PathLike[str] | None = None) -> Path | None:
+    """Mint the persistent ``vault-id`` and, if this vault's index/audit dir is
+    still at the legacy absolute-path-hash location, RENAME it to the id-based
+    location — so index + audit chain survive a vault move without a rebuild or
+    an audit-chain fork (field bug 3). Host-only; best-effort (a failure just
+    leaves the legacy layout in place). No-op when ``$BRAIN_INDEX_DIR`` pins the
+    dir. Returns the new dir if a rename happened, else ``None``."""
+    if os.environ.get("BRAIN_INDEX_DIR"):
+        return None
+    v = vault_root(vault)
+    legacy = _app_data_base() / "vaults" / _legacy_index_slug(v)
+    vid = vault_id(v, create=True)
+    if not vid:
+        return None
+    new = _app_data_base() / "vaults" / f"{v.name}-{vid[:8]}"
+    if legacy != new and legacy.exists() and not new.exists():
+        try:
+            new.parent.mkdir(parents=True, exist_ok=True)
+            legacy.rename(new)
+            return new
+        except OSError:
+            return None
+    return None
 
 
 def index_path(vault: str | os.PathLike[str] | None = None) -> Path:
@@ -165,15 +229,29 @@ def secure_file_permissions(path: "os.PathLike[str] | str", mode: int = SECURE_F
         pass
 
 
-def vault_root(explicit: str | os.PathLike[str] | None = None) -> Path:
+class VaultNotFoundError(RuntimeError):
+    """The CWD/vault fallback resolved to a path that is not a vault."""
+
+
+def vault_root(
+    explicit: str | os.PathLike[str] | None = None,
+    *,
+    allow_missing: bool = False,
+) -> Path:
     """Resolve the vault root: explicit arg > ``$BRAIN_VAULT`` > CWD/vault.
 
-    When it falls back to CWD/vault, warn (stderr) if ``./vault`` is not yet a
-    Brainiac vault (no ``./vault/.brain``) — so brain never SILENTLY writes to a
-    phantom ``./vault/.brain/`` in whatever directory it happened to run from (a
-    footgun that once scattered 231 drafts into a stray ``migration/vault/``
-    mid-migration). Creation flows (``brain init``, the installer's sample-vault
-    build) still work: the fallback path is unchanged — only now it is loud.
+    The CWD/vault fallback FAILS CLOSED when ``./vault`` is not yet a Brainiac
+    vault (no ``./vault/.brain``): brain must never write to a phantom
+    ``./vault/.brain/`` in whatever directory it happened to run from. This was
+    a stderr WARNING and that was not enough — a warning is invisible to any
+    caller that reads the success JSON, so ``cos-propose`` with $BRAIN_VAULT
+    unset silently materialised a phantom vault and reported success (and the
+    same footgun once scattered 231 drafts into a stray ``migration/vault/``).
+
+    Creation flows (``brain init``, the installer's sample-vault build) pass
+    ``allow_missing=True`` — they are the only callers entitled to bring a vault
+    into existence. An explicit ``--vault``/``$BRAIN_VAULT`` is a deliberate act
+    and is still trusted as given.
     """
     if explicit:
         return Path(explicit).expanduser().resolve()
@@ -181,16 +259,13 @@ def vault_root(explicit: str | os.PathLike[str] | None = None) -> Path:
     if env:
         return Path(env).expanduser().resolve()
     cwd_vault = (Path.cwd() / "vault").resolve()
-    if not (cwd_vault / ".brain").is_dir():
-        import sys as _sys
-        print(
-            f"brain: WARNING no --vault/$BRAIN_VAULT given; resolved to {cwd_vault}, "
-            f"which is not yet a vault (no {cwd_vault / '.brain'}). This is the "
-            f"CWD/vault fallback ({Path.cwd()} + 'vault'), not an error -- but if this "
-            f"isn't the vault you meant, pin it: export BRAIN_VAULT={cwd_vault} "
-            "(or pass --vault explicitly on every call). Otherwise brain creates/uses "
-            "a vault at the path above.",
-            file=_sys.stderr,
+    if not allow_missing and not (cwd_vault / ".brain").is_dir():
+        raise VaultNotFoundError(
+            f"no --vault/$BRAIN_VAULT given and the CWD/vault fallback "
+            f"({cwd_vault}) is not a vault (no {cwd_vault / '.brain'}). Refusing "
+            f"to create one implicitly. Pin the vault you meant: "
+            f"export BRAIN_VAULT=/path/to/vault (or pass --vault), or run "
+            f"`brain init` to create a new vault here."
         )
     return cwd_vault
 
@@ -369,6 +444,19 @@ def health_sparse_path(vault: str | os.PathLike[str] | None = None) -> Path:
     week and is trivially small forever, so it is never windowed or rotated —
     ``health_trend`` reads it in full for the sparse comparisons."""
     return _health_history_root(vault) / "health-sparse.jsonl"
+
+
+def cos_ops_dir(vault: str | os.PathLike[str] | None = None) -> Path:
+    """CUT-01E: THE canonical COS operations dir — ``$BRAIN_COS_OPS_DIR`` or
+    ``<vault>/.brain/cos``. Host-only by contract (under the gitignored,
+    never-indexed, never-exported ``.brain/``), split by PERMISSION into three
+    sub-paths (see ``brain.cos``): ``host/`` (host-private), ``shared/``
+    (VM-readable projection, host writes), ``drop/`` (VM-writable input, host
+    claims). Surfaced by ``brain status --json``."""
+    override = os.environ.get("BRAIN_COS_OPS_DIR")
+    if override:
+        return Path(override).expanduser()
+    return brain_runtime_dir(vault) / "cos"
 
 
 def anchor_dir() -> Path | None:

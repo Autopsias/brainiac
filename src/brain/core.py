@@ -101,6 +101,10 @@ class BrainCore:
             self.index = BrainIndex(db_path=config.snapshot_db_path(self.vault),
                                     read_only=True)
         else:
+            # Field bug 3: before opening the index/audit dir, migrate a legacy
+            # absolute-path-keyed dir onto the move-stable vault-id key so a
+            # vault move never re-embeds or forks the audit chain. Best-effort.
+            config.migrate_index_location(self.vault)
             self.index = BrainIndex(db_path=config.index_path(self.vault))
         if self.role == config.ROLE_VM:
             # No signing surface AT ALL on the VM: the audit chain (and thus
@@ -773,6 +777,14 @@ class BrainCore:
         # session-start hook's stale-nightly line.
         out["maintain_heartbeat"] = self._maintain_heartbeat_summary(today=today)
         out["graph"] = self._graph_status()
+        # CUT-01E: surface the canonical COS ops dir + queue counts. The VM
+        # view only reads the zones it may touch (drop/ + shared/).
+        try:
+            from . import cos as cos_mod
+
+            out["cos"] = cos_mod.status_block(self.vault, self.role)
+        except Exception as exc:  # noqa: BLE001 — status must never crash on cos
+            out["cos"] = {"error": f"{type(exc).__name__}: {exc}"}
         return out
 
     def _count_pending_drafts(self) -> int:
@@ -2104,6 +2116,253 @@ class BrainCore:
             fh.write(marker + "\n" + entry_md.rstrip("\n") + "\n\n")
         return True
 
+    # -- Tier-2 owner question queue (PUSH redesign, 2026-07-13) --------------
+    def _inbox_path(self) -> Path:
+        return config.memory_dir(self.vault) / "inbox.jsonl"
+
+    def _read_inbox(self) -> list[dict[str, Any]]:
+        from . import inbox as ibx
+        p = self._inbox_path()
+        return ibx.parse_inbox(p.read_text(encoding="utf-8")) if p.exists() else []
+
+    def _write_inbox(self, entries: list[dict[str, Any]]) -> None:
+        from . import inbox as ibx
+        p = self._inbox_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(ibx.render_inbox(entries), encoding="utf-8")
+
+    def enqueue_question(self, question: dict[str, Any], *,
+                         source: str = "", today: Any = None) -> bool:
+        """Queue ONE owner-only decision (validated options+default). Idempotent
+        on (source, question). Host-only: the queue is host session state under
+        ``.brain/`` — the headless synthesis session enqueues, an interactive
+        ``/brain-inbox`` answers. Returns True if newly appended."""
+        from . import inbox as ibx
+        import datetime as _dt
+        self._require_host("enqueue an owner question")
+        d = today or _dt.date.today()
+        entries, appended = ibx.enqueue(
+            self._read_inbox(), question, created=d.isoformat(), source=source)
+        if appended:
+            self._write_inbox(entries)
+        return appended
+
+    def answer_question(self, key: str, answer: str, *, today: Any = None) -> bool:
+        """Record the owner's answer to queued question ``key``. Host-only. The
+        answer is CONSUMED (executed through the audited write path) by the next
+        fold — recording it here is plain host queue state, not an index write."""
+        from . import inbox as ibx
+        import datetime as _dt
+        self._require_host("answer an owner question")
+        d = today or _dt.date.today()
+        entries, matched = ibx.record_answer(
+            self._read_inbox(), key, answer, answered=d.isoformat())
+        if matched:
+            self._write_inbox(entries)
+        return matched
+
+    def open_questions(self) -> list[dict[str, Any]]:
+        """The open owner-decision queue (host-only read)."""
+        from . import inbox as ibx
+        self._require_host("read the owner question queue")
+        return ibx.open_questions(self._read_inbox())
+
+    # -- COS host-engine capabilities (CUT-01E) ---------------------------
+    def cos_propose(self, content: str, *, ident: str | None = None) -> dict[str, Any]:
+        """VM-ALLOWED unsigned proposal ingress — writes to the proposal-drop
+        dir that ``sync`` NEVER reads. Available on both legs (like
+        ``draft_capture``); the broker/owner gate is what makes it safe."""
+        from . import cos as cos_mod
+
+        return cos_mod.propose(self.vault, content, ident=ident)
+
+    def cos_propose_correction(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """VM-ALLOWED correction drop (verdict-drop/) — see docs/cos-ops.md."""
+        from . import cos as cos_mod
+
+        return cos_mod.propose_correction(self.vault, payload)
+
+    def cos_broker_fold(self, *, today: Any = None) -> dict[str, Any]:
+        """HOST broker step (wired into ``maintain``): claim + validate drops,
+        expire/requeue, consume owner answers (move ONLY accepted candidates
+        into capture-inbox), release due holds, enqueue at most one new
+        signed batch, GC. Each stage is independent — one failure never
+        aborts the rest."""
+        from . import cos as cos_mod
+        import datetime as _dt
+
+        self._require_host("run the COS broker")
+        now = (_dt.datetime.combine(today, _dt.time(3, 0), tzinfo=_dt.timezone.utc)
+               if isinstance(today, _dt.date) and not isinstance(today, _dt.datetime)
+               else (today or _dt.datetime.now(_dt.timezone.utc)))
+        report: dict[str, Any] = {"ritual": "cos-broker", "errors": []}
+        cos_mod.ensure_layout(self.vault)
+        def _expire_batches() -> list[str]:
+            expired = cos_mod.expire_batches(self.vault, now)
+            cos_mod.close_expired_batch_questions(self, expired)
+            return expired
+
+        for stage, fn in (
+            ("claimed", lambda: cos_mod.claim_drops(self.vault, now)),
+            ("batch_expired", _expire_batches),
+            ("proposals_expired", lambda: cos_mod.expire_proposals(self.vault, now)),
+            ("consumed", lambda: cos_mod.consume_answers(self, now)),
+            ("holds_released", lambda: cos_mod.hold_release_due(self.vault, now)),
+            ("corrections_asked", lambda: cos_mod.enqueue_correction_questions(self, now)),
+            # ING-04: route auto-capture-eligible pending proposals into the
+            # hold store BEFORE building the owner batch, so only
+            # non-qualifying candidates ever reach the owner.
+            ("auto_captured", lambda: cos_mod.auto_capture_fold(self.vault, now)),
+            ("batch", lambda: cos_mod.enqueue_batch(self, now)),
+            ("gc", lambda: cos_mod.gc_compact(self.vault, now)),
+            # SP-01/SP-02: refresh the VM-readable spine-summary.md projection
+            # every fold so the brief's LATE+RADAR section is never stale.
+            ("spine_rendered", lambda: self.cos_spine_render(now=now)),
+        ):
+            try:
+                report[stage] = fn()
+            except Exception as exc:  # noqa: BLE001 — stage-isolated, surfaced
+                report["errors"].append(f"{stage}: {type(exc).__name__}: {exc}")
+        return report
+
+    def cos_ingest_sweep(self, *, downloads_dir: str | Path | None = None,
+                         dry_run: bool = False) -> dict[str, Any]:
+        """HOST sweeper (v2.1 field bug b): claim VM ingest-manifest lines and
+        move exact-filename matches from the host downloads dir into
+        ``<vault>/inbox/`` (the ordinary signed-ingest drop zone)."""
+        from . import cos as cos_mod
+
+        self._require_host("sweep host downloads into the ingest inbox")
+        return cos_mod.ingest_sweep(self.vault, downloads_dir=downloads_dir,
+                                    dry_run=dry_run)
+
+    def cos_correct(self, round_: int, msg_key: str, bucket: str, tier: str,
+                    *, actor: str = "host-cli") -> dict[str, Any]:
+        """HOST-only correction of record (append-only correction_events)."""
+        from . import cos as cos_mod
+
+        self._require_host("record a COS correction")
+        return cos_mod.record_correction(self.vault, round_, msg_key, bucket,
+                                         tier, actor=actor)
+
+    def cos_evidence_sign(self, **kwargs: Any) -> dict[str, Any]:
+        from . import cos as cos_mod
+
+        self._require_host("sign COS trust-gate evidence")
+        return cos_mod.sign_evidence(self.vault, **kwargs)
+
+    def cos_evidence_verify(self, bundle_dir: str | Path) -> dict[str, Any]:
+        from . import cos as cos_mod
+
+        self._require_host("verify COS evidence (resolves the signing key)")
+        return cos_mod.verify_evidence(bundle_dir)
+
+    def cos_priority_map(self, *, max_tier: str | None = None) -> dict[str, Any]:
+        from . import cos as cos_mod
+
+        self._require_host("generate the COS priority map")
+        return cos_mod.generate_priority_map(self, max_tier=max_tier)
+
+    def cos_report(self) -> dict[str, Any]:
+        """HOST-only shadow-mode calibration report (verdicts × corrections)."""
+        from . import cos as cos_mod
+
+        self._require_host("read the COS calibration report")
+        return cos_mod.calibration_report(self.vault)
+
+    def cos_hold_add(self, content: str, *, not_before: str,
+                     ident: str | None = None) -> dict[str, Any]:
+        from . import cos as cos_mod
+
+        self._require_host("add an auto-capture hold")
+        return cos_mod.hold_add(self.vault, content, not_before=not_before,
+                                ident=ident)
+
+    def cos_hold_list(self) -> list[dict[str, Any]]:
+        from . import cos as cos_mod
+
+        self._require_host("list auto-capture holds")
+        return cos_mod.hold_list(self.vault)
+
+    def cos_hold_cancel(self, ident: str) -> bool:
+        from . import cos as cos_mod
+
+        self._require_host("cancel an auto-capture hold")
+        return cos_mod.hold_cancel(self.vault, ident)
+
+    def cos_hold_release_due(self) -> list[str]:
+        from . import cos as cos_mod
+
+        self._require_host("release due auto-capture holds")
+        return cos_mod.hold_release_due(self.vault)
+
+    def cos_spine_record(self, *, event: str, direction: str | None = None,
+                         counterparty: str | None = None, text: str | None = None,
+                         topic: str | None = None, due: str | None = None,
+                         source_ref: str | None = None, note: str | None = None,
+                         commitment_id: str | None = None) -> dict[str, Any]:
+        """HOST-only manual/host-sourced spine event (e.g. a calendar
+        follow-up or drafts-ledger item spotted outside the ingestion
+        pipeline). Ingestion-candidate commitments are recorded automatically
+        by ``cos_broker_fold`` on owner acceptance — this verb is for the
+        other two named sources (calendar follow-ups, the drafts ledger)."""
+        from . import spine as spine_mod
+
+        self._require_host("record a commitment-spine event")
+        return spine_mod.record_event(
+            self.vault, event=event, direction=direction, counterparty=counterparty,
+            text=text, topic=topic, due=due, source_ref=source_ref, note=note,
+            commitment_id=commitment_id)
+
+    def cos_spine_radar(self) -> dict[str, Any]:
+        from . import spine as spine_mod
+
+        self._require_host("read the commitment-spine radar")
+        return spine_mod.radar(self.vault)
+
+    def cos_spine_render(self, *, now: Any = None) -> dict[str, Any]:
+        from . import spine as spine_mod
+
+        self._require_host("render the commitment-spine summary")
+        return spine_mod.render_spine_summary(self.vault, now)
+
+    def _engine_feedback_dir(self) -> Path:
+        return config.brain_runtime_dir(self.vault) / "engine-feedback"
+
+    def retro(self, *, today: Any = None) -> dict[str, Any]:
+        """Retro fold: scan this vault's own maintenance output for engine
+        FAILURE SIGNATURES (future dates, absolute-path leakage, duplicate
+        findings, future artifacts, hot.md bloat) and write a ready-to-run
+        engine-repo prompt into ``.brain/engine-feedback/`` for each. Host-only,
+        idempotent (one file per signature per day). Returns the signature ->
+        evidence map plus the feedback files written."""
+        from . import retro as rmod
+        import datetime as _dt
+        self._require_host("run the retro fold")
+        d = today or _dt.date.today()
+
+        hot_path = self._hot_md_path()
+        hot_text = hot_path.read_text(encoding="utf-8") if hot_path.exists() else ""
+        hot_bytes = hot_path.stat().st_size if hot_path.exists() else 0
+        findings = rmod.scan(hot_text, config.brief_dir(self.vault), d, hot_md_bytes=hot_bytes)
+
+        written: list[str] = []
+        fb_dir = self._engine_feedback_dir()
+        for signature, evidence in findings.items():
+            slug, md = rmod.render_engine_feedback(signature, evidence, d)
+            fpath = fb_dir / f"{slug}.md"
+            if not fpath.exists():
+                fb_dir.mkdir(parents=True, exist_ok=True)
+                fpath.write_text(md, encoding="utf-8")
+                written.append(fpath.name)
+        return {"date": d.isoformat(), "findings": findings, "feedback_written": written}
+
+    def pending_engine_feedback(self) -> list[str]:
+        """Filenames of engine-feedback prompts waiting to be fired at the repo
+        (surfaced by the SessionStart hook)."""
+        fb_dir = self._engine_feedback_dir()
+        return sorted(f.name for f in fb_dir.glob("*.md")) if fb_dir.is_dir() else []
+
     def _daily_note_fold(self, today: Any, brief_result: Any = None) -> dict[str, Any]:
         """Daily fold: create today's ``type: daily`` note exactly once per day.
 
@@ -2259,6 +2518,16 @@ class BrainCore:
             if dry_run:
                 results["status"] = self.status()
             else:
+                # Field bug 1 self-heal: reap any future-dated brief/digest
+                # HTML (a `--date <future>` leak shadows the real day's
+                # artifact). Cheap, id-free, safe — derived files only.
+                reaped = maint.reap_future_dated_artifacts(config.brief_dir(self.vault), d)
+                if reaped:
+                    auto_fixed.append(maint.auto_fixed_item(
+                        "reap-future-artifacts", "brief/",
+                        f"removed {len(reaped)} future-dated brief/digest file(s): "
+                        f"{', '.join(reaped)}"))
+
                 # WSP-01 workspace sweep — BEFORE sync, so the ingest drain
                 # inside sync picks up what the sweep just staged (settled
                 # workspace files gain their lifecycle in the same nightly:
@@ -2280,6 +2549,60 @@ class BrainCore:
                         blocked.append(maint.blocked_item(
                             f"workspace sweep failed: {exc}",
                             "filesystem", "next maintain run"))
+                # CUT-01E: the COS broker step runs BEFORE the first sync so
+                # broker-accepted candidates and released holds land in
+                # capture-inbox in time for THIS run's drain to sign them —
+                # a VM cos-propose drop becomes a queued owner-inbox batch
+                # within one nightly interval, never "eventually".
+                try:
+                    cos_res = self.cos_broker_fold(today=d)
+                    results["cos_broker"] = cos_res
+                    if cos_res.get("claimed", {}).get("claimed"):
+                        auto_fixed.append(maint.auto_fixed_item(
+                            "cos-broker", str(self.vault),
+                            f"claimed {len(cos_res['claimed']['claimed'])} COS "
+                            f"proposal drop(s) for owner review"))
+                    if cos_res.get("batch", {}).get("enqueued"):
+                        auto_fixed.append(maint.auto_fixed_item(
+                            "cos-broker", "owner inbox",
+                            f"queued COS ingestion batch "
+                            f"{cos_res['batch']['batch_id']} "
+                            f"({len(cos_res['batch']['candidates'])} candidate(s))"))
+                    consumed = cos_res.get("consumed", {}) or {}
+                    if consumed.get("accepted"):
+                        auto_fixed.append(maint.auto_fixed_item(
+                            "cos-broker", str(self.capture_inbox_dir()),
+                            f"moved {len(consumed['accepted'])} owner-accepted "
+                            f"candidate(s) into capture-inbox for signing"))
+                    if cos_res.get("holds_released"):
+                        auto_fixed.append(maint.auto_fixed_item(
+                            "cos-broker", str(self.capture_inbox_dir()),
+                            f"released {len(cos_res['holds_released'])} due "
+                            f"auto-capture hold(s)"))
+                    for err in cos_res.get("errors", []):
+                        blocked.append(maint.blocked_item(
+                            f"COS broker stage failed: {err}",
+                            "cos ops dir / owner inbox / signing key",
+                            "next maintain run"))
+                except Exception as exc:
+                    blocked.append(maint.blocked_item(
+                        f"COS broker fold failed: {exc}",
+                        "cos ops dir", "next maintain run"))
+                # v2.1: sweep VM ingest-manifest lines against the host
+                # downloads dir BEFORE sync, so a matched attachment lands in
+                # inbox/ in time for THIS run's ingest drain to sign it.
+                try:
+                    sweep_res = self.cos_ingest_sweep()
+                    results["cos_ingest_sweep"] = sweep_res
+                    if sweep_res.get("moved"):
+                        auto_fixed.append(maint.auto_fixed_item(
+                            "cos-ingest-sweep", str(self.vault / "inbox"),
+                            f"moved {len(sweep_res['moved'])} manifest-named "
+                            f"download(s) into inbox/ for signed ingest"))
+                except Exception as exc:
+                    blocked.append(maint.blocked_item(
+                        f"COS ingest sweep failed: {exc}",
+                        "downloads dir / cos ops dir", "next maintain run"))
                 try:
                     # First pass WITHOUT publish: the self-organization folds
                     # below mutate metadata/paths, and the snapshot must carry
@@ -2289,10 +2612,12 @@ class BrainCore:
                     added = sync_res.get("added", 0)
                     updated = sync_res.get("updated", 0)
                     deleted = sync_res.get("deleted", 0)
-                    if added or updated or deleted:
+                    rebased = sync_res.get("rebased", 0)
+                    if added or updated or deleted or rebased:
+                        reb = f" ={rebased} path-rebased (move, no re-embed)" if rebased else ""
                         auto_fixed.append(maint.auto_fixed_item(
                             "sync", str(self.vault),
-                            f"index reconciled +{added} ~{updated} -{deleted}"))
+                            f"index reconciled +{added} ~{updated} -{deleted}{reb}"))
                     drain = sync_res.get("drain", {}) or {}
                     if drain.get("promoted"):
                         auto_fixed.append(maint.auto_fixed_item(
@@ -2612,8 +2937,13 @@ class BrainCore:
                     results["promote_scan"] = promote_res
                     if not dry_run:
                         if curate_res.get("stale_links") or curate_res.get("revisit_sample"):
+                            # Idempotency key = hash of the DISTINCT stale-target
+                            # set, NOT the run date, so an unchanged dangling set
+                            # isn't re-reported every week under a fresh key
+                            # (field bug 2).
                             self._append_hot_once(
-                                f"maintain:curate:{d.isoformat()}",
+                                "maintain:curate:"
+                                + maint.curation_finding_key(curate_res["stale_links"]),
                                 maint.render_curation_hot_entry(
                                     curate_res["stale_links"], curate_res["revisit_sample"], d),
                             )
@@ -2623,6 +2953,19 @@ class BrainCore:
                                 maint.render_promote_scan_hot_entry(promote_res["candidates"], d),
                             )
                         results["digest_html"] = self.digest_html(days=7, today=d)
+                        # Retro fold (PUSH redesign): deterministic scan of this
+                        # vault's own maintenance output for engine failure
+                        # signatures -> ready-to-run prompts in engine-feedback/.
+                        # Fires weekly here so it stands even if the model-backed
+                        # synthesis session doesn't run; the synthesis prompt
+                        # ALSO calls `brain retro` to act on what it finds.
+                        retro_res = self.retro(today=d)
+                        results["retro"] = retro_res
+                        if retro_res["feedback_written"]:
+                            auto_fixed.append(maint.auto_fixed_item(
+                                "retro", "engine-feedback/",
+                                f"filed {len(retro_res['feedback_written'])} engine "
+                                f"bug prompt(s): {', '.join(retro_res['feedback_written'])}"))
                     _mark("digest", True)
                 except Exception as exc:
                     blocked.append(maint.blocked_item(

@@ -40,6 +40,37 @@ def auto_fixed_item(verb: str, path: str, reason: str) -> dict[str, Any]:
     return {"verb": verb, "path": path, "reason": reason}
 
 
+_DATED_ARTIFACT = re.compile(r"^(?:brief|digest)-(\d{4}-\d{2}-\d{2})\.html$")
+
+
+def reap_future_dated_artifacts(brief_dir: Path, today: datetime.date) -> list[str]:
+    """Delete generation-stamped brief/digest HTML whose embedded date is AFTER
+    ``today``. Such a file can only exist because a maintain run computed a
+    future date (field bug 1, e.g. a `--date <future>` exercise leaked onto a
+    live vault) — and it SHADOWS the real artifact for that day. Self-heal: the
+    next real nightly reaps it, so the corruption clears with no manual ritual
+    (self-organizing-vault ruling). Touches only derived, regenerable
+    `.brain/brief/` files — never a source note. Returns reaped basenames."""
+    reaped: list[str] = []
+    if not brief_dir.is_dir():
+        return reaped
+    for f in sorted(brief_dir.glob("*.html")):
+        m = _DATED_ARTIFACT.match(f.name)
+        if not m:
+            continue
+        try:
+            fdate = datetime.date.fromisoformat(m.group(1))
+        except ValueError:
+            continue
+        if fdate > today:
+            try:
+                f.unlink()
+                reaped.append(f.name)
+            except OSError:
+                pass
+    return reaped
+
+
 def action_required_item(
     finding: str, why: str, proposed: str, inspect: str
 ) -> dict[str, Any]:
@@ -325,28 +356,73 @@ def resolve_recommendation(
 # Sunday curation/promotion-scan hot-queue renderers (AUT-02). Pure markdown
 # builders — ``BrainCore.maintain`` does the idempotent file I/O.
 # ---------------------------------------------------------------------------
+def aggregate_stale_links(
+    stale_links: list[dict[str, Any]],
+) -> tuple[list[tuple[str, dict[str, Any]]], int, int]:
+    """Collapse a (possibly huge) raw stale-link list into per-target
+    aggregates sorted by frequency. Returns ``(sorted_targets, distinct_srcs,
+    total_occurrences)`` where each ``sorted_targets`` item is
+    ``(target_text, {"count", "reason", "example"})``. Field bug 2: the fold
+    once dumped 4341 raw rows into hot.md as a wall of text — aggregate so an
+    unbounded dangling set becomes a bounded summary + top offenders."""
+    by_target: dict[str, dict[str, Any]] = {}
+    src_notes: set[str] = set()
+    for s in stale_links:
+        target = s.get("target_text") or "(empty)"
+        frm = (s.get("from") or {}).get("id") or "(unknown)"
+        src_notes.add(frm)
+        agg = by_target.setdefault(
+            target, {"count": 0, "reason": s.get("reason"), "example": frm})
+        agg["count"] += 1
+    ordered = sorted(by_target.items(), key=lambda kv: (-kv[1]["count"], kv[0]))
+    return ordered, len(src_notes), len(stale_links)
+
+
+def curation_finding_key(stale_links: list[dict[str, Any]]) -> str:
+    """A content hash of the DISTINCT stale-target set, for the hot.md
+    idempotency key. Keying on this instead of the run date stops the fold
+    re-reporting an IDENTICAL dangling set every week under a fresh
+    ``maintain:curate:<date>`` key (field bug 2). An empty set yields
+    ``"none"`` (the caller only appends when there are findings)."""
+    targets = sorted({(s.get("target_text") or "") for s in stale_links})
+    if not targets:
+        return "none"
+    import hashlib
+    return hashlib.sha256("\n".join(targets).encode("utf-8")).hexdigest()[:12]
+
+
 def render_curation_hot_entry(
     stale_links: list[dict[str, Any]], revisit_sample: list[dict[str, Any]],
     today: datetime.date,
 ) -> str:
-    lines = [f"## {today.isoformat()} — Sunday curation scan"]
+    # Neutral label (no weekday): this is the "Sunday branch" but runs on
+    # whatever day it's DUE via due-since-last-run catch-up, so a hardcoded
+    # "Sunday" mislabelled catch-up runs on other weekdays (field bug 1).
+    ordered, distinct_srcs, total = aggregate_stale_links(stale_links)
+    lines = [f"## {today.isoformat()} — curation scan"]
     lines.append(
-        f"- **Context:** scheduled curation fold found {len(stale_links)} stale "
-        f"wikilink target(s) and a {len(revisit_sample)}-note revisit sample."
+        f"- **Context:** curation fold found {total} stale wikilink "
+        f"occurrence(s) — {len(ordered)} distinct target(s) across "
+        f"{distinct_srcs} note(s); {len(revisit_sample)}-note revisit sample."
     )
-    for s in stale_links[:10]:
-        target = s.get("target_text")
-        reason = s.get("reason")
-        frm = s.get("from", {}).get("id")
-        lines.append(f"  - stale link: `{frm}` -> `{target}` ({reason})")
+    if ordered:
+        lines.append(f"- Top offenders (of {len(ordered)} distinct targets):")
+        for target, agg in ordered[:10]:
+            lines.append(
+                f"  - `{target}` — {agg['count']}× ({agg['reason']}), "
+                f"e.g. from `{agg['example']}`"
+            )
+        if len(ordered) > 10:
+            lines.append(f"  - … {len(ordered) - 10} more distinct target(s)")
     for r in revisit_sample[:10]:
         lines.append(
             f"  - revisit: `{r.get('id')}` (last updated {r.get('updated')}, "
             f"age {r.get('age_days')}d, score {r.get('score')})"
         )
     lines.append(
-        "- **Owner input needed:** review via `brain curate --json` or the "
-        "`.claude/skills/curation` skill for full detail."
+        "- **Tier-1 (auto-resolved by the weekly synthesis session):** "
+        "unambiguous stale-link fixes are applied on the audited path; this is "
+        "the LOG, not a queue. Detail: `brain curate --json` / the `curation` skill."
     )
     return "\n".join(lines) + "\n"
 
@@ -705,16 +781,25 @@ def update_golden_attempt_marker(
 
 
 def render_promote_scan_hot_entry(candidates: list[dict[str, Any]], today: datetime.date) -> str:
-    lines = [f"## {today.isoformat()} — Sunday promotion-scan"]
+    # Neutral label (see render_curation_hot_entry) — catch-up runs fire on
+    # non-Sunday weekdays, so a hardcoded "Sunday" mislabels them (field bug 1).
+    lines = [f"## {today.isoformat()} — promotion-scan"]
     lines.append(
         f"- **Context:** {len(candidates)} `raw/` source(s) not yet promoted "
         "into a typed `brain/` note."
     )
+    # Note id only — never the absolute path. The stored path is absolute, so
+    # echoing it into hot.md left every entry stale after a vault move (field
+    # bug 3); the id is a stable, move-proof handle.
     for c in candidates[:10]:
-        lines.append(f"  - `{c.get('id')}` ({c.get('path')})")
+        lines.append(f"  - `{c.get('id')}`")
+    if len(candidates) > 10:
+        lines.append(f"  - … {len(candidates) - 10} more")
     lines.append(
-        "- **Owner input needed:** review for promotion (`brain capture` / "
-        "`brain write`) — promotion itself stays a human gate."
+        "- **Tier-1 (auto-resolved by the weekly synthesis session):** the "
+        "obviously-promotable candidates are promoted into typed notes on the "
+        "audited path; this is the LOG. A genuinely owner-only call is enqueued "
+        "to the `brain inbox` instead."
     )
     return "\n".join(lines) + "\n"
 

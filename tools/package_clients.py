@@ -66,12 +66,14 @@ KERNEL_SKILLS = [
     "vault-eval",
     "save-conversation",
     "voice",
+    "brain-inbox",
 ]
 EXTRAS_SKILLS = [
     "curation",
     "improve",
     "task-registrar",
     "autoresearch",
+    "chief-of-staff",
 ]
 ALL_SKILLS = KERNEL_SKILLS + EXTRAS_SKILLS
 

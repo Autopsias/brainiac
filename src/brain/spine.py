@@ -55,6 +55,19 @@ def _utcnow() -> _dt.datetime:
     return _dt.datetime.now(_dt.timezone.utc)
 
 
+def _json_safe(v: Any) -> Any:
+    """The event log is JSON text, but callers hand us values straight out of
+    YAML frontmatter, where an unquoted `due: 2026-07-17` parses as a
+    `datetime.date` — not JSON-serializable. Normalize dates to ISO at this one
+    boundary: every source (ingestion candidates, `brain cos-spine record`,
+    calendar follow-ups) routes through record_event, and the reducer/radar
+    read `due` back as ISO text either way.
+    """
+    if isinstance(v, (_dt.date, _dt.datetime)):
+        return v.isoformat()
+    return v
+
+
 def _ts(dt: _dt.datetime | None = None) -> str:
     return (dt or _utcnow()).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -227,7 +240,7 @@ def record_event(vault, *, event: str, direction: str | None = None,
                  ("text", text), ("topic", _topic_of(text or "", topic) if text or topic else None),
                  ("due", due), ("source_ref", source_ref), ("note", note)):
         if v is not None:
-            evidence[k] = v
+            evidence[k] = _json_safe(v)
 
     conn = _conn(vault)
     try:

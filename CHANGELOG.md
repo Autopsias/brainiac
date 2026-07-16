@@ -7,6 +7,36 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.18.1] — 2026-07-16
+### Fixed
+- **The commitment spine ingested nothing — 0.18.0's headline feature was a
+  silent no-op in the shape the shipped skill actually emits.** The COS kernel
+  writes unquoted date-only frontmatter (`due: 2026-07-17`); YAML parses that
+  to a `datetime.date`, so `spine.record_event`'s `json.dumps` of the event
+  evidence raised `TypeError`. `consume_answers` catches spine failures by
+  design ("never block acceptance"), so every accepted commitment candidate
+  signed as a note normally while its spine row silently never appeared —
+  leaving SP-01's only wired source ingesting nothing and the brief's
+  LATE+RADAR half on pre-v4 heuristics. Fixed at the one boundary every source
+  routes through (ingestion candidates, `brain cos-spine record`, future
+  calendar/drafts sources): `record_event` now normalizes `date`/`datetime` to
+  ISO text. Two independent test holes closed: the fixture used
+  `due: ...T00:00:00Z` (re-serialized to a string by the claim path, so it
+  dodged the bug), and `test_spine_keeper_commitment_gets_note_and_spine_row`
+  asserted only on `accepted` + the signed note — never the spine row its own
+  name promises, so a swallowed error still passed. The new date-only
+  regression test fails on the pre-fix code and passes after.
+- **Nothing scheduled the COS host broker fold.** The hourly task runs
+  `brain maintain`, which has no `cos_broker`/spine code path, so the fold that
+  claims VM proposal drops, releases holds, runs auto-capture, enqueues the
+  owner batch, and renders `shared/spine-summary.md` was only ever invoked by
+  hand. Field effect on the reference deployment: proposals stranded ~29h,
+  spine summary never rendered. `scripts/brain-brief.sh` now runs
+  `brain cos-broker` before `maintain` (so notes it signs are indexed and
+  published by the same run's sync), non-fatally so a broker failure can never
+  cost the vault its capture-drain floor. Static order guard:
+  `tests/test_brief_script_wiring.py`.
+
 ## [0.18.0] — 2026-07-16
 ### Added
 - **Chief-of-staff (COS) host engine — the `brain cos-*` verb family.**

@@ -63,6 +63,14 @@ fi
 
 {
   echo "=== brain-daily-brief / brain-nightly $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+  # cos-broker FIRST: the host broker fold claims VM proposal drops, releases due
+  # holds, runs auto-capture, enqueues the owner batch, and renders
+  # shared/spine-summary.md. Nothing else schedules it -- without this line the
+  # VM proposes into a drop dir no one drains (measured 2026-07-16: spine DB empty,
+  # candidates unclaimed ~29h) . It runs BEFORE maintain so notes it signs are
+  # indexed + published by the same run's sync. Host-only, idempotent, and
+  # NON-FATAL: a broker failure must never cost the vault its capture-drain floor.
+  "$BRAIN_BIN" cos-broker --json || echo "brain-brief: cos-broker fold failed (non-fatal), continuing to maintain"
   # maintain: sync --publish (drain pending captures + reconcile index +
   # republish snapshot) + brief, THEN whichever of health/integrity/digest is
   # due today (date-gated). graphify is documented-only (no build invoked --

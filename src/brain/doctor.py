@@ -858,6 +858,51 @@ def check_vm_model_cache(vault: Path) -> dict:
     return _row(surface, CURRENT, f"{model_dir} present ({n_files} file(s))")
 
 
+# The pinned Cowork-VM interpreter (field finding 2026-07-18: cp311 wheels
+# staged for the 3.10-only VM caused a 10-run EmbedderUnavailable outage).
+# Keep in lockstep with tools/vendor_semantic_deps.py's VM_PYTHON.
+_VM_PYTHON = (3, 10)
+
+_CPYTHON_SO_RE = re.compile(r"\.cpython-(\d)(\d+)-")
+
+
+def check_vendor_abi(vendor_dir: Path, interpreter: tuple[int, int]) -> dict:
+    """Report the vendored wheels' extension-module ABI tags against the
+    interpreter that will import them, and NAME a mismatch explicitly
+    ("vendor is cp311 but interpreter is 3.10") instead of leaving the VM to
+    die later with a bare EmbedderUnavailable. Reads only filenames of
+    extracted ``.so`` files (``*.cpython-3XX-*.so`` / ``*.abi3.so``)."""
+    surface = "Vendored deps ABI (.brain/vendor)"
+    want = f"cp{interpreter[0]}{interpreter[1]}"
+    if not vendor_dir.is_dir():
+        return _row(surface, NOT_DETECTABLE, f"no vendor dir at {vendor_dir}")
+    tags: set[str] = set()
+    for so in vendor_dir.rglob("*.so"):
+        m = _CPYTHON_SO_RE.search(so.name)
+        if m:
+            tags.add(f"cp{m.group(1)}{m.group(2)}")
+        elif so.name.endswith(".abi3.so"):
+            tags.add("abi3")
+    if not tags:
+        return _row(surface, NOT_DETECTABLE,
+                    f"no tagged extension modules under {vendor_dir} — vendor not staged "
+                    "(VM runs lexical-only)")
+    bad = sorted(t for t in tags if t not in ("abi3", want))
+    if bad:
+        return _row(surface, STALE,
+                    f"vendor is {'/'.join(bad)} but interpreter is "
+                    f"{interpreter[0]}.{interpreter[1]} — the vendored wheels cannot import "
+                    "here, so semantic search dies with EmbedderUnavailable",
+                    remediation="re-stage from the host: tools/cowork_workspace_install.sh "
+                                f"(vendored wheels must be {want}/abi3 — "
+                                "tools/vendor_semantic_deps.py now refuses mismatched tags)",
+                    raw={"tags": sorted(tags), "interpreter": want})
+    return _row(surface, CURRENT,
+                f"vendored ABI tags {sorted(tags)} match interpreter "
+                f"{interpreter[0]}.{interpreter[1]}",
+                raw={"tags": sorted(tags), "interpreter": want})
+
+
 def check_embedder_liveness() -> dict:
     """Probe whether the LIVE runtime can produce real semantic embeddings, or
     would silently degrade to the non-semantic HashEmbedder (DV-03, 2026-07-09).
@@ -962,6 +1007,12 @@ def run_doctor_vm(vault: Optional[str | os.PathLike[str]] = None) -> dict[str, A
     rows.extend(check_workspace_schema(entries, SCHEMA_VERSION))
     rows.append(check_vm_snapshot(vault_path))
     rows.append(check_vm_model_cache(vault_path))
+    # 2026-07-18 field report: name a staged-ABI mismatch ("vendor is cp311 but
+    # interpreter is 3.10") instead of a bare EmbedderUnavailable downstream.
+    import sys as _sys
+
+    rows.append(check_vendor_abi(config.brain_runtime_dir(vault_path) / "vendor",
+                                 _sys.version_info[:2]))
     rows.append(check_embedder_liveness())  # DV-03: model files present ≠ embedder loads
     rows.append(check_vm_maintain_heartbeat(vault_path))
     rows.extend(_row(s, NOT_DETECTABLE,
@@ -1071,6 +1122,15 @@ def run_doctor(
             remediation="run `brain doctor --role vm` for the VM-appropriate surfaces, "
                         "or run this on the full host checkout"))
     rows.extend(check_staged_workspaces(registry_entries, ssot))
+    # 2026-07-18 field report: report staged-vendor ABI vs the PINNED VM
+    # interpreter (the host's own python is irrelevant to linux wheels) for
+    # every registered cowork workspace that has a vendor dir.
+    for entry in registry_entries:
+        if entry.get("target") == "host":
+            continue
+        vdir = Path(_cowork_vault_dir(entry)) / ".brain" / "vendor"
+        if vdir.is_dir():
+            rows.append(check_vendor_abi(vdir, _VM_PYTHON))
     rows.extend(check_staged_skill_bundles(registry_entries, ssot))
     rows.extend(check_workspace_schema(registry_entries, SCHEMA_VERSION))
     rows.append(check_marketplace_cache(marketplace_dir))

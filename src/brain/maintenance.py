@@ -391,6 +391,20 @@ def curation_finding_key(stale_links: list[dict[str, Any]]) -> str:
     return hashlib.sha256("\n".join(targets).encode("utf-8")).hexdigest()[:12]
 
 
+def promote_scan_finding_key(candidates: list[dict[str, Any]]) -> str:
+    """A content hash of the DISTINCT candidate-id set, for the hot.md
+    idempotency key — same treatment as ``curation_finding_key``. Keying on
+    the run date re-reported an IDENTICAL candidate set every run under a
+    fresh ``maintain:promote-scan:<date>`` key (retro signature
+    ``duplicate-findings``); a changed candidate set still yields a new key,
+    so a genuinely new finding still logs."""
+    ids = sorted({str(c.get("id") or "") for c in candidates})
+    if not ids:
+        return "none"
+    import hashlib
+    return hashlib.sha256("\n".join(ids).encode("utf-8")).hexdigest()[:12]
+
+
 def render_curation_hot_entry(
     stale_links: list[dict[str, Any]], revisit_sample: list[dict[str, Any]],
     today: datetime.date,
@@ -802,6 +816,62 @@ def render_promote_scan_hot_entry(candidates: list[dict[str, Any]], today: datet
         "to the `brain inbox` instead."
     )
     return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# hot.md rotation (retro signature ``hot-md-bloat``): handoff.md already
+# auto-rotates to archive/ at ~15 KB (docs/session-memory.md); hot.md gets the
+# same treatment at its own soft cap (``retro.HOT_MD_SOFT_MAX_BYTES``, 32 KB —
+# the size it reached unread in the field). Aged, resolved entries rotate to
+# ``archive/hot-<date>.md`` WITH their idempotency-key comment lines (so the
+# append-once guard still finds them there); recent entries and anything still
+# asking for owner input stay in the live file.
+# ---------------------------------------------------------------------------
+HOT_MD_ROTATE_KEEP_DAYS = 7
+
+
+def rotate_hot_md(
+    text: str, today: datetime.date, *,
+    max_bytes: int | None = None, keep_days: int = HOT_MD_ROTATE_KEEP_DAYS,
+) -> tuple[str, str]:
+    """Split hot.md into ``(kept_text, rotated_text)``.
+
+    No-op (``rotated_text == ""``) while the file is under ``max_bytes``.
+    When over, every idempotency-keyed block whose ``## <date>`` header is
+    older than ``keep_days`` AND that carries no open ``**Owner input
+    needed`` line moves to ``rotated_text``, key line included. Unkeyed
+    preamble, recent entries, and unresolved entries are always kept — a
+    soft cap: a file full of open owner questions stays over the limit
+    rather than losing one."""
+    from .retro import _HEADER_DATE_RE, _KEY_RE, HOT_MD_SOFT_MAX_BYTES
+
+    limit = HOT_MD_SOFT_MAX_BYTES if max_bytes is None else max_bytes
+    if len(text.encode("utf-8")) <= limit:
+        return text, ""
+    kept: list[str] = []
+    rotated: list[str] = []
+    for part in re.split(r"\n(?=<!--\s*idempotency-key:)", text):
+        block = part.strip("\n")
+        if not block:
+            continue
+        if not _KEY_RE.search(block):
+            kept.append(block)  # unkeyed preamble/tail — never rotated
+            continue
+        aged = False
+        m = _HEADER_DATE_RE.search(block)
+        if m:
+            try:
+                entry_date = datetime.date.fromisoformat(m.group("date"))
+                aged = (today - entry_date).days > keep_days
+            except ValueError:
+                aged = False
+        unresolved = "**Owner input needed" in block
+        (rotated if aged and not unresolved else kept).append(block)
+    if not rotated:
+        return text, ""
+    kept_text = ("\n\n".join(kept) + "\n") if kept else ""
+    rotated_text = "\n\n".join(rotated) + "\n"
+    return kept_text, rotated_text
 
 
 # ---------------------------------------------------------------------------

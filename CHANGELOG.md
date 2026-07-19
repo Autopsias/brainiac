@@ -7,6 +7,28 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.19.1] — 2026-07-20
+### Fixed
+- **Synthesis headless run hardening** (`brain-synthesis.sh`): default
+  max-turns raised 60→120 (the 08:00 run died `error_max_turns` at 61),
+  allowlist widened to the read-only diagnostics the watchdog prompt
+  requires, and an immediate notification ping fires on any non-zero exit
+  instead of waiting for the >8-day watchdog.
+- **Fold hygiene.** `hot.md` rotation (`rotate_hot_md()`): aged resolved
+  blocks archive past 32 KB while open owner questions never rotate.
+  Promote-scan findings are deduplicated by a content hash of the candidate
+  set instead of the run date, and hot-log entries relativize
+  vault-absolute paths.
+- **Vendor ABI pin.** `vendor_semantic_deps.py` pins the Cowork VM
+  interpreter (`VM_PYTHON=3.10`) and a wheel-tag guard refuses
+  non-cp310/abi3/pure wheels (a cp311 wheel caused a 10-run
+  EmbedderUnavailable outage); `brain doctor` gains a vendor-ABI row that
+  names the mismatch ("vendor is cpXYZ but interpreter is 3.10") on both
+  VM and host legs.
+- **COS behaviour report** excludes legacy content-rejoin rows and
+  verdict-unjoined rows from both sides of the consistency/contradiction
+  rates.
+
 ## [0.19.0] — 2026-07-19
 ### Added
 - **Chief-of-Staff kernel matured to v5.6.** The mail-triage/commitment

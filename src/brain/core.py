@@ -2125,17 +2125,57 @@ class BrainCore:
         """Append ``entry_md`` to ``hot.md`` guarded by an idempotency-key
         HTML comment; a no-op (returns ``False``) if the key is already
         present — the per-branch/per-run-date idempotency guard for every
-        scheduled fold that queues a hot-queue entry (HARDENED:codex)."""
+        scheduled fold that queues a hot-queue entry (HARDENED:codex).
+
+        Two shared gates live HERE so every fold renderer inherits them:
+        (1) vault-absolute paths are rewritten vault-relative (retro
+        signature ``absolute-paths`` — an absolute path in fold output goes
+        stale on a vault move); (2) the idempotency check also scans rotated
+        ``archive/hot-*.md`` segments, so an entry rotated out by
+        ``_rotate_hot_md`` is never re-appended under the same key."""
+        import os as _os
         path = self._hot_md_path()
         path.parent.mkdir(parents=True, exist_ok=True)
+        for root in {str(self.vault), str(Path(self.vault).resolve())}:
+            entry_md = entry_md.replace(root.rstrip(_os.sep) + _os.sep, "")
         marker = f"<!-- idempotency-key: {key} -->"
         existing = path.read_text(encoding="utf-8") if path.exists() else ""
         if marker in existing:
             return False
+        # ponytail: linear scan of rotated segments; index them if they ever
+        # number in the hundreds.
+        for seg in sorted((path.parent / "archive").glob("hot-*.md")):
+            try:
+                if marker in seg.read_text(encoding="utf-8"):
+                    return False
+            except OSError:
+                continue
         with path.open("a", encoding="utf-8") as fh:
             if existing and not existing.endswith("\n"):
                 fh.write("\n")
             fh.write(marker + "\n" + entry_md.rstrip("\n") + "\n\n")
+        return True
+
+    def _rotate_hot_md(self, today: Any) -> bool:
+        """Rotate aged, resolved hot.md entries into ``archive/hot-<date>.md``
+        once the live file exceeds the soft cap (retro signature
+        ``hot-md-bloat``) — same auto-rotate posture handoff.md already has.
+        Pure judgment lives in ``maintenance.rotate_hot_md``; this method is
+        the file I/O. Returns True when a rotation happened."""
+        from . import maintenance as maint
+        path = self._hot_md_path()
+        if not path.exists():
+            return False
+        kept, rotated = maint.rotate_hot_md(
+            path.read_text(encoding="utf-8"), today)
+        if not rotated:
+            return False
+        archive_dir = path.parent / "archive"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        seg = archive_dir / f"hot-{today.isoformat()}.md"
+        with seg.open("a", encoding="utf-8") as fh:
+            fh.write(rotated)
+        path.write_text(kept, encoding="utf-8")
         return True
 
     # -- Tier-2 owner question queue (PUSH redesign, 2026-07-13) --------------
@@ -2970,8 +3010,13 @@ class BrainCore:
                                     curate_res["stale_links"], curate_res["revisit_sample"], d),
                             )
                         if promote_res.get("candidates"):
+                            # Idempotency key = hash of the DISTINCT candidate-id
+                            # set, NOT the run date — an unchanged candidate set
+                            # isn't re-reported every run under a fresh key
+                            # (retro signature: duplicate-findings).
                             self._append_hot_once(
-                                f"maintain:promote-scan:{d.isoformat()}",
+                                "maintain:promote-scan:"
+                                + maint.promote_scan_finding_key(promote_res["candidates"]),
                                 maint.render_promote_scan_hot_entry(promote_res["candidates"], d),
                             )
                         results["digest_html"] = self.digest_html(days=7, today=d)
@@ -3371,6 +3416,13 @@ class BrainCore:
             results["notifications"] = notifications
 
             if not dry_run:
+                # hot-md-bloat: rotate aged/resolved entries to archive/ once
+                # the live file exceeds the soft cap. Best-effort hygiene —
+                # never allowed to fail the maintain run.
+                try:
+                    self._rotate_hot_md(d)
+                except Exception:  # noqa: BLE001
+                    pass
                 # In-process graphify (owner decision 2026-07-11): the
                 # `_graphify_drift` marker is written by `_run_bounded_graphify`
                 # within THIS process, into THIS `state` dict, so `state` already

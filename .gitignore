@@ -54,6 +54,11 @@ _evidence/eval/*
 !_evidence/eval/heartbeat.txt
 !_evidence/eval/DONE
 !_evidence/eval/capture.lock
+# S01 (obs-recovery-2026-07) baseline report: synthetic-vault timings + generic
+# error-string counts only, never real owner/vault content.
+!_evidence/obs-recovery-2026-07/
+_evidence/obs-recovery-2026-07/*
+!_evidence/obs-recovery-2026-07/baseline.md
 eval/_expand/
 eval/golden_set*.json
 eval/qrels/

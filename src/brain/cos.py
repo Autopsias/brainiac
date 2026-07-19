@@ -977,6 +977,13 @@ def shadow_ledger_entries(vault) -> list[dict[str, Any]]:
 BEHAVIOUR_OBSERVATIONS = ("owner_replied", "owner_flagged", "owner_read",
                           "owner_archived", "untouched")
 
+# Legacy VM-drop key scheme (pre-canonical-msg_key): `content-rejoin:<sender>|
+# <subject>` rows join 0/10 to any verdict row's msg_key (field evidence,
+# behaviour-r12.jsonl 2026-07-18) — grading them double-counts mail that is
+# already graded under its canonical key, so they are excluded from BOTH the
+# numerator and denominator of the consistency/contradiction rates.
+LEGACY_REJOIN_PREFIX = "content-rejoin:"
+
 
 def grade_behaviour(bucket: str, observed: str, *,
                     auto_archived: bool = False) -> str:
@@ -1031,6 +1038,22 @@ def behaviour_report(vault) -> dict[str, Any]:
     owner's own archive patterns (top senders he archives himself — evidence
     for FUTURE noise-signals, never an actuator by itself)."""
     entries = behaviour_entries(vault)
+    # Exclusion (2026-07-18 field report): legacy `content-rejoin:` keys — and,
+    # when a shadow ledger exists, any row whose msg_key joins no verdict —
+    # never enter the rates. No ledger at all ⇒ only the legacy scheme is
+    # excludable (can't prove a join miss against nothing).
+    ledger = known_ledger_keys(vault)
+    verdict_keys = {k for _, k in ledger} if ledger else None
+    excluded = 0
+    joined: list[dict[str, Any]] = []
+    for e in entries:
+        k = str(e.get("msg_key", ""))
+        if k.startswith(LEGACY_REJOIN_PREFIX) or (
+                verdict_keys is not None and k not in verdict_keys):
+            excluded += 1
+            continue
+        joined.append(e)
+    entries = joined
     per_bucket: dict[str, dict[str, int]] = {}
     contradicted_rows: list[dict[str, Any]] = []
     owner_archive_patterns: dict[str, int] = {}
@@ -1053,6 +1076,7 @@ def behaviour_report(vault) -> dict[str, Any]:
     contradicted = noise.get("contradicted", 0)
     return {
         "observations": len(entries),
+        "excluded_unjoined": excluded,
         "rounds_observed": len(rounds),
         "per_bucket": per_bucket,
         "noise_observed": noise_observed,

@@ -28,7 +28,10 @@ mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/synthesis-$(date +%F).log"
 REGISTRY="${BRAIN_WORKSPACES_JSON:-$HOME/.brainiac/workspaces.json}"
 CLAUDE_BIN="${BRAIN_CLAUDE_BIN:-$(command -v claude || echo "$HOME/.local/bin/claude")}"
-MAX_TURNS="${BRAIN_SYNTHESIS_MAX_TURNS:-60}"
+# 120, not 60: the 2026-07-19 08:00 run died error_max_turns at 61 while the
+# 22:26 rerun needed 96 turns for the same scope — 60 cannot fit a real
+# synthesis pass over a week's transcript batch.
+MAX_TURNS="${BRAIN_SYNTHESIS_MAX_TURNS:-120}"
 
 log() { printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$LOG"; }
 
@@ -95,17 +98,30 @@ PY
   # A per-run unique name (date + pid + two $RANDOM draws) avoids the
   # same-second collision the old date-second+pid name allowed (finding [9]).
   OUT_JSON="$LOG_DIR/synthesis-out-$(date +%F)-$$-${RANDOM}${RANDOM}.json"
+  # Allowlist covers the read-only diagnostics the watchdog prompt itself
+  # requires (logs, state files, index probes) — the 2026-07-19 runs burned
+  # 10+ turns on ls/cat/find/sqlite3/python3 denials. `Bash(python3 *)` is
+  # not a widening in practice: Write + `Bash(python3 tools/*)` already
+  # allowed arbitrary code by writing a file into tools/ first.
   ( cd "$WS" && BRAIN_VAULT="$VAULT" "$CLAUDE_BIN" -p "$PROMPT" \
       --max-turns "$MAX_TURNS" \
       --permission-mode acceptEdits \
       --output-format stream-json \
       --verbose \
-      --allowedTools "Read,Grep,Glob,Edit,Write,Bash(brain *),Bash(python3 tools/*)" \
+      --allowedTools "Read,Grep,Glob,Edit,Write,Bash(brain *),Bash(python3 *),Bash(ls *),Bash(cat *),Bash(head *),Bash(tail *),Bash(find *),Bash(grep *),Bash(wc *),Bash(sed *),Bash(sort *),Bash(uniq *),Bash(file *),Bash(diff *),Bash(sqlite3 *)" \
   ) < /dev/null > "$OUT_JSON" 2>>"$LOG"
   # < /dev/null: claude -p hangs forever reading a non-TTY stdin — and inside
   # this while-read loop it would otherwise inherit (and eat) the registry pipe
   RC=$?
   log "END synthesis: vault=$VAULT rc=$RC"
+  # Immediate failure ping (owner ask 2026-07-19): WATCHDOG-01 only trips at
+  # >8 days stale, which let two consecutive Sunday failures hide for two
+  # weeks. Best-effort banner, never fails the run; the durable channels are
+  # the log line above + synthesis-state.json (read by the session-start
+  # alerts hook).
+  if [ "$RC" -ne 0 ] && command -v osascript >/dev/null 2>&1; then
+    osascript -e "display notification \"weekly synthesis FAILED (rc=$RC) for $VAULT — see $LOG\" with title \"Brainiac health\"" >/dev/null 2>&1 || true
+  fi
   # Render a human-readable transcript from the structured NDJSON into $LOG
   # (finding [5]): the prior `tee`'d raw NDJSON REPLACED the readable session
   # transcript the weekly-watchdog prompt tells an operator to open. Structured

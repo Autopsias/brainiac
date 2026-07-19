@@ -44,8 +44,10 @@ mkdir -p "$BRAIN_DIR/bin" "$BRAIN_DIR/model" "$BRAIN_DIR/snapshot" \
 # (a) the engine, ZERO-INSTALL by default: the brain package is pure Python
 # with stdlib-only graceful degradation, so the VM runs it STRAIGHT FROM a
 # staged source copy (python3 -m brain.cli) — nothing is installed in the VM.
-# Dense query embedding is an optional in-VM `pip install onnxruntime
-# tokenizers numpy` (model files are already staged); without it the read
+# Dense query embedding needs the VENDORED wheels this installer stages below
+# via tools/vendor_semantic_deps.py (onnxruntime/numpy/tokenizers/sqlite-vec,
+# pinned to the VM's Python 3.10 ABI — the VM has NO network and the base
+# image ships none of them; in-VM pip is not a thing). Without them the read
 # verbs run lexical-first (BM25/grep/frontmatter), which is the design.
 echo "[install] engine source -> $BRAIN_DIR/engine/brain/"
 rm -rf "$BRAIN_DIR/engine"
@@ -153,22 +155,26 @@ PYTHONPATH="$REPO/src" "$HOST_PY" -m brain.cli snapshot --dest "$BRAIN_DIR/snaps
   --json | tee "$BRAIN_DIR/snapshot/export-snapshot.json"
 
 # (c2) VERIFY the offline semantic stack the VM will use (DV-03/DV-04). The VM
-# queries through the shim's python3, which needs: onnxruntime (present in the
-# Cowork base image), the vendored tokenizers + sqlite-vec staged above, and the
+# queries through the shim's python3 (pinned Python 3.10), which needs the
+# vendored onnxruntime + numpy + tokenizers + sqlite-vec staged above (the
+# Cowork base image ships NONE of them — field finding 2026-07-13) and the
 # staged model. We can't run the VM's python from here, so we verify what the
-# installer actually controls — that the vendored deps landed. `brain doctor` /
+# installer actually controls — that the vendored deps landed at the right ABI
+# (vendor_semantic_deps.py refuses non-cp310/abi3 wheels). `brain doctor` /
 # `brain status` on the VM leg confirm the LIVE embedder at session time (and the
 # VM fails closed on a dead embedder, never returning random hash results).
 echo "[install] verifying vendored semantic deps ..."
 missing=""
 for arch in aarch64 x86_64; do
   if [ -f "$BRAIN_DIR/vendor/$arch/tokenizers/tokenizers.abi3.so" ] \
-     && [ -f "$BRAIN_DIR/vendor/$arch/sqlite_vec/vec0.so" ]; then :; else
+     && [ -f "$BRAIN_DIR/vendor/$arch/sqlite_vec/vec0.so" ] \
+     && [ -d "$BRAIN_DIR/vendor/$arch/onnxruntime" ] \
+     && [ -d "$BRAIN_DIR/vendor/$arch/numpy" ]; then :; else
     missing="$missing $arch"
   fi
 done
 if [ -z "$missing" ]; then
-  echo "[install]   vendored tokenizers + sqlite-vec present (aarch64, x86_64)"
+  echo "[install]   vendored onnxruntime + numpy + tokenizers + sqlite-vec present (aarch64, x86_64)"
 else
   echo "[install] WARNING: vendored semantic deps missing for:$missing" >&2
   echo "          The VM runs lexical-only there (grep/bases-query still work) until" >&2

@@ -1,10 +1,11 @@
 """Stage the offline semantic-search deps the Cowork device VM can't pip-install
 (DV-04, 2026-07-09).
 
-The device VM has onnxruntime (base image) + the staged model, but NOT
-``tokenizers`` (query tokenisation) or ``sqlite-vec`` (vec0 ANN), and it has no
-outbound network. So the HOST (which does have network) downloads the per-arch
-wheels and unpacks them into ``<brain_dir>/vendor/<arch>/``; the shim puts the
+The device VM (pinned Python ``VM_PYTHON`` = 3.10, no outbound network, base
+image ships NONE of the compiled deps) needs ``onnxruntime`` + ``numpy``
+(inference), ``tokenizers`` (query tokenisation) and ``sqlite-vec`` (vec0 ANN).
+So the HOST (which does have network) downloads the per-arch cp310/abi3 wheels
+and unpacks them into ``<brain_dir>/vendor/<arch>/``; the shim puts the
 engine FIRST on ``PYTHONPATH`` with ``vendor/<arch>`` after it, and the VM
 imports the third-party deps locally — no pip, no egress.
 
@@ -26,6 +27,7 @@ Cowork VM runs. Pure stdlib — safe to import from anywhere.
 """
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import sys
@@ -34,6 +36,15 @@ import zipfile
 from pathlib import Path
 
 ARCHS = ("aarch64", "x86_64")
+
+# THE single pinned VM interpreter version. The Cowork Linux VM runs Python
+# 3.10 ONLY (field finding 2026-07-18: cp311 wheels staged for a 3.10 VM caused
+# a 10-run EmbedderUnavailable outage). Every pip-download job below derives
+# its --python-version from this, and check_wheel_tag() refuses any wheel whose
+# tag the pinned interpreter cannot import. Keep in lockstep with
+# src/brain/doctor.py's _VM_PYTHON.
+VM_PYTHON = "3.10"
+_VM_PY_NODOT = VM_PYTHON.replace(".", "")  # "310"
 
 # The zero-install shim, with the engine ahead of the vendored deps on
 # PYTHONPATH (codex 2026-07-19 — an untrusted wheel must not shadow the engine).
@@ -85,17 +96,46 @@ def _has_deps(arch_dir: Path) -> bool:
     )
 
 
+def check_wheel_tag(wheel_name: str, vm_python: str = VM_PYTHON) -> bool:
+    """True iff the wheel's filename tags are importable by the pinned VM
+    interpreter (regression guard, 2026-07-18: cp311 wheels staged for the
+    3.10-only VM caused the EmbedderUnavailable outage). Acceptable:
+    ``cp310``, ``abi3`` built at or below 3.10 (e.g. cp39-abi3), and pure
+    ``py3-none-any``. Refused: cp311/cp312/..., or any unparseable name."""
+    major, minor = (int(x) for x in vm_python.split("."))
+    stem = wheel_name[:-len(".whl")] if wheel_name.endswith(".whl") else wheel_name
+    parts = stem.split("-")
+    if len(parts) < 5:  # name-version[-build]-python-abi-platform
+        return False
+    py_tag, abi_tag = parts[-3], parts[-2]
+    if abi_tag not in (f"cp{major}{minor}", "abi3", "none"):
+        return False
+
+    def _py_ok(t: str) -> bool:
+        if t in ("py3", "py2.py3", f"py{major}{minor}"):
+            return True
+        m = re.fullmatch(r"cp(\d)(\d+)", t)
+        if not m:
+            return False
+        maj, mnr = int(m.group(1)), int(m.group(2))
+        # abi3 is forward-compatible: cp39-abi3 imports fine on 3.10.
+        return maj == major and (mnr <= minor if abi_tag == "abi3" else mnr == minor)
+
+    return any(_py_ok(t) for t in py_tag.split("."))
+
+
 def _download_and_unpack(arch: str, arch_dir: Path, python_exe: str) -> bool:
     plat = f"manylinux2014_{arch}"
     common = [python_exe, "-m", "pip", "download", "--no-deps", "--only-binary=:all:",
-              "--platform", plat, "--python-version", "310"]
+              "--platform", plat, "--python-version", _VM_PY_NODOT]
     # onnxruntime ships no abi3 wheels, so it (and its closure: numpy etc.) must
-    # match the VM python's exact minor — the Cowork base image is bookworm,
-    # python 3.11. The base image does NOT ship onnxruntime (field finding
-    # 2026-07-13: EmbedderUnavailable in-VM), so we vendor the full closure.
+    # match the pinned VM python's EXACT minor (VM_PYTHON = 3.10 — a 311 pin
+    # here is precisely the 2026-07-18 EmbedderUnavailable outage). The base
+    # image does NOT ship onnxruntime (field finding 2026-07-13), so we vendor
+    # the full closure.
     onnx_plat = f"manylinux_2_28_{arch}"
     onnx = [python_exe, "-m", "pip", "download", "--only-binary=:all:",
-            "--platform", onnx_plat, "--python-version", "311", "onnxruntime"]
+            "--platform", onnx_plat, "--python-version", _VM_PY_NODOT, "onnxruntime"]
     jobs = (
         [*common, "--implementation", "cp", "--abi", "abi3", "tokenizers"],
         [*common, "sqlite-vec"],
@@ -117,6 +157,14 @@ def _download_and_unpack(arch: str, arch_dir: Path, python_exe: str) -> bool:
         #   the EmbedderUnavailable outage class — add a hash-locked requirements
         #   file when the threat model includes a fully compromised package index.
         for whl in tmp.glob("*.whl"):
+            # ABI regression guard: refuse (loudly) any wheel the pinned VM
+            # interpreter cannot import, BEFORE it lands in vendor/.
+            if not check_wheel_tag(whl.name):
+                print(f"[vendor] REFUSING {whl.name}: wheel tag incompatible "
+                      f"with the pinned VM interpreter (Python {VM_PYTHON}) — "
+                      f"staging {arch} aborted", file=sys.stderr)
+                shutil.rmtree(arch_dir, ignore_errors=True)
+                return False
             with zipfile.ZipFile(whl) as zf:
                 _safe_extract(zf, arch_dir)
     return _has_deps(arch_dir)
@@ -161,7 +209,12 @@ def _demo() -> None:
         (bd / "vendor" / "aarch64" / "tokenizers" / "tokenizers.abi3.so").write_bytes(b"")
         (bd / "vendor" / "aarch64" / "sqlite_vec").mkdir(parents=True)
         (bd / "vendor" / "aarch64" / "sqlite_vec" / "vec0.so").write_bytes(b"")
+        (bd / "vendor" / "aarch64" / "onnxruntime").mkdir(parents=True)
+        (bd / "vendor" / "aarch64" / "numpy").mkdir(parents=True)
         assert _has_deps(bd / "vendor" / "aarch64")
+        # ABI pin guard (2026-07-18): cp310/abi3/pure pass, cp311 refused
+        assert check_wheel_tag("numpy-1.26.4-cp310-cp310-manylinux_2_28_aarch64.whl")
+        assert not check_wheel_tag("numpy-1.26.4-cp311-cp311-manylinux_2_28_aarch64.whl")
     print("OK: vendor_semantic_deps self-check passed")
 
 

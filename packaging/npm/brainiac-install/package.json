@@ -1,6 +1,6 @@
 {
   "name": "brainiac-install",
-  "version": "0.19.0",
+  "version": "0.19.1",
   "description": "One-command bootstrap for the Brainiac 'brain' CLI engine — installs brainiac-cli from PyPI (uv/pipx/pip), verifies it, and initializes a vault.",
   "bin": {
     "brainiac-install": "bin/cli.js"

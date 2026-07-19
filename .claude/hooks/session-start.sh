@@ -138,35 +138,71 @@ fi
 # a model reading vault content, so they stay out of the injected context — the
 # /brain-inbox skill reads them interactively). These are actionable harness
 # lines, not untrusted vault data.
-PUSH=$(python3 - "$MEMORY_DIR/inbox.jsonl" "$VAULT_DIR/.brain/engine-feedback" <<'PYEOF'
+PUSH=$(python3 - "$VAULT_DIR" <<'PYEOF'
 import glob
 import json
 import os
 import sys
 
-inbox_path, fb_dir = sys.argv[1], sys.argv[2]
-open_n = 0
-try:
-    with open(inbox_path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                e = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(e, dict) and e.get("status", "open") == "open":
-                open_n += 1
-except FileNotFoundError:
-    pass
-fb_n = len(glob.glob(os.path.join(fb_dir, "*.md"))) if os.path.isdir(fb_dir) else 0
-if open_n:
-    print(f"OWNER INBOX: {open_n} owner decision(s) pending — run /brain-inbox "
-          f"(or `brain inbox`) to answer them (~{open_n} min).")
-if fb_n:
-    print(f"ENGINE FEEDBACK: {fb_n} engine-bug prompt(s) waiting in "
-          f".brain/engine-feedback/ — fire them at the Brainiac engine repo.")
+# EVERY registered vault, not just this project's (field 2026-07-16). The PUSH
+# redesign promises "every session becomes the delivery channel", but this hook
+# only ever looked at $BRAIN_VAULT / $PROJECT_DIR/vault. The owner works in the
+# FRAMEWORK repo (whose vault/ is a generic scaffold with no inbox) while every
+# real question lands in his DEPLOYMENT vault — so the push fired at an empty
+# file and he was never told, for weeks. He learned the system as "a thing I
+# must remember to go poll", which is exactly what the redesign set out to kill.
+# The workspace registry already knows every vault; read it.
+def _candidate_vaults(project_vault: str) -> list[str]:
+    out, seen = [], set()
+    for v in [project_vault] + _registered():
+        v = os.path.abspath(v)
+        if v not in seen and os.path.isdir(v):
+            seen.add(v); out.append(v)
+    return out
+
+
+def _registered() -> list[str]:
+    reg = os.path.expanduser("~/.brainiac/workspaces.json")
+    try:
+        with open(reg, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return []
+    return [e["vault_path"] for e in data.get("entries", [])
+            if isinstance(e, dict) and e.get("vault_path")]
+
+
+def _open_count(vault: str) -> int:
+    n = 0
+    try:
+        with open(os.path.join(vault, ".brain", "memory", "inbox.jsonl"),
+                  encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(e, dict) and e.get("status", "open") == "open":
+                    n += 1
+    except FileNotFoundError:
+        pass
+    return n
+
+
+for vault in _candidate_vaults(sys.argv[1]):
+    open_n = _open_count(vault)
+    fb_n = len(glob.glob(os.path.join(vault, ".brain", "engine-feedback", "*.md")))
+    label = os.path.basename(os.path.dirname(vault)) or vault
+    if open_n:
+        print(f"OWNER INBOX ({label}): {open_n} decision(s) pending — ask me to "
+              f"open them, or run /brain-inbox. Each is one question with options "
+              f"and a default (~{open_n} min).")
+    if fb_n:
+        print(f"ENGINE FEEDBACK ({label}): {fb_n} engine-bug prompt(s) waiting in "
+              f"{vault}/.brain/engine-feedback/.")
 PYEOF
 )
 

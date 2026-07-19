@@ -482,6 +482,28 @@ class BrainCore:
                 except ValueError as exc:
                     skipped.append({"draft": draft.name, "reason": f"unsafe-id (fail-closed): {exc}"})
                     continue
+                # COS owner-gate integrity: never sign a draft whose id is still
+                # awaiting the owner's accept/reject in the proposal pipeline.
+                # The gated copy is authoritative; only the owner's answer may
+                # promote it (consume_answers moves it here itself on accept).
+                # Quarantined rather than skipped-in-place — see
+                # cos.quarantine_gate_bypass for why leaving it would let a
+                # later REJECT still leak the content on the next drain.
+                try:
+                    from . import cos as _cos_mod
+                    if nid in _cos_mod.undecided_proposal_ids(self.vault):
+                        dest = _cos_mod.quarantine_gate_bypass(self.vault, draft)
+                        skipped.append({
+                            "draft": draft.name,
+                            "reason": f"gate-bypass: {nid!r} is awaiting the owner's "
+                                      f"accept/reject — quarantined to {dest.parent.name}/{dest.name}",
+                        })
+                        continue
+                except Exception as exc:  # noqa: BLE001 — never break the drain floor
+                    skipped.append({"draft": draft.name,
+                                    "reason": f"gate-check-failed (fail-closed, left in place): "
+                                              f"{type(exc).__name__}: {exc}"})
+                    continue
                 # raw source -> raw/<id>.md ; otherwise a brain note -> resources/.
                 if note.type == "source" or note.zone == "raw":
                     rel, subtree = f"raw/{nid}.md", "raw"

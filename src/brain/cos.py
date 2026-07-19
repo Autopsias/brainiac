@@ -413,6 +413,49 @@ def claim_drops(vault, now: _dt.datetime | None = None) -> dict[str, Any]:
 
 
 # -- proposal state helpers ----------------------------------------------------
+def undecided_proposal_ids(vault) -> set[str]:
+    """Candidate ids the owner has NOT yet ruled on — staged in the VM's
+    proposal drop, or claimed into host ``pending/``. Both states mean "the
+    owner's answer is still outstanding".
+
+    A capture draft carrying one of these ids is a GATE BYPASS: the same
+    content is simultaneously travelling the gated route (cos-propose ->
+    broker -> owner batch -> selective commit) and the UNGATED one
+    (draft-capture -> capture-inbox -> signed on the next drain). The ungated
+    one always wins the race, so the owner gets asked to approve a note that is
+    already authoritative in the vault, and a "reject" has nothing to reject.
+
+    Measured 2026-07-16 (run 14/15): the COS skill forbids SUBSTITUTING
+    draft-capture for cos-propose in Phase 1.6, but Phase 5 separately requires
+    draft-capture for anything the owner must see. A finding that is also an
+    ingestion candidate satisfies both rules and bypasses the gate — no rule
+    violated. Policy cannot fix a collision between two obeyed rules; the
+    engine must.
+    """
+    ids: set[str] = set()
+    for d in (proposal_drop_dir(vault), proposals_dir(vault) / "pending"):
+        if d.is_dir():
+            ids.update(p.stem for p in d.glob("*.md"))
+    return ids
+
+
+def quarantine_gate_bypass(vault, draft: Path, *, now: _dt.datetime | None = None) -> Path:
+    """Move a bypassing capture draft out of the drain's path, reversibly.
+
+    NOT deleted (recoverable, auditable) and NOT left in place: leaving it
+    would re-offer it to every subsequent drain, and — the real hazard — a
+    later owner REJECT clears the gated copy out of ``pending/``, after which
+    the leftover draft no longer matches an undecided id and the next drain
+    would sign the very content the owner just rejected.
+    """
+    dest_dir = host_dir(vault) / "gate-bypass"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    stamp = (now or _utcnow()).strftime("%Y%m%dT%H%M%S")
+    dest = dest_dir / f"{stamp}-{draft.name}"
+    shutil.move(str(draft), dest)
+    return dest
+
+
 def _pending_metas(vault) -> list[dict[str, Any]]:
     pending = proposals_dir(vault) / "pending"
     out = []
@@ -920,6 +963,108 @@ def shadow_ledger_entries(vault) -> list[dict[str, Any]]:
     return list(by_key.values())
 
 
+# -- behavioural grading (2026-07-17, owner decision) --------------------------
+# The corrections-based calibration required ~10 mornings of the owner grading
+# email by hand; across 6 rounds / 308 verdicts he filed ZERO — the ritual will
+# never happen, so auto-archive was permanently gated on evidence that could
+# not accrue. Behavioural grading replaces stated preference with revealed
+# preference: the VM already reads the mailbox nightly, so it OBSERVES what the
+# owner actually did to previously-verdicted mail (read / replied / flagged /
+# archived himself / untouched) and drops raw observations; THIS module grades
+# them, in one testable place. Owner ruling: also mine his own archive actions
+# as pattern evidence — "albeit not exclusively".
+
+BEHAVIOUR_OBSERVATIONS = ("owner_replied", "owner_flagged", "owner_read",
+                          "owner_archived", "untouched")
+
+
+def grade_behaviour(bucket: str, observed: str, *,
+                    auto_archived: bool = False) -> str:
+    """One verdict row + one observed behaviour -> a grade.
+
+    The error that matters for auto-archive is exactly one: "would have
+    archived mail the owner needed". So a NOISE verdict the owner then replied
+    to or flagged is `contradicted` — the hard, gate-relevant failure. A noise
+    row he merely opened is `read_anyway`: a weak signal (people open
+    newsletters), reported but never gated on. Noise he left untouched or
+    archived himself is `consistent`. An act/read row he archived without
+    engaging is `overcalled` — over-caution, harmless, informational.
+    """
+    b, o = str(bucket).lower(), str(observed).lower()
+    # Aged-read lane (owner policy 2026-07-17): priority-list mail may be
+    # auto-archived when read + no-action + >7d old. Those rows are bucket
+    # `read`, not `noise` — so the drift contradiction must key on the ACTION
+    # (we auto-archived it), not the bucket: the owner replying to or flagging
+    # ANY row we auto-archived is the gate error, whichever lane moved it.
+    if auto_archived and o in ("owner_replied", "owner_flagged"):
+        return "contradicted"
+    if b == "noise":
+        if o in ("owner_replied", "owner_flagged"):
+            return "contradicted"
+        if o == "owner_read":
+            return "read_anyway"
+        if o in ("untouched", "owner_archived"):
+            return "consistent"
+    elif b in ("act", "read") and o == "owner_archived":
+        return "overcalled"
+    return "neutral"
+
+
+def behaviour_entries(vault) -> list[dict[str, Any]]:
+    """Raw behaviour observations from the VM drop (``behaviour-*.jsonl``),
+    deduped by (round, msg_key) — last write wins, same idempotency shape as
+    the shadow ledger. Rows are VM-authored and untrusted: consumed as data."""
+    vdir = verdict_drop_dir(vault)
+    files = sorted(vdir.glob("behaviour-*.jsonl")) if vdir.is_dir() else []
+    by_key: dict[tuple[int, str], dict[str, Any]] = {}
+    for f in files:
+        for e in _read_jsonl(f):
+            r, k = e.get("round"), e.get("msg_key")
+            if isinstance(r, int) and isinstance(k, str):
+                by_key[(r, k)] = e
+    return list(by_key.values())
+
+
+def behaviour_report(vault) -> dict[str, Any]:
+    """Aggregate observed-behaviour evidence: per-bucket grade counts, the
+    noise-safety numbers an auto-archive re-arm decision needs, and the
+    owner's own archive patterns (top senders he archives himself — evidence
+    for FUTURE noise-signals, never an actuator by itself)."""
+    entries = behaviour_entries(vault)
+    per_bucket: dict[str, dict[str, int]] = {}
+    contradicted_rows: list[dict[str, Any]] = []
+    owner_archive_patterns: dict[str, int] = {}
+    rounds: set[int] = set()
+    for e in entries:
+        b = str(e.get("bucket", "?")).lower()
+        o = str(e.get("observed", "?")).lower()
+        g = grade_behaviour(b, o, auto_archived=bool(e.get("auto_archived")))
+        per_bucket.setdefault(b, {})[g] = per_bucket.setdefault(b, {}).get(g, 0) + 1
+        rounds.add(int(e["round"]))
+        if g == "contradicted":
+            contradicted_rows.append(
+                {k: e.get(k) for k in ("round", "msg_key", "sender", "subject",
+                                        "observed")})
+        if o == "owner_archived":
+            key = str(e.get("sender") or e.get("sender_domain") or "unknown").lower()
+            owner_archive_patterns[key] = owner_archive_patterns.get(key, 0) + 1
+    noise = per_bucket.get("noise", {})
+    noise_observed = sum(noise.values())
+    contradicted = noise.get("contradicted", 0)
+    return {
+        "observations": len(entries),
+        "rounds_observed": len(rounds),
+        "per_bucket": per_bucket,
+        "noise_observed": noise_observed,
+        "noise_contradicted": contradicted,
+        "noise_consistency": (round((noise_observed - contradicted) / noise_observed, 4)
+                              if noise_observed else None),
+        "contradicted_rows": contradicted_rows[:20],
+        "owner_archive_patterns": dict(sorted(owner_archive_patterns.items(),
+                                              key=lambda kv: -kv[1])[:20]),
+    }
+
+
 def calibration_report(vault) -> dict[str, Any]:
     """Shadow-mode trust-gate report: calibration = reduce(verdicts,
     correction_events). A verdict is bucket-correct when no correction exists
@@ -955,6 +1100,10 @@ def calibration_report(vault) -> dict[str, Any]:
         "overall_bucket_precision": (round(bucket_correct / total, 4)
                                      if total else None),
         "per_bucket": buckets,
+        # revealed preference alongside stated preference: the corrections
+        # count above stays authoritative where it exists, but 0 corrections
+        # no longer means 0 evidence.
+        "behaviour": behaviour_report(vault),
     }
 
 
@@ -1408,7 +1557,18 @@ def _is_keeper_counterparty(vault, counterparty: str | None) -> bool:
     if not counterparty:
         return False
     overrides = load_priority_overrides(vault)
-    return overrides.get(str(counterparty).lower()) == "high"
+    name = str(counterparty).lower()
+    if overrides.get(name) == "high":
+        return True
+    # Override keys are NOTE-ID SLUGS (the only form _OVERRIDE_LINE_RE parses),
+    # but a commitment's counterparty is a display name from mail — e.g. a name
+    # like "Renée Dûval" could never equal "renee-duval", so keeper detection
+    # silently never fired (found 2026-07-17, the day the first real roster was
+    # written). Compare in slug space, accents folded.
+    import unicodedata
+    folded = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+    slug = re.sub(r"[^a-z0-9]+", "-", folded).strip("-")
+    return overrides.get(slug) == "high"
 
 
 def _spine_ingest_commitment(vault, meta: dict[str, Any], *, source_ref: str,
@@ -1484,6 +1644,13 @@ DEFAULT_INGEST_SWEEP_MAX_BYTES = 200 * 1024 * 1024
 INGEST_SWEEP_DOWNLOADS_ENV = "BRAIN_COS_DOWNLOADS_DIR"
 INGEST_SWEEP_SKEW_SECONDS = 300          # manifest ts vs file mtime clock skew
 INGEST_SWEEP_SIZE_TOLERANCE = 0.10       # when the manifest carries a size
+# Host-observed freshness floor (codex 2026-07-19): a candidate whose mtime is
+# older than this relative to the sweep's OWN clock is a pre-existing host file,
+# not something the VM just downloaded — the un-forgeable provenance anchor. The
+# maintain umbrella fires hourly; a 6h window tolerates a few missed runs / a
+# sleeping Mac while still excluding files that have sat in Downloads for days.
+INGEST_SWEEP_RECENCY_ENV = "BRAIN_COS_SWEEP_RECENCY_SECONDS"
+DEFAULT_INGEST_SWEEP_RECENCY_SECONDS = 6 * 3600
 
 
 def ingest_manifest_dir(vault=None) -> Path:
@@ -1505,6 +1672,14 @@ def _sweep_max_bytes() -> int:
                                   DEFAULT_INGEST_SWEEP_MAX_BYTES))
     except ValueError:
         return DEFAULT_INGEST_SWEEP_MAX_BYTES
+
+
+def _sweep_recency_seconds() -> int:
+    try:
+        return int(os.environ.get(INGEST_SWEEP_RECENCY_ENV,
+                                  DEFAULT_INGEST_SWEEP_RECENCY_SECONDS))
+    except ValueError:
+        return DEFAULT_INGEST_SWEEP_RECENCY_SECONDS
 
 
 def _unique_dest(inbox: Path, filename: str) -> Path:
@@ -1529,8 +1704,12 @@ def ingest_sweep(vault, *, downloads_dir: Path | str | None = None,
     - filenames are basename-only — any path separator / ``..`` is refused;
     - a symlinked candidate (or manifest file) is refused, never followed;
     - files above the size cap (default 200 MB) are refused;
-    - a match requires exact filename, size within tolerance when the
-      manifest carries one, and mtime newer than the manifest ts minus skew;
+    - a candidate must be a FRESH download — mtime within the recency window of
+      the sweep's own clock — so a VM manifest cannot claim a pre-existing host
+      Downloads file it did not just download (codex 2026-07-19, VM/host
+      boundary): the mtime is the one provenance signal the VM cannot forge;
+    - a match requires exact filename, size within tolerance when the manifest
+      carries one, and mtime newer than the manifest ts minus skew;
     - claims are append-only, one per manifest line — a re-run never
       double-moves (idempotent);
     - NOTHING the manifest does not name is ever touched, moved, or deleted.
@@ -1587,7 +1766,16 @@ def ingest_sweep(vault, *, downloads_dir: Path | str | None = None,
                 continue
             fname = next((n for n in safe if (ddir / n).exists()), None)
             if fname is None:
-                report["unmatched"].extend(safe)  # unclaimed — retry next run
+                # WHY matters: "not in the downloads dir at all" is a different
+                # problem from "present but rejected by a guard", and the old
+                # bare-name list could not tell them apart — the 2026-07-16
+                # field read was "sweeper stalled ~32h" when the sweeper was in
+                # fact correctly refusing stale namesakes. Reasons are additive:
+                # the plain names stay in `unmatched` for compatibility.
+                report["unmatched"].extend(safe)
+                report.setdefault("unmatched_reasons", []).extend(
+                    {"filename": n, "reason": "not present in the downloads dir"}
+                    for n in safe)
                 continue
             cand = ddir / fname
             if cand.is_symlink() or not cand.is_file():
@@ -1601,15 +1789,50 @@ def ingest_sweep(vault, *, downloads_dir: Path | str | None = None,
                 report["refused"].append({"filename": fname,
                                           "reason": "over size cap"})
                 continue
+            # SECURITY (codex 2026-07-19, VM/host boundary): the manifest is
+            # VM-writable, so its own fields cannot prove provenance — the VM
+            # can name any basename and BACKDATE `ts` to defeat the staleness
+            # check on an old host file. The one thing a VM-side attacker CANNOT
+            # forge is a host file's mtime, so the sweep's OWN clock is the
+            # anchor: only a file whose mtime is recent relative to `now` — i.e.
+            # one genuinely downloaded within this maintenance window — is
+            # eligible. A guessed sensitive file that has been sitting in
+            # ~/Downloads (tax.pdf, statement.pdf …) is refused regardless of
+            # what the manifest claims. Widen the window via env for slow hosts.
+            age = now.timestamp() - cand.stat().st_mtime
+            if age > _sweep_recency_seconds():
+                report["unmatched"].append(fname)
+                report.setdefault("unmatched_reasons", []).append({
+                    "filename": fname,
+                    "reason": f"not a fresh download: host mtime is {age / 3600.0:.1f}h "
+                              f"old (recency window {_sweep_recency_seconds() // 3600}h) "
+                              f"— a pre-existing host file the VM manifest cannot claim",
+                })
+                continue
             want = entry.get("approx_size_bytes")
             if isinstance(want, int) and want > 0:
                 if abs(size - want) > max(want * INGEST_SWEEP_SIZE_TOLERANCE, 4096):
                     report["unmatched"].append(fname)  # wrong file — leave it
+                    report.setdefault("unmatched_reasons", []).append({
+                        "filename": fname,
+                        "reason": f"size mismatch: on disk {size}B, manifest expects "
+                                  f"{want}B (tolerance "
+                                  f"{int(max(want * INGEST_SWEEP_SIZE_TOLERANCE, 4096))}B) "
+                                  f"— a DIFFERENT file of the same name",
+                    })
                     continue
             ets = _parse_ts(str(entry.get("ts", "")))
             if ets is not None and cand.stat().st_mtime < (
                     ets.timestamp() - INGEST_SWEEP_SKEW_SECONDS):
                 report["unmatched"].append(fname)  # older than the download
+                age_h = (ets.timestamp() - cand.stat().st_mtime) / 3600.0
+                report.setdefault("unmatched_reasons", []).append({
+                    "filename": fname,
+                    "reason": f"stale namesake: file mtime is {age_h:.1f}h OLDER than the "
+                              f"manifest's download ts {ets.isoformat()} (skew allowance "
+                              f"{INGEST_SWEEP_SKEW_SECONDS}s) — the VM's download did not "
+                              f"land; this is a pre-existing file with the same name",
+                })
                 continue
             dest = _unique_dest(inbox, fname)
             if not dry_run:

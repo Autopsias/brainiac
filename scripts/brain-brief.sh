@@ -63,12 +63,14 @@ fi
 
 {
   echo "=== brain-daily-brief / brain-nightly $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
-  # cos-broker FIRST: the host broker fold claims VM proposal drops, releases due
-  # holds, runs auto-capture, enqueues the owner batch, and renders
-  # shared/spine-summary.md. Nothing else schedules it -- without this line the
-  # VM proposes into a drop dir no one drains (measured 2026-07-16: spine DB empty,
-  # candidates unclaimed ~29h) . It runs BEFORE maintain so notes it signs are
-  # indexed + published by the same run's sync. Host-only, idempotent, and
+  # cos-broker first — CORRECTION (2026-07-17): `brain maintain` ALSO runs the
+  # fold + the ingest sweep (core.py maintain, the CUT-01E block); the original
+  # claim here that "nothing else schedules it" was WRONG. The 2026-07-16 field
+  # failure (spine DB empty, candidates unclaimed ~29h) was actually the plist
+  # pinning a 0.17.0 engine whose fold predates the spine stage — maintain was
+  # calling the fold hourly all along, at a version that couldn't render it.
+  # This explicit call stays as defense-in-depth: idempotent, cheap, and it
+  # keeps the drain floor if maintain's internal block ever regresses.
   # NON-FATAL: a broker failure must never cost the vault its capture-drain floor.
   "$BRAIN_BIN" cos-broker --json || echo "brain-brief: cos-broker fold failed (non-fatal), continuing to maintain"
   # maintain: sync --publish (drain pending captures + reconcile index +

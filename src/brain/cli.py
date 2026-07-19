@@ -164,6 +164,12 @@ def _emit(obj: Any, as_json: bool, human: str | None = None) -> None:
         sys.stdout.write((human if human is not None else str(obj)) + "\n")
 
 
+# Set True by main() on role=vm: the untrusted leg must not be told to
+# "re-run with --max-tier Restricted" — that hint is the self-elevation nudge
+# codex flagged, and the VM ceiling clamp makes the instruction a no-op anyway.
+_SUPPRESS_ELEVATION_HINT = False
+
+
 def _filter_dicts(items: list[dict], max_tier: str) -> tuple[list[dict], dict]:
     # THE single egress chokepoint — every content-returning subcommand routes
     # through egress.apply_gate so a new content path cannot silently bypass the
@@ -174,7 +180,8 @@ def _filter_dicts(items: list[dict], max_tier: str) -> tuple[list[dict], dict]:
     # web search — leaking internal topics outward. Say WHY it's thin and HOW to
     # elevate, in the report dict so it surfaces in BOTH --json (agent-facing)
     # and the text footer. The tier stays the human gate; this only signposts it.
-    if report.get("withheld", 0) > 0 and max_tier != cls.TIERS[-1]:
+    if (report.get("withheld", 0) > 0 and max_tier != cls.TIERS[-1]
+            and not _SUPPRESS_ELEVATION_HINT):
         report["hint"] = (
             f"{report['withheld']} note(s) withheld above the {max_tier} cap — "
             f"re-run with --max-tier Restricted (or MNPI for the most sensitive) "
@@ -1080,6 +1087,7 @@ VM_ALLOWED = frozenset({
 
 
 def main(argv: list[str] | None = None) -> int:
+    global _SUPPRESS_ELEVATION_HINT
     try:
         return _main(argv)
     except Exception as exc:  # H-4: top-level guard -- never a raw traceback
@@ -1088,6 +1096,11 @@ def main(argv: list[str] | None = None) -> int:
         _emit({"error": type(exc).__name__, "detail": str(exc)} if as_json
               else f"{exc.__class__.__name__}: {exc}", as_json)
         return 3
+    finally:
+        # The VM hint-suppression flag is INVOCATION-scoped (set by _main per
+        # role): reset it here so it never leaks into a later main() call or a
+        # direct _filter_dicts caller in the same process (e.g. across tests).
+        _SUPPRESS_ELEVATION_HINT = False
 
 
 def _main(argv: list[str] | None = None) -> int:
@@ -1103,6 +1116,14 @@ def _main(argv: list[str] | None = None) -> int:
     if getattr(args, "max_tier", "unset") is None:
         args.max_tier = (cls.VM_DEFAULT_MAX_TIER if role == config.ROLE_VM
                          else cls.DEFAULT_MAX_TIER)
+    # VM egress ceiling (codex 2026-07-19): on the untrusted leg, --max-tier is
+    # a value the LLM can set itself, and the starvation hint nudges it to. Clamp
+    # any VM-side max_tier to the operator-set ceiling so a typed --max-tier MNPI
+    # cannot self-elevate past it; the hint is also suppressed for role=vm below.
+    global _SUPPRESS_ELEVATION_HINT
+    _SUPPRESS_ELEVATION_HINT = (role == config.ROLE_VM)  # deterministic per call
+    if role == config.ROLE_VM and hasattr(args, "max_tier"):
+        args.max_tier = cls.clamp_to(str(args.max_tier), cls.vm_egress_ceiling())
     # DV-03: the VM leg fails closed on a dead embedder rather than silently
     # answering semantic queries with random hash vectors (no-op when a real
     # embedder is present or hash was chosen explicitly).
@@ -1371,7 +1392,8 @@ def _main(argv: list[str] | None = None) -> int:
                 + srep["withheld_unlabelled_default_deny"],
             "max_tier": args.max_tier,
         }
-        if report["withheld"] > 0 and args.max_tier != cls.TIERS[-1]:
+        if (report["withheld"] > 0 and args.max_tier != cls.TIERS[-1]
+                and not _SUPPRESS_ELEVATION_HINT):
             report["hint"] = (
                 f"{report['withheld']} note(s) withheld above the "
                 f"{args.max_tier} cap — re-run with a higher --max-tier.")

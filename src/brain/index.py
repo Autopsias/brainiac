@@ -457,7 +457,56 @@ class BrainIndex:
 
     # -- build (full) -----------------------------------------------------
     def rebuild(self, vault: Path) -> dict[str, Any]:
-        """Drop and rebuild the entire index from vault/. Always safe.
+        """Rebuild the entire index from vault/ — crash-safe.
+
+        Builds into a TEMP db file and atomically swaps it into place on
+        success (same posture as ``snapshot.publish_snapshot``), so a killed
+        rebuild leaves the prior live index untouched. Before this fix,
+        ``_create_schema`` dropped the live tables FIRST and inserts landed at
+        the end — a kill mid-rebuild (a full re-embed of a large vault can run
+        an hour+) left the live index wiped (field report 2026-07-16: a killed
+        rebuild on a 2,312-note vault left 0 notes / 0 chunks).
+
+        In-memory DBs (``:memory:``, test-only) build in place — there is
+        nothing to swap."""
+        if self.db_path == Path(":memory:"):
+            return self._rebuild_impl(vault)
+
+        tmp_path = self.db_path.with_name(self.db_path.name + f".rebuild.tmp.{os.getpid()}")
+        for p in (tmp_path, Path(str(tmp_path) + "-wal"), Path(str(tmp_path) + "-shm")):
+            p.unlink(missing_ok=True)
+
+        orig_db_path = self.db_path
+        self.close()
+        self.db_path = tmp_path
+        try:
+            result = self._rebuild_impl(vault)
+            # Checkpoint the temp DB's WAL into its main file so the file we
+            # swap in is fully self-contained (mirrors snapshot.py's
+            # wal_checkpoint(TRUNCATE) before publish).
+            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            self.close()
+            os.replace(tmp_path, orig_db_path)
+        except BaseException:
+            self.close()
+            self.db_path = orig_db_path
+            for p in (tmp_path, Path(str(tmp_path) + "-wal"), Path(str(tmp_path) + "-shm")):
+                p.unlink(missing_ok=True)
+            raise
+        finally:
+            for p in (tmp_path, Path(str(tmp_path) + "-wal"), Path(str(tmp_path) + "-shm")):
+                p.unlink(missing_ok=True)
+        # The just-replaced live DB has no matching sidecars of its own yet
+        # (the temp ones were checkpointed away above) — drop any stale
+        # leftovers from the PRIOR live DB so the next open starts clean.
+        for suffix in ("-wal", "-shm"):
+            Path(str(orig_db_path) + suffix).unlink(missing_ok=True)
+        self.db_path = orig_db_path
+        result["db"] = str(self.db_path)
+        return result
+
+    def _rebuild_impl(self, vault: Path) -> dict[str, Any]:
+        """Drop and rebuild the tables at ``self.db_path`` in place.
 
         S11 indexing speed fix: chunking / embedding / writing are now THREE
         separate passes. Previously ``_insert_note`` was called once per note

@@ -23,7 +23,7 @@ the shell env does not):
   export BRAIN_ROLE=vm
   export BRAIN_RUNTIME_DIR="$BRAIN_VAULT/.brain"
   export BRAIN_MODEL_CACHE="$BRAIN_RUNTIME_DIR/model"
-  export PYTHONPATH="$BRAIN_RUNTIME_DIR/vendor/$(uname -m):$BRAIN_RUNTIME_DIR/engine:$PYTHONPATH"
+  export PYTHONPATH="$BRAIN_RUNTIME_DIR/engine:$BRAIN_RUNTIME_DIR/vendor/$(uname -m):$PYTHONPATH"
   export PATH="$BRAIN_RUNTIME_DIR:$PATH"
   brain status
 

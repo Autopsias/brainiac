@@ -7,7 +7,9 @@
 # ONE install flow lands the full operational layer (INS-01):
 #   (a) the engine        — per-arch brain ELFs into .brain/bin/
 #   (b) the model cache   — bundled Arctic model into .brain/model/
-#   (c) the host index    — rebuilt + published as the read-only .brain/snapshot/
+#   (c) the host index    — reconciled (sync when current, full rebuild only on
+#                            schema/embedder mismatch or an absent/corrupt index)
+#                            + published as the read-only .brain/snapshot/
 #   (d) the SKILL payload  — dist/cowork-skills/*.skill into .brain/skills/,
 #                            REBUILT at the current version on every run and
 #                            version-verified against the engine (s08, cw-02)
@@ -52,12 +54,14 @@ cp -R "$REPO/src/brain" "$BRAIN_DIR/engine/brain"
 find "$BRAIN_DIR/engine" -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
 cat > "$BRAIN_DIR/brain" <<'SHIM'
 #!/bin/sh
-# zero-install shim: run the staged brain engine from source, with the vendored
-# semantic deps (tokenizers/sqlite-vec, staged per-arch below) ahead of it on
-# the path so real query embedding works offline in the VM (DV-04).
+# zero-install shim: run the staged brain engine from source, with the ENGINE
+# first on the path and the vendored semantic deps (tokenizers/sqlite-vec,
+# staged per-arch below) AFTER it, so real query embedding works offline in the
+# VM (DV-04) while an untrusted vendored wheel cannot shadow the engine
+# (codex 2026-07-19). Keep in lockstep with tools/vendor_semantic_deps.py.
 DIR="$(cd "$(dirname "$0")" && pwd)"
 ARCH="$(uname -m)"
-PYTHONPATH="$DIR/vendor/$ARCH:$DIR/engine${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m brain.cli "$@"
+PYTHONPATH="$DIR/engine:$DIR/vendor/$ARCH${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m brain.cli "$@"
 SHIM
 chmod 755 "$BRAIN_DIR/brain"
 
@@ -131,10 +135,20 @@ echo "[install] vendoring semantic deps (tokenizers, sqlite-vec) + shim -> $BRAI
 "$HOST_PY" "$REPO/tools/vendor_semantic_deps.py" "$BRAIN_DIR" || \
   echo "[install]   WARNING: vendoring reported an issue — VM may run lexical-only" >&2
 
-echo "[install] rebuild host index + publish snapshot (interpreter: $HOST_PY)"
+echo "[install] reconcile host index + publish snapshot (interpreter: $HOST_PY)"
 export BRAIN_VAULT="$VAULT"
 export BRAIN_MODEL_CACHE="$BRAIN_DIR/model"
-PYTHONPATH="$REPO/src" "$HOST_PY" -m brain.cli rebuild
+# Staleness-aware (2026-07-16 field report): `sync` is already a full rebuild
+# when the index is absent or its schema_version/embed_model meta mismatch the
+# live engine (BrainIndex.sync's IDX-01/IDX-03 guard), and an incremental
+# path+hash reconcile otherwise — a re-stage against an already-current index
+# (the common case) drops from a ~1h full re-embed to seconds/minutes instead
+# of always paying the full-rebuild cost. A hard failure (e.g. a corrupt index
+# file `sync` can't even open) falls back to an explicit full `rebuild`.
+if ! PYTHONPATH="$REPO/src" "$HOST_PY" -m brain.cli sync; then
+  echo "[install]   sync failed (index missing/corrupt beyond sync's own guard) — falling back to full rebuild" >&2
+  PYTHONPATH="$REPO/src" "$HOST_PY" -m brain.cli rebuild
+fi
 PYTHONPATH="$REPO/src" "$HOST_PY" -m brain.cli snapshot --dest "$BRAIN_DIR/snapshot" \
   --json | tee "$BRAIN_DIR/snapshot/export-snapshot.json"
 

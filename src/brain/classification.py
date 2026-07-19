@@ -44,6 +44,31 @@ if DEFAULT_MAX_TIER not in RANK:
 # Public + Internal only unless a human explicitly elevates with --max-tier.
 VM_DEFAULT_MAX_TIER = "Internal"
 
+# Hard server-side ceiling for the untrusted VM leg (codex 2026-07-19). On
+# role=vm, --max-tier is a caller-controlled argument the LLM can set itself;
+# without a clamp the egress-starvation hint ("re-run with --max-tier
+# Restricted") turns the intended HUMAN-gated elevation into an instruction the
+# model follows autonomously. This is the CLI analogue of the MCP adapter's
+# BRAIN_MAX_EGRESS_TIER: a VM caller can never exceed this ceiling regardless of
+# what it types. The host operator raises it deliberately via the env var (the
+# real human gate); an unrecognised value falls back to VM_DEFAULT_MAX_TIER.
+VM_EGRESS_CEILING_ENV = "BRAIN_VM_MAX_EGRESS_TIER"
+
+
+def vm_egress_ceiling() -> str:
+    """The tier a role=vm caller may never exceed. Operator-settable via
+    $BRAIN_VM_MAX_EGRESS_TIER; defaults to the conservative VM cap."""
+    val = os.environ.get(VM_EGRESS_CEILING_ENV, "").strip()
+    return val if val in RANK else VM_DEFAULT_MAX_TIER
+
+
+def clamp_to(requested: str, ceiling: str) -> str:
+    """Return the lower (less-sensitive) of two tiers by rank — a caller can
+    never widen egress past the ceiling, only narrow within it."""
+    req = requested if requested in RANK else DEFAULT_DENY_TIER
+    ceil = ceiling if ceiling in RANK else VM_DEFAULT_MAX_TIER
+    return req if RANK[req] <= RANK[ceil] else ceil
+
 
 def normalize(value: object) -> str:
     """Map a raw frontmatter value to a recognised tier, default-deny on miss."""

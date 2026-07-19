@@ -7,6 +7,78 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-07-19
+### Added
+- **Chief-of-Staff kernel matured to v5.6.** The mail-triage/commitment
+  automation gained a three-lane authority matrix with a 1–30 day anticipation
+  horizon (v5.0), P0/P1/P2 priority-chip projection replacing the flat action
+  mark (v4.6), an any-sender aged-read lane that archives read, no-action mail
+  past a freshness threshold (v4.3/v5.1), a steady-state rot response with an
+  inbox-zero closeout (v5.2), recurring-digest supersession that keeps only the
+  latest chipped copy and declassifies + archives priors (v5.4), a full-inbox
+  chip re-evaluation staleness sweep (v5.5), and a harness-agnostic mail leg
+  whose marks/archives gate on browser capability rather than a Claude-specific
+  skill (v5.6). Auto-archive ships ON as a drift monitor (owner ruling), behind
+  a review gate + owner-approved three-op token set (v4.5), with
+  behavioural-grading calibration from revealed preference (v4.2).
+- **COS commitment spine + auto-capture** and an owner priority roster feed the
+  keeper/spine ledger; overlay-owned COS drafts (`overlay/cos/drafts.md`) give
+  owner rulings a home.
+
+### Fixed
+- **Security (Codex scan, 2026-07-19).** A VM ingest manifest could import
+  guessed host `~/Downloads` files into the signed vault — now bound to a
+  host-clock recency floor the VM cannot forge. The egress-starvation hint let a
+  VM harness self-elevate `--max-tier` — the VM leg now clamps to an
+  operator-set ceiling (`BRAIN_VM_MAX_EGRESS_TIER`, default Internal) and
+  suppresses the hint. Vendored wheels could shadow the engine on `PYTHONPATH` —
+  the engine now precedes the vendor dir and extraction refuses zip-slip and
+  top-level shadowing/auto-exec members.
+- **Engine.** Crash-safe index rebuild + staleness-aware re-stage sync.
+- **COS reliability.** Mail-leg preflight (persistent pairing retry, fail-loud,
+  evening schedule; v5.3); `owner_replied` requires a post-verdict
+  `sentDateTime`; the aged-read lane screens "no action" deterministically
+  before judgment; keeper name/slug matching folds accents; `kernel_version` no
+  longer pins a phantom stamp; the auto-archive freeze pins the classifier, not
+  the engine; NOISE/auto-archive vocabulary means "file to Archive"; an
+  overlay's `overlay_type` must equal its directory; and the owner-push hook
+  watches the correct vault.
+- **Release hygiene.** Removed pre-publish contamination the clean-room gate
+  flagged (a stray plan-closeout doc + a person name in a code comment).
+
+## [0.18.2] — 2026-07-16
+### Fixed
+- **The owner's approval gate could be bypassed by the ungated capture path.**
+  Field failure 2026-07-16: an MNPI ingestion candidate was signed into
+  `brain/resources/` and made retrievable while its own batch sat
+  `state: open` / `consumed_at: None` — the owner would have been asked to
+  approve a note already authoritative in his vault, and a "reject" would have
+  had nothing to reject. Root cause is a **collision of two obeyed rules**, not
+  a violation: the COS skill forbids *substituting* `draft-capture` for
+  `cos-propose` (Phase 1.6), but Phase 5 separately *requires* `draft-capture`
+  for anything the owner must see; a finding that is also an ingestion
+  candidate satisfies both and races down the ungated path, which always wins.
+  A third prose rule cannot fix a collision between two obeyed ones, so
+  `drain_drafts` now refuses to sign any draft whose id is still awaiting the
+  owner's accept/reject, and **quarantines** it to `.brain/cos/host/gate-bypass/`
+  rather than skipping it in place — a skipped draft would survive a later
+  REJECT, after which the id no longer matches an undecided proposal and the
+  next drain would sign exactly what the owner rejected.
+- **The embedder and the ingest sweeper hid their own causes.** The VM's
+  fail-closed embedder error printed a guess-list ("onnxruntime/tokenizers
+  missing *or* the model is absent") for **seven consecutive runs** — every one
+  silently degraded to lexical-only grounding with every dedup `inconclusive` —
+  because `available()` returned a bare `False` and the raise sites discarded
+  the exception; a missing package, an ABI mismatch against the vendored cp311
+  wheels, and a missing model were indistinguishable, and the VM has no shell
+  to probe with. `embedder_unavailable_reason()` now reports the actual import
+  error per module plus the interpreter version. Likewise the sweeper's
+  `unmatched` list carried bare filenames with no reason, so four runs
+  escalated it as "stalled ~32h" when it was behaving correctly — measured on
+  the reference deployment, 8 of 9 manifest files had never been downloaded at
+  all and the 9th was a stale namesake. `unmatched_reasons` now distinguishes
+  absent / stale-namesake / size-mismatch (additive; `unmatched` unchanged).
+
 ## [0.18.1] — 2026-07-16
 ### Fixed
 - **The commitment spine ingested nothing — 0.18.0's headline feature was a

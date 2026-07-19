@@ -356,7 +356,11 @@ rules, in order:
    `-- N withheld …` line in text): when you see it, **re-run with
    `--max-tier Restricted`** (or `MNPI` for the most sensitive) — the
    human-gated elevation — instead of concluding the vault has nothing and
-   web-searching to compensate.
+   web-searching to compensate. **On `--role vm` this elevation is NOT
+   self-serve:** the VM leg clamps `--max-tier` to a hard ceiling
+   (`$BRAIN_VM_MAX_EGRESS_TIER`, default `Internal`), so a typed higher tier is
+   silently capped and the elevation hint is suppressed — raising a VM's ceiling
+   is a host-operator action, not something the model does on its own.
 
 3. **Never leak internal topics into a web search.** A web query for a
    Confidential-or-above subject — a deal codename, a counterparty, an internal

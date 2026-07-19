@@ -210,8 +210,8 @@ class ArcticEmbedder:
                 from fastembed import TextEmbedding
             except Exception as exc:  # pragma: no cover - exercised when absent
                 raise EmbedderUnavailable(
-                    "fastembed/onnxruntime not importable; install the 'embed' "
-                    "extra or bundle the model"
+                    f"fastembed/onnxruntime not importable; install the 'embed' "
+                    f"extra or bundle the model: {type(exc).__name__}: {exc}"
                 ) from exc
             self._model = TextEmbedding(
                 model_name=self.model_id, cache_dir=self._cache_dir,
@@ -315,7 +315,8 @@ class CatalogEmbedder:
                 from fastembed import TextEmbedding
             except Exception as exc:  # pragma: no cover
                 raise EmbedderUnavailable(
-                    "fastembed/onnxruntime not importable for CatalogEmbedder"
+                    f"fastembed/onnxruntime not importable for CatalogEmbedder: "
+                    f"{type(exc).__name__}: {exc}"
                 ) from exc
             self._register_custom()
             self._model = TextEmbedding(
@@ -470,7 +471,8 @@ class OnnxEmbedder:
                 from tokenizers import Tokenizer
             except Exception as exc:  # pragma: no cover
                 raise EmbedderUnavailable(
-                    "onnxruntime/tokenizers not importable for OnnxEmbedder"
+                    f"onnxruntime/tokenizers not importable for OnnxEmbedder: "
+                    f"{type(exc).__name__}: {exc}"
                 ) from exc
             try:
                 onnx_path, base = self._resolve_model_files()
@@ -721,14 +723,42 @@ _HASH_FALLBACK_MSG = (
 )
 
 
+def embedder_unavailable_reason() -> str:
+    """Probe WHY no real embedder resolved and report the ACTUAL error.
+
+    The old message guessed ("onnxruntime/tokenizers missing OR the model is
+    absent") because both ``available()`` and the raise sites discard the
+    exception. Field cost (2026-07-16): the Cowork VM reported the identical
+    opaque line for SEVEN consecutive runs — every one grounding on lexical
+    search only, every dedup `inconclusive` — and no operator could tell a
+    missing package from an ABI mismatch from a missing model without shell
+    access to the VM. An error that cannot distinguish its own causes cannot
+    be fixed remotely; that is the defect this repairs.
+
+    Carries the interpreter version deliberately: the vendored VM wheels are
+    built for one CPython minor (`vendor_semantic_deps.py` pins cp311), so an
+    image whose python moved yields `undefined symbol` / `No module named` —
+    indistinguishable from "never installed" unless the version is printed.
+    """
+    parts: list[str] = [f"python {sys.version.split()[0]}"]
+    for mod in ("onnxruntime", "tokenizers"):
+        try:
+            __import__(mod)
+        except Exception as exc:  # noqa: BLE001 — the reason IS the payload
+            parts.append(f"{mod}: {type(exc).__name__}: {exc}")
+        else:
+            parts.append(f"{mod}: ok")
+    return "; ".join(parts)
+
+
 def _implicit_hash_fallback() -> Embedder:
     """Return HashEmbedder for the IMPLICIT auto-path, but never silently:
     fail closed when the operator demanded a real embedder, else warn loudly."""
     if os.environ.get("BRAIN_REQUIRE_REAL_EMBEDDER"):
         raise EmbedderUnavailable(
             "BRAIN_REQUIRE_REAL_EMBEDDER is set but no real semantic embedder is "
-            "available (onnxruntime/tokenizers missing or e5-small model absent). "
-            "Refusing to degrade to the non-semantic HashEmbedder."
+            "available. Refusing to degrade to the non-semantic HashEmbedder. "
+            f"Probe: {embedder_unavailable_reason()}"
         )
     print(_HASH_FALLBACK_MSG, file=sys.stderr, flush=True)
     return HashEmbedder()

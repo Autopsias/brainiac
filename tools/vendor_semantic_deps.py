@@ -4,9 +4,16 @@
 The device VM has onnxruntime (base image) + the staged model, but NOT
 ``tokenizers`` (query tokenisation) or ``sqlite-vec`` (vec0 ANN), and it has no
 outbound network. So the HOST (which does have network) downloads the per-arch
-wheels and unpacks them into ``<brain_dir>/vendor/<arch>/``; the shim puts
-``vendor/<arch>`` on ``PYTHONPATH`` ahead of the engine, and the VM imports them
-locally — no pip, no egress.
+wheels and unpacks them into ``<brain_dir>/vendor/<arch>/``; the shim puts the
+engine FIRST on ``PYTHONPATH`` with ``vendor/<arch>`` after it, and the VM
+imports the third-party deps locally — no pip, no egress.
+
+Supply-chain hardening (codex 2026-07-19): a vendored wheel is untrusted input.
+The engine is placed BEFORE the vendor dir on ``PYTHONPATH`` so a poisoned wheel
+cannot shadow the ``brain`` package, and extraction refuses any member that
+would drop a top-level shadowing/auto-exec module (``brain``, ``sitecustomize``,
+``usercustomize``) or escape the vendor dir (zip-slip). Deps are pinned to exact
+versions below.
 
 This module is the SINGLE source of that logic, shared by
 ``tools/cowork_workspace_install.sh`` (fresh install) and ``brain update``'s
@@ -28,16 +35,45 @@ from pathlib import Path
 
 ARCHS = ("aarch64", "x86_64")
 
-# The zero-install shim, with vendored deps ahead of the engine on PYTHONPATH.
+# The zero-install shim, with the engine ahead of the vendored deps on
+# PYTHONPATH (codex 2026-07-19 — an untrusted wheel must not shadow the engine).
 # Kept here so the installer and the updater write the identical file.
 SHIM_CONTENT = """#!/bin/sh
-# zero-install shim: run the staged brain engine from source, with the vendored
-# semantic deps (tokenizers/sqlite-vec) ahead of it on the path so real query
-# embedding works offline in the VM (DV-04).
+# zero-install shim: run the staged brain engine from source, with the ENGINE
+# first on the path and the vendored semantic deps (tokenizers/sqlite-vec)
+# AFTER it, so real query embedding works offline in the VM (DV-04) while an
+# untrusted vendored wheel cannot shadow the brain engine (codex 2026-07-19).
 DIR="$(cd "$(dirname "$0")" && pwd)"
 ARCH="$(uname -m)"
-PYTHONPATH="$DIR/vendor/$ARCH:$DIR/engine${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m brain.cli "$@"
+PYTHONPATH="$DIR/engine:$DIR/vendor/$ARCH${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m brain.cli "$@"
 """
+
+
+# Top-level names an untrusted wheel must never be allowed to drop into the
+# vendor dir: the engine package itself, and the two modules CPython auto-imports
+# at startup (a wheel placing `sitecustomize.py`/`usercustomize.py` on the path
+# runs arbitrary code with no import statement). Engine-first PYTHONPATH already
+# stops `brain` shadowing; this is belt-and-braces + covers the auto-exec pair.
+_FORBIDDEN_TOPLEVEL = frozenset({
+    "brain", "sitecustomize", "usercustomize", "sitecustomize.py", "usercustomize.py",
+})
+
+
+def _safe_extract(zf: zipfile.ZipFile, dest: Path) -> None:
+    """Extract a wheel, refusing members that escape ``dest`` (zip-slip) or
+    that would shadow the engine / auto-exec at a top-level name. A poisoned
+    wheel is untrusted input (codex 2026-07-19)."""
+    dest = dest.resolve()
+    for member in zf.namelist():
+        top = member.split("/", 1)[0]
+        if top in _FORBIDDEN_TOPLEVEL:
+            raise ValueError(f"vendored wheel member {member!r} would shadow a "
+                             f"protected top-level name — refusing extraction")
+        target = (dest / member).resolve()
+        if target != dest and dest not in target.parents:
+            raise ValueError(f"vendored wheel member {member!r} escapes {dest} "
+                             f"(zip-slip) — refusing extraction")
+    zf.extractall(dest)
 
 
 def _has_deps(arch_dir: Path) -> bool:
@@ -74,10 +110,15 @@ def _download_and_unpack(arch: str, arch_dir: Path, python_exe: str) -> bool:
             shutil.rmtree(arch_dir)
         arch_dir.mkdir(parents=True, exist_ok=True)
         # extract every downloaded wheel — pure-python wheels (*-none-any) carry
-        # no arch tag, so a *{arch}* glob would silently drop onnxruntime's deps
+        # no arch tag, so a *{arch}* glob would silently drop onnxruntime's deps.
+        # _safe_extract refuses zip-slip and engine/auto-exec shadowing members.
+        # ponytail: version+hash pinning is the deeper supply-chain hardening;
+        #   deferred because pinning wheel versions we can't validate offline is
+        #   the EmbedderUnavailable outage class — add a hash-locked requirements
+        #   file when the threat model includes a fully compromised package index.
         for whl in tmp.glob("*.whl"):
             with zipfile.ZipFile(whl) as zf:
-                zf.extractall(arch_dir)
+                _safe_extract(zf, arch_dir)
     return _has_deps(arch_dir)
 
 

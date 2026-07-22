@@ -93,3 +93,4 @@ _archive/
 # Step 0a real-corpus validation: kill-resume on a real-content subset —
 # counts and timings only, no note content.
 !_evidence/obs-recovery-2026-07/real-corpus-validation.txt
+dist_build/

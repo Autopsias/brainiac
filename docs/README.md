@@ -9,10 +9,10 @@ an engineer (Technical), or both (Mixed).
 
 | Doc | For | Language | What it is |
 |---|---|---|---|
-| [`../README.md`](../README.md) | everyone | Plain | What Brainiac is and the fastest way to install it |
+| [`../README.md`](https://github.com/Autopsias/brainiac/blob/main/README.md) | everyone | Plain | What Brainiac is and the fastest way to install it |
 | [`install-guide.html`](install-guide.html) | installing it yourself | Plain | End-to-end install — new machine, existing machine, every path, with diagrams |
 | [`install/LLM-INSTALL.md`](install/LLM-INSTALL.md) | "just do it for me" | Plain | Paste-and-go runbook your AI assistant executes end-to-end |
-| [`../AGENTS.md`](../AGENTS.md) | AI assistants + power users | Mixed | The canonical contract: note shape, the four verbs, capture rules, security posture |
+| [`../AGENTS.md`](https://github.com/Autopsias/brainiac/blob/main/AGENTS.md) | AI assistants + power users | Mixed | The canonical contract: note shape, the four verbs, capture rules, security posture |
 
 ## Install & operate
 
@@ -39,7 +39,7 @@ an engineer (Technical), or both (Mixed).
 | Doc | What it is |
 |---|---|
 | [`harness-wiring.md`](harness-wiring.md) | Which client reads which file / uses which surface (per-harness matrix) |
-| [`../SECURITY.md`](../SECURITY.md) | Vulnerability reporting, supported versions, audit-key rotation |
+| [`../SECURITY.md`](https://github.com/Autopsias/brainiac/blob/main/SECURITY.md) | Vulnerability reporting, supported versions, audit-key rotation |
 | [`SECURITY_NOTES.md`](SECURITY_NOTES.md) | Triaged static-scanner findings (accepted false positives, per site) |
 | [`session-memory.md`](session-memory.md) · [`ingestion.md`](ingestion.md) · [`corpus-migration.md`](corpus-migration.md) | Operational internals |
 | [`adr/`](adr/) · [`release-runbook.md`](release-runbook.md) · [`dependency-inventory.md`](dependency-inventory.md) | Decision records + release/dependency process |

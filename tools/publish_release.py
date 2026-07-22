@@ -32,6 +32,7 @@ a release, then a full ``--denylist`` run once before cutting the tag.
 from __future__ import annotations
 
 import argparse
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -97,17 +98,40 @@ def step_contamination_scan(export_dir: Path, denylist: Path) -> dict:
     # its own argument (not bundled into -rFoiI) — this repo's `grep` resolves
     # to ugrep on macOS, which parses a bundled "-f<path>" as flag "-f" +
     # filename "I"; splitting -f out is portable across both.
+    #
+    # Prefer ripgrep when installed (2026-07-22): BSD grep matches line-by-
+    # line, and _evidence/ carries multi-MB SINGLE-LINE JSON dumps — 530
+    # case-insensitive fixed patterns against a 35 MB line effectively never
+    # terminates (observed: a release run wedged >40 min at 100% CPU). rg's
+    # matcher is line-length-insensitive and finishes the same sweep in
+    # seconds. Same semantics for our purpose: -F fixed strings, -o one hit
+    # per match, -i case-insensitive; hidden files included to match grep -r.
+    # -w (owner decision 2026-07-22): a denylist term hits only as a whole
+    # word — short entries otherwise fire as substrings inside ordinary
+    # English words and camelCase identifiers (and quoting an example here
+    # would itself trip the gate — this comment stays abstract). Hyphen/
+    # slash/dot still bound words, so "term-vault" slug forms keep matching;
+    # known tradeoff: an underscore_joined identifier does NOT (underscore
+    # is a word character) — accepted, since scrubbed identifiers were the
+    # first thing the historical cleanups removed.
+    if shutil.which("rg"):
+        def _scan(target: Path) -> list[str]:
+            proc = subprocess.run(
+                ["rg", "-Foiw", "--hidden", "--no-ignore", "-f", clean_denylist,
+                 str(target)],
+                capture_output=True, text=True,
+            )
+            return [line for line in proc.stdout.splitlines() if line.strip()]
+    else:
+        def _scan(target: Path) -> list[str]:
+            proc = subprocess.run(
+                ["grep", "-rFoiI", "-f", clean_denylist, str(target)],
+                capture_output=True, text=True,
+            )
+            return [line for line in proc.stdout.splitlines() if line.strip()]
     try:
-        proc = subprocess.run(
-            ["grep", "-rFoiI", "-f", clean_denylist, str(export_dir)],
-            capture_output=True, text=True,
-        )
-        hits = [line for line in proc.stdout.splitlines() if line.strip()]
-        evidence_proc = subprocess.run(
-            ["grep", "-rFoiI", "-f", clean_denylist, str(REPO_ROOT / "_evidence")],
-            capture_output=True, text=True,
-        )
-        evidence_hits = [line for line in evidence_proc.stdout.splitlines() if line.strip()]
+        hits = _scan(export_dir)
+        evidence_hits = _scan(REPO_ROOT / "_evidence")
     finally:
         Path(clean_denylist).unlink(missing_ok=True)
     return {"export_hit_count": len(hits), "evidence_hit_count": len(evidence_hits)}

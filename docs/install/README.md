@@ -308,7 +308,7 @@ PyPI-first, same as `install.sh`: tries `uv tool install`, then `pipx`, then
 `pip install --user`, first success wins, each attempt visibly reported.
 Puts `brain` on your **User PATH** (additive — never overwrites your
 existing PATH, safe to re-run). Semantic search downloads its embedding
-model (~300 MB) lazily on first real use, or run `brain warmup` up front.
+model (~465 MB) lazily on first real use, or run `brain warmup` up front.
 Unlike `install.sh --with-ocr`, it never runs a package manager for you — it
 just prints the `winget`/`choco` command for the OCR toolchain, since
 scanned PDFs degrade to a metadata-only quarantine without it rather than

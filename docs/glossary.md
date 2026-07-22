@@ -35,3 +35,15 @@ README.md, AGENTS.md, and docs/install/*.
 - **snapshot** — the read-only, generation-stamped copy of the index that the
   host publishes (`brain sync --publish` / `brain snapshot`) for the VM to
   read; the VM never touches the live index or WAL directly.
+- **WAL** — SQLite's Write-Ahead Log journaling mode, used by the live index
+  on the host. Only the host opens the index writably; the VM reads a
+  WAL-free snapshot.
+- **FDE** — Full-Disk Encryption (FileVault on macOS, BitLocker on Windows):
+  the at-rest baseline the security posture assumes.
+- **EDR** — Endpoint Detection & Response, the corporate security agent on a
+  managed machine. The host is EDR-visible; the Cowork VM is EDR-blind,
+  which is why it is restricted to read + draft.
+- **ZDR** — Zero Data Retention: the contractual term under which the model
+  vendor does not retain or train on submitted content.
+- **VirtioFS** — the shared-folder filesystem between the host and the
+  Cowork VM; the one channel through which the VM sees the workspace.

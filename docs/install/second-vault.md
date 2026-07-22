@@ -92,40 +92,22 @@ rotation — see `SECURITY.md`).
 ## 5. The nightly scheduled task: genuinely needs a second registration
 
 This is the one place two vaults **cannot** share the existing tooling
-as-is. The host-side installer uses a **fixed** LaunchAgent label / Windows
-task name — not derived from the vault path:
+as-is. The maintenance task is registered under a **per-vault** label /
+task name derived from the vault path (single source of truth:
+`brain.config.nightly_label`):
 
-- macOS: `com.profile-a-brain.daily-brief`, written to the fixed path
-  `~/Library/LaunchAgents/com.profile-a-brain.daily-brief.plist`
-  (`scripts/install-brief-mac.sh:19-20`, `scripts/register_tasks.py:50`).
-- Windows: task name `brain-daily-brief` (`scripts/register_tasks.py:51`).
+- macOS: `com.brainiac.nightly.<vault-id>`, written to
+  `~/Library/LaunchAgents/com.brainiac.nightly.<vault-id>.plist`
+  (`scripts/install-brief-mac.sh`).
+- Windows: task name `brain-daily-brief-<vault-id>`
+  (`scripts/install-brief-windows.ps1`).
 
-Re-running `brain init --full` (or `scripts/install-brief-mac.sh`) for vault
-2 **overwrites the same plist/task** — vault 1's nightly brief silently
-stops running, replaced by vault 2's. There is currently no per-vault label
-derivation in the registrar.
-
-**If you need both vaults' nightly drain + brief running, do a manual second
-registration** with a distinct label, by hand:
-
-```bash
-# copy the plist template under a new label, pointed at vault 2
-sed -e "s|SCRIPTS_DIR|$(pwd)/scripts|g" \
-    -e "s|VAULT_PATH|$HOME/vaults/personal|g" \
-    -e "s|HOME_DIR|$HOME|g" \
-    -e "s|AUDIT_KEY_PEM_PLACEHOLDER|$BRAIN_AUDIT_KEY_PEM|g" \
-    scripts/brain-brief-mac.plist \
-    | sed 's/com.profile-a-brain.daily-brief/com.profile-a-brain.daily-brief.personal/' \
-    > ~/Library/LaunchAgents/com.profile-a-brain.daily-brief.personal.plist
-
-launchctl load -w ~/Library/LaunchAgents/com.profile-a-brain.daily-brief.personal.plist
-```
-
-(Windows: same idea with `schtasks /Create /TN brain-daily-brief-personal ...`
-against `install-brief-windows.ps1`'s underlying command, with a distinct
-`-TaskName`.) Track which vault owns which label yourself — the registrar
-doesn't. If you only need one vault's nightly drain, no action needed: just
-be aware the *other* vault has none.
+So registering vault 2 **adds a second task alongside vault 1's** — nothing
+is overwritten, and each vault's hourly maintenance runs independently. The
+installer also migrates any pre-0.19 install off the old single shared label
+(`com.profile-a-brain.daily-brief` / `brain-daily-brief`) the first time it
+runs; if you still see that legacy name in your LaunchAgents or Task
+Scheduler, re-run the installer for the vault it points at.
 
 ## Summary table
 
@@ -137,7 +119,7 @@ be aware the *other* vault has none.
 | `overlay/` | yes (`<vault>/overlay`) | fill in fresh, nothing to do |
 | `.brain/snapshot`, `capture-inbox`, routines copy | yes (`<vault>/.brain/`) | nothing to do |
 | Search index + audit chain | yes (per-vault app-data subdir since 0.3.0) | nothing to do — `brain rebuild` once |
-| Nightly scheduled task | **no — fixed label/task name** | manual second registration with a distinct label, if you need both running |
+| Nightly scheduled task | yes — per-vault label (`com.brainiac.nightly.<id>`) | none — registered automatically by `brain init --full` |
 
 ## Cross-references
 

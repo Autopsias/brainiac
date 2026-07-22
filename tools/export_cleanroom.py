@@ -11,11 +11,17 @@ rather than a working-tree grep. This script IS that policy:
    `_evidence/`, `_workspace/`) as defense-in-depth, in case one is ever
    accidentally tracked.
 3. Copy the survivors into ``--output``.
-4. Regenerate ``dist/cowork-skills/*.skill`` via ``tools/package_clients.py``
-   (dist/ is gitignored, but these zips are release-contract artifacts the
-   Cowork install docs point at) and copy them in under ``dist/cowork-skills/``
-   — the ONLY gitignored path allowed into the export.
-5. Write ``manifest.json`` listing every exported file.
+4. Write ``manifest.json`` listing every exported file.
+
+NOTHING gitignored is exported. Until 0.19.10 this script also regenerated
+``dist/cowork-skills/*.skill`` and copied them in as a deliberate "release
+contract" exception — but they never actually reached the public repo, whose
+own ``.gitignore`` carries ``dist/``, so ``git add -A`` dropped them silently
+on all twelve releases. Nobody missed them: ``tools/cowork_workspace_install.sh``
+rebuilds the bundles from source on every stage (deliberately, not
+only-if-absent), and both the packager and the SKILL.md sources ship. Shipping
+prebuilt zips would only reintroduce the stale-bundle class of bug that
+v0.10.5 had to fix.
 
 Usage:
     python3 tools/export_cleanroom.py --output /path/to/export-dir
@@ -27,7 +33,6 @@ import json
 import re
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -65,11 +70,6 @@ EXCLUDE_PREFIXES = (
 # never ship it. (Root-cause fix accompanies scrubbing the tracked files.)
 EXCLUDE_SUFFIXES = ("-evidence.md",)
 
-# The one gitignored allowlist exception: release-contract Cowork bundles,
-# regenerated fresh at export time rather than shipped stale.
-COWORK_SKILL_GLOB = "dist/cowork-skills/*.skill"
-
-
 def tracked_files(repo_root: Path) -> list[str]:
     out = subprocess.run(
         ["git", "-C", str(repo_root), "ls-files", "-z"],
@@ -82,16 +82,6 @@ def tracked_files(repo_root: Path) -> list[str]:
             and not p.endswith(EXCLUDE_SUFFIXES)]
 
 
-def build_cowork_zips(repo_root: Path) -> list[Path]:
-    subprocess.run(
-        [sys.executable, str(repo_root / "tools" / "package_clients.py")],
-        check=True,
-        cwd=repo_root,
-    )
-    cowork_dir = repo_root / "dist" / "cowork-skills"
-    return sorted(cowork_dir.glob("*.skill"))
-
-
 def export(repo_root: Path, output_dir: Path) -> list[str]:
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest: list[str] = []
@@ -101,13 +91,6 @@ def export(repo_root: Path, output_dir: Path) -> list[str]:
         dst = output_dir / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
-        manifest.append(rel)
-
-    for zip_path in build_cowork_zips(repo_root):
-        rel = f"dist/cowork-skills/{zip_path.name}"
-        dst = output_dir / rel
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(zip_path, dst)
         manifest.append(rel)
 
     assert_exported_version_stamp(output_dir)

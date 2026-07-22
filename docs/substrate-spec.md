@@ -53,8 +53,9 @@ vault/
 ## 3 · The engine (`brain`)
 
 - **Index:** sqlite-vec (dense vectors) + FTS5 (lexical), one `.sqlite` file.
-- **Embeddings:** Snowflake **Arctic-embed** via fastembed/ONNX, model mmap'd
-  from the mount (never copied to `/tmp`). Bundle the model — the Cowork egress
+- **Embeddings:** **multilingual-e5-small** via ONNX (revision-pinned
+  download; `Xenova/multilingual-e5-small`), model mmap'd from the mount
+  (never copied to `/tmp`). Bundle the model for Cowork — the VM egress
   allowlist excludes HuggingFace.
 - **Four agent verbs:** `search`, `get`, `recent`, `draft_capture` (see §5 +
   AGENTS.md §5). `write_note` is host-broker-only.
@@ -121,10 +122,12 @@ mechanism S08 builds on.
 
 - **Baseline:** FDE (FileVault/BitLocker) + OS file permissions — sufficient for
   single-user local.
-- **Conditional app-encryption** (age/SOPS/SQLCipher, ACL-bound Keychain key)
-  for the sensitive subset, switched on only by the flip-list: off-device
-  backup/sync, regulated data (PCI/MNPI/PII regime), multi-user machine, or a
-  cyber-team mandate. **Encrypt any off-device backup.**
+- **Conditional app-encryption**: the shipped AES-256-GCM module protects
+  **backups only** (`brain backup`) today — the live index/vault/audit chain
+  rest on the FDE baseline (see `docs/security-overview.html` §6.8). The
+  flip-list for wanting more remains: off-device backup/sync, regulated data
+  (PCI/MNPI/PII regime), multi-user machine, or a cyber-team mandate.
+  **Encrypt any off-device backup.**
 - Budget goes to **egress**, not broad at-rest encryption (v5 §2–§3).
 
 ## 7 · Substrate readiness ≠ operational cutover (scope guard)

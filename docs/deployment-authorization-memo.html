@@ -56,13 +56,17 @@
 </head>
 <body>
 <main>
-  <div class="kicker">Confidential · internal decision memo · draft for sign-off</div>
+  <div class="kicker">Decision-memo template · draft for sign-off by the adopting organization</div>
   <h1>Deployment Authorization — Brainiac on company laptops</h1>
   <p class="meta">Prepared for: IT Architecture &amp; Information Security. Subject: whether to authorize
-    Brainiac (local knowledge-engine CLI, <code>v0.16.0</code>) for endpoint deployment, and under what
+    Brainiac (local knowledge-engine CLI) for endpoint deployment, and under what
     conditions. Basis: two independent security reviews (in-house + cross-family, Codex
-    <code>gpt-5.6-sol</code>), each verified against source, plus a hardening pass that closed several
-    findings. This memo records the recommendation; the named approvers below make the decision.</p>
+    <code>gpt-5.6-sol</code>) <strong>assessed at <code>v0.16.0</code> (2026-07)</strong>, each verified
+    against source, plus a hardening pass that closed several findings. Current release:
+    <code>v0.19.10</code> — changes since the assessed version are in <code>CHANGELOG.md</code>;
+    re-confirm the <span class="pill done" style="vertical-align:baseline">DONE</span> conditions in §3
+    against the version you deploy before signing. This memo records the recommendation; the named
+    approvers below make the decision.</p>
 
   <div class="verdict">
     <h2>Recommendation: CONDITIONALLY AUTHORIZE</h2>
@@ -110,8 +114,9 @@
   </div>
 
   <h2>3 · Conditions of authorization</h2>
-  <p class="rule">Status legend: <span class="pill done">DONE</span> shipped &amp; tested in
-    <code>v0.16.0</code> · <span class="pill open">ORG</span> the organization's action before rollout ·
+  <p class="rule">Status legend: <span class="pill done">DONE</span> shipped &amp; tested as of the
+    assessed version (<code>v0.16.0</code>; still present in <code>v0.19.10</code>) ·
+    <span class="pill open">ORG</span> the organization's action before rollout ·
     <span class="pill gate">GATE</span> a hard blocker if unmet.</p>
   <table>
     <tr><th>#</th><th>Condition</th><th>Status</th></tr>

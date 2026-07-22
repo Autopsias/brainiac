@@ -114,8 +114,8 @@ postcondition.
 
 The export is produced by `tools/export_cleanroom.py`, which enumerates
 **git-tracked files at HEAD** (`git ls-files`) and drops anything under an
-explicit exclude-prefix list, then regenerates and includes the Cowork
-`.skill` zips (the one gitignored exception).
+explicit exclude-prefix list. Nothing gitignored is exported — there are no
+exceptions.
 
 ### What is exported
 
@@ -125,8 +125,16 @@ project files (`pyproject.toml`, `CHANGELOG.md`, `README.md`, `install.sh`,
 `.claude-plugin/`, `.codex/`, `.claude/settings.json`), the kernel's own
 generic `vault/brain/*` scaffold notes and `overlay/template/*` starter
 templates (these are framework meta-content and starter templates, not owner
-data — see the contamination-scan adjudication below), and
-`dist/cowork-skills/*.skill` (regenerated fresh, not stale).
+data — see the contamination-scan adjudication below).
+
+**Not the Cowork `.skill` bundles** (changed 0.19.10). The exporter used to
+regenerate `dist/cowork-skills/*.skill` and copy them in as a deliberate
+gitignored exception — but the public repo's own `.gitignore` carries
+`dist/`, so `git add -A` dropped them on all twelve releases and no one
+noticed. They are build output: `tools/cowork_workspace_install.sh` rebuilds
+them from source on every stage (deliberately, not only-if-absent), and both
+the packager and the SKILL.md sources ship publicly. Shipping prebuilt zips
+would reintroduce the stale-bundle bug class that v0.10.5 had to fix.
 
 ### What is EXCLUDED (hard, by construction)
 

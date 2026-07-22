@@ -22,7 +22,7 @@ This repo is **Profile A** — a local, any-LLM second brain whose **substrate i
 plain Markdown + YAML frontmatter**. It is being built to **supersede Obsidian +
 Smart Connections** as the retrieval substrate. Retrieval,
 embeddings, and indexing are owned by a `brain` engine (sqlite-vec + FTS5 +
-Arctic-embed), not by an Obsidian plugin. Design of record:
+multilingual-e5-small embeddings), not by an Obsidian plugin. Design of record:
 `docs/substrate-spec.md`. (Unfamiliar term below? Check `docs/glossary.md`.)
 
 ---

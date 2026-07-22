@@ -554,6 +554,14 @@ class BrainCore:
                                      "reason": f"duplicate-id: {nid!r} already exists"})
                     continue
                 content = draft.read_text(encoding="utf-8")
+                # codex 2026-07-22: the capture-inbox IS the trust boundary — a
+                # draft is untrusted by POSITION, not by what its frontmatter
+                # claims. A file written straight into the inbox (bypassing
+                # `draft-capture`'s additive stamp) could omit or forge the
+                # stamp, so the drain overwrites it unconditionally.
+                if frontmatter.split(content) is not None:
+                    content = frontmatter.set_keys(
+                        content, {"provenance.trust": "untrusted"})
                 split = frontmatter.split(content)
                 if split is not None:
                     from . import autolink as _autolink
@@ -2925,6 +2933,7 @@ class BrainCore:
                             "autodedup_retired": len(ddp_res["retired"]),
                             "autodedup_skipped_classification": len(ddp_res["skipped_classification"]),
                             "autodedup_skipped_recurring": len(ddp_res["skipped_recurring"]),
+                            "autodedup_skipped_trust": len(ddp_res["skipped_trust"]),
                         }
                         if ddp_res["retired"]:
                             auto_fixed.append(maint.auto_fixed_item(
@@ -2936,6 +2945,16 @@ class BrainCore:
                                 f"{len(ddp_res['skipped_classification'])} sha256-identical "
                                 f"pair(s) span different classifications",
                                 "classification decisions are never automated",
+                                "review the pair and `brain supersede` by hand if the "
+                                "duplicate really is retired content",
+                                "auto-dedup"))
+                        if ddp_res["skipped_trust"]:
+                            action_required.append(maint.action_required_item(
+                                f"{len(ddp_res['skipped_trust'])} sha256-identical "
+                                f"pair(s) span different trust levels (one side is a "
+                                f"draft/untrusted-provenance note)",
+                                "an untrusted draft must never automatically retire a "
+                                "trusted note (codex 2026-07-22)",
                                 "review the pair and `brain supersede` by hand if the "
                                 "duplicate really is retired content",
                                 "auto-dedup"))

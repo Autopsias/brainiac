@@ -75,13 +75,15 @@ tools/cowork_workspace_install.sh <workspace>/vault /tmp/e5
 fallback for locked-down VMs without `python3` — most users never need
 them.)
 
-This one script (per `docs/operations/cutover-s09-evidence.md`) lands
-the **full** operational layer in one pass, not just the engine:
+This one script lands the **full** operational layer in one pass, not just
+the engine:
 
 ```
 <workspace>/vault/.brain/
-├── bin/            per-arch Linux ELFs + a symlink resolved by uname -m
-├── model/          bundled e5-small ONNX model (no HF fetch needed in the VM)
+├── engine/          staged pure-Python engine source (what the `brain` shim runs)
+├── vendor/<arch>/   per-architecture semantic deps (onnxruntime, tokenizers, ...)
+├── bin/             per-arch frozen Linux ELFs — OPTIONAL fallback for VMs without python3
+├── model/           bundled e5-small ONNX model (no HF fetch needed in the VM)
 ├── snapshot/        read-only index.snapshot.sqlite + manifest
 ├── skills/          the 10 .skill bundles, REBUILT at the current version every run
 └── routines/        routines/manifest.json + the Cowork registrar paste-prompt + a brain-init report
@@ -107,16 +109,19 @@ always rebuildable from it.
 
 ## 1 — Teach the agent (project instructions) + per-session bootstrap
 
-Cowork does **not** auto-read `AGENTS.md`/`CLAUDE.md` from the mounted
-workspace — a fresh session knows nothing about the brain. The workspace
-installer stages two files that fix this:
+Cowork **auto-loads a workspace-root `CLAUDE.md`** at session start (same
+loader as Claude Code, but without `@import` expansion — so the installer
+stages the full conventions contract **inlined** there). Verify anytime by
+sending the message `contract?` — a healthy session answers
+`[brain contract loaded] [contract inlined]`.
 
-- `<workspace>/vault/.brain/AGENTS.md` — the full conventions contract.
-- `<workspace>/vault/.brain/routines/cowork-session-prompt.md` — a prompt
-  block that bootstraps the env AND points the agent at that contract.
-  **Put it in the Claude Desktop project's custom instructions** (once per
-  project — the CLAUDE.md-equivalent for Cowork) or paste it as the first
-  message of each session. Source doc: `docs/install/cowork-session-prompt.md`.
+If the probe gets no markers (older Cowork build, or a workspace staged
+before this change), use the **fallback channel**: the installer also stages
+`<workspace>/vault/.brain/routines/cowork-session-prompt.md` — a prompt
+block that bootstraps the env AND points the agent at the contract. Put it
+in the Claude Desktop project's custom instructions (once per project) or
+paste it as the first message of each session. Source doc:
+`docs/install/cowork-session-prompt.md`.
 
 The env part, for reference — the VM filesystem persists across a session's
 lifetime, but the shell environment does **not**, so this runs at the start

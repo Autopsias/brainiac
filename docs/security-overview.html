@@ -69,9 +69,14 @@
   <h1>Security Overview &amp; Threat Model</h1>
   <div class="meta">Companions: <code>docs/architecture-overview.html</code> (component map) ·
     <code>docs/classification-scheme.md</code> (tier definitions) ·
-    <code>docs/SECURITY_NOTES.md</code> (triaged static-scanner findings).
-    Describes the shipped system as of <strong>v0.16 (2026-07)</strong>.
-    <strong>This document is deliberately honest about residual risk — §6 lists what is NOT mitigated.</strong></div>
+    <code>docs/SECURITY_NOTES.md</code> (triaged static-scanner findings) ·
+    <code>docs/glossary.md</code> (project jargon).
+    Describes the shipped system as of <strong>v0.19.10 (2026-07)</strong>.
+    <strong>This document is deliberately honest about residual risk — §6 lists what is NOT mitigated.</strong>
+    Abbreviations used below: FDE = full-disk encryption · EDR = endpoint detection &amp; response ·
+    ZDR = zero data retention (vendor contract term) · WAL = SQLite write-ahead log ·
+    VirtioFS = the host↔VM shared-folder filesystem · MNPI = material non-public information
+    (the most restrictive classification tier).</div>
 
   <div class="chips">
     <span>deny-by-default egress</span><span>host/VM trust split</span>
@@ -419,7 +424,10 @@
         (recommended for managed endpoints).</li>
       <li><strong>Installers.</strong> <code>install.sh</code> / <code>install.ps1</code> /
         <code>npx brainiac-install</code> invoke package managers directly (uv → pipx → pip); they
-        are <em>not</em> remote-script pipes, but they resolve unpinned public packages. For managed
+        are <em>not</em> remote-script pipes, but they resolve unpinned public packages. The npm
+        package (<code>brainiac-install</code>, source in <code>packaging/npm/</code>) is a thin
+        Node bootstrap containing no engine code — it only installs the same PyPI
+        <code>brainiac-cli</code> package. For managed
         endpoints, install from the lock via an approved internal index and set
         <code>$BRAIN_MANAGED=1</code> (§6.6) to disable self-update.</li>
     </ul>
@@ -448,7 +456,10 @@
       tooling. That is exactly why the VM was stripped to read+draft: the things worth logging
       (writes, signing, promotion) can only happen on the EDR-visible host, and every one lands
       in the signed audit chain. Residual: VM-side <em>reads</em> of snapshot content
-      (≤ Internal by default) are unlogged.</p>
+      (≤ Internal by default) are unlogged — and more broadly, <strong>reads are not logged
+      anywhere</strong>: neither host nor VM keeps a query/access log, so there is no "who
+      searched what" record and nothing to forward to a SIEM. The audit chain covers
+      <em>writes</em> only.</p>
   </div>
 
   <div class="risk">

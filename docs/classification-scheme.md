@@ -25,9 +25,13 @@ mechanism S08 (egress gate) is built on.
 
 Consequences:
 
-- An **unlabelled** note is invisible to ordinary retrieval — it is never
-  surfaced to a model without an explicit human gate. Fail-closed, not
-  fail-open.
+- An **unlabelled** note ranks as MNPI, the most-restrictive tier. On any
+  *capped* surface (the VM leg's `Internal` default, an explicit
+  `--max-tier`, MCP's ceiling) it is therefore invisible — fail-closed, not
+  fail-open. Note the trusted-host default is the **full vault** (owner
+  decision 2026-07-10), so on an uncapped host read an unlabelled note is
+  *surfaced* (as MNPI-ranked), not hidden — see
+  `docs/security-overview.html` §2.1.
 - This makes **bulk migration a lifecycle prerequisite, not an afterthought**:
   an imported corpus with no `classification:` is *invisible* until classified.
   Mass-classification is therefore part of corpus migration
@@ -40,7 +44,9 @@ Consequences:
 1. Caller (an LLM leg / interaction) has a **max allowed tier** for this
    execution path (set by the trifecta-break design, S08).
 2. `search`/`get`/`recent` drop any result whose tier **exceeds** the caller's
-   max. Unlabelled ⇒ treated as MNPI ⇒ dropped for all but a human-gated path.
+   max. Unlabelled ⇒ treated as MNPI ⇒ dropped on any capped surface
+   (surfaced only where the cap is the full vault, i.e. the trusted-host
+   default).
 3. Surfacing `Restricted`/`MNPI` content, and any irreversible/outbound action,
    requires **human-in-the-loop**.
 
@@ -55,7 +61,8 @@ Consequences:
 ## Relationship to the at-rest posture
 
 Classification drives **egress** (what is surfaced). It is *separate* from
-at-rest encryption, which is FDE-baseline + conditional (substrate-spec §6).
-A `Restricted`/`MNPI` tier is one of the flip-list triggers for conditional
-app-encryption when a regulated regime applies — but classification's primary
-job is the **surfacing gate**, not disk encryption.
+at-rest encryption, which is FDE-baseline (substrate-spec §6). The optional
+app-layer encryption module currently protects **backups only**
+(`brain backup`), not the live index/vault/audit chain — see
+`docs/security-overview.html` §6.8. Classification's primary job is the
+**surfacing gate**, not disk encryption.

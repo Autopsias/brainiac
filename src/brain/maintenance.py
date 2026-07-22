@@ -1587,7 +1587,15 @@ def auto_dedup_tier1(core: Any) -> dict[str, Any]:
     (d) NOT both ids matching a recurring-artifact id pattern (the same
         list ``index.near_dup`` uses for its boilerplate caveat) — two
         generated periodic artifacts (``daily-*``, transcripts, ...) can be
-        byte-identical by template design without being real duplicates.
+        byte-identical by template design without being real duplicates;
+    (e) their TRUST levels match (codex 2026-07-22): a note carrying
+        ``status: draft`` or ``provenance.trust: untrusted`` (a drained VM/
+        capture draft) must never automatically retire a trusted note —
+        canonical selection keys on attacker-writable frontmatter dates, so
+        an untrusted byte-duplicate with a future ``document_date`` would
+        otherwise win. A trust mismatch is counted and left for a human,
+        exactly like a classification mismatch. An unreadable/unparseable
+        note fails closed as untrusted.
 
     Canonical = newer by (document_date, else updated, else created); tie ->
     more backlinks (counted over this same body pass — no second vault
@@ -1600,19 +1608,45 @@ def auto_dedup_tier1(core: Any) -> dict[str, Any]:
 
     rows = core.index.conn.execute(
         "SELECT id, zone, type, classification, is_latest_version, superseded_by, "
-        "body, COALESCE(NULLIF(document_date,''), NULLIF(updated,''), created) "
+        "body, path, COALESCE(NULLIF(document_date,''), NULLIF(updated,''), created) "
         "FROM notes"
     ).fetchall()
 
     live: list[dict[str, Any]] = []
-    for nid, zone, ntype, cls, ilv, sup_by, body, date_key in rows:
+    for nid, zone, ntype, cls, ilv, sup_by, body, path, date_key in rows:
         if sup_by or str(ilv or "").strip().lower() == "false":
             continue
         live.append({
             "id": str(nid), "zone": str(zone or ""), "type": str(ntype or ""),
             "classification": str(cls or ""), "date_key": str(date_key or ""),
+            "path": str(path or ""),
             "body": body or "", "hash": body_sha256(body or ""),
         })
+
+    # Trust check (e) — lazy per-note frontmatter read, only reached for the
+    # rare pairs that clear every cheaper filter; cached so no note is read
+    # twice. Fail-closed: an unreadable note counts as untrusted.
+    from . import frontmatter as fm
+
+    trust_cache: dict[str, bool] = {}
+
+    def _untrusted(n: dict[str, Any]) -> bool:
+        cached = trust_cache.get(n["id"])
+        if cached is None:
+            p = Path(n["path"])
+            if not p.is_absolute():
+                p = Path(core.vault) / p
+            try:
+                meta, _ = fm.parse_text(p.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001 — unreadable = fail closed
+                cached = True
+            else:
+                cached = (
+                    str(meta.get("status", "")).strip().lower() == "draft"
+                    or str(meta.get("provenance.trust", "")).strip().lower() == "untrusted"
+                )
+            trust_cache[n["id"]] = cached
+        return cached
 
     # Backlink counts, reused from this same body pass (no second vault walk).
     ids = {n["id"] for n in live}
@@ -1635,6 +1669,7 @@ def auto_dedup_tier1(core: Any) -> dict[str, Any]:
     retired: list[dict[str, str]] = []
     skipped_classification: list[dict[str, str]] = []
     skipped_recurring: list[dict[str, str]] = []
+    skipped_trust: list[dict[str, str]] = []
     retired_ids: set[str] = set()
     truncated = 0
 
@@ -1662,6 +1697,9 @@ def auto_dedup_tier1(core: Any) -> dict[str, Any]:
                 if a_pat and b_pat:
                     skipped_recurring.append({"a": a["id"], "b": b["id"], "pattern": a_pat})
                     continue
+                if _untrusted(a) != _untrusted(b):
+                    skipped_trust.append({"a": a["id"], "b": b["id"]})
+                    continue
                 key_a = (a["date_key"], a["backlinks"], a["id"])
                 key_b = (b["date_key"], b["backlinks"], b["id"])
                 canonical, old = (a, b) if key_a >= key_b else (b, a)
@@ -1681,6 +1719,7 @@ def auto_dedup_tier1(core: Any) -> dict[str, Any]:
         "retired": retired,
         "skipped_classification": skipped_classification,
         "skipped_recurring": skipped_recurring,
+        "skipped_trust": skipped_trust,
         "truncated": truncated,
         "cap": cap,
     }

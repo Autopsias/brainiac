@@ -1,7 +1,13 @@
-# Cowork-Windows workspace-install path (INT-02 — PRIMARY surface)
+# Cowork-Windows workspace install — frozen-binary fallback lane
 
-Claude Desktop **Cowork on Windows** is the largest user population and the
-**primary** surface for this framework. Its shell runs in a **local Linux VM**
+> **Start with [`docs/install/cowork.md`](install/cowork.md).** The standard
+> Cowork staging (`tools/cowork_workspace_install.sh`, or
+> `/brainiac-cowork-setup`) runs the engine as **staged pure-Python source**
+> via the VM's own `python3` — no binaries involved. This page documents the
+> **frozen Linux ELF fallback** for locked-down VMs *without* `python3`,
+> plus the VirtioFS/runtime rules that apply to both lanes.
+
+Claude Desktop **Cowork on Windows** runs its shell in a **local Linux VM**
 that mounts **only the workspace folder** over **VirtioFS**. There is no package
 install, no HuggingFace egress, and no host toolchain inside the VM. So the brain
 ships **into the workspace** as a self-contained, arch-matched build the VM can
@@ -21,7 +27,7 @@ The Cowork sandbox sees the workspace root. We place the runtime under
         │   ├── brain-linux-x86_64       ← arch-matched Linux ELF (Intel/AMD VM)
         │   └── brain-linux-aarch64      ← arch-matched Linux ELF (ARM VM)
         ├── brain                        ← symlink → the arch that matches `uname -m`
-        ├── model/                       ← bundled Arctic-embed fastembed cache (model.onnx + tokenizer)
+        ├── model/                       ← bundled e5-small ONNX model cache (model.onnx + tokenizer)
         ├── snapshot/
         │   ├── index.snapshot.sqlite    ← READ-ONLY published index (single file)
         │   └── snapshot.manifest.json   ← generation id + age + counts + sha256
@@ -41,7 +47,7 @@ The Cowork sandbox sees the workspace root. We place the runtime under
    `brain` → the one matching `uname -m`. Build matrix + recipe:
    `tools/build_brain_binary.sh`.
 2. **Bundle the ONNX model.** HuggingFace is **not** on the VM egress allowlist,
-   so the Arctic-embed model (the fastembed cache layout: `model.onnx` +
+   so the embedding model (multilingual-e5-small; cache layout: `model.onnx` +
    tokenizer/config) is shipped in `.brain/model/`. Point fastembed at it with
    `BRAIN_MODEL_CACHE=<.brain>/model` (no network fetch — the embedder reads the
    bundled cache, never downloads).

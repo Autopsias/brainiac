@@ -10,13 +10,12 @@ project — expect an acknowledgement, not an SLA; there is no bug bounty.
 
 ## Supported versions
 
-There is no public release yet. Versioning follows `pyproject.toml`'s
-`[project].version` (currently `0.3.0`, internal/unreleased) and
-`CHANGELOG.md`. Once the clean-room export described in
-`docs/adr/0001-publish-via-clean-room-export.md` cuts its first public tag
-(`v1`), only the **latest tagged export** is supported — there is no
-back-porting of fixes to older tags. Pre-`v1` internal `0.x` states carry no
-support guarantee.
+Public releases are tagged `v<semver>` on this repository and published to
+PyPI as `brainiac-cli`; versioning follows `pyproject.toml`'s
+`[project].version` and `CHANGELOG.md`. Only the **latest tagged release**
+is supported — there is no back-porting of fixes to older tags. Each release
+is produced via the clean-room export described in
+`docs/adr/0001-publish-via-clean-room-export.md`.
 
 ## Audit-key rotation runbook
 

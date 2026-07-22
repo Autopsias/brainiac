@@ -62,9 +62,17 @@ No `uv`? Download the bootstrap script, run it, then run the `brain init` line a
 ```bash
 # macOS/Linux
 curl -fsSL https://raw.githubusercontent.com/Autopsias/brainiac/main/install.sh -o /tmp/brainiac-install.sh && bash /tmp/brainiac-install.sh
-# Windows (PowerShell)
-irm https://raw.githubusercontent.com/Autopsias/brainiac/main/install.ps1 -OutFile install.ps1; .\install.ps1
 ```
+
+```powershell
+# Windows (PowerShell) — install, then init with PowerShell syntax:
+irm https://raw.githubusercontent.com/Autopsias/brainiac/main/install.ps1 -OutFile install.ps1; .\install.ps1
+$env:BRAIN_VAULT = "$HOME\brain\vault"; brain init --full --apply
+```
+
+(The bootstrap scripts install the engine only — `brain init --full --apply`
+is what creates the vault and registers maintenance. Full Windows
+walk-through: [`docs/install/README.md`](docs/install/README.md), Path E.)
 
 **Then search:**
 
@@ -83,7 +91,9 @@ brain search "welcome" --json
   a non-empty vault — run `brain rebuild` once afterward or the first search is empty.
 
 Platform-by-platform detail: [`docs/install/README.md`](docs/install/README.md).
-Run `brain --help` any time — the CLI is self-describing.
+Prefer one browser-readable walk-through with a decision tree?
+[`docs/install-guide.html`](docs/install-guide.html). Run `brain --help` any
+time — the CLI is self-describing.
 
 ## Update
 

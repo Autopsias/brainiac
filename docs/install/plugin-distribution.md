@@ -96,17 +96,15 @@ after `git clone https://github.com/Autopsias/brainiac.git ~/brainiac`)
 remains a documented fallback for offline or credential-restricted
 environments.
 
-## 5 · Nightly model: single shared label (per-vault labels: decided, NOT implemented)
+## 5 · Nightly model: per-vault labels (implemented)
 
-**Reality check (2026-07-05):** the per-vault-label decision below was never
-implemented. The shipped code (`scripts/install-brief-mac.sh`,
-`register_tasks.py`) registers ONE shared label,
-`com.profile-a-brain.daily-brief` (Windows: `brain-daily-brief`), whose plist
-carries a single `BRAIN_VAULT`. A second vault's `brain init --apply` therefore
-**repoints** the nightly drain (observed live during the 2026-07-04
-reference-deployment install). The lifecycle skills now describe the shared label and
-gate any repoint behind an explicit user OK. Implement the per-vault design
-below only if/when a host genuinely runs multiple active vaults:
+**Status (2026-07):** the per-vault-label design below is now the shipped
+behaviour. `scripts/install-brief-mac.sh` / `install-brief-windows.ps1`
+derive the label from `brain.config.nightly_label` and migrate any install
+still on the old single shared label (`com.profile-a-brain.daily-brief` /
+`brain-daily-brief`) on first run. The historical shared-label caveat
+(a second vault's `brain init --apply` silently repointing the nightly
+drain) no longer applies. The design as implemented:
 
 - `vault_id = first 8 hex of sha256(realpath(vault_path))`; label = `com.brainiac.nightly.<vault_id>`; plist at `~/Library/LaunchAgents/com.brainiac.nightly.<vault_id>.plist`, program = the venv `brain maintain` with the vault path baked in.
 - One label per `target: "host"` registry entry; `cowork-vm` entries never get one (the host's nightly for the backing vault is the drain floor).

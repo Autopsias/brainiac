@@ -7,6 +7,51 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.19.11] — 2026-07-22
+### Fixed
+- **Capture-inbox trust boundary hardened (codex 2026-07-22).** The drain
+  now stamps `provenance.trust: untrusted` on every draft unconditionally —
+  a file written straight into the inbox (bypassing `draft-capture`'s
+  additive stamp) can no longer omit or forge the stamp. And auto-dedup
+  gained a trust guard: a `status: draft` / untrusted-provenance note is
+  never allowed to automatically retire a trusted note (canonical selection
+  keys on attacker-writable frontmatter dates); trust mismatches are counted
+  and left for a human, like classification mismatches. Unreadable notes
+  fail closed as untrusted.
+
+### Changed
+- **Docs clarity pass ahead of external review.**
+  Fixed stale claims that contradicted the shipped v0.19.x reality:
+  `SECURITY.md` no longer says "no public release yet / 0.3.0"; the four
+  reader-facing HTML docs (architecture / security / install-guide /
+  managed-runbook) now say v0.19.10, and the deployment-authorization memo
+  states its evidence base ("assessed at v0.16.0") explicitly instead of
+  implying freshness; `second-vault.md` + `plugin-distribution.md` updated
+  for the implemented per-vault task labels (`com.brainiac.nightly.<id>`,
+  legacy shared-label migration); model naming unified to
+  multilingual-e5-small (~465 MB) across AGENTS.md, substrate-spec,
+  corpus-migration, and the Cowork docs; `cowork-windows-install.md`
+  reframed as the frozen-ELF fallback lane (staged pure-Python is primary)
+  and `cowork.md` updated for the CLAUDE.md auto-load channel;
+  app-layer-encryption claims corrected to backups-only in
+  classification-scheme + substrate-spec; security-overview gained acronym
+  expansions, a glossary link, an explicit reads-are-not-logged statement,
+  and an npm-bootstrap supply-chain note; README gained a real PowerShell
+  Windows block and a link to install-guide.html; glossary gained
+  WAL/FDE/EDR/ZDR/VirtioFS.
+- **The clean-room export no longer carries `dist/cowork-skills/*.skill`.**
+  The exporter regenerated the 13 Cowork bundles and copied them in as a
+  deliberate "one gitignored exception" — but the public repo's own
+  `.gitignore` carries `dist/`, so `git add -A` dropped them on all twelve
+  releases and nobody noticed, because they are build output:
+  `tools/cowork_workspace_install.sh` rebuilds them from source on every
+  stage (deliberately, not only-if-absent), and both the packager and the
+  SKILL.md sources ship publicly. Shipping prebuilt zips would only
+  reintroduce the stale-bundle bug class that v0.10.5 had to fix. The export
+  contract is now simply "nothing gitignored, no exceptions" — 342 files
+  becomes 329, and `tests/test_export_cleanroom.py` asserts the stronger
+  invariant instead of the allowlist.
+
 ## [0.19.10] — 2026-07-21
 ### Added
 - **COS migrated to Codex + native-ui mail lane hardened (kernel v5.7→v5.11).**

@@ -56,7 +56,7 @@
     <code>deployment-authorization-memo.html</code> into concrete, copy-paste MDM steps for
     company-managed laptops. Everything here is <strong>defensive endpoint hardening of your own
     machines</strong> — locking down install/update, key custody, and egress. Applies to
-    <code>v0.16.0+</code>. Steps that need infrastructure you own (an internal package index, a
+    <code>v0.19.10+</code>. Steps that need infrastructure you own (an internal package index, a
     code-signing certificate) are marked <span class="org"><b>ORG-INFRA</b></span>; the commands are
     provided, the infrastructure is yours.</p>
 
@@ -114,9 +114,9 @@ export PIP_NO_INDEX=            # allow ONLY the internal index; no public fallb
 python -m pip install --require-hashes -r requirements.lock
 
 # 2) install the reviewed, signed engine wheel WITHOUT re-resolving deps
-python -m pip install --no-deps brainiac_cli-0.16.0-py3-none-any.whl
+python -m pip install --no-deps brainiac_cli-0.19.10-py3-none-any.whl
 
-brain --version        # expect: brain 0.16.0</code></pre>
+brain --version        # expect: brain 0.19.10</code></pre>
   <div class="callout"><strong>Why two steps:</strong> <code>--require-hashes -r requirements.lock</code>
     guarantees every dependency matches a reviewed SHA-256; <code>--no-deps &lt;wheel&gt;</code> installs the
     engine itself without letting pip pull anything unpinned. The wheel's integrity comes from your
@@ -184,6 +184,9 @@ security add-generic-password -s profile-a-brain-audit-key -a "$USER" -w "&lt;PE
 
 # Windows — Credential Manager (generic credential), or your HSM/CNG provider
 #   Target: profile-a-brain-audit-key   User: %USERNAME%   Secret: &lt;PEM&gt;</code></pre>
+  <p><code>profile-a-brain-audit-key</code> is the code's default service name (historical; kept for
+    compatibility with existing installs). Override it fleet-wide with
+    <code>$BRAIN_AUDIT_KEYCHAIN_SERVICE</code> if your naming policy requires.</p>
   <p>The key <em>signs</em> every committed note so the write history is tamper-evident; it is never an
     encryption key and never leaves the keystore. Rotation runbook: <code>SECURITY.md</code>.</p>
 
@@ -205,7 +208,7 @@ brain connect --client claude-desktop --max-tier Internal</code></pre>
     <code>brain project --dest &lt;dir&gt; --max-tier Internal</code> ships only the allowed tiers.</div>
 
   <h2 id="s7">7 · Verify — endpoint acceptance checklist <span style="font-size:.7em;color:var(--muted)">(run post-deploy)</span></h2>
-<pre><code>brain --version                       # expect 0.16.0 from the internal wheel
+<pre><code>brain --version                       # expect 0.19.10 from the internal wheel
 brain doctor --json                   # no FAIL lines; reports install channel
 brain status                          # index + snapshot + embedder: ready|pending
 

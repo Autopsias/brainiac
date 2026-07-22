@@ -72,8 +72,9 @@
     <h2>Recommendation: CONDITIONALLY AUTHORIZE</h2>
     <p style="margin:.2rem 0 0"><strong>Authorize deployment on single-user, company-managed laptops</strong>
     as a personal knowledge engine over content the user is already entitled to see — subject to the
-    conditions in §3. <strong>Do not authorize</strong> reliance on the classification tiers as an
-    access-control boundary between a user and data on their own machine, the sandbox/Cowork VM leg, or
+    conditions in §3, <strong>including the sandbox/Cowork VM leg under conditions 3.9a–c</strong>.
+    <strong>Do not authorize</strong> reliance on the classification tiers as an
+    access-control boundary between a user and data on their own machine, or
     vaults holding regulated data (MNPI/PII/PCI) without the separate compliance sign-off in §4.</p>
   </div>
 
@@ -99,13 +100,15 @@
         <li>Vaults holding <strong>only data the user is entitled to</strong>, up to Confidential.</li>
         <li>Host-role CLI use by approved AI assistants (see §4.5).</li>
         <li>The read-only MCP surface, capped per §3.</li>
+        <li>The <strong>Cowork / sandbox-VM leg</strong> in its read+draft role, under §3.9a–c.</li>
       </ul>
     </div>
     <div class="no">
       <h3>✗ Not authorized (this memo)</h3>
       <ul>
         <li>Tiers used as an <strong>intra-machine access boundary</strong>.</li>
-        <li>The <strong>Cowork / sandbox-VM leg</strong> (EDR-blind).</li>
+        <li>Any attempt to give the sandbox VM <strong>write, signing, or host-broker</strong>
+          privileges (the engine refuses these; do not work around it).</li>
         <li>Vaults containing <strong>MNPI / regulated data</strong> → §4 compliance gate.</li>
         <li>Multi-user or shared machines.</li>
         <li>Self-service install/update on managed endpoints (use §3.6 managed build).</li>
@@ -146,8 +149,33 @@
     <tr><td>3.8</td><td><strong>Cap the MCP surface.</strong> Set <code>BRAIN_MAX_EGRESS_TIER</code> via
       managed config the AI client cannot edit (default ships full-vault).</td>
       <td><span class="pill open">ORG</span></td></tr>
-    <tr><td>3.9</td><td><strong>Prohibit the sandbox-VM leg</strong> in this authorization (EDR-blind;
-      optional and severable).</td><td><span class="pill open">ORG</span></td></tr>
+    <tr><td>3.9a</td><td><strong>Sandbox-VM leg: run it only in the <code>vm</code> role.</strong>
+      <code>BRAIN_ROLE=vm</code> (or <code>--role vm</code>) makes the leg read+draft only: it reads
+      ONLY the host-published read-only snapshot, never resolves a signing key, and refuses
+      <code>write</code>/<code>ingest</code>/<code>supersede</code>/<code>graphify</code> before any key
+      resolution. Those refusals are code-enforced and covered by tests — but <strong>the role itself is
+      caller-selected</strong> (§2.2 of the security overview): it is set by the staged session
+      bootstrap, not by something the VM cannot override. In practice a VM session that skipped it
+      still cannot sign (no key reaches the VM) or write the canonical index (it is not mounted), so
+      this is a deployment boundary reinforced by architecture — verify the staged bootstrap sets
+      <code>BRAIN_ROLE=vm</code>, and treat any local build that removes host verbs outright as the
+      stronger option.</td>
+      <td><span class="pill done">DONE</span> engine · <span class="pill open">ORG</span> verify the bootstrap</td></tr>
+    <tr><td>3.9b</td><td><strong>Set the VM egress ceiling in managed config.</strong>
+      <code>BRAIN_VM_MAX_EGRESS_TIER</code> (default <code>Internal</code>) is a hard clamp — a higher
+      <code>--max-tier</code> typed inside the VM is silently capped and the elevation hint suppressed,
+      so raising it is a host-operator act. Where a vault holds tiers the sandbox should never see,
+      stage the workspace from <code>brain project --dest &lt;dir&gt; --max-tier &lt;tier&gt;</code>: a filtered
+      copy that physically omits them (the gate alone is an egress decision; the projection is
+      containment).</td>
+      <td><span class="pill done">DONE</span> engine · <span class="pill open">ORG</span> set the ceiling</td></tr>
+    <tr><td>3.9c</td><td><strong>Accept, in writing, that VM-side activity is EDR-blind and
+      unlogged.</strong> Host security tooling cannot see what happens inside the sandbox, and reads
+      are not logged there (nor on the host — §5). What the VM can reach is exactly what the host
+      staged into the workspace folder, so the staging decision IS the exposure decision. The original
+      reviews recommended severing this leg as the simplest path; deploying it is a deliberate scope
+      choice and is the part of this memo that most wants the reviewer's own judgment.</td>
+      <td><span class="pill open">ORG</span> <span class="pill gate">GATE</span></td></tr>
     <tr><td>3.10</td><td><strong>Parser sandboxing (defense-in-depth).</strong> The five document parsers
       are the main third-party attack surface; run ingestion in a low-privilege worker where feasible.</td>
       <td><span class="pill open">ORG</span> recommended, not blocking</td></tr>
@@ -181,6 +209,10 @@
     <li><strong>Elevation is a CLI flag, not an enforced human gate</strong>; real containment for any
       untrusted leg is a filtered projection, which §3.9 defers.</li>
     <li><strong>Availability is best-effort</strong> (watchdogs, no HA) — acceptable for a single-user tool.</li>
+    <li><strong>The sandbox-VM leg is EDR-blind and its reads are unlogged</strong> (§3.9c). The
+      containment is architectural — read-only snapshot, no signing key, host-only writes — not
+      observational: if the requirement is "security tooling must see everything the assistant reads",
+      this leg does not meet it, and no configuration makes it meet it.</li>
   </ul>
   <p class="rule">These are documented in full in <code>docs/security-overview.html</code> §6, which was
     corrected in this review cycle to remove earlier overstatements.</p>

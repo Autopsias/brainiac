@@ -29,7 +29,7 @@ opens the folder. In order:
    `.skill` bundles at `<workspace>/vault/.brain/skills/` — upload them via
    Cowork's **Save-skill** flow (kernel first; extras optional, §2). Prefer
    the Plugins tab instead? **Customize → Plugins →** add
-   `Autopsias/brainiac` → install **Profile A — Kernel Skills** (and
+   `Autopsias/brainiac` → install **Brainiac — Kernel Skills** (and
    **Extras**) works too and is documented as an optional alternative (§2) —
    just don't install Brainiac Manager in Cowork either way; its skills
    mutate the host and are useless in the VM.
@@ -158,8 +158,8 @@ extras:  curation.skill  improve.skill  task-registrar.skill  autoresearch.skill
 **Optional: Plugins tab, from inside a live Cowork session.**
 `Autopsias/brainiac` is public (flipped 2026-07-04), so Cowork's Customize →
 Plugins tab can sync the marketplace directly — verified live the same day
-(all three plugins visible: "Brainiac Manager — host lifecycle", "Profile A
-— Kernel Skills", "Profile A — Extras"). In Cowork: Customize → Plugins →
+(all three plugins visible: "Brainiac Manager — host lifecycle", "Brainiac
+— Kernel Skills", "Brainiac — Extras"). In Cowork: Customize → Plugins →
 add marketplace `Autopsias/brainiac` → install `brainiac-kernel` (and
 `brainiac-extras` if wanted); `/plugin marketplace update` inside that
 session then keeps it current — see the

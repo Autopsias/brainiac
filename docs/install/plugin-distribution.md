@@ -1,5 +1,11 @@
 # Plugin-first distribution — brainiac-manager design note (SF-01)
 
+> **This is an internal design note, not an install guide.** It records *why*
+> plugin distribution works the way it does, in the project's own build
+> shorthand. If you are installing Brainiac, you want
+> [`docs/install/README.md`](README.md) or
+> [`docs/install-guide.html`](../install-guide.html) instead.
+
 Status: ACCEPTED 2026-07-04 · Contract for sessions s02–s04 · See also `docs/adr/0002-cowork-plugin-skill-delivery.md`.
 
 ## 0 · What was actually probed (not assumed)

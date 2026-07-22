@@ -1,9 +1,9 @@
-# Substrate specification — Profile A second brain
+# Substrate specification — the Brainiac second brain
 
 **Status:** spec of record for SESSION S01 (SUB-01 / SUB-02).
 **Derived from:** the project's internal architecture design note (v5).
 (canonical; v1–v4 superseded but readable for rationale).
-**Decision (2026-06-27, maintainer):** Profile A **supersedes** Obsidian + Smart
+**Decision (2026-06-27, maintainer):** Brainiac **supersedes** Obsidian + Smart
 Connections as the retrieval substrate. "Beats today" = beats the current
 Obsidian + SC vault baseline. Corpus migration/cutover from the current vault is
 in scope (see §7 + `corpus-migration.md`).
@@ -132,7 +132,7 @@ mechanism S08 builds on.
 
 ## 7 · Substrate readiness ≠ operational cutover (scope guard)
 
-This spec makes Profile A **ready** to replace Obsidian + Smart Connections. It
+This spec makes Brainiac **ready** to replace Obsidian + Smart Connections. It
 does **not** perform the live swap. Within these 10 sessions, "migration/cutover
 in scope" means precisely:
 

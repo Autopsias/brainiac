@@ -61,7 +61,7 @@ distribution legs were re-verified live against the public repo:
   `marketplace update` — all succeeded in a sandboxed-HOME test.
 - **Cowork Plugins tab:** syncing `Autopsias/brainiac` now works — the
   directory shows all three plugins ("Brainiac Manager — host lifecycle",
-  "Profile A — Kernel Skills", "Profile A — Extras") under a "brainiac"
+  "Brainiac — Kernel Skills", "Brainiac — Extras") under a "brainiac"
   marketplace chip (screenshot evidence, 2026-07-04 20:13). The earlier
   "Marketplace sync failed" was the private-repo state (§ above), now
   resolved by the public flip alone — no code or Cowork-side change was

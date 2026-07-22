@@ -4,9 +4,9 @@
   "description": "Host lifecycle skills for Brainiac: /brainiac-install (one-command host install + nightly registration + audit-key provisioning), /brainiac-update (refresh engine + workspaces + nightly after a marketplace update), /brainiac-uninstall (teardown), /brainiac-health (one-command doctor+status+trend+heartbeat readout with a HEALTHY/DEGRADED/BROKEN verdict). Separate from brainiac-kernel/brainiac-extras so daily-use skills never pull in host-only commands.",
   "version": "0.19.11",
   "author": {
-    "name": "Profile A maintainers"
+    "name": "Brainiac maintainers"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": [
     "second-brain",
     "brain-cli",

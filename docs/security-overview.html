@@ -316,6 +316,28 @@
   <p><strong>Not present:</strong> HTTP APIs, sockets, browser components, telemetry, credential
     storage for third-party services.</p>
 
+  <h3>4.1 Network endpoints — the complete list</h3>
+  <p>Everything the tool itself can contact, so a proxy/allowlist review has a closed set. No
+    connection is made at rest, on a timer, or on a read; each is tied to an explicit action:</p>
+  <table>
+    <tr><th>Host</th><th>When</th><th>Why</th></tr>
+    <tr><td><code>huggingface.co</code> / <code>cdn-lfs*.huggingface.co</code></td><td><code>brain warmup</code>, or first semantic search on a fresh install</td><td>one-time embedding-model download (revision-pinned). Avoidable entirely: pre-stage <code>$BRAIN_MODEL_CACHE</code>, or run <code>BRAIN_EMBEDDER=hash</code>.</td></tr>
+    <tr><td><code>pypi.org</code> / <code>files.pythonhosted.org</code></td><td>install and <code>brain update</code></td><td>package install. On managed endpoints point at your internal index and set <code>BRAIN_MANAGED=1</code> to disable self-update.</td></tr>
+    <tr><td><code>registry.npmjs.org</code></td><td>only if you use <code>npx brainiac-install</code></td><td>fetches the bootstrap, which then installs from PyPI. Skippable — it is one of three install routes.</td></tr>
+    <tr><td><code>github.com</code></td><td>only if you install the Claude Code plugins from the marketplace</td><td>plugin/skill files. Not needed for CLI-only use.</td></tr>
+  </table>
+  <p>Nothing here carries vault content — these are artifact fetches. <strong>The one channel that
+    carries your content is the AI client's own model call</strong>, which the tool never makes and
+    holds no key for (§1, §6.2). Data residency for that channel is your model vendor's contract, not
+    this tool's to state.</p>
+
+  <h3>4.2 Reporting a problem</h3>
+  <p>Suspected vulnerabilities go through GitHub private vulnerability reporting on the repository
+    (Security → "Report a vulnerability"); see <code>SECURITY.md</code> for what to include and the
+    audit-key rotation runbook. Stated plainly for planning purposes: this is a single-maintainer
+    project with <strong>no SLA and no bug bounty</strong> — an adopting organization should treat
+    support as best-effort and budget its own remediation path.</p>
+
   <h2 id="threat">5 · Threat model</h2>
   <p><strong>Assets:</strong> the vault content (up to MNPI tier), the audit signing key, the
     integrity of the audit history.</p>

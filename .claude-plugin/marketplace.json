@@ -1,9 +1,9 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
   "name": "brainiac",
-  "description": "Plugin marketplace for the Profile A brain-substrate second-brain — kernel skills (kb-curator, promote, vault-ingestion, vault-eval, save-conversation, voice), an optional extras plugin (curation, improve, task-registrar, autoresearch), and brainiac-manager (host lifecycle: /brainiac-install). The kernel skills also auto-load from .claude/skills/ on a repo clone; this marketplace is the install path for a Claude Code user who is NOT working inside this repo, or who wants extras/lifecycle skills one command away.",
+  "description": "Plugin marketplace for the Brainiac brain-substrate second-brain — kernel skills (kb-curator, promote, vault-ingestion, vault-eval, save-conversation, voice), an optional extras plugin (curation, improve, task-registrar, autoresearch), and brainiac-manager (host lifecycle: /brainiac-install). The kernel skills also auto-load from .claude/skills/ on a repo clone; this marketplace is the install path for a Claude Code user who is NOT working inside this repo, or who wants extras/lifecycle skills one command away.",
   "owner": {
-    "name": "Profile A maintainers"
+    "name": "Brainiac maintainers"
   },
   "plugins": [
     {

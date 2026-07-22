@@ -213,7 +213,7 @@ installed; it does not install the engine itself.
 2. In **Claude Desktop → Cowork**, add that folder as the project folder.
 
 3. **Customize → Plugins → add marketplace `Autopsias/brainiac`** → install
-   **Profile A — Kernel Skills** (`brainiac-extras` optional). **Do not
+   **Brainiac — Kernel Skills** (`brainiac-extras` optional). **Do not
    install Brainiac Manager in Cowork** — it's host-only lifecycle tooling
    (install/update/uninstall/cowork-setup) that mutates things Cowork can't
    reach; it simply can't do its job from inside the VM.

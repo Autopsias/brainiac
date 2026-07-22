@@ -1658,11 +1658,11 @@ def auto_capture_fold(vault, now: _dt.datetime | None = None) -> dict[str, Any]:
 
 
 # -- ingest sweeper (host-broker) ------------------------------------------------
-# The Cowork VM has no view of the HOST's ~/Downloads (browser downloads land
-# there), so the VM writes an ingest MANIFEST line per triggered download into
-# the VM-writable drop; the host sweeper matches each named file in the host
-# downloads dir and moves it into <vault>/inbox/ (the ordinary signed-ingest
-# drop zone — quarantine of unknown extensions per ADR-0003 stays downstream).
+# The Cowork VM writes an ingest MANIFEST line per triggered download into the
+# VM-writable drop. The host sweeper is disabled until the operator configures
+# a DEDICATED host-only staging directory; it never falls back to the user's
+# shared ~/Downloads directory. This out-of-band host configuration is the
+# provenance boundary a VM-written basename cannot provide by itself.
 INGEST_SWEEP_MAX_BYTES_ENV = "BRAIN_COS_SWEEP_MAX_BYTES"
 DEFAULT_INGEST_SWEEP_MAX_BYTES = 200 * 1024 * 1024
 INGEST_SWEEP_DOWNLOADS_ENV = "BRAIN_COS_DOWNLOADS_DIR"
@@ -1722,7 +1722,8 @@ def ingest_sweep(vault, *, downloads_dir: Path | str | None = None,
                  dry_run: bool = False,
                  now: _dt.datetime | None = None) -> dict[str, Any]:
     """HOST sweeper: claim unclaimed ingest-manifest lines against the host
-    downloads dir and MOVE exact-filename matches into ``<vault>/inbox/``.
+    dedicated staging dir and MOVE exact-filename matches into
+    ``<vault>/inbox/``.
 
     Safety contract:
     - filenames are basename-only — any path separator / ``..`` is refused;
@@ -1739,14 +1740,26 @@ def ingest_sweep(vault, *, downloads_dir: Path | str | None = None,
     - NOTHING the manifest does not name is ever touched, moved, or deleted.
     """
     now = now or _utcnow()
-    ddir = Path(downloads_dir
-                or os.environ.get(INGEST_SWEEP_DOWNLOADS_ENV)
-                or (Path.home() / "Downloads"))
+    configured_dir = downloads_dir or os.environ.get(INGEST_SWEEP_DOWNLOADS_ENV)
+    ddir = Path(configured_dir).expanduser() if configured_dir else None
     mdir = ingest_manifest_dir(vault)
     inbox = config.vault_root(vault) / "inbox"
-    report: dict[str, Any] = {"downloads_dir": str(ddir), "dry_run": dry_run,
+    report: dict[str, Any] = {"downloads_dir": str(ddir) if ddir else None,
+                              "dry_run": dry_run,
                               "moved": [], "refused": [], "unmatched": [],
                               "already_claimed": 0}
+    if ddir is None:
+        report["disabled_reason"] = (
+            f"set {INGEST_SWEEP_DOWNLOADS_ENV} to a dedicated host-only "
+            "download staging directory; shared ~/Downloads is never swept")
+        return report
+    if ddir.is_symlink() or ddir.resolve() == (Path.home() / "Downloads").resolve():
+        report["disabled_reason"] = (
+            "refusing shared or symlinked ~/Downloads; configure a dedicated "
+            "host-only staging directory")
+        return report
+    ddir = ddir.resolve()
+    report["downloads_dir"] = str(ddir)
     if not mdir.is_dir():
         return report
     claims = _read_jsonl(_sweep_claims_path(vault))

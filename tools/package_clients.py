@@ -67,6 +67,7 @@ KERNEL_SKILLS = [
     "save-conversation",
     "voice",
     "brain-inbox",
+    "vm-doctor",
 ]
 EXTRAS_SKILLS = [
     "curation",
@@ -252,6 +253,36 @@ def write_plugin_versions(version: str) -> list[Path]:
     return written
 
 
+# The npm bootstrap installer (packaging/npm/brainiac-install) is a FOURTH
+# published artifact, on its own registry. It was bumped by hand in every
+# release commit until 0.19.10, when a release cut through tools/release.py
+# left it a version behind and every lockstep check still reported OK — the
+# validator simply did not know it existed. It is on the SSOT now.
+NPM_PACKAGE_JSON = REPO_ROOT / "packaging" / "npm" / "brainiac-install" / "package.json"
+
+
+def write_npm_version(version: str) -> Path:
+    data = validate_json_file(NPM_PACKAGE_JSON)
+    if data.get("version") != version:
+        data["version"] = version
+        NPM_PACKAGE_JSON.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return NPM_PACKAGE_JSON
+
+
+def validate_npm_version_lockstep(version: str) -> None:
+    """Hard error if the npm bootstrap's version != the pyproject SSOT version.
+
+    Same rule as the plugin manifests (ADR-0004 Ruling 5): one version line
+    across every published artifact, skew is an error, not a warning."""
+    data = validate_json_file(NPM_PACKAGE_JSON)
+    nversion = data.get("version")
+    if nversion != version:
+        raise ValidationError(
+            f"{NPM_PACKAGE_JSON}: version {nversion!r} != pyproject.toml SSOT version {version!r} "
+            "(ADR-0004 Ruling 5 — single version line, skew is a hard error)"
+        )
+
+
 def validate_monotonic_version(version: str) -> None:
     """ADR-0005 Ruling 5 (GV-01): hard-fail if the SSOT version on disk is not
     strictly greater than the release baseline (highest semver-shaped local
@@ -341,6 +372,10 @@ ENGINE_ASSET_FILES = [
     "scripts/brain-brief.sh",
     "scripts/brain-synthesis.sh",
     "scripts/brain-synthesis-mac.plist",
+    # `brain graph-report` HTML shell — the payload <script type="application/
+    # json"> block is spliced in at render time by src/brain/graphreport.py;
+    # everything else here is static (CSS/JS/WebGL viewer).
+    "assets/graph-explorer-template.html",
 ]
 ENGINE_ASSET_DIRS = [
     "templates",
@@ -451,6 +486,8 @@ def build_cowork_zips(version: str) -> list[Path]:
 
 def validate_cowork_zip(zip_path: Path, version: str) -> None:
     name = zip_path.stem
+    if not zip_path.exists():
+        raise ValidationError(f"missing {zip_path} — run tools/package_clients.py to build it")
     with zipfile.ZipFile(zip_path) as zf:
         bad = zf.testzip()
         if bad is not None:
@@ -618,6 +655,8 @@ def main() -> int:
             _log(f"  propagating version {version} into all {len(PLUGIN_NAMES)} plugin.json (ADR-0004 Ruling 5) ...")
             for p in write_plugin_versions(version):
                 _log(f"  wrote {p.relative_to(REPO_ROOT)}")
+            npm_path = write_npm_version(version)
+            _log(f"  wrote {npm_path.relative_to(REPO_ROOT)} — npm bootstrap installer")
 
         _log("\nValidating ...")
         validate_all_skill_sources()
@@ -630,13 +669,21 @@ def main() -> int:
         _log("  OK: .codex/config.toml parses")
         validate_claude_settings()
         _log("  OK: .claude/settings.json (extraKnownMarketplaces present)")
-        for name in ALL_SKILLS:
-            validate_cowork_zip(COWORK_DIST_DIR / f"{name}.skill", version)
-        _log(f"  OK: all {len(ALL_SKILLS)} dist/cowork-skills/*.skill zips re-open, parse, and carry the SSOT VERSION")
-        validate_compat_marker()
-        _log("  OK: dist/COMPAT + SKILL_VERSION markers match")
+        # dist/ is gitignored build output, so on a clean checkout (CI) these
+        # artifacts do not exist and are not a repo invariant to validate. The
+        # full build path always creates dist/ first, so it still checks them.
+        if DIST_DIR.exists():
+            for name in ALL_SKILLS:
+                validate_cowork_zip(COWORK_DIST_DIR / f"{name}.skill", version)
+            _log(f"  OK: all {len(ALL_SKILLS)} dist/cowork-skills/*.skill zips re-open, parse, and carry the SSOT VERSION")
+            validate_compat_marker()
+            _log("  OK: dist/COMPAT + SKILL_VERSION markers match")
+        else:
+            _log("  SKIP: dist/ absent (gitignored build output) — cowork zips + COMPAT marker not validated")
         validate_plugin_version_lockstep(version)
         _log("  OK: all plugin.json versions match the pyproject.toml SSOT (ADR-0004 Ruling 5)")
+        validate_npm_version_lockstep(version)
+        _log("  OK: packaging/npm/brainiac-install/package.json matches the pyproject.toml SSOT")
         validate_version_stamp(version)
         _log("  OK: src/brain/_version.py stamp matches the pyproject.toml SSOT (ADR-0005 Ruling 1)")
         validate_monotonic_version(version)

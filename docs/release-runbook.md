@@ -120,7 +120,7 @@ explicit exclude-prefix list, then regenerates and includes the Cowork
 ### What is exported
 
 Everything `git ls-files` returns MINUS the excludes below. In practice: all
-source (`src/brain/`), all plugins (`plugins/*/`), `docs/`, `tests/`, top-level
+source (`src/brain/`), all plugins (`plugins/*/`), `docs/`, top-level
 project files (`pyproject.toml`, `CHANGELOG.md`, `README.md`, `install.sh`,
 `.claude-plugin/`, `.codex/`, `.claude/settings.json`), the kernel's own
 generic `vault/brain/*` scaffold notes and `overlay/template/*` starter
@@ -136,6 +136,7 @@ data — see the contamination-scan adjudication below), and
 | `_evidence/` | explicit prefix exclude in `export_cleanroom.py` |
 | `_archive/` | explicit prefix exclude in `export_cleanroom.py` |
 | `_workspace/` | explicit prefix exclude in `export_cleanroom.py` |
+| `tests/` (corpus-derived — built using the owner's real vault as example data; excluded 2026-07-12) | explicit prefix exclude in `export_cleanroom.py` |
 | `vault/.brain/` (runtime index/cache) | gitignored — never in `git ls-files` |
 | `vault/inbox/` (ingestion drop zone) | gitignored — never in `git ls-files` |
 | `.brain/` (host runtime: memory, maintain-state, brief, graph) | gitignored — never in `git ls-files` |
@@ -463,14 +464,20 @@ Same human-only class as PyPI/`git push`: no script in this repo holds or
 reads an npm token — a human runs `npm publish` from their own authenticated
 npm session (`npm login` / `~/.npmrc`, never this repo's).
 
-**1. Sync the package version with the release** (manual — `tools/
-package_clients.py`/`release.py` do not touch `packaging/npm/`; this is a
-known follow-up, not automated by this session):
+**1. Sync the package version with the release** — AUTOMATIC since v0.19.10.
+`tools/package_clients.py` writes the SSOT version into
+`packaging/npm/brainiac-install/package.json` on every build, and
+`--validate-only` hard-fails on skew, exactly like the three `plugin.json`
+manifests (ADR-0004 Ruling 5).
+
+This used to be a hand-edit, and the hand-edit is precisely what went wrong:
+cutting v0.19.10 through `tools/release.py` left the npm manifest at 0.19.9
+while every lockstep check still reported OK, because the validator did not
+know the fourth published artifact existed. Nothing to do here now beyond
+confirming the packager ran:
 
 ```
-# packaging/npm/brainiac-install/package.json "version" should read <X.Y.Z>,
-# matching pyproject.toml's SSOT (§2). Edit it by hand if `release.py` moved
-# the engine version and this package hasn't been bumped yet.
+python3 tools/package_clients.py --validate-only   # includes the npm manifest
 ```
 
 **2. Pack + smoke-test the tarball** (repeats this session's smoke test —

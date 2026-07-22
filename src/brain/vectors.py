@@ -33,6 +33,14 @@ def unpack_vector(blob: bytes) -> list[float]:
     return list(struct.unpack(f"{len(blob) // 4}f", blob))
 
 
+# SQLite's SQLITE_MAX_VARIABLE_NUMBER defaults to 999 on older builds (newer
+# ones raise it to ~32766) -- an unchunked `IN (?,?,...)` over a whole
+# corpus's chunk rowids can blow either ceiling on a real vault (finding 4,
+# 2026-07-20 dedup batch: graphify crashed with "too many SQL variables" on
+# a ~2.5k-note vault). 500 stays safely under both.
+_IN_CLAUSE_BATCH = 500
+
+
 def cosine(a: Sequence[float], b: Sequence[float]) -> float:
     dot = sum(x * y for x, y in zip(a, b))
     na = math.sqrt(sum(x * x for x in a))
@@ -148,13 +156,16 @@ class SqliteVecBackend:
     def get_vectors(self, conn, rowids):
         if not rowids:
             return {}
-        qmarks = ",".join("?" * len(rowids))
         out: dict[int, list[float]] = {}
-        for rowid, blob in conn.execute(
-            f"SELECT rowid, embedding FROM vec_index WHERE rowid IN ({qmarks})",
-            tuple(int(r) for r in rowids),
-        ):
-            out[int(rowid)] = unpack_vector(blob)
+        ids = [int(r) for r in rowids]
+        for i in range(0, len(ids), _IN_CLAUSE_BATCH):
+            batch = ids[i:i + _IN_CLAUSE_BATCH]
+            qmarks = ",".join("?" * len(batch))
+            for rowid, blob in conn.execute(
+                f"SELECT rowid, embedding FROM vec_index WHERE rowid IN ({qmarks})",
+                tuple(batch),
+            ):
+                out[int(rowid)] = unpack_vector(blob)
         return out
 
 
@@ -194,13 +205,16 @@ class BruteForceBackend:
     def get_vectors(self, conn, rowids):
         if not rowids:
             return {}
-        qmarks = ",".join("?" * len(rowids))
         out: dict[int, list[float]] = {}
-        for rowid, blob in conn.execute(
-            f"SELECT rowid, embedding FROM vec_blob WHERE rowid IN ({qmarks})",
-            tuple(int(r) for r in rowids),
-        ):
-            out[int(rowid)] = unpack_vector(blob)
+        ids = [int(r) for r in rowids]
+        for i in range(0, len(ids), _IN_CLAUSE_BATCH):
+            batch = ids[i:i + _IN_CLAUSE_BATCH]
+            qmarks = ",".join("?" * len(batch))
+            for rowid, blob in conn.execute(
+                f"SELECT rowid, embedding FROM vec_blob WHERE rowid IN ({qmarks})",
+                tuple(batch),
+            ):
+                out[int(rowid)] = unpack_vector(blob)
         return out
 
 

@@ -149,13 +149,12 @@
       mislabelled notes from a full-vault host session — that host is trusted to see everything.</li>
     <li><strong>Role-split defaults:</strong> a trusted host session defaults to the full vault;
       the untrusted sandbox leg (<code>--role vm</code>) defaults to <code>Internal</code> and below.
-      <code>--max-tier</code> narrows or raises the cap per call. <strong>Important honesty:</strong>
-      <code>--max-tier</code> is an ordinary CLI flag — an explicit value <em>wins on either role</em>
-      (<code>cli.py</code>), so it is <strong>not a technically-enforced human gate</strong>: a caller
-      that constructs the argv (including a model on the VM leg) can raise its own cap. The real
-      containment for an untrusted leg is not the flag but <code>brain project</code> — a filtered
-      snapshot that physically omits higher tiers (see §2.2 / §6.3). Treat “human-gated elevation”
-      as an operating convention, not a mechanism.</li>
+      On the host, <code>--max-tier</code> may narrow or raise the per-call cap. On the VM it is
+      clamped to the operator-owned <code>$BRAIN_VM_MAX_EGRESS_TIER</code> ceiling (default
+      <code>Internal</code>), so a model-controlled argv cannot self-elevate; the elevation hint is
+      suppressed there as well. A physically filtered <code>brain project</code> workspace remains
+      the stronger containment boundary because it omits sensitive files entirely (see §2.2 /
+      §6.3).</li>
     <li>The graph surface applies the same gate — a withheld note cannot leak via link expansion.</li>
   </ul>
   <figure class="info">
@@ -184,7 +183,7 @@
     <rect x="574" y="120" width="190" height="72" rx="10" class="b2"/>
     <text x="669" y="142" text-anchor="middle" class="t">withholding is VISIBLE</text>
     <text x="669" y="160" text-anchor="middle" class="ts">“3 withheld — re-run with</text>
-    <text x="669" y="174" text-anchor="middle" class="ts">--max-tier …” (human-gated)</text>
+    <text x="669" y="174" text-anchor="middle" class="ts">host elevates; VM remains clamped</text>
     <text x="440" y="235" class="ts">defaults: trusted host = full vault ·</text>
     <text x="440" y="250" class="ts">sandbox VM = Internal and below</text>
   </svg>
@@ -373,13 +372,13 @@
       the audit chain (writes are signed), <strong>not</strong> the gate. A deployment needing a
       narrower host default sets <code>$BRAIN_DEFAULT_MAX_TIER</code> per machine — a conscious
       owner policy decision, documented as such.</p>
-    <p>Two corollaries a reviewer should log explicitly: (a) the <strong>MCP read surface ships the
-      same MNPI (full-vault) default</strong> — set <code>$BRAIN_MAX_EGRESS_TIER</code> to
-      <code>Internal</code> or below, via managed config the AI client cannot edit, for a capped MCP
-      server; and (b) because <code>--max-tier</code> overrides the role default (§2.1), a
-      narrowed default is a floor a caller can still raise unless the surface is a separately-built
-      capped binary. For an untrusted leg, rely on <code>brain project</code> (physical omission),
-      not the cap.</p>
+    <p>Two corollaries a reviewer should log explicitly: (a) the <strong>MCP read surface is a
+      separate LLM-facing boundary and defaults to Internal</strong> — raise
+      <code>$BRAIN_MAX_EGRESS_TIER</code> only via managed config the AI client cannot edit; and
+      (b) a host caller can still change a narrowed host default with <code>--max-tier</code>, while
+      the VM caller is hard-clamped to <code>$BRAIN_VM_MAX_EGRESS_TIER</code>. For the strongest
+      untrusted-leg containment, use <code>brain project</code> (physical omission) as well as the
+      cap.</p>
   </div>
 
   <div class="risk">
@@ -395,7 +394,7 @@
   </div>
 
   <div class="risk">
-    <h3>6.5 Supply chain <span style="font-weight:400;font-size:.85em">(partly hardened 2026-07-12)</span></h3>
+    <h3>6.5 Supply chain <span style="font-weight:400;font-size:.85em">(hardened through 2026-07-20)</span></h3>
     <ul>
       <li><strong>Dependencies — now hash-pinned + CVE-gated.</strong> <code>requirements.lock</code>
         is the full transitive runtime closure with per-artifact SHA-256 hashes
@@ -405,6 +404,12 @@
         <em>and weekly</em> (catching a newly-disclosed CVE in an already-pinned dep), and publishes
         a CycloneDX SBOM. Managed installs should resolve against the lock, from an internal mirror,
         not pyproject's open <code>&gt;=</code> ranges.</li>
+      <li><strong>Cowork offline wheels — exact artifact lock.</strong>
+        <code>tools/vendor_semantic_deps.py</code> downloads a complete, exact-version dependency
+        closure with <code>--no-deps</code>, accepts only the locked per-architecture filenames and
+        PyPI SHA-256 digests, verifies every member against wheel <code>RECORD</code>, and rejects
+        unexpected top-level modules. Extraction happens in a temporary generation; the currently
+        working vendor tree is preserved unless the whole new generation validates.</li>
       <li><strong>Model artifacts — now revision-pinned.</strong> The default model download is
         pinned to an exact Hugging Face commit (<code>E5_SMALL_ONNX_REVISION</code>), so the bytes
         are reproducible rather than "whatever <code>main</code> points at today"; override with
@@ -498,8 +503,8 @@
     <tr><th>Knob</th><th>Effect</th><th>Default</th></tr>
     <tr><td><code>BRAIN_MANAGED=1</code></td><td>corporate lockdown: ignores env/shell key custody (keystore-only), refuses <code>brain update</code> self-update</td><td>off</td></tr>
     <tr><td><code>--role vm</code> / <code>BRAIN_ROLE=vm</code></td><td>read+draft-only mode, snapshot reads, <code>Internal</code> cap</td><td>host role</td></tr>
-    <tr><td><code>--max-tier</code> / <code>BRAIN_DEFAULT_MAX_TIER</code></td><td>egress ceiling per call / per machine. Note: an explicit <code>--max-tier</code> overrides the role default on either role (not a hard gate — §2.1)</td><td>host: full vault (MNPI); vm: Internal</td></tr>
-    <tr><td><code>BRAIN_MAX_EGRESS_TIER</code> (MCP)</td><td>hard server-side ceiling for the MCP read surface; an unset/invalid value falls back to the default</td><td><strong>MNPI (full vault)</strong> — set to <code>Internal</code> or below for a capped MCP surface</td></tr>
+    <tr><td><code>--max-tier</code> / <code>BRAIN_DEFAULT_MAX_TIER</code> / <code>BRAIN_VM_MAX_EGRESS_TIER</code></td><td>host per-call/default cap; VM requests are hard-clamped to the operator-owned VM ceiling (§2.1)</td><td>host: full vault (MNPI); VM ceiling: Internal</td></tr>
+    <tr><td><code>BRAIN_MAX_EGRESS_TIER</code> (MCP)</td><td>hard server-side ceiling for the MCP read surface; an unset/invalid value fails closed to the default</td><td><strong>Internal</strong> — explicitly raise only for an approved MCP server</td></tr>
     <tr><td><code>BRAIN_AUDIT_KEY_CMD</code></td><td>external signing-key custody command (shell) — disable on managed builds (§6.6)</td><td>Keychain / Credential Manager</td></tr>
     <tr><td><code>BRAIN_ENCRYPTION_KEY_CMD</code> + module enable</td><td>AES-256-GCM — <strong>backups only</strong> today, not the live index/vault (§6.8)</td><td>off (FDE baseline)</td></tr>
     <tr><td><code>BRAIN_EMBEDDER=hash</code></td><td>fully-offline embedder (no model download)</td><td><code>auto</code> (e5-small)</td></tr>

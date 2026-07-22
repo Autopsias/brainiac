@@ -645,7 +645,12 @@ def _process_claimed(
         _append("quarantined", {"file": claimed.name, "reason": reason})
         return
 
-    meta = _meta(slug, today, archive_path, vault, hashlib.sha256(result.markdown.encode("utf-8")).hexdigest())
+    from .. import autolink
+
+    linked_markdown, autolink_added = autolink.apply_autolinks(
+        result.markdown, title=orig_name, vault=vault,
+    )
+    meta = _meta(slug, today, archive_path, vault, hashlib.sha256(linked_markdown.encode("utf-8")).hexdigest())
     body_sha = meta["sha256"]
     classification = meta["classification"]
     note_rel = f"raw/{slug}.md"
@@ -675,7 +680,7 @@ def _process_claimed(
         })
         return
 
-    content = _build_frontmatter(meta, result.markdown)
+    content = _build_frontmatter(meta, linked_markdown)
     core.write_note(
         note_rel, content,
         reason=f"ingest {orig_name} -> raw/{slug}.md "
@@ -690,6 +695,7 @@ def _process_claimed(
         "archived": str(archive_path.relative_to(vault)),
         "classification": classification,
         "warnings": result.warnings,
+        "autolink_added": autolink_added,
     })
 
     # S06 (ING-03): zip members / eml attachments re-enter the SAME

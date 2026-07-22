@@ -372,6 +372,16 @@ def maintain_lock_path(vault: str | os.PathLike[str] | None = None) -> Path:
     return brain_runtime_dir(vault) / "maintain.lock"
 
 
+def writer_lock_path(vault: str | os.PathLike[str] | None = None) -> Path:
+    """Single-writer advisory lock (CC-02) between the hourly scheduled job
+    and a hand-run CLI write — covers sync/rebuild/maintain/snapshot/restore,
+    ALL of which mutate the same index file. Distinct from
+    ``maintain_lock_path`` (that one is a single-*maintain*-runner lock, a
+    narrower concept); this one gates the index file itself. NEVER created on
+    a read path or the VM leg."""
+    return brain_runtime_dir(vault) / "writer.lock"
+
+
 def graph_dir(vault: str | os.PathLike[str] | None = None) -> Path:
     """GRF-01 discovery-graph runtime artifacts (ADR-0003 Ruling 6/(a)) —
     gitignored, host-only, never published into the VM snapshot. Holds the

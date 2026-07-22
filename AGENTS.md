@@ -224,9 +224,20 @@ gates.
    `projects/`, retired notes → `archive/`; PAR-01), and regenerates
    `backlinks.md` + per-zone `catalog.md` (NAV-01) before republishing the
    snapshot. `tools/validate.py --backlinks --catalogs` remains the manual
-   equivalent. Only SYNTHESIS (writing/promoting prose notes, `index.md`
-   content) stays session work — the folds manage metadata and generated
-   views, never note bodies.
+   equivalent. A Wednesday-gated `graph_hygiene` branch (GRH-01,
+   2026-07-20) adds cheap, no-model wikilink hygiene: knowledge-layer
+   (`brain/` zone) orphan/dangling-link/connected-component counts
+   (generated maps — `backlinks.md`/per-zone `catalog.md` — excluded from the
+   knowledge layer entirely, since they wikilink every note in their zone by
+   design and would otherwise both hide real orphans and register as
+   constant-noise "orphans" themselves), persisted into
+   `maintain-state.json` + `health-history.jsonl` and surfaced via `brain
+   health-report`'s "Graph hygiene" section; an orphan-count jump past
+   `$BRAIN_GRAPH_ORPHAN_GROWTH_MAX` (default 10) since the last run logs a
+   `hot.md` line for the weekly synthesis session to work — never an owner
+   ritual, never an inbox item. Only SYNTHESIS (writing/promoting prose
+   notes, `index.md` content) stays session work — the folds manage
+   metadata and generated views, never note bodies.
 5. **Capture under the VM is a *draft*, not a commit** — see §6.
 
 ---
@@ -501,22 +512,61 @@ The VM is a **read + draft** surface only; the host is the **only writer**.
    atomically republishes the read-only, generation-stamped snapshot into
    `.brain/snapshot/`. Only now is the note retrievable from the VM.
 
-**No capture daemon, no dedicated drain task.** The host drains *on invoke*;
-there are exactly **two** sanctioned scheduled tasks (persistence budget,
-amended 2026-07-11): **(1) `brain-nightly`** — the maintenance umbrella
-(fires **hourly**; every firing runs sweep + ingest + drain + incremental
-sync + snapshot publish + the self-organization folds of §4 rule 4 — a
-captured document is searchable within the hour — while the weekly/monthly
-branches stay date-gated), and **(2) `brain-synthesis`** — a weekly (Sun 08:00),
-registry-driven, model-backed kb-curator session that keeps the SYNTHESIS
-layer (state/MOC notes, promotions, index.md) current, since prose synthesis
-needs a model the engine deliberately does not hold. `brain status` surfaces
-snapshot generation/age + pending-draft count so staleness is visible, never
-silent.
+**No capture daemon, no dedicated drain task.** The host drains *on invoke*.
+Scheduled tasks are a **small, curated set, each justified on its own merits —
+no fixed cap, no over-engineering** (owner ruling 2026-07-20, superseding the
+earlier fixed-two-tasks framing): currently **`brain-nightly`** — the
+maintenance umbrella (fires **hourly**; every firing runs sweep + ingest +
+drain + incremental sync + snapshot publish + the self-organization folds of
+§4 rule 4 — a captured document is searchable within the hour — while the
+weekly/monthly branches stay date-gated) and **`brain-synthesis`** — a weekly
+(Sun 08:00), registry-driven, model-backed kb-curator session that keeps the
+SYNTHESIS layer (state/MOC notes, promotions, index.md) current, since prose
+synthesis needs a model the engine deliberately does not hold. Recurring
+vault-METADATA work (the graph_hygiene fold is the reference case, §4 rule 4)
+should normally join the `brain-nightly` umbrella as a date-gated branch
+rather than become a new scheduled task — a fold reuses the umbrella's
+run-lock, state file, escalation, and health-history plumbing for free, with
+no separate plist/cron entry to manage. `brain status` surfaces snapshot
+generation/age + pending-draft count so staleness is visible, never silent.
 
 So: **a VM session can read and propose; only the host can canonise.** A draft
 is never authoritative and never surfaced by `search` until the host commits it
 and republishes the snapshot.
+
+### Single-writer discipline (CC-01/CC-02, 2026-07-20)
+
+The hourly `brain-nightly` job and a hand-run `brain sync`/`rebuild` write the
+SAME sqlite index, so two protections apply to every index-mutating verb
+(`sync`, `rebuild`, `maintain`, `snapshot`, `restore-index`, and — since the
+2026-07-20 dedup-batch fix (finding 1) — `supersede`, whose full critical
+section (both signed note writes + its trailing reindex) now runs under ONE
+acquisition of the same lock, never an unbounded wait):
+
+- **A bounded, jittered write-retry** absorbs transient lock contention
+  ("database is locked") past the existing 5s `busy_timeout` — write
+  transactions use `BEGIN IMMEDIATE` (not SQLite's default DEFERRED) so the
+  busy handler can legally wait instead of hitting an un-retriable
+  lock-upgrade `SQLITE_BUSY`. Bounded to ~30s total (`$BRAIN_WRITE_RETRY_SECONDS`).
+- **An advisory single-writer lock** (`fcntl.flock` on `.brain/writer.lock`,
+  process-lifetime, NOT a pidfile — the kernel releases it on crash/kill, no
+  stale-lock heuristic needed) serializes the hourly job against a hand-run
+  command. Re-entrant within one process (`sync` self-delegating to
+  `rebuild` shares one lock, never deadlocks on it). Bounded wait
+  (`$BRAIN_WRITER_LOCK_SECONDS`, default 30s); the loser's error names the
+  current holder's pid + verb. **Read paths (`search`/`get`/`recent`) and the
+  VM leg NEVER take this lock** — it is created only by the HOST-broker write
+  verbs above.
+- **A blocked hourly run skips cleanly, not with an error** — a rebuild can
+  legitimately hold the lock for 90 minutes. `brain maintain`'s `daily`
+  branch reports `status: "skipped-writer-busy"`, refreshes `last_attempt`,
+  and increments a separate `consecutive_skips` counter (+ `writer_busy_since`
+  on the first skip of a streak) — it never increments
+  `consecutive_failures` and never touches `last_run` (those mean *work
+  completed*, and are what liveness detection keys on). `>= 6` consecutive
+  skips, or a `writer_busy_since` older than a bounded grace period, is
+  pathological (a leaked lock, a wedged rebuild) and must be surfaced as
+  loudly as a failure — never silently reported HEALTHY.
 
 ---
 

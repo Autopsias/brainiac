@@ -186,7 +186,7 @@ def _dump_json(data: dict) -> str:
     return json.dumps(data, indent=2) + "\n"
 
 
-def mcp_server_entry(vault: str, name: str = "brainiac", max_tier: str = "MNPI") -> dict:
+def mcp_server_entry(vault: str, name: str = "brainiac", max_tier: str = "Internal") -> dict:
     """The SAME entry shape ``brain mcp-config`` prints (cli.py) — the one
     place this shape is built; both the print-only command and this writer
     call it so they can never drift apart."""
@@ -213,9 +213,8 @@ def claude_desktop_config_path() -> Path:
 
 
 def plan_claude_desktop(config_path: Path, vault: str, name: str = "brainiac",
-                         max_tier: str = "MNPI") -> ConnectPlan:
+                         max_tier: str = "Internal") -> ConnectPlan:
     old_data = _load_json(config_path)
-    old_text = json.dumps(old_data, indent=2, sort_keys=True) if config_path.exists() else None
     entry = mcp_server_entry(vault, name, max_tier)
     new_data = dict(old_data)
     servers = dict(new_data.get("mcpServers") or {})

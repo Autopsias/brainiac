@@ -59,6 +59,10 @@ _evidence/eval/*
 !_evidence/obs-recovery-2026-07/
 _evidence/obs-recovery-2026-07/*
 !_evidence/obs-recovery-2026-07/baseline.md
+# S02: two-writer stress transcript, generic synthetic-vault content only.
+!_evidence/obs-recovery-2026-07/lock-contention-stress.txt
+# S03B (RB-02): kill-resume transcript, generic synthetic-vault content only.
+!_evidence/obs-recovery-2026-07/kill-resume-proof.txt
 eval/_expand/
 eval/golden_set*.json
 eval/qrels/
@@ -86,3 +90,6 @@ _plans/*/run_state.json
 _plans/*/HALT_NOTICE.txt
 _archive/
 .claude/eval-gates.json
+# Step 0a real-corpus validation: kill-resume on a real-content subset —
+# counts and timings only, no note content.
+!_evidence/obs-recovery-2026-07/real-corpus-validation.txt

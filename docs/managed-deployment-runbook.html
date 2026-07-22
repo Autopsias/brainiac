@@ -188,7 +188,7 @@ security add-generic-password -s profile-a-brain-audit-key -a "$USER" -w "&lt;PE
     encryption key and never leaves the keystore. Rotation runbook: <code>SECURITY.md</code>.</p>
 
   <h2 id="s6">6 · Cap the MCP / egress surface <span style="font-size:.7em;color:var(--muted)">(memo 3.8)</span></h2>
-  <p>The MCP read surface and the CLI both default to the full vault on the host. For a capped
+  <p>The host CLI defaults to the full vault; the LLM-facing MCP read surface defaults to Internal. For a differently capped
     deployment, set a hard ceiling via managed config the AI client cannot edit:</p>
 <pre><code># machine env (MDM) — a hard ceiling for the MCP server
 BRAIN_MAX_EGRESS_TIER=Internal        # or Confidential, per policy
@@ -198,11 +198,11 @@ BRAIN_DEFAULT_MAX_TIER=Internal
 
 # when wiring Claude Desktop, bake the ceiling into the MCP stanza:
 brain connect --client claude-desktop --max-tier Internal</code></pre>
-  <div class="callout"><strong>Honest limit (from the review):</strong> <code>--max-tier</code> is not a
-    hard human gate — a caller can raise its own cap. The <em>real</em> containment for an untrusted
-    consumer is a physically-filtered projection: <code>brain project --dest &lt;dir&gt; --max-tier
-    Internal</code> ships only the allowed tiers. Prefer that over the cap wherever a surface is not
-    fully trusted. (The sandbox-VM leg stays out of scope per memo 3.9.)</div>
+  <div class="callout"><strong>Boundary detail:</strong> a host caller may change its per-call
+    <code>--max-tier</code>; the VM caller cannot raise itself past the operator-owned
+    <code>$BRAIN_VM_MAX_EGRESS_TIER</code> ceiling (default <code>Internal</code>). The strongest
+    containment for an untrusted consumer is still a physically-filtered projection:
+    <code>brain project --dest &lt;dir&gt; --max-tier Internal</code> ships only the allowed tiers.</div>
 
   <h2 id="s7">7 · Verify — endpoint acceptance checklist <span style="font-size:.7em;color:var(--muted)">(run post-deploy)</span></h2>
 <pre><code>brain --version                       # expect 0.16.0 from the internal wheel

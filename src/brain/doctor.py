@@ -854,7 +854,22 @@ def check_vm_model_cache(vault: Path) -> dict:
                     f"{model_dir} missing/empty — the VM has no HF egress, so semantic search "
                     "silently falls back to hash embeddings without this",
                     remediation="re-stage from the host: tools/cowork_workspace_install.sh")
+    # A dangling symlink is not is_file(): an HF-cache snapshot staged without
+    # dereferencing (field finding 2026-07-20, F1) looks "present" while every
+    # file points at a blobs/ dir that was never copied.
+    dangling = [p for p in model_dir.rglob("*") if p.is_symlink() and not p.exists()]
+    if dangling:
+        return _row(surface, STALE,
+                    f"{model_dir} has {len(dangling)} dangling symlink(s) (e.g. {dangling[0].name}) — "
+                    "the HF-cache snapshot was staged without dereferencing its blobs/ links",
+                    remediation="re-stage with resolved copies: cp -RL <hf-snapshot>/. into the model dir "
+                                "(tools/cowork_workspace_install.sh now does this)")
     n_files = sum(1 for p in model_dir.rglob("*") if p.is_file())
+    if not any(p.name.startswith("model") and p.suffix == ".onnx" and p.stat().st_size > 1_000_000
+               for p in model_dir.rglob("*.onnx")):
+        return _row(surface, STALE,
+                    f"{model_dir} present ({n_files} file(s)) but no model*.onnx >1MB — cache is incomplete",
+                    remediation="re-stage from the host: tools/cowork_workspace_install.sh")
     return _row(surface, CURRENT, f"{model_dir} present ({n_files} file(s))")
 
 
@@ -878,6 +893,11 @@ def check_vendor_abi(vendor_dir: Path, interpreter: tuple[int, int]) -> dict:
         return _row(surface, NOT_DETECTABLE, f"no vendor dir at {vendor_dir}")
     tags: set[str] = set()
     for so in vendor_dir.rglob("*.so"):
+        # _retired-*/ holds deliberately quarantined old wheels (e.g. the
+        # cp311 set retired by the 2026-07 ABI fix) — corpses, not the live
+        # vendor; counting them re-reports the exact outage they ended.
+        if any(part.startswith("_retired") for part in so.relative_to(vendor_dir).parts):
+            continue
         m = _CPYTHON_SO_RE.search(so.name)
         if m:
             tags.add(f"cp{m.group(1)}{m.group(2)}")
@@ -947,6 +967,8 @@ def check_vm_maintain_heartbeat(vault: Path) -> dict:
 
     from . import config
 
+    from . import maintenance as maint
+
     surface = "Maintain heartbeat (.brain/maintain-state.json)"
     state = _read_json(config.maintain_state_path(vault))
     if not state:
@@ -954,9 +976,10 @@ def check_vm_maintain_heartbeat(vault: Path) -> dict:
                     "no maintain-state.json yet — brain maintain (host-only ritual) has not run")
     today = _dt.date.today()
     stale, repeated = [], []
+    escalated: list[str] = []  # ES-01: liveness + stuck-writer-lock, see maintenance.branch_escalation
     for branch, entry in state.items():
-        if not isinstance(entry, dict):
-            continue
+        if str(branch).startswith("_") or not isinstance(entry, dict):
+            continue  # marker (e.g. "_retention"), not a branch
         last_run = entry.get("last_run")
         age_hours: Optional[float] = None
         if last_run:
@@ -966,14 +989,25 @@ def check_vm_maintain_heartbeat(vault: Path) -> dict:
                 age_hours = None
         if branch == "daily" and (entry.get("failed") or (age_hours is not None and age_hours > 48)):
             stale.append(branch)
+        # UNCHANGED gate: >=2 consecutive failures (a PULL surface stays
+        # cheaply noisy at the pre-existing threshold — never raised to 3).
         if int(entry.get("consecutive_failures", 0) or 0) >= 2:
             repeated.append(branch)
+        # ES-01 ADDITION: liveness (stale last_run) and a leaked writer-lock
+        # skip streak — neither is visible to the consecutive_failures counter
+        # above, because a process that never runs never increments it.
+        esc = maint.branch_escalation(branch, entry, today)
+        if esc["escalate"]:
+            escalated.append(f"{branch} ({'; '.join(esc['reasons'])})")
     if stale:
         return _row(surface, STALE, f"stale branch(es): {stale}",
                     remediation="brain maintain runs host-side only — check the host's nightly scheduler")
     if repeated:
         return _row(surface, STALE, f"repeated-failure branch(es): {repeated}",
                     remediation="check the host's nightly maintenance logs")
+    if escalated:
+        return _row(surface, STALE, f"escalated branch(es): {escalated}",
+                    remediation="check the host's nightly maintenance logs / a stuck writer lock")
     return _row(surface, CURRENT, f"{len(state)} branch(es) tracked, none stale/repeatedly-failing")
 
 
@@ -1095,22 +1129,42 @@ def run_doctor(
             registry_entries = []
             registry_unavailable = True
 
-    ssot = _ssot_version(repo_root)
+    # Repo-oriented surfaces (SSOT/stamp/dist/plugin-manifests) only mean
+    # anything on a DEV CHECKOUT. From an installed engine (dist venv, uv
+    # tool, pipx) repo_root resolves inside site-packages, so those rows came
+    # back UNKNOWN — a gating status — and every health report generated by a
+    # pinned engine read falsely DEGRADED (field finding 2026-07-20, caught in
+    # the v0.19.3 pre-restage verification). Without a checkout the honest
+    # answer is NOT_DETECTABLE, and drift comparisons fall back to the running
+    # engine's own version.
+    is_dev_checkout = (repo_root / "pyproject.toml").is_file() and (repo_root / "src" / "brain").is_dir()
+
+    ssot = _ssot_version(repo_root) if is_dev_checkout else None
     rows: list[dict] = []
 
-    if ssot is None:
+    if not is_dev_checkout:
+        from . import __version__ as _engine_version
+        rows.append(_row(
+            "Version SSOT (pyproject.toml)", NOT_DETECTABLE,
+            f"no dev checkout at {repo_root} — installed engine "
+            f"(running {_engine_version}); repo drift surfaces skipped",
+        ))
+        ssot = _engine_version or "0.0.0"
+    elif ssot is None:
         rows.append(_row("Version SSOT (pyproject.toml)", UNKNOWN, "no version found in pyproject.toml"))
         ssot = "0.0.0"  # keeps downstream comparisons from crashing; every row above is UNKNOWN/errored
     else:
         rows.append(_row("Version SSOT (pyproject.toml)", CURRENT, ssot, raw={"version": ssot}))
 
     resolved_brain = shutil.which("brain")
-    rows.append(check_committed_stamp(repo_root, ssot))
+    if is_dev_checkout:
+        rows.append(check_committed_stamp(repo_root, ssot))
     rows.append(check_host_venv(brainiac_home, ssot,
                                 resolved_brain=Path(resolved_brain) if resolved_brain else None))
     rows.append(check_embedder_liveness())  # DV-03: the host also builds/queries
-    rows.append(check_dist_compat(repo_root, ssot))
-    rows.extend(check_plugin_manifests(repo_root, ssot))
+    if is_dev_checkout:
+        rows.append(check_dist_compat(repo_root, ssot))
+        rows.extend(check_plugin_manifests(repo_root, ssot))
     rows.extend(check_installed_cli_plugins(claude_home, ssot, marketplace_name))
     rows.extend(check_stale_name_plugins(claude_home))
     if registry_unavailable:
@@ -1133,6 +1187,18 @@ def run_doctor(
             rows.append(check_vendor_abi(vdir, _VM_PYTHON))
     rows.extend(check_staged_skill_bundles(registry_entries, ssot))
     rows.extend(check_workspace_schema(registry_entries, SCHEMA_VERSION))
+    # ES-01: the host is the only leg that actually RUNS `brain maintain`, so
+    # this is where a repeated-failure/stuck-lock/stale branch must gate the
+    # exit code — `check_vm_maintain_heartbeat` is vault-path-generic despite
+    # its name (it just reads maintain-state.json), reused here per
+    # registered host vault (a VM-target entry's own copy is checked by
+    # ``run_doctor_vm`` instead, against ITS vault path — never double-gated).
+    for entry in registry_entries:
+        if entry.get("target") != "host":
+            continue
+        vp = entry.get("vault_path")
+        if vp:
+            rows.append(check_vm_maintain_heartbeat(Path(vp)))
     rows.append(check_marketplace_cache(marketplace_dir))
     if registry_fetch is not None:
         rows.append(check_pypi_registry_drift(repo_root, ssot, fetch=registry_fetch))

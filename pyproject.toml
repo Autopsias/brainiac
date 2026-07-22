@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 # check. The IMPORT package stays `brain` and the console script stays
 # `brain` — only the distribution/project name changes.
 name = "brainiac-cli"
-version = "0.19.1"
+version = "0.19.10"
 description = "Brainiac — local any-LLM second-brain core engine + brain CLI (Markdown truth, derived SQLite index)."
 readme = "README.md"
 license = "Apache-2.0"

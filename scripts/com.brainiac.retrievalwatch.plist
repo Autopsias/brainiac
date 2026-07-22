@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- brain-retrieval-watch — monthly retrieval-quality drift watch (macOS LaunchAgent)
+
+     TEMPLATE — same placeholder convention as brain-brief-mac.plist
+     (SCRIPTS_DIR / VAULT_PATH / HOME_DIR). Rendered by hand; unlike the
+     nightly there is no installer script, because this watch is a per-owner
+     opt-in:
+
+       sed -e "s|SCRIPTS_DIR|$PWD/scripts|g" \
+           -e "s|VAULT_PATH|/path/to/your/vault|g" \
+           -e "s|HOME_DIR|$HOME|g" \
+           scripts/com.brainiac.retrievalwatch.plist \
+           > ~/Library/LaunchAgents/com.brainiac.retrievalwatch.plist
+       launchctl load ~/Library/LaunchAgents/com.brainiac.retrievalwatch.plist
+
+     Uninstall: launchctl unload ~/Library/LaunchAgents/com.brainiac.retrievalwatch.plist
+                rm ~/Library/LaunchAgents/com.brainiac.retrievalwatch.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.brainiac.retrievalwatch</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>SCRIPTS_DIR/brain-retrieval-watch.sh</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <!-- 1st of every month, 07:30 — before the workday, after any
+             overnight maintain runs have settled -->
+        <key>Day</key><integer>1</integer>
+        <key>Hour</key><integer>7</integer>
+        <key>Minute</key><integer>30</integer>
+    </dict>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>HOME_DIR/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+        <key>BRAIN_VAULT</key>
+        <string>VAULT_PATH</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>HOME_DIR/.brain/logs/launchd-retrievalwatch-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>HOME_DIR/.brain/logs/launchd-retrievalwatch-stderr.log</string>
+</dict>
+</plist>

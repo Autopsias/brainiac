@@ -1,13 +1,17 @@
 # Cowork session prompt — teach the agent this workspace is a Brainiac vault
 
-Cowork (Claude Desktop's Linux VM) does **not** auto-read `AGENTS.md`/
-`CLAUDE.md` the way Claude Code does — a fresh Cowork session knows nothing
-about the brain in its workspace. This prompt is how it learns.
+**This prompt is now the FALLBACK channel.** Cowork auto-loads a
+workspace-root `CLAUDE.md` at session start (same claudeMd loader as Claude
+Code), and the workspace installer stages the full conventions contract
+there — verify anytime by sending the message `contract?`; a healthy
+session answers `[brain contract loaded] [contract inlined]`. When the
+probe answers, this paste is redundant.
 
-**Best: paste it once into the Claude Desktop project's *custom
-instructions*** (Project → instructions) so every Cowork session in that
-project carries it automatically. Otherwise paste it as the first message of
-each session. A copy is also staged at
+**If the probe gets no markers** (an older Cowork build, or the workspace was
+staged before the CLAUDE.md change): paste this once into the Claude Desktop
+project's *custom instructions* (Project → instructions) so every Cowork
+session in that project carries it automatically. Otherwise paste it as the
+first message of each session. A copy is also staged at
 `vault/.brain/routines/cowork-session-prompt.md` by the workspace installer.
 
 ---

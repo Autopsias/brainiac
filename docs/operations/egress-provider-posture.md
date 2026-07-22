@@ -14,7 +14,7 @@ in one agent leg. We break it **structurally**, per execution path:
 | Execution path | Untrusted content? | Private data reach | Outbound channel | How the trifecta is broken |
 |---|---|---|---|---|
 | **Cowork VM leg** (`--role vm`) | yes (ingested/raw, MCP/tool output) | **NO** — reads only the published read-only **snapshot of a projected workspace** (sensitive tiers physically absent) + cannot resolve a signing key | the model (vendor channel) | the leg that reads untrusted content has **no private data** (projection omits Confidential/Restricted/MNPI + unlabelled) and **no write/sign privilege** (host-broker only) |
-| **Host retrieval leg** | yes | yes (full vault) | the model | the **classification gate** (deny-by-default) caps what `brain` will surface; sensitive tiers require an explicit `--max-tier` **human gate** |
+| **Host retrieval leg** | yes | yes (full vault) | the model | trusted-host default is full vault; provider contractual controls and harness tool policy are the boundary |
 | **Host write/commit** (`write_note`) | — | yes | — | **human-gated + audited** (Ed25519 chain, fails closed without a key); not an agent-facing verb |
 
 The retrieval verbs are **read+draft only**; the one irreversible/outbound action
@@ -26,7 +26,9 @@ content) is deliberately the leg with the *least* privilege.
 `brain` declines to surface the most sensitive subset at stdout — the egress
 decision point. Tiers low→high: `Public < Internal < Confidential < Restricted
 < MNPI`. An unlabelled/unrecognised note is treated as **MNPI** (default-deny).
-Default cap is **Internal**; elevation (`--max-tier`) is the explicit human gate.
+The trusted-host default is the full vault. The VM default and hard ceiling are
+**Internal**; a VM-supplied `--max-tier` is clamped, and only the host operator
+can raise the ceiling via `BRAIN_VM_MAX_EGRESS_TIER`.
 
 **Single chokepoint (SEC-01, r2-codex).** EVERY content-returning subcommand —
 `search`/`hybrid-search` (incl. `--rerank`), `grep`, `bases-query`,
@@ -87,8 +89,9 @@ the core in-process bypasses the gate. Resolution:
 
 ## 3 · Human-in-the-loop (HITL)
 
-- **Surfacing sensitive content** (`> Internal`) requires an explicit `--max-tier`
-  elevation — a human decision, not a default.
+- **Surfacing sensitive content on the VM** (`> Internal`) requires the host
+  operator to raise `BRAIN_VM_MAX_EGRESS_TIER`; model-controlled argv cannot do
+  it. The trusted host itself defaults to the full vault.
 - **`write_note`** (the one irreversible/outbound commit) is a **host-broker
   privilege**, not an agent verb; it Ed25519-signs the audit chain and **fails
   closed** without a key. VM-side capture is a *draft* only (host drains + signs).

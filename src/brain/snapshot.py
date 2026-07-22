@@ -34,6 +34,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 
 from . import config
+from .dbretry import with_write_retry
 
 SNAPSHOT_DB = "index.snapshot.sqlite"
 MANIFEST = "snapshot.manifest.json"
@@ -143,11 +144,19 @@ def publish_snapshot(source_db: Path, dest_dir: Path) -> SnapshotManifest:
 
     # Checkpoint the WAL into the main DB before snapshotting so the copy is a
     # self-contained, consistent point-in-time (no dependence on -wal/-shm).
+    # CC-02/[HARDENED:adv-r1-codex]: this used to swallow OperationalError
+    # and copy anyway -- a busy checkpoint (another writer mid-transaction)
+    # would silently publish a snapshot that OMITS uncheckpointed WAL
+    # writes. Now bounded-retried (same helper as every other write path),
+    # and a checkpoint that still can't complete ABORTS the publish rather
+    # than copying a possibly-incomplete DB. Callers hold the CC-02 writer
+    # lock around this call, so real contention here should be rare.
     con = sqlite3.connect(str(source_db))
+    con.isolation_level = None
     try:
-        con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-    except sqlite3.OperationalError:
-        pass
+        with_write_retry(
+            lambda: con.execute("PRAGMA wal_checkpoint(TRUNCATE)"), conn=con
+        )
     finally:
         con.close()
 

@@ -172,11 +172,107 @@ def render_outcomes_markdown(outcomes: dict[str, Any]) -> str:
 # fire on the weekday/day-of-month the persistence budget assigns them so the
 # WHOLE roster rides the one sanctioned OS task (`brain-nightly`) with ZERO
 # extra scheduler entries (persistence-budget.md THE LOCK).
-_MONDAY, _TUESDAY, _SUNDAY = 0, 1, 6
+_MONDAY, _TUESDAY, _WEDNESDAY, _SUNDAY = 0, 1, 2, 6
 _WEEKLY_TRIGGER_WEEKDAY = {
-    "health": _MONDAY, "integrity": _TUESDAY, "digest": _SUNDAY, "golden": _SUNDAY,
+    "health": _MONDAY, "integrity": _TUESDAY, "graph_hygiene": _WEDNESDAY,
+    "digest": _SUNDAY, "golden": _SUNDAY,
 }
-_ALL_BRANCHES = ("daily", "health", "integrity", "digest", "graphify", "golden")
+_ALL_BRANCHES = ("daily", "health", "integrity", "graph_hygiene", "digest", "graphify", "golden")
+
+# ---------------------------------------------------------------------------
+# ES-01 — loud escalation for a maintain branch that stops making progress.
+#
+# Single source of truth shared by doctor.py (exit code), brief.py (banner)
+# and BrainCore.maintain (notification): every consumer calls
+# ``branch_escalation``/``maintain_escalation`` instead of re-deriving these
+# thresholds, so the three surfaces can never drift apart.
+#
+# Two INDEPENDENT deliberately-different gates already exist upstream and are
+# NOT touched here: `brain doctor`'s own consecutive_failures>=2 STALE check
+# (doctor.py) and `status()`'s >=2 repeated-failures flag (core.py) — both are
+# PULL surfaces (cheap to be noisy). This module governs only the PUSH
+# surfaces (banner + notification), at the louder >=3 threshold, PLUS a
+# liveness check neither of those upstream gates can see: consecutive_failures
+# is incremented only inside a branch handler's try — a process that never
+# runs at all (launchd never fired, a crashed import, or a leaked writer lock
+# via the `skipped-writer-busy` contract in `_mark_writer_busy`) leaves the
+# counter frozen, forever "healthy". Liveness is keyed on `last_run` (set only
+# on genuine success) and the writer-busy skip contract's own
+# `consecutive_skips`/`writer_busy_since` — never on `last_attempt`, which the
+# writer-busy skip refreshes every time regardless of whether any work
+# happened.
+# ---------------------------------------------------------------------------
+FAILURE_ESCALATE_THRESHOLD = 3   # consecutive_failures >= this -> loud (banner+doctor+notify)
+SKIP_ESCALATE_THRESHOLD = 6      # consecutive_skips >= this -> loud (leaked-lock regression guard)
+WRITER_BUSY_GRACE_HOURS = 12     # writer_busy_since older than this -> loud even if skip count is low
+_STALE_CADENCE_MULTIPLIER = 2    # last_run older than this many cadences -> liveness failure
+_CADENCE_DAYS = {
+    "daily": 1, "health": 7, "integrity": 7, "graph_hygiene": 7, "digest": 7,
+    "golden": 7, "graphify": 30,
+}
+
+
+def branch_escalation(
+    branch: str, entry: dict[str, Any], today: datetime.date,
+) -> dict[str, Any]:
+    """Whether ``branch`` (one ``maintain-state.json`` entry) should escalate
+    LOUDLY today, and why. Pure, never raises on malformed data (an
+    unparseable date degrades to "can't tell", not a crash).
+
+    Returns ``{"escalate": bool, "reasons": [str, ...]}``.
+    """
+    reasons: list[str] = []
+
+    consecutive_failures = int(entry.get("consecutive_failures", 0) or 0)
+    if consecutive_failures >= FAILURE_ESCALATE_THRESHOLD:
+        reasons.append(f"{consecutive_failures} consecutive failures")
+
+    consecutive_skips = int(entry.get("consecutive_skips", 0) or 0)
+    writer_busy_since = entry.get("writer_busy_since")
+    skip_escalate = consecutive_skips >= SKIP_ESCALATE_THRESHOLD
+    if not skip_escalate and writer_busy_since:
+        try:
+            since = datetime.date.fromisoformat(str(writer_busy_since))
+            if (today - since).days * 24 >= WRITER_BUSY_GRACE_HOURS:
+                skip_escalate = True
+        except ValueError:
+            pass
+    if skip_escalate:
+        reasons.append(f"writer-lock held/skipped {consecutive_skips} consecutive run(s)")
+
+    last_run = entry.get("last_run")
+    if last_run:
+        try:
+            age_days = (today - datetime.date.fromisoformat(str(last_run))).days
+            cadence = _CADENCE_DAYS.get(branch, 1)
+            if age_days > cadence * _STALE_CADENCE_MULTIPLIER:
+                reasons.append(f"last_run {age_days}d ago (expected every ~{cadence}d)")
+        except ValueError:
+            pass
+
+    return {"escalate": bool(reasons), "reasons": reasons}
+
+
+def maintain_escalation(
+    state: dict[str, Any], today: datetime.date | None = None,
+) -> dict[str, Any]:
+    """Escalation status across every branch in ``maintain-state.json``.
+    Pure — the caller loads/passes ``state``, this never touches disk.
+
+    Returns ``{"escalate": bool, "branches": [{"branch", "reasons", ...}]}``.
+    """
+    d = today or datetime.date.today()
+    branches: list[dict[str, Any]] = []
+    for branch, entry in state.items():
+        if str(branch).startswith("_") or not isinstance(entry, dict):
+            continue  # marker, not a branch (mirrors maintain()'s own filter)
+        result = branch_escalation(branch, entry, d)
+        if result["escalate"]:
+            branches.append({
+                "branch": branch, "reasons": result["reasons"],
+                "consecutive_failures": int(entry.get("consecutive_failures", 0) or 0),
+            })
+    return {"escalate": bool(branches), "branches": branches}
 
 
 def _next_trigger(branch: str, last_run: datetime.date) -> datetime.date:
@@ -493,6 +589,123 @@ def render_graphify_hot_entry(candidates: list[dict[str, Any]], today: datetime.
         "- **Owner input needed:** review via `brain graphify --json` and, if a "
         "candidate is genuinely related, add the wikilink yourself — graphify "
         "never writes a link into a note."
+    )
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# GRH-01 (2026-07-20 dedup batch, finding-driven weekly fold) — the
+# `graph_hygiene` branch: cheap, no-model wikilink-hygiene metrics
+# (`graph.graph_hygiene_metrics`), Wednesday-gated (see `_WEEKLY_TRIGGER_WEEKDAY`
+# above), escalating to a hot.md LOG line (never a queue/ritual) when
+# knowledge-layer orphans grow past a threshold since the last run.
+# ---------------------------------------------------------------------------
+GRAPH_ORPHAN_GROWTH_MAX_ENV = "BRAIN_GRAPH_ORPHAN_GROWTH_MAX"
+DEFAULT_GRAPH_ORPHAN_GROWTH_MAX = 10
+
+
+def graph_hygiene_orphan_growth(
+    prev_metrics: dict[str, Any] | None, new_metrics: dict[str, Any],
+) -> int:
+    """Orphan-count delta since the last recorded run. No prior baseline
+    (never run, or a metrics-less legacy entry) -> 0 growth, never a spurious
+    alarm on the very first run."""
+    prev_count = (prev_metrics or {}).get("orphan_count")
+    if not isinstance(prev_count, int):
+        return 0
+    return max(0, int(new_metrics.get("orphan_count", 0)) - prev_count)
+
+
+def should_alert_graph_hygiene_growth(growth: int, *, max_growth: int | None = None) -> bool:
+    import os as _os
+
+    threshold = max_growth if max_growth is not None else int(
+        _os.environ.get(GRAPH_ORPHAN_GROWTH_MAX_ENV, DEFAULT_GRAPH_ORPHAN_GROWTH_MAX))
+    return growth > threshold
+
+
+def render_graph_hygiene_hot_entry(
+    metrics: dict[str, Any], growth: int, today: datetime.date,
+) -> str:
+    """A LOG line (never a queue item, never owner-input-needed — self-
+    organizing-vault ruling): tells the weekly synthesis session to work the
+    new orphans and regenerate the link-candidates artifact reference."""
+    lines = [f"## {today.isoformat()} — Graph hygiene: orphan growth"]
+    lines.append(
+        f"- **Context:** knowledge-layer orphans grew by {growth} since the last "
+        f"run (now {metrics.get('orphan_count')} of {metrics.get('knowledge_note_count')} "
+        f"notes; {metrics.get('island_count')} connected component(s); "
+        f"{metrics.get('dangling_target_count')} dangling wikilink target(s))."
+    )
+    if metrics.get("orphan_ids"):
+        lines.append("- **New/existing orphans (sample):** " +
+                      ", ".join(f"`{i}`" for i in metrics["orphan_ids"][:10]))
+    lines.append(
+        "- **Next:** work the new orphans (link them in, or move to archive/) "
+        "and regenerate the graphify link-candidates artifact (`brain graphify "
+        "--dry-run --json`) for review — self-organization fold, not an owner ritual."
+    )
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# LNK-03b — the DAILY (not Wednesday-gated) cheap knowledge-layer orphan
+# counter. Reuses `graph.graph_hygiene_metrics` as-is (measured: ~11ms on a
+# synthetic 2,500-note index — well under a "lighter helper needed" bar) and
+# persists only the orphan count as `kl_orphans`, every day, so a SUSTAINED
+# multi-day drift is visible even though the full graph_hygiene branch (with
+# its own separate, single-prior-run growth alarm) only runs weekly.
+# ---------------------------------------------------------------------------
+KL_ORPHAN_SUSTAINED_GROWTH_ENV = "BRAIN_ORPHAN_SUSTAINED_GROWTH"
+DEFAULT_KL_ORPHAN_SUSTAINED_GROWTH = 5
+KL_ORPHAN_TRAILING_DAYS = 7
+
+
+def kl_orphan_sustained_growth(
+    history: list[dict[str, Any]], new_count: int,
+) -> int | None:
+    """Growth in ``kl_orphans`` versus the value recorded
+    ``KL_ORPHAN_TRAILING_DAYS`` prior RECORDED runs ago (``history`` is
+    already-sorted-by-ts health-history rows, prior to appending this run's
+    own). Returns ``None`` when fewer than that many prior daily values
+    exist yet — no baseline, never a spurious alarm while the feature is
+    still warming up."""
+    vals = [h.get("kl_orphans") for h in history if isinstance(h.get("kl_orphans"), int)]
+    if len(vals) < KL_ORPHAN_TRAILING_DAYS:
+        return None
+    baseline = vals[-KL_ORPHAN_TRAILING_DAYS]
+    return new_count - baseline
+
+
+def should_alert_kl_orphan_sustained_growth(
+    growth: int | None, *, max_growth: int | None = None,
+) -> bool:
+    import os as _os
+
+    if growth is None:
+        return False
+    threshold = max_growth if max_growth is not None else int(
+        _os.environ.get(KL_ORPHAN_SUSTAINED_GROWTH_ENV, DEFAULT_KL_ORPHAN_SUSTAINED_GROWTH))
+    return growth > threshold
+
+
+def render_kl_orphan_sustained_growth_hot_entry(
+    new_count: int, growth: int, today: datetime.date,
+) -> str:
+    """A LOG line (never a queue item — same PUSH posture as every other
+    self-organization fold): names the sustained trend and points at the
+    graph explorer (`brain graph-report`) rather than enumerating ids (the
+    weekly `graph_hygiene` fold already surfaces a sample of those)."""
+    lines = [f"## {today.isoformat()} — Knowledge-layer orphans: sustained growth"]
+    lines.append(
+        f"- **Context:** knowledge-layer orphan count grew by {growth} over the "
+        f"trailing {KL_ORPHAN_TRAILING_DAYS} recorded day(s) (now {new_count})."
+    )
+    lines.append(
+        "- **Next:** review the trend in `brain health-report` (Graph hygiene "
+        "section) or `brain graph-report` for the full explorer — self-organization "
+        "log, not an owner ritual; the weekly `graph_hygiene` fold's own single-run "
+        "growth alarm stays independent."
     )
     return "\n".join(lines) + "\n"
 
@@ -1313,6 +1526,188 @@ def auto_version_chains(core: Any) -> dict[str, Any]:
     return report
 
 
+# ---------------------------------------------------------------------------
+# DDP-01: HIGH-CONFIDENCE auto-dedup tier — nightly fold, same daily branch as
+# VER-01 above. Retires ONLY the provably-safe duplicate tier (sha256-identical
+# bodies, same classification, same zone+type, neither side a recurring
+# generated-artifact pattern) through the audited `core.supersede` path.
+# Everything else (cosine-similar-but-not-identical, mixed
+# classification/zone/type, recurring-pattern pairs) stays with the weekly
+# synthesis / owner inbox exactly as before — this fold makes zero judgment
+# calls, only arithmetic ones.
+# ---------------------------------------------------------------------------
+_AUTODEDUP_DEFAULT_CAP = 10
+
+
+def _normalize_body_for_hash(body: str) -> str:
+    """Strip trailing whitespace per line + surrounding blank lines. Only
+    trailing-whitespace noise is normalized — real content differences (even
+    one word) must still produce a different hash."""
+    return "\n".join(ln.rstrip() for ln in body.splitlines()).strip()
+
+
+def body_sha256(body: str) -> str:
+    """sha256 of the BODY ONLY (post-frontmatter), normalized per
+    ``_normalize_body_for_hash``. Frontmatter (ids, dates, classification)
+    differs trivially between re-ingestions of the same content — hashing
+    the body alone is what makes those re-ingestions detectable as
+    duplicates in the first place."""
+    import hashlib
+
+    return hashlib.sha256(_normalize_body_for_hash(body).encode("utf-8")).hexdigest()
+
+
+def autodedup_max_per_run() -> int:
+    """Bounded trickle, never a mass migration (owner cap). Malformed/missing
+    env falls back to the default rather than raising."""
+    import os
+
+    try:
+        return max(0, int(os.environ.get("BRAIN_AUTODEDUP_MAX_PER_RUN", "").strip()
+                           or _AUTODEDUP_DEFAULT_CAP))
+    except ValueError:
+        return _AUTODEDUP_DEFAULT_CAP
+
+
+def auto_dedup_tier1(core: Any) -> dict[str, Any]:
+    """DDP-01: auto-supersede sha256-identical-body duplicate PAIRS.
+
+    Reads ``body`` straight off the already-synced ``notes`` index row (no
+    second file read) — this fold runs right after ``sync`` in the same
+    unconditional daily block VER-01 occupies, so the index already reflects
+    the current on-disk state.
+
+    A pair is a TIER-1 candidate only when ALL of:
+    (a) both notes are LIVE (``is_latest_version`` not ``false``, neither
+        already ``superseded_by`` something) and their normalized body
+        sha256 matches;
+    (b) their ``classification`` values are IDENTICAL — a classification
+        mismatch is never automated, it is counted and left for a human;
+    (c) same zone (``raw``/``brain``) and same ``type``;
+    (d) NOT both ids matching a recurring-artifact id pattern (the same
+        list ``index.near_dup`` uses for its boilerplate caveat) — two
+        generated periodic artifacts (``daily-*``, transcripts, ...) can be
+        byte-identical by template design without being real duplicates.
+
+    Canonical = newer by (document_date, else updated, else created); tie ->
+    more backlinks (counted over this same body pass — no second vault
+    walk); tie -> lexicographically last id. The older side is retired via
+    the audited ``core.supersede`` (signed, reversible, invariant-checked).
+
+    Bounded to ``autodedup_max_per_run()`` retirements; anything past the cap
+    is left untouched and counted in ``truncated`` for the caller to log."""
+    from .index import _boilerplate_patterns, _matches_boilerplate_pattern
+
+    rows = core.index.conn.execute(
+        "SELECT id, zone, type, classification, is_latest_version, superseded_by, "
+        "body, COALESCE(NULLIF(document_date,''), NULLIF(updated,''), created) "
+        "FROM notes"
+    ).fetchall()
+
+    live: list[dict[str, Any]] = []
+    for nid, zone, ntype, cls, ilv, sup_by, body, date_key in rows:
+        if sup_by or str(ilv or "").strip().lower() == "false":
+            continue
+        live.append({
+            "id": str(nid), "zone": str(zone or ""), "type": str(ntype or ""),
+            "classification": str(cls or ""), "date_key": str(date_key or ""),
+            "body": body or "", "hash": body_sha256(body or ""),
+        })
+
+    # Backlink counts, reused from this same body pass (no second vault walk).
+    ids = {n["id"] for n in live}
+    backlinks: dict[str, int] = {}
+    for n in live:
+        for m in _WIKILINK_RE.finditer(n["body"]):
+            target = m.group(1).strip()
+            if target in ids and target != n["id"]:
+                backlinks[target] = backlinks.get(target, 0) + 1
+    for n in live:
+        n["backlinks"] = backlinks.get(n["id"], 0)
+
+    by_hash: dict[str, list[dict[str, Any]]] = {}
+    for n in live:
+        by_hash.setdefault(n["hash"], []).append(n)
+
+    boilerplate_patterns = _boilerplate_patterns()
+    cap = autodedup_max_per_run()
+
+    retired: list[dict[str, str]] = []
+    skipped_classification: list[dict[str, str]] = []
+    skipped_recurring: list[dict[str, str]] = []
+    retired_ids: set[str] = set()
+    truncated = 0
+
+    for h in sorted(by_hash):
+        members = sorted(by_hash[h], key=lambda n: n["id"])
+        if len(members) < 2:
+            continue
+        for i in range(len(members)):
+            a = members[i]
+            if a["id"] in retired_ids:
+                continue
+            for j in range(i + 1, len(members)):
+                if a["id"] in retired_ids:
+                    break
+                b = members[j]
+                if b["id"] in retired_ids:
+                    continue
+                if a["zone"] != b["zone"] or a["type"] != b["type"]:
+                    continue  # out of scope — cross zone/type dedup, not tier-1
+                if a["classification"] != b["classification"]:
+                    skipped_classification.append({"a": a["id"], "b": b["id"]})
+                    continue
+                a_pat = _matches_boilerplate_pattern(a["id"], boilerplate_patterns)
+                b_pat = _matches_boilerplate_pattern(b["id"], boilerplate_patterns)
+                if a_pat and b_pat:
+                    skipped_recurring.append({"a": a["id"], "b": b["id"], "pattern": a_pat})
+                    continue
+                key_a = (a["date_key"], a["backlinks"], a["id"])
+                key_b = (b["date_key"], b["backlinks"], b["id"])
+                canonical, old = (a, b) if key_a >= key_b else (b, a)
+                if len(retired) >= cap:
+                    truncated += 1
+                    continue
+                try:
+                    core.supersede(
+                        old["id"], canonical["id"],
+                        reason="auto-dedup DDP-01 (sha256-identical, nightly self-organization)")
+                except Exception:  # noqa: BLE001 — one bad pair never aborts the fold
+                    continue
+                retired.append({"old": old["id"], "new": canonical["id"]})
+                retired_ids.add(old["id"])
+
+    return {
+        "retired": retired,
+        "skipped_classification": skipped_classification,
+        "skipped_recurring": skipped_recurring,
+        "truncated": truncated,
+        "cap": cap,
+    }
+
+
+def render_autodedup_hot_entry(result: dict[str, Any], today: datetime.date) -> str:
+    """ONE log line per run, only when the fold actually did something
+    (retired a pair, or hit the cap) — a record, never a queue item
+    (self-organizing-vault / PUSH-interaction posture, same as
+    graph_hygiene's hot entry)."""
+    lines = [f"## {today.isoformat()} — Auto-dedup (DDP-01)"]
+    retired = result.get("retired", [])
+    lines.append(
+        f"- **Context:** {len(retired)} sha256-identical duplicate pair(s) "
+        f"auto-superseded this run (cap {result.get('cap')})."
+    )
+    for pair in retired[:10]:
+        lines.append(f"  - `{pair['old']}` -> `{pair['new']}`")
+    if result.get("truncated"):
+        lines.append(
+            f"- **Remainder:** {result['truncated']} more provably-safe "
+            "duplicate pair(s) found but left untouched this run (cap "
+            "reached) — will be picked up next run."
+        )
+    return "\n".join(lines) + "\n"
+
+
 def auto_para(vault: Path) -> dict[str, Any]:
     """PAR-01: file brain/ notes into their PARA zone by METADATA, not by a
     human dragging files. Two deliberately small rules:
@@ -1812,6 +2207,9 @@ def collect_health_metrics(
     if isinstance(dc, dict):
         decision_candidates = dc.get("candidates")
     golden = results.get("golden") if isinstance(results.get("golden"), dict) else {}
+    graph_hygiene = results.get("graph_hygiene") if isinstance(results.get("graph_hygiene"), dict) else {}
+    autodedup = results.get("autodedup") if isinstance(results.get("autodedup"), dict) else {}
+    kl_orphans = results.get("kl_orphans") if isinstance(results.get("kl_orphans"), dict) else {}
 
     return {
         "ts": ts or _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -1828,6 +2226,26 @@ def collect_health_metrics(
         "decision_candidates": decision_candidates,
         "golden_score": golden.get("score"),
         "synthesis_cost_usd": latest_synthesis_cost(vault),
+        # GRH-01: only present when the graph_hygiene branch ran this run —
+        # a record from a run where it was not due simply omits these (None).
+        "graph_orphans": graph_hygiene.get("orphan_count"),
+        "graph_islands": graph_hygiene.get("island_count"),
+        "graph_dangling": graph_hygiene.get("dangling_target_count"),
+        # LNK-03b: unlike graph_orphans (Wednesday-only), this is present on
+        # EVERY run once this fold ships — the sustained-growth baseline
+        # reads 7 of these, not 7 of the sparse weekly graph_orphans values.
+        "kl_orphans": kl_orphans.get("orphan_count"),
+        # DDP-01: only present when the autodedup fold ran this run — a
+        # record from a run where it errored out entirely simply omits these
+        # (None), same posture as the graph_hygiene fields above.
+        "autodedup_retired": len(autodedup["retired"]) if "retired" in autodedup else None,
+        "autodedup_skipped_classification": (
+            len(autodedup["skipped_classification"])
+            if "skipped_classification" in autodedup else None
+        ),
+        "autodedup_skipped_recurring": (
+            len(autodedup["skipped_recurring"]) if "skipped_recurring" in autodedup else None
+        ),
     }
 
 
@@ -2231,6 +2649,7 @@ DEFAULT_NOTIFY_MARKER_RETENTION_DAYS = 30
 
 def degradation_findings(
     outcomes: dict[str, Any], trend_findings: list[dict[str, Any]],
+    maintain_state: dict[str, Any] | None = None, today: datetime.date | None = None,
 ) -> list[tuple[str, str]]:
     """``(dedup_key, display_text)`` pairs, in priority order: blocked>0 (from
     ``outcomes`` — the ritual-level count, distinct from ``health_trend``'s
@@ -2252,7 +2671,14 @@ def degradation_findings(
     Fix [3]: ``health_trend`` ALSO appends its own ``metric: "blocked"`` entry
     to ``trend_findings`` whenever the latest record shows blocked>0 — that
     entry is skipped here so the SAME blocked condition never produces two
-    findings in one run."""
+    findings in one run.
+
+    ES-01: also folds in ``maintain_escalation(maintain_state)`` when
+    ``maintain_state`` is given — a branch crossing the loud-escalation
+    threshold (repeated failure, a stuck writer-lock skip, or a stale
+    ``last_run`` liveness failure) notifies exactly like any other
+    degradation finding, keyed ``branch-escalate:<branch>`` so it dedups
+    per branch per day same as everything else here."""
     pairs: list[tuple[str, str]] = []
     blocked = (outcomes.get("counts") or {}).get("blocked", 0)
     if blocked:
@@ -2267,6 +2693,11 @@ def degradation_findings(
             continue  # already reported via outcomes.counts above
         text = str(f.get("summary") or f"{metric} regression")
         pairs.append((f"trend:{metric}", text))
+    if maintain_state:
+        esc = maintain_escalation(maintain_state, today)
+        for b in esc["branches"]:
+            text = f"maintain branch '{b['branch']}' escalated: {'; '.join(b['reasons'])}"
+            pairs.append((f"branch-escalate:{b['branch']}", text))
     return pairs
 
 
@@ -2369,19 +2800,22 @@ def fire_notification(text: str, *, title: str = "Brainiac health") -> str:
 
 def pending_notifications(
     vault: Path, outcomes: dict[str, Any], trend_findings: list[dict[str, Any]],
-    today: datetime.date,
+    today: datetime.date, maintain_state: dict[str, Any] | None = None,
 ) -> list[tuple[str, str]]:
     """The ``(key, text)`` findings still pending notification for TODAY —
     empty when ``BRAIN_NOTIFY=off`` or when every candidate was already
     surfaced today (dedup by stable KEY). Pure read (does not mark) — pair
     with ``fire_and_mark_notifications``. Also opportunistically prunes old
-    markers (fix [7]) since this is called once per maintain run."""
+    markers (fix [7]) since this is called once per maintain run.
+
+    ``maintain_state`` (optional, ES-01) folds branch-escalation findings in —
+    see ``degradation_findings``."""
     import os
 
     _prune_notify_markers(vault)
     if os.environ.get(NOTIFY_ENV, "").strip().lower() == "off":
         return []
-    return [(k, t) for (k, t) in degradation_findings(outcomes, trend_findings)
+    return [(k, t) for (k, t) in degradation_findings(outcomes, trend_findings, maintain_state, today)
             if should_notify(vault, k, today)]
 
 

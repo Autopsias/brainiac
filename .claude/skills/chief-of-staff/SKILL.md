@@ -138,7 +138,88 @@ metadata:
   # v4.6/v4.7/v5.0/v5.1/v5.2/v5.3/v5.4/v5.5 — the calibration record must
   # be re-stamped to this version (kit step 1, BLOCKING per s01 note f)
   # rather than re-measured.
-  kernel_version: "chief-of-staff v5.6"
+  # v5.7 bump is a MUTATION-LANE-ELECTION-only bump (owner ruling
+  # 2026-07-21, validated by the first SCHEDULED Codex COS run — run 26:
+  # orchestration, guards, and the brief all ran clean, but the mail
+  # mutation leg failed closed because the v4.6 zero-mutation liveness
+  # preflight is REST-SPECIFIC — "one read-only call on the live REST lane"
+  # — and Codex's unattended browser surface cannot capture bearers or
+  # execute in-page fetch, so tier 2 was unreachable even though the
+  # doctrine's own PROVEN DOM primitives ((2) sender-scoped, (3) per-row
+  # right-click move, dom-categorize) need none of that). The preflight
+  # becomes a LANE ELECTION: REST lane (probe + order unchanged) else
+  # NATIVE-UI lane (zero-mutation proof of list-read-with-convid + UI
+  # control interaction), recorded as `mutation_lane` on the companion and
+  # every mutation ledger row. On the native-ui lane the DOM primitives are
+  # PRIMARY (all their v2.2/v2.3 guards bind identically; banned list
+  # absolute and lane-independent); undo rows carry
+  # `key_scheme: convid` (`message_id: null`, never fabricated) and restore
+  # symmetrically at conversation granularity per the v4.7 durable-id rule;
+  # auto-archive is PER-LANE canary-gated — the 2026-07-15 rest-move canary
+  # does NOT open the native-ui lane; a native-ui canary drill must pass
+  # first. Phase-1.5 classification RULES and the assignment taxonomy are
+  # UNCHANGED, and auto-resolve gains ZERO new action classes (the DOM
+  # archive/categorize primitives are the SAME authority-matrix rows,
+  # reached by lane election instead of per-row fallback), so — same as
+  # v4.6–v5.6 — the calibration record must be re-stamped to this version
+  # (kit step 1, BLOCKING per s01 note f) rather than re-measured.
+  # v5.8 bump is a SHADOW-RUN-OBLIGATION-only bump (owner ruling 2026-07-21,
+  # measured failure runs 26-27: `any_sender_lane: shadow` and `chip_reeval:
+  # shadow` were set in the overlay, three nights read the Inbox live, yet
+  # ZERO shadow ledger rows exist for either lane — the promotion bar
+  # (>=5 shadow nights, >=30 mature rows) can never be met on evidence
+  # nobody collects). Phases 1.5b/1.5f gain an explicit RUN OBLIGATION:
+  # shadow verdict computation is read-only and runs on EVERY mail-live run
+  # (degraded-mutation nights included — it needs no mutation lane, no
+  # canary); E22 gains (a2) and E26 extends (g) so a shadow-enabled,
+  # mail-live night with no shadow ledger is a FAIL, never a silent
+  # "not exercised". ZERO new mutations, ZERO new action classes,
+  # Phase-1.5 classification RULES and the assignment taxonomy UNCHANGED —
+  # same as v4.6-v5.7, re-stamp the calibration record, never re-measure.
+  # v5.9 bump is a NATIVE-UI-MECHANICS-HARDENING-only bump (measured
+  # 2026-07-21 supervised historical drain: two sessions hit OWA UI
+  # flakiness — a non-rendered Move submenu put rows in Delete (the adjacent
+  # menu entry); a Ctrl+F keystroke (= Forward in OWA) spawned a phantom
+  # "Fw:" compose draft that corrupted the list UI; both were caught by the
+  # verify-from-state guards and repaired, but only by accident of the
+  # Deleted-Items check firing). Codifies three doctrine rules on the
+  # native-ui lane: (1) keyboard is banned wholesale on the message list
+  # (mouse-only; search-box text the sole exception); (2) submenu-render
+  # confirmation before any Move-destination click + a Deleted-Items absence
+  # check in EVERY move verification, a row in Deleted Items = safety breach,
+  # repaired + ledgered; (3) bulk work routes to sender-scoped select-all
+  # over per-row to minimize menu-interaction count. E15/E17 gain the
+  # keystroke-ban and Deleted-Items-check teeth. ZERO new mutations, ZERO new
+  # action classes, classification RULES + taxonomy UNCHANGED — same as
+  # v4.6-v5.8, re-stamp the calibration record, never re-measure.
+  # v5.10 bump is a DEADLINE-SCREEN-only bump (measured 2026-07-21 supervised
+  # drain: a thread that was read, unflagged, and undrafted still carried a
+  # same-day response deadline in its body and was classified done — the
+  # draft/flag/chip/spine screens are metadata-level and cannot see it). The
+  # aged-read judgment step (roster lane v4.3 + any-sender lane 1.5b) gains a
+  # BODY-level check: a live/unexpired deadline, dated request, response
+  # request, or RSVP in the latest message ⇒ not eligible, exactly as an
+  # unanswered ask; uncertain ⇒ HELD. Tightens eligibility only (archives
+  # FEWER rows) — ZERO new mutations, ZERO new action classes, classification
+  # RULES + taxonomy UNCHANGED — same as v4.6-v5.9, re-stamp, never re-measure.
+  # v5.11 bump adds the COS-DRAFT EXPIRY disposition (owner ruling
+  # 2026-07-21: "those drafts are not my words, it's claude's — do we really
+  # need them?"). Measured failure: COS-authored reply drafts from prior
+  # runs sat unsent for up to 2 months, and because ANY draft confers
+  # draft-protection, their threads were untouchable to every automated
+  # lane — machine output squatting on the lifecycle. New: a COS-created
+  # draft unsent >14 days is presumed rejected and is discarded by the
+  # nightly (ledgered `draft-expired`, brief line, no re-draft without a
+  # newer incoming message). Identification is conservative and dual-signal
+  # (draft-replies ledger match AND machine signature); doubt ⇒ owner's
+  # draft ⇒ untouchable. Draft-protection screens (roster (ii), 1.5b (ii),
+  # RTG-01/E26(e)) gain the expired-class carve-out. NOTE: unlike
+  # v5.7-v5.10 this DOES add one auto-resolve action class (the expiry
+  # discard) — it has its own authority-matrix row and E26(e) teeth; it
+  # touches ONLY COS's own ledgered output, never owner content, never mail.
+  # Phase-1.5 classification RULES and the assignment taxonomy remain
+  # UNCHANGED — re-stamp the calibration record, never re-measure.
+  kernel_version: "chief-of-staff v5.11"
   type: scheduled-task
   cron: "0 19 * * *"  # default evening ~19:00-21:00 local (v5.3 — moved from 05:00: Mac reliably awake, Chrome + Outlook signed in at this hour, matching when the task has actually been firing; brief is still ready for the next morning). Actual launchd/Cowork reschedule is a deploy step, not a change to this file — owner-configurable
   cadence: daily
@@ -301,7 +382,7 @@ This is COS's OWN non-negotiable safety floor — historically mirrored from the
 - archiving routine-class rows;
 - archiving substantive `archive`-bucket rows (body-read-classified) — **conditional on the full overnight ledger appearing in the morning brief** (every archived row: sender, subject, one-line reason). Archive is reversible; any row genuinely unsure stays in Inbox as `needs-review`;
 - **(v3.0) archiving read-tier `noise` rows meeting ALL SEVEN guard conditions in Phase 1.5** (bucket=noise, tier≠P0/P1 [and =P3 specifically under the default `scope: p3-only`], a high-confidence noise-signal present, model-version match, a valid undo-canary on file, under the per-run cap for the active scope, kill switch not disabling) — an owner-documented risk-acceptance (2026-07-14, widened 2026-07-14 v3.0) that this class is a superset-by-one of the archive-bucket approval directly above, never a leap to "archive anything the classifier calls noise"; P0/P1 senders and low-confidence verdicts are excluded under EITHER scope, absolutely;
-- **(v4.3, owner ruling 2026-07-17) the AGED-READ lane — priority-list mail, read + no-action + >7 days.** Owner's words: *"we can definitely archive people from the priority list, but it needs to be with emails that I've already read and that I have no action [on]. … only archive emails from these people that are older than one week because I might have seen it but not really read it."* A row from a roster-`high` sender may be auto-archived ONLY when **ALL** of: (a) **`IsRead: true` as observed on the server** — never marked read by us, observed only; (b) **no action on the owner** — screened DETERMINISTICALLY first, judgment second (owner refinement 2026-07-17: "that judgement can be helped by checking if there is an action classifier on said email and a draft"). Hard screens, each a plain REST read, any hit ⇒ NOT eligible, no judgment involved: (i) an open **priority chip ("P0 · Now" / "P1 · Today" / "P2 · This week") or legacy Action category chip** on any message in the conversation — an open P-chip screens exactly like the old Action chip (v4.6) — including chips applied by prior runs; (ii) an **unsent draft in Drafts for this conversation** — a waiting draft IS an open action (the run already inventories Drafts nightly; join on ConversationId); (iii) a **flag** set; (iv) an **open spine commitment** naming this counterparty+topic. Only rows passing ALL four screens reach the judgment step: bucket is NOT `act` and the thread carries no unanswered direct ask to him — and when THAT is uncertain the row is HELD, never archived; (c) **received more than 7 days ago** (server `receivedDateTime`, not our first-seen — the owner may have *seen* it without having *read* it, hence the week); (d) every OTHER guard in this list holds (canary, classifier freeze, cap — aged-read rows count against the same per-run cap — kill switch, full undo field set, per-row `response-confirmed` verification). This lane does NOT weaken the noise lane: the noise lane's P0/P1 hard-exclusion stands untouched — an unread or same-week priority mail can never be archived by ANY lane. The drift monitor covers this lane by ACTION: any auto-archived row (either lane) the owner later replies to or flags is a contradiction and trips auto-archive to shadow. Overlay control: `overlay/cos/auto-archive.md` accepts `aged_read_lane: true|false` (ABSENT ⇒ **true** — the owner ruled it on) and `aged_read_min_days: <int>` (ABSENT ⇒ 7);
+- **(v4.3, owner ruling 2026-07-17) the AGED-READ lane — priority-list mail, read + no-action + >7 days.** Owner's words: *"we can definitely archive people from the priority list, but it needs to be with emails that I've already read and that I have no action [on]. … only archive emails from these people that are older than one week because I might have seen it but not really read it."* A row from a roster-`high` sender may be auto-archived ONLY when **ALL** of: (a) **`IsRead: true` as observed on the server** — never marked read by us, observed only; (b) **no action on the owner** — screened DETERMINISTICALLY first, judgment second (owner refinement 2026-07-17: "that judgement can be helped by checking if there is an action classifier on said email and a draft"). Hard screens, each a plain REST read, any hit ⇒ NOT eligible, no judgment involved: (i) an open **priority chip ("P0 · Now" / "P1 · Today" / "P2 · This week") or legacy Action category chip** on any message in the conversation — an open P-chip screens exactly like the old Action chip (v4.6) — including chips applied by prior runs; (ii) an **unsent draft in Drafts for this conversation** — a waiting draft IS an open action (the run already inventories Drafts nightly; join on ConversationId) — **EXCEPT an expired-class COS draft (v5.11: COS-authored by BOTH signals — ledger match + machine signature — AND >14 days unsent), which confers no protection**; (iii) a **flag** set; (iv) an **open spine commitment** naming this counterparty+topic. Only rows passing ALL four screens reach the judgment step: bucket is NOT `act` and the thread carries no unanswered direct ask to him — **and (v5.10, measured 2026-07-21) the judgment step reads the BODY of the latest message for a deadline / dated request / response-request / RSVP: a thread can be read, unflagged, and undrafted yet still say "respond by <date>" — a live-or-unexpired deadline or explicit response request ⇒ NOT eligible, exactly as an unanswered ask** — and when ANY of that is uncertain the row is HELD, never archived; (c) **received more than 7 days ago** (server `receivedDateTime`, not our first-seen — the owner may have *seen* it without having *read* it, hence the week); (d) every OTHER guard in this list holds (canary, classifier freeze, cap — aged-read rows count against the same per-run cap — kill switch, full undo field set, per-row `response-confirmed` verification). This lane does NOT weaken the noise lane: the noise lane's P0/P1 hard-exclusion stands untouched — an unread or same-week priority mail can never be archived by ANY lane. The drift monitor covers this lane by ACTION: any auto-archived row (either lane) the owner later replies to or flags is a contradiction and trips auto-archive to shadow. Overlay control: `overlay/cos/auto-archive.md` accepts `aged_read_lane: true|false` (ABSENT ⇒ **true** — the owner ruled it on) and `aged_read_min_days: <int>` (ABSENT ⇒ 7);
 - **(v3.0, ING-01/02) staging ingestion candidates via `cos-propose`** — decisions/commitments/positions/numbers extracted from `act`/high-tier-`read` threads, evidence-required, secret-scrubbed, classified, deduped; this is a WRITE ONLY TO AN UNSIGNED HOST-BROKER QUEUE, never a note-store mutation — nothing here becomes a real note until the owner answers the host's one batched inbox question;
 - creating reply drafts (cap 10/run) — **governed by `overlay/cos/drafts.md`
   (`overlay_type: cos` + `setting: drafts`, body `enabled: true|false`; ABSENT or
@@ -371,6 +452,7 @@ every run it fires).
 | Brain read (`--role vm` search/get/dossier/bases-query/graph) | auto-resolve | n/a (read) | n/a | citations (E6) |
 | Behavioural observation (Phase 1.5c REST reads) | auto-resolve | n/a (read) | n/a | behaviour drop |
 | Any-sender aged-read lane — SHADOW observation only (Phase 1.5b, v5.1/LAN-01; `shadow` computes-and-logs, zero mutations) | auto-resolve | n/a (read) | n/a | any-sender-shadow drop |
+| COS-draft expiry (v5.11) — discard COS's OWN ledgered, machine-signed drafts unsent >14 days; NEVER an owner draft (both-signals identification, doubt ⇒ owner's) | auto-resolve | yes | yes / documented — draft verified gone from Drafts; content regenerable by the draft-replies leg | overnight ledger (`draft-expired` rows) · E3 |
 | Chip re-eval staleness — SHADOW observation only (Phase 1.5f, v5.5/RTG-01; `chip_reeval: shadow` computes-and-logs every verdict, zero mutations) | auto-resolve | n/a (read) | n/a | chip-reeval-shadow drop |
 | Browser channel — navigation to rule-11 allowlisted hosts + the proven DOM/REST primitives inside the token class (incl. triggering attachment downloads for capture) | auto-resolve | n/a (transport — mutations are governed by their own rows) | n/a | AUT-03 provenance log · E11 |
 | Priority-chip categorize add/remove (marks + lifecycle re-level/clear; incl. ONE-TIME creation of the three owner-confirmed category names once the chip gate opens — the ONLY sanctioned settings write, immutable after) | auto-resolve | yes | yes / yes — set-preserving write + full-set server re-read per write (E19c); chip round-trip in the canary drill | chip ledger 7¾ · E15/E19/E20 |
@@ -458,14 +540,47 @@ mutation, read `cos-ops/_mutation_lease.json`
 - Interactive sessions CREATE the lease (owner, run id, TTL) before mutating
   and REMOVE it after reconciliation; this nightly never creates one.
 
-**ZERO-MUTATION LIVENESS PREFLIGHT (v4.6 — before classification).** Before
-Phase 1.5 runs and before ANY mutation is attempted, issue ONE read-only
-call on the live REST lane (per the LIVE ENDPOINT doctrine below — e.g. a
-folder/list read on the same signed-in surface the mutations will use). A
-non-success response ⇒ the run **fails closed for every mail-mutation leg**
-(no per-row endpoint discovery mid-queue): classification may still be
+**ZERO-MUTATION LIVENESS PREFLIGHT (v4.6; v5.7 — LANE ELECTION, before
+classification).** Before Phase 1.5 runs and before ANY mutation is
+attempted, prove the mutation lane this run will actually use. TWO lanes are
+recognized; probe them in preference order and ELECT the first that proves
+live (the elected lane is recorded in the companion and on every mutation
+ledger row as `mutation_lane`):
+- **REST lane** — ONE read-only call on the live REST lane (per the LIVE
+  ENDPOINT doctrine below — e.g. a folder/list read on the same signed-in
+  surface the mutations will use). Success ⇒ `mutation_lane: rest`
+  (unchanged v4.6 behaviour; the archive doctrine's REST-preferred order
+  applies).
+- **NATIVE-UI lane (v5.7 — for a harness whose browser surface cannot
+  capture tokens or execute in-page fetch, e.g. Codex's native Chrome
+  driving):** prove BOTH, with ZERO mutations: (a) the live Inbox list is
+  readable WITH per-row stable conversation ids (`data-convid` or
+  equivalent) — the identity the DOM primitives verify by; (b) the harness
+  can operate list-row UI controls, proven by opening ONE row's context
+  menu and DISMISSING it (Esc / click-away) without selecting any command —
+  a zero-mutation interaction proof on the very control surface the DOM
+  primitives use. Both pass ⇒ `mutation_lane: native-ui`: the archive
+  doctrine's DOM primitives ((2)/(3)) and `dom-categorize` become the
+  PRIMARY mechanics for this run, under ALL of their existing guards; the
+  REST primitive is simply absent, never probed per-row mid-queue.
+  **SAME-TOOLSET DISCIPLINE (v5.7):** the probe must execute through the
+  SAME browser toolset the run's mutations will use — a harness may expose
+  more than one browser-control surface (e.g. an approval-gated devtools
+  lane beside an unattended-capable plugin lane), and a probe passing on
+  one NEVER licenses mutations through another. The companion names the
+  toolset alongside the lane.
+NEITHER lane proving live ⇒ the run **fails closed for every mail-mutation
+leg** (no per-row endpoint discovery mid-queue): classification may still be
 recorded shadow-only, and the brief opens with a top-of-brief OUTAGE banner
-naming the failed probe and response.
+naming the failed probes and responses. A lane, once elected, holds for the
+WHOLE run — no mid-run lane switching (a REST call failing mid-queue on a
+`rest` run falls back per-row per the archive doctrine, unchanged; it never
+re-elects the lane). **LANE-CHANGE BANNER (v5.7):** when the elected lane
+differs from the previous run's recorded lane on the same harness (e.g. a
+transient REST-probe failure silently downgrading a REST-capable harness to
+native-ui), the BRIEF carries a banner naming both lanes and the failed
+probe — a lane downgrade is surfaced to the owner, never only a companion
+field; repeated downgrades are a rotting-surface signal, not routine.
 
 **LIVE ENDPOINT doctrine (v4.6 — the 2026-07-15 OWA migration).** OWA moved
 from `outlook.office.com` to `outlook.cloud.microsoft`, and the in-page
@@ -561,13 +676,14 @@ not a retry loop, it is evidence to fall back to the DOM primitives.
      applied only when the re-read shows the ENTIRE post-write set
      correct: the P-chip present AND the non-managed subset unchanged;
      ledger primitive=`rest-categorize`, verify=`response-confirmed`. **Per-row/fallback path (run-5 proven):** DOM categorize — checkbox multi-select + ribbon Categorize; verification = the category chip visible on the row in the re-queried list; ledgered `dom-categorize`. **Marks are worked to completion the same way archives are** — no "ran out of runway" holds; the only rows a run may end with unmarked are individual verification-failed-twice rows (or a batch remainder per the protocol below).
-3. **export-and-capture** — INGEST rows: attachments/body notes → `<brain-vault>/inbox/` → verify (exists, size > 0, fresh mtime) → archive source. Requires the downloads mount per the triage pre-flight. **Downloads mount ABSENT (v2.1 — host-sweeper path, never a plain BLOCK):** still trigger each attachment download in the browser (it lands in the HOST's downloads dir, which this VM cannot see), then append one manifest line per file to `$BRAIN_COS_OPS_DIR/drop/ingest-manifest/manifest-<TARGET DAY>.jsonl` (a VM-writable engine drop, sibling of `verdict-drop/`): `{"msg_key": "...", "filename": "<exact name as shown>", "approx_size_bytes": <int, omit if not visible>, "sender": "...", "subject": "...", "ts": "<ISO>"}`. The host's `brain cos-ingest-sweep` (engine ≥ 0.17.0, wired into `brain maintain`) matches the file in the host downloads dir and moves it into `<brain-vault>/inbox/` for normal signed ingest. **Source-email archiving for these rows is DEFERRED:** the source stays in Inbox until a LATER run finds the file present in `<brain-vault>/inbox/` (or already ingested) — host-confirmed capture — and only then archives it under the standing approval; tonight's ledger row reads "capture pending host sweep". Mount present ⇒ the direct verify-then-archive path above applies unchanged.
+3. **export-and-capture** — INGEST rows: attachments/body notes → `<brain-vault>/inbox/` → verify (exists, size > 0, fresh mtime) → archive source. Requires the downloads mount per the triage pre-flight. **Downloads mount ABSENT ⇒ BLOCKED:** do NOT trigger the browser download and do NOT write a basename-only ingest manifest. The host sweeper no longer reads shared `~/Downloads`; it is disabled unless the owner separately configures a dedicated host-only staging directory via `$BRAIN_COS_DOWNLOADS_DIR`. A VM-written filename is not proof that the VM caused a host download. Keep the source email in Inbox, add a ready-to-run capture action to REQUIRED ACTIONS, and ledger `capture blocked — downloads mount absent`. Mount present ⇒ the direct verify-then-archive path above applies unchanged.
 4. **approved-archive** — archive-bucket rows per the standing approval, executed under the **verified-batch mutation protocol** below (verification = the row ABSENT from the re-queried Inbox list); every row into the ledger with its verification result.
 5. **draft-replies** — response-warranted ACTION rows, in the owner's voice via the workspace **`voice` skill**: invoke it in **DRAFT** mode per reply and **CHECK** mode as the post-draft Voice Check; log the Voice Check note in the companion. If no voice skill is installed (or its overlay is empty), draft in a neutral professional register and say so in the brief footer — same degradation contract as the voice kernel. Brain-grounded with `[owner: confirm …]` placeholders where the brain is silent, comms-policy pass for external recipients, idempotent against the Drafts inventory, Drafts-folder verification at end. Cap 10. **Stale asks still get a draft (v2.1):** an ACT row whose ask is older than ~7 days is never skipped as "premise moved" — draft the shorter **acknowledge-late + current-position** form (2–4 sentences: acknowledge the delay, state the owner's current position or the honest "here's where this stands now", offer the next step), same voice-skill DRAFT/CHECK path, counted inside the cap. Age alone is never a logged skip reason.
+   **COS-DRAFT EXPIRY (v5.11 — owner ruling 2026-07-21; measured: machine drafts as squatters).** A COS-created draft the owner has not sent within **14 days** is presumed REJECTED, not pending: the nightly DISCARDS it (mouse/native or REST per the elected lane, verified gone from Drafts) and logs one line in the brief's overnight ledger. Measured failure this closes: a COS draft from May sat unsent on a thread for two months, and because ANY draft confers draft-protection, that thread was untouchable to every automated lane — the protection meant for the owner's work-in-progress was shielding the machine's abandoned output. **Identification is conservative, both signals required: the draft matches a draft-replies ledger record (this leg ledgers every draft it creates) AND carries the machine signature (`[owner: confirm …]`/`[confirm: …]` placeholders or the ledgered body hash).** A draft matching neither, or only one, is treated as the OWNER'S and is untouchable — when in doubt it is the owner's. **OWNER DRAFTS ARE NEVER EXPIRED, never discarded, never aged out — this disposition touches ONLY COS's own ledgered output.** Discarded-draft rows are ledgered (`draft-expired`, thread convid, created date) so the brief can report them and the next run's idempotency check doesn't re-draft the same ask unless the thread has a NEWER incoming message. Correspondingly (both lanes' hard screen (ii) and RTG-01(e)): an EXPIRED-CLASS draft — COS-authored by both signals AND >14 days unsent — does NOT confer draft-protection; every other draft does, unchanged.
 
 **Verified-batch mutation protocol (v2.1 — execution WITH verification, never wholesale holds).** Applies to every browser-driven mailbox mutation leg (apply-marks, approved-archive):
 - Execute in **small batches (default 5 rows)**. After each batch, **verify by re-querying the Outlook list**: an archive verifies as the row's ABSENCE from the Inbox list; a mark verifies as the category chip on the row. Only then start the next batch.
-- **Ledger every row with its verification result** (`verified-archived` / `verified-marked` / `verified-failed` / `held`; v2.4/v2.5: `response-confirmed` for rest-move and rest-categorize rows).
+- **Ledger every row with its verification result** (`verified-archived` / `verified-marked` / `verified-failed` / `held`; v2.4/v2.5: `response-confirmed` for rest-move and rest-categorize rows). **(v5.7) Every mutation ledger row — standing-approval, auto-archive, DIG-01/RTG-01 dispositions, chip writes — also carries `mutation_lane` + `key_scheme`; a pre-v5.7 row with neither field reads as `rest`/`message-id`. This is the ONE row-shape contract the undo spec dispatches on — never a second source of truth.**
 - **On a batch whose verification fails:** retry that batch ONCE. **Two consecutive verified-failed batches ⇒ hold ONLY the remaining (not-yet-attempted) rows** — each held row lands in REQUIRED ACTIONS with its ready-to-apply payload. Rows already verified in earlier batches stay executed — never retroactively doubted, never re-held.
 - **Sender-scoped archive recipe — two HARD rules (v2.2, production near-misses):**
   - **(a) SCOPE BEFORE QUERY.** Set the search scope (Current folder = Inbox)
@@ -591,7 +707,27 @@ not a retry loop, it is evidence to fall back to the DOM primitives.
   of the approved-archive leg (approval semantics unchanged — the standing
   approval and the full-ledger condition above still gate WHAT may be
   archived; this governs HOW). The nightly archive queue is worked to zero
-  every run using ONLY the primitives below, in preference order:
+  every run using ONLY the primitives below. The preference order is
+  LANE-CONDITIONAL (v5.7, per the elected `mutation_lane`): on the **REST
+  lane**, (1) → (2) → (3) as written; on the **NATIVE-UI lane**, primitive
+  (1) is absent by construction and (2)/(3) ARE the primary mechanics —
+  every one of their guards (v2.2 sender-scope rules, filter-state check,
+  per-row convid identification, re-query verification) binds identically;
+  the banned-mechanisms list below is lane-independent and absolute. Chips
+  follow the same split: `rest-categorize` on the REST lane,
+  `dom-categorize` (checkbox multi-select + ribbon Categorize, row-chip
+  re-query verification) as the primary on the NATIVE-UI lane.
+  **SELECT-ALL SET-EQUALITY GUARD (v5.7, all lanes — binding wherever
+  primitive (2) fires, and E15-pinned):** before ANY select-all Move, the
+  visible selected row set must be verified EQUAL to the approved archive
+  queue for that sender — every visible row's `data-convid` is on the
+  approved list, and no selected row is unidentified. ONE extra,
+  unapproved, or convid-unreadable row in the selection ⇒ abort select-all
+  for that sender and fall to the per-row primitive (3). Sender-match alone
+  (the v2.2 rule) is NOT sufficient: an approved-noise sender can also have
+  an unapproved or P0/P1 row in the same result list, and a select-all
+  there would over-archive it while the absence re-query "verifies" the
+  overreach as success.
   - **(1) IN-PAGE REST MOVE (PREFERRED — first-tried for every row, v2.4;
     v4.6: the LIVE surface is `service.svc` `MoveItem` per the LIVE
     ENDPOINT doctrine above — the `/api/v2.0` calls below are the legacy
@@ -686,6 +822,36 @@ not a retry loop, it is evidence to fall back to the DOM primitives.
     multi-row selection** (silent no-op). A mechanism not on the proven list
     must be tested on ONE disposable row with full verification before any
     batch use, and the result recorded in skill memory.
+  - **KEYBOARD IS BANNED ON THE NATIVE-UI LANE, WHOLESALE (v5.9 — measured
+    2026-07-21 bulk drain).** While driving OWA's list on the native-ui lane,
+    the run uses the MOUSE ONLY — NO keystrokes of any kind on the message
+    list: not `Ctrl+F` (in OWA that is **Forward**, and it silently created a
+    phantom "Fw: …" compose draft that corrupted the list's UI state across
+    two sessions), not Delete/Backspace (sends the focused row to Deleted
+    Items), not arrow-key navigation (moves focus off the intended row so the
+    next click lands blind), not 'e'/'v'/any single-key command. Search-box
+    text entry for a sender-scoped query is the ONLY sanctioned typing, and
+    only into a uniquely-resolved search input (a duplicate/ambiguous search
+    box ⇒ do not type, re-render first). A keystroke on the list is an E15
+    FAIL for the run.
+  - **SUBMENU-RENDER CONFIRM + DELETED-ITEMS WATCH (v5.9 — same measured
+    failure).** On the native-ui lane, before clicking ANY Move-submenu
+    destination, the run must SEE the submenu fully rendered and the
+    "Archive" entry's label confirmed — never a click at a remembered/blind
+    position (a non-rendered submenu put rows in **Delete**, the adjacent
+    entry, live). Submenu fails to render ⇒ mouse-click empty space to
+    dismiss, re-query, retry that row ONCE, else hold it. And EVERY move's
+    verification includes a **Deleted-Items absence check** for the convid
+    (not just Inbox-absence): a row found in Deleted Items — whether this run
+    targeted it or not — is a **safety breach**, repaired immediately
+    (Move → Archive) and ledgered `verification: safety-breach-repaired`; a
+    move whose verification omits the Deleted-Items check is an E15/E17 FAIL.
+  - **BULK WORK ROUTES TO SENDER-SCOPED, NOT PER-ROW (v5.9 doctrine note).**
+    For a backlog drain (many rows), prefer primitive (2) sender-scoped
+    select-all (one Move per sender, fewest interactions, its 106-row proven
+    guards) over per-row (3) — per-row menu interactions are where the
+    render-race risk concentrates, so minimizing their count minimizes the
+    blast surface. Per-row remains the fallback for mixed/singleton rows.
   - **NO BACKLOG CAPS:** overnight time is free — the run never holds rows
     because "it's a lot"; "too many" is not a hold reason. The ONLY rows a
     run may end with unarchived are those that **fail verification twice,
@@ -847,18 +1013,58 @@ auto-archived row:** the Phase-1.5 verdict line (unchanged shape, rule 3
 below) AND an action-ledger entry exactly like a standing-approval archive,
 but carrying the FULL undo-capable field set (v3.0 — Codex X9; every field
 required, none optional):
-`{sender, subject, reason: "auto-archive: noise/<tier>/<signal>", scope: "p3-only|all-noise", account: "<mailbox address>", message_id: "<provider-immutable internetMessageId, NOT the mutable list-view id>", thread_id: "<convid>", original_folder: "Inbox", destination_folder: "<Archive folder id/name actually used>", action_ts: "<ISO>", primitive: "rest-move|dom-move-fallback|sender-scoped", connector_result: "<HTTP status / DOM verify result / error text>", verification: "response-confirmed|verified-archived|verified-failed"}`.
+`{sender, subject, reason: "auto-archive: noise/<tier>/<signal>", scope: "p3-only|all-noise", account: "<mailbox address>", message_id: "<provider-immutable internetMessageId, NOT the mutable list-view id>", thread_id: "<convid>", key_scheme: "message-id|convid", mutation_lane: "rest|native-ui", original_folder: "Inbox", destination_folder: "<Archive folder id/name actually used>", action_ts: "<ISO>", primitive: "rest-move|dom-move-fallback|sender-scoped", connector_result: "<HTTP status / DOM verify result / error text>", verification: "response-confirmed|verified-archived|verified-failed"}`.
+**`key_scheme` (v5.7):** on the REST lane, `message-id` — `message_id` holds
+the provider-immutable internetMessageId, exactly as before (still never the
+mutable list-view id). On the NATIVE-UI lane, where the harness cannot read
+internetMessageId without opening headers, `key_scheme: "convid"` —
+`message_id` is explicitly `null` (never fabricated, never a list-view
+handle) and **`thread_id` (the stable `data-convid`) is the undo key**, per
+the v4.7 durable-id rule. Every field remains required; `null` is a
+recorded value, not an omission.
 It appears in the brief's OVERNIGHT LEDGER (component 8) alongside every
 other archived row — never a silent mutation, never a mutation without the
 verification the archive doctrine already requires, and never a mutation
 whose ledger entry is missing any of the fields above (E17).
 
 **Undo specification (v3.0, Codex X9 — spec + canary test, required before
-ANY row auto-archives).** Restore is keyed on **`message_id`** (the
-provider-immutable id), never on sender/subject (duplicate subjects are
-common and must not restore the wrong message) and never on `thread_id`
-alone (a conversation may hold multiple messages; only the specific
-archived message is restored):
+ANY row auto-archives).** Restore is keyed per the row's `key_scheme`
+(v5.7). **REST-lane rows (`key_scheme: message-id`, unchanged):** keyed on
+**`message_id`** (the provider-immutable id), never on sender/subject
+(duplicate subjects are common and must not restore the wrong message) and
+never on `thread_id` alone (a conversation may hold multiple messages; only
+the specific archived message is restored). **NATIVE-UI-lane rows
+(`key_scheme: convid`, v5.7):** the archive operates at CONVERSATION
+granularity (the OWA list-row move), and a conversation id does NOT freeze
+conversation membership — a reply can arrive after the archive, and the
+owner can move members by hand — so the doctrine bounds what it archives and
+refuses to guess on restore:
+- **Single-Inbox-message restriction (auto-archive only):** a row is
+  eligible for NATIVE-UI **auto**-archive only when its conversation shows
+  exactly ONE Inbox message at archive time (the expanded row / item count);
+  the ledger records `members_moved: 1` plus that message's received
+  timestamp. Multi-message conversations are EXCLUDED from native-ui
+  auto-archive (left for the REST lane or the owner) — standing-approval
+  archives, being owner-approved per row, remain allowed at conversation
+  granularity with `members_moved` recording the observed count.
+- **Restore:** re-enumerate the `destination_folder` list for the row's
+  `thread_id` (`data-convid`) and move that conversation row back to
+  `original_folder` via the same proven DOM move primitive; verify by the
+  convid ABSENT from the destination re-query AND PRESENT in the
+  `original_folder` re-query.
+- **Idempotency and conflicts (never guess):** `already-restored` may be
+  logged ONLY when the convid is present in `original_folder` AND absent
+  from `destination_folder`. ANY other state — present in BOTH (e.g. a new
+  reply landed in Inbox while the archived member still sits in Archive),
+  present in NEITHER, or found in a third folder — is a **CONFLICT**: no
+  move is issued, the row is surfaced in REQUIRED ACTIONS with both
+  observations, and the ledger records `undo: conflict-held`. A conflict is
+  never silently resolved and never reported as restored.
+The X9 hard cases resolve as: duplicate subjects — keyed on convid, never
+subject; a reply landing post-archive triggers the conflict rule above
+(present-in-both), never a false `already-restored`; a `verified-failed`
+original archive has no undo target, recorded not attempted (unchanged).
+For REST-lane rows the numbered procedure below applies unchanged:
 1. **Procedure:** REST `POST /api/v2.0/me/messages/{message_id}/move` with
    `{"DestinationId": "<original_folder>"}` (same primitive family as the
    archive move, reversed) — fallback to the proven DOM move-to-folder
@@ -894,10 +1100,39 @@ archived message is restored):
    Only on all steps passing, write
    `cos-ops/_cos_undo_canary.json`: `{"tested": "<ISO>", "message_id":
    "<canary id>", "primitive": "...", "idempotent_replay": "confirmed",
-   "operator": "owner|scheduled-canary-row"}`. This file is what condition 5
+   "operator": "owner|scheduled-canary-row", "mutation_lane":
+   "rest|native-ui"}`. This file is what condition 5
    above reads — it is NOT self-renewing from a clean run; it re-validates
    only when the canary drill is re-run (owner-triggered, or this skill may
    propose re-running it as a REQUIRED ACTION when it is due to expire).
+   **PER-LANE VALIDITY (v5.7).** A canary certifies ONLY the lane whose
+   primitives it exercised (`mutation_lane`; a pre-v5.7 canary file with no
+   `mutation_lane` field reads as `rest`). Condition 5 is satisfied for a
+   run only by a canary matching the run's ELECTED lane: the 2026-07-15
+   `rest-move` canary keeps the REST lane live but does NOT open auto-archive
+   on the NATIVE-UI lane — a native-ui-lane run without a native-ui canary
+   holds auto-archive (shadow verdicts still recorded, standing-approval
+   archives under the verified-batch protocol are NOT canary-gated and
+   proceed), and surfaces "run the native-ui canary drill" as a REQUIRED
+   ACTION. The native-ui drill is the SAME drill via the DOM primitives at
+   conversation granularity: archive one disposable SINGLE-Inbox-message row
+   (`dom-move-fallback`), convid-keyed undo, idempotent replay (including
+   one deliberate conflict-rule read: verify the present-in-original AND
+   absent-from-destination state before logging `already-restored`), and a
+   chip round-trip via `dom-categorize` **with FULL-SET verification at
+   E19c parity** — read the row's complete category set (the Categories
+   dialog or equivalent full-set surface, never row-chip visibility alone)
+   before and after BOTH the add and the remove, asserting the non-managed
+   subset unchanged; a drill verified only by the chip appearing on the row
+   does NOT certify the lane. Written with `mutation_lane: "native-ui"`,
+   `key_scheme: "convid"`, `message_id: null`. **Canary file shape
+   (v5.7):** the file becomes a per-lane map — `{"lanes": {"rest": {...},
+   "native-ui": {...}}}`, each lane holding the full field set above; a
+   legacy FLAT pre-v5.7 file (top-level `tested`/`primitive`/…) reads as the
+   `rest` lane's record, and the first post-v5.7 canary write migrates it
+   into the map unchanged. Writing the canary file without executing every
+   drill step on live rows is an E17 FAIL — the file asserts receipts
+   (per-step verification results), never bare fields.
 
 **Anything not meeting all seven conditions stays shadow (or needs-review,
 per rule 3b) — no exceptions, no "probably fine" override.** Trust widens
@@ -1024,6 +1259,20 @@ met. An unrecognized value (anything other than `shadow`/`live`) is treated
 as OFF — the lane never silently widens itself from a typo or a stale
 config.
 
+**RUN OBLIGATION (v5.8 — shadow is homework, not a fair-weather extra).**
+While `any_sender_lane` reads `shadow` (or `live`), this phase runs on
+**EVERY run whose mail leg was read-live** — including mutation-degraded
+nights, `degraded`-tier runs that still read the Inbox, and runs whose
+mutation batches were held: observation needs NO mutation lane, no elected
+`mutation_lane`, and no canary. The measured failure this clause closes
+(runs 26–27, 2026-07-21): three consecutive nights read the Inbox live yet
+wrote ZERO shadow rows, so the promotion bar (>= 5 shadow nights, >= 30
+mature rows) could never be met — the lane was waiting on evidence nobody
+was collecting. A run that read the Inbox live, with the key set, and wrote
+no shadow ledger despite lane-eligible rows existing is an **E22 FAIL**,
+never an N/A; "not exercised" is valid ONLY when the key is absent/OFF or
+the mail leg was never read live this run.
+
 **Eligibility screen (identical to the roster lane's four hard screens +
 age + read test, only the sender restriction is dropped).** A thread from
 ANY sender is lane-eligible when ALL of: (a) **`IsRead: true` as observed on
@@ -1034,9 +1283,13 @@ NOT eligible, no judgment involved: (i) an open priority chip ("P0 · Now" /
 "P1 · Today" / "P2 · This week") or legacy Action category chip on any
 message in the conversation — including chips applied by prior runs; (ii)
 an unsent draft in Drafts for this conversation — a waiting draft IS an
-open action; (iii) a flag set; (iv) an open spine commitment naming this
+open action (v5.11: except an expired-class COS draft — ledger match +
+machine signature + >14 days unsent — which confers no protection); (iii) a flag set; (iv) an open spine commitment naming this
 counterparty+topic. Only rows passing all four screens reach the judgment
 step: bucket is NOT `act` and the thread carries no unanswered direct ask —
+plus the v5.10 body-level deadline/response-request check (same rule as the
+roster lane: a live deadline or explicit response request in the latest
+message body ⇒ not eligible) —
 and when THAT is uncertain the row is HELD, never logged as would-archive;
 (c) **received more than 7 days ago** (server `receivedDateTime`, not our
 first-seen); (d) `any_sender_lane` reads `shadow` or `live` for this run
@@ -1318,10 +1571,21 @@ real pending items.**
       like Phase 1.5 rule 6.
 4. **Every existing Phase-1.5 guard applies unmodified:** the
    classifier-version freeze (condition 4), the undo-canary gate (condition
-   5 — restore is keyed on `message_id`, the SAME undo specification as
-   Phase 1.5), the per-run cap (condition 6, shared per 3d above), and the
+   5 — restore keyed per the row's `key_scheme`, the SAME undo specification
+   as Phase 1.5), the per-run cap (condition 6, shared per 3d above), and the
    kill switch (condition 7 — `overlay/cos/auto-archive.md` `enabled:
-   false` disables this phase along with the rest of auto-archive). A
+   false` disables this phase along with the rest of auto-archive).
+   **NATIVE-UI LANE RESTRICTION (v5.7):** this phase archives a PRIOR
+   instance while the stream's LATEST instance must remain untouched — a
+   message-granular contract. On the NATIVE-UI lane the move primitive is
+   conversation-granular, so a stream is eligible for disposition this run
+   ONLY when the prior instance's conversation row provably contains NO
+   keep-instance — the retire target and the keep-latest do not share a
+   `data-convid`, and the target conversation shows exactly one Inbox
+   message (the prior being retired). A stream whose keep and retire
+   instances share a convid, or whose containment cannot be affirmatively
+   read, is left untouched for a REST-lane run or the owner — E25(b) would
+   catch the violation post-hoc; this guard prevents it pre-move. A
    missing/stale canary, a classifier mismatch, or `enabled: false` ⇒ this
    phase falls back to leaving every instance untouched for the run, same
    fail-closed fallback as Phase 1.5 itself.
@@ -1353,6 +1617,17 @@ This phase closes that gap by re-evaluating the AGED chipped backlog that
 Phase 1.5d's window does not cover — bounded, cycling over multiple runs,
 and SHADOW-FIRST because it can touch items previously flagged as the
 owner's own ACTIONS by chipping them.
+
+**RUN OBLIGATION (v5.8 — same clause as Phase 1.5b, same measured
+failure).** While `chip_reeval` reads `shadow` (or `live`), this phase's
+VERDICT COMPUTATION runs on **every run whose mail leg was read-live** —
+shadow verdicts are read-only and need no mutation lane, no elected
+`mutation_lane`, and no canary (only `live` EXECUTION does). A run that
+read the Inbox live, with the key set and aged chipped threads in the
+cycling batch, and wrote no `chip-reeval-shadow-r<round>.jsonl` verdicts is
+an **E26 FAIL**, never an N/A; "shadow not exercised" is valid ONLY when
+the key is absent/OFF, the mail leg was never read live, or the cycling
+batch was genuinely empty (and then the companion says so explicitly).
 
 **Coverage + cadence (bounded, cycling, never unbounded, never overlapping
 Phase 1.5d).**
@@ -1415,7 +1690,10 @@ first-pass guess, and is never overridable by owner config):**
 - **DRAFT-PROTECTED ⇒ KEEP.** Any thread carrying an unsent draft (join on
   conversation, the SAME Drafts check Phase 1.5d already runs) is
   work-in-progress and is NEVER archived or declassified by this phase,
-  regardless of how confident the resolution guess is.
+  regardless of how confident the resolution guess is. **(v5.11 carve-out:
+  an expired-class COS draft — ledger match + machine signature + >14 days
+  unsent — confers no protection; the thread is judged as if undrafted, and
+  the expired draft itself is handled by the COS-DRAFT EXPIRY disposition.)**
 - **Archiving a P0 or P1 requires EXPLICIT documented resolution** — an
   owner reply after the ask, a passed hard deadline, an approval-granted
   notification, or a superseding thread — NEVER inferred from silence
@@ -1746,6 +2024,8 @@ egress action of any kind.
 
 `img-src 'self' data:` blocks every remote host; `script-src 'none'` keeps it JS-free (CSS-only `<details>`/`<summary>`). Never embed `<img src="http(s)://…">`. Overlay brand values feed ONLY the sanitized accent-color/font/title slots — never a raw style block, `url()`, or HTML fragment from an overlay file.
 
+**Engine health link (`brain health-report`, additive, generic — no owner content).** If `<vault>/.brain/brief/health-latest.html` exists, include one `System health: <VERDICT>` line + a `file://` link to it in the brief header — read VERDICT from the report's own leading `<!-- verdict: HEALTHY|DEGRADED|BROKEN -->` HTML comment (the contract documented in `src/brain/healthreport.py`'s module docstring), never re-derive it. If VERDICT is not `HEALTHY`, ALSO add one line at the very top of REQUIRED ACTIONS (component 5), before any other row, saying the engine's own health needs attention and pointing at the same link.
+
 Components in order:
 1. **Banner** (when degraded/late-run, AND on every PASS-WITH-ACCEPTANCE run): what was skipped/late and why, retry instruction; under an owner risk-acceptance, the one-line standing notice naming the accepted capability (Phase 0.5 step 5b) — never omitted, never softened. **(v4.6) Inbox-zero rollout status — a STANDING one-liner on every run until steady state** (operator-paced waits are push-visible, never silent): "inbox-zero rollout: awaiting name confirmation" (chip gate closed) / "first chipped night pending validation" / "chips live (night N)". **(v5.1/LAN-01) Any-sender shadow-lane counter — a further STANDING one-liner, present whenever `any_sender_lane` reads `shadow` or `live` (silent/omitted when the key is absent or OFF — nothing to report):** "inbox-zero rollout: `<kernel_version>` shadow night N/5" while the promotion bar (Phase 1.5b) is unmet, or "inbox-zero rollout: `<kernel_version>` shadow evidence complete (M mature, 0 contradicted) — promotion question pending" once it is met — `<kernel_version>` is read verbatim from this file's own frontmatter, never a hand-typed literal, so the line never goes stale across a future bump. Also here: the mutation-lease banner (holder named, or stale-lease report) and the top-of-brief OUTAGE banner when the liveness preflight failed (Phase 1).
 2. **TL;DR** — ≤ 3 bullets: the day's shape, the one decision that matters, the one thing not to forget.
@@ -1813,35 +2093,35 @@ strip always has at least tonight's numbers even with no 7-day history yet.
 - **E2** · Brief exists with sections 2–10 (degraded: banner + non-skipped; Sunday: SELF-REVIEW + WEEKLY RETRO present or logged skip) AND companion exists, AND the brief + every `_cos_materials/*.html` carries the image-containment CSP meta with `img-src 'self' data:` and no remote `<img src="http(s)://…">` (missing CSP or remote img = FAIL) — `script` · repair.
 - **E3** · Every response-warranted ACTION row has a drafts-ledger entry (verified-in-Drafts) or a logged skip reason — `script` · repair.
 - **E4** · Every TARGET-DAY calendar event appears as battlecard or compact row, or a logged skip; calendar-BLOCKED runs report N/A — `script` · repair.
-- **E5** · Ledger completeness: marked/archived/captured/drafted counts equal the state-file execution-log counts, **counting only rows whose verification result is `verified-*` as executed** (v2.1); `held` and `verified-failed` rows are reconciled against the REQUIRED ACTIONS panel instead; deferred INGEST rows ("capture pending host sweep") reconcile against tonight's ingest-manifest lines — `script` · repair.
+- **E5** · Ledger completeness: marked/archived/captured/drafted counts equal the state-file execution-log counts, **counting only rows whose verification result is `verified-*` as executed** (v2.1); `held` and `verified-failed` rows are reconciled against the REQUIRED ACTIONS panel instead; downloads-mount-absent INGEST rows reconcile against REQUIRED ACTIONS and carry `capture blocked — downloads mount absent` — `script` · repair.
 - **E6** · Every brain-sourced fact in the brief carries a brain **note id** + a resolvable `brain --role vm get <id>` reference (and a `file://` link whose target exists) — `grep` · repair.
 - **E7** · Degraded honesty: any skipped phase ⇒ banner names it AND a 🚧 BLOCKED block exists; no silent omission — `read` · **action_required**.
 - **E8** · Idempotency: same-night re-run no-ops — drafts keyed on Drafts inventory + conversation; archives keyed on state file; brief/companion overwrite-same-content; metrics/opex append keyed on date — `script` · repair.
-- **E9** · Every finding that should become a real note was `brain --role vm draft-capture`'d (a draft exists in the capture-inbox), and every `cos-ops/` write this run is listed in the companion ledger — no orphan writes; **no write targeted `.brain/` or any path outside `cos-ops/` + `inbox/` + the engine's VM-writable drops (`$BRAIN_COS_OPS_DIR/drop/verdict-drop/` (shadow-ledger + behaviour-r<N> observation rows), `drop/ingest-manifest/` for the v2.1 host-sweeper manifest, and `drop/proposal-drop/` via `cos-propose` — the LATTER covers both `cos-propose --kind correction` and every ING-01 ingestion candidate, and NEVER `draft-capture` for an ingestion candidate); the only `.brain/` read is the VM-readable `$BRAIN_COS_OPS_DIR/shared/priority-map.md`; `host/` is never touched** — `grep` · repair.
+- **E9** · Every finding that should become a real note was `brain --role vm draft-capture`'d (a draft exists in the capture-inbox), and every `cos-ops/` write this run is listed in the companion ledger — no orphan writes; **no write targeted `.brain/` or any path outside `cos-ops/` + `inbox/` + the engine's VM-writable drops (`$BRAIN_COS_OPS_DIR/drop/verdict-drop/` (shadow-ledger + behaviour-r<N> observation rows) and `drop/proposal-drop/` via `cos-propose` — the LATTER covers both `cos-propose --kind correction` and every ING-01 ingestion candidate, and NEVER `draft-capture` for an ingestion candidate); basename-only `drop/ingest-manifest/` writes are forbidden; the only `.brain/` read is the VM-readable `$BRAIN_COS_OPS_DIR/shared/priority-map.md`; `host/` is never touched** — `grep` · repair.
 - **E10** · Calibration footer present AND a metrics row for TARGET DAY exists in `cos-ops/_cos_metrics.jsonl` — `script` · repair.
 - **E11** · Unattended-egress containment (EXFIL-04/06): on the cron path this run made **zero** live web-egress calls while private context was loaded (EXTERNAL SIGNAL / SUPERVISED FOLLOW-ONS are queued prompts, not fetched results); **every** Chrome navigation targeted an allowlisted mail host; no reply draft to an off-thread recipient; no queued prompt contains an `overlay/keywords/` internal term. (`brain --role vm` reads and draft-captures are local, not egress.) Any live web call, off-allowlist nav, off-thread draft, or leaked internal term is a FAIL; a missing ledger is a FAIL. **An owner risk-acceptance (Phase 0.5 step 5) covers capability PRESENCE only — a live web fetch/search call on the unattended path is a FAIL even with a valid acceptance on file.** Interactive path: supervised sweeps allowed, report `N/A (interactive)` — `read` · **action_required**.
 - **E12** · Trifecta preflight & outbound gate (AUT-02/03): the Phase 0.5 preflight ran and the companion carries the `Trifecta legs: …` proof line in either valid form — `preflight=PASS|HALT` or `preflight=PASS-WITH-ACCEPTANCE` (which additionally requires the Banner standing notice and an existing valid `cos-ops/_cos_risk_acceptance.md`) — silence = FAIL; the removed leg (E) made zero capability use; and no state-changing outbound was executed — any such action appears HELD, never done. **The two layers of Phase 0.5 step 5c apply here:** a valid acceptance covering a capability's PRESENCE (e.g. `calendar-connector-present-unattended`, which includes visible calendar-write tools) makes `PASS-WITH-ACCEPTANCE` the CORRECT verdict — presence-under-acceptance is never a FAIL and never forces a HALT; but any EXECUTION of a Layer-2 hard deny (mail send/delete/unread-touch, any calendar write, off-allowlist nav, off-thread-recipient draft) is a FAIL regardless of any acceptance record — `read` · **action_required**.
 - **E13** · Harness OpEx metering: the companion's `💵 Harness OpEx (this run)` line is present and non-empty; AND exactly ONE `cos-ops/_harness_opex.jsonl` record was appended for today — OR the line reads `not metered — <reason>` and no record was appended — `script` · repair (never fabricate token counts).
 - **E14** · Read-tier integrity (v3.0): every substantive Phase-1 thread has exactly one verdict line in tonight's `shadow-ledger-r<round>.jsonl` (valid JSON, all five keys, evidence carries no raw mail quote); the brief's READ rows + `Would archive (N)` (including needs-review-held rows) + the OVERNIGHT LEDGER's auto-archived-`noise` count together equal the ledger's `read`/`noise` counts; the round number is correct per the round-counter rule; **(v2.2) every verdict row carries `sender` + `subject` verbatim AND a stable-id `msg_key` (`key_scheme: convid`) or an explicit sha-fallback marker (`key_scheme: sha-fallback`)** — a row missing sender/subject or carrying an unmarked sha key is a FAIL. **(v3.0) Auto-archive mutation gate:** any mailbox mutation attributable to a read-tier verdict is a FAIL UNLESS every one of the seven v3.0 guard conditions held for that row (bucket=noise, tier≠P0/P1 — and =P3 specifically under `scope: p3-only` — high-confidence noise-signal present [never a needs-review-lane row], model-version match, valid undo-canary on file, under the per-run cap for the active scope, kill switch not disabling) — an auto-archived row failing any condition, a P0/P1 row that auto-archived under ANY scope, a needs-review-lane row that auto-archived instead of being held, a mismatched model version, a stale/absent undo canary, a cap overrun, or an auto-archive while the kill switch read `enabled: false` is an automatic FAIL, not a repair-and-continue. Every auto-archived row has a matching action-ledger entry (reason names the tier/signal/scope, primitive, verification result) — an auto-archived verdict with no action-ledger entry is a FAIL — `script` · **action_required**.
-- **E15** · Verified-batch execution (v2.1): **every executed archive/mark row in the ledger carries a verification result** (`verified-archived`/`verified-marked` from a post-batch re-query, or — v2.4/v2.5 — `response-confirmed` from the rest-move MOVE RESPONSE or the rest-categorize PATCH RESPONSE, valid and indeed STRONGER verifications — an executed row with no verification result is a FAIL); no batch exceeded the batch size before its verification; after two consecutive verified-failed batches only the REMAINING rows were held (verified rows untouched); deferred-INGEST source emails were NOT archived tonight (their archive waits for host-confirmed capture) and each has a manifest line; **(v2.2) a batch verification is INVALID if a list filter was active during the check — each verification asserts the filter state was examined (no active filter, e.g. "Mentions me"), and a filtered empty list never counts as a verified archive**; **(v2.3/v2.5) every executed archive/mark row's ledger entry names the primitive used (`rest-move` | `rest-categorize` | `dom-move-fallback` | `dom-categorize` | `sender-scoped`) and its per-row/batch/response verification result; a captured token used for an operation OUTSIDE the internal-reversible-non-egress class (i.e. failing the three-part defining test) is an automatic FAIL; zero banned-mechanism use appears in the ledger; a run that ends with unarchived approved-archive rows MUST list each one with its convid and a reason — `verification-failed-twice` is the ONLY acceptable reason, and "too many" is explicitly NOT a valid reason** — `script` · repair.
+- **E15** · Verified-batch execution (v2.1): **every executed archive/mark row in the ledger carries a verification result** (`verified-archived`/`verified-marked` from a post-batch re-query, or — v2.4/v2.5 — `response-confirmed` from the rest-move MOVE RESPONSE or the rest-categorize PATCH RESPONSE, valid and indeed STRONGER verifications — an executed row with no verification result is a FAIL); no batch exceeded the batch size before its verification; after two consecutive verified-failed batches only the REMAINING rows were held (verified rows untouched); downloads-mount-absent INGEST source emails were NOT archived tonight, each appears in REQUIRED ACTIONS, and each is ledgered `capture blocked — downloads mount absent` (no ingest manifest); **(v2.2) a batch verification is INVALID if a list filter was active during the check — each verification asserts the filter state was examined (no active filter, e.g. "Mentions me"), and a filtered empty list never counts as a verified archive**; **(v2.3/v2.5) every executed archive/mark row's ledger entry names the primitive used (`rest-move` | `rest-categorize` | `dom-move-fallback` | `dom-categorize` | `sender-scoped`) and its per-row/batch/response verification result; a captured token used for an operation OUTSIDE the internal-reversible-non-egress class (i.e. failing the three-part defining test) is an automatic FAIL; zero banned-mechanism use appears in the ledger; a run that ends with unarchived approved-archive rows MUST list each one with its convid and a reason — `verification-failed-twice` is the ONLY acceptable reason, and "too many" is explicitly NOT a valid reason**; **(v5.7) exactly ONE `mutation_lane` was elected this run and EVERY executed mutation row carries it with a lane-consistent primitive (`rest-move`/`rest-categorize` only on `rest`; a `rest-*` primitive on a `native-ui` row, or two lanes across one run's rows, is a FAIL) — and every `sender-scoped` select-all this run asserts the SET-EQUALITY GUARD was checked (visible selected convids ⊆ approved queue, no unidentified row); a select-all executed without the set-equality assertion is a FAIL** — `script` · repair.
 - **E16** · Ingestion evidence-required (v3.0, ING-01): every candidate this run staged via `cos-propose` carries a non-empty firewalled source quote, an owner/actor, a `classification`, and a `dedup_check` result (`clean` | `inconclusive`) — a candidate with no evidence, no classification, or a dedup check silently skipped is a FAIL. Every staged candidate's raw text was scanned for the secret-scrub patterns (rule 3) before dropping — a proposal later REJECTED by the host's own claim-time secret-scrub is not itself a FAIL of this run (defense in depth caught it), but a repeat of the SAME uncaught pattern across 2+ nights is — `grep` · repair.
-- **E17** · Auto-archive undo-capability (v3.0, Codex X9): every auto-archived row's action-ledger entry carries the FULL field set from Phase 1.5's execution mechanics (`account, message_id, thread_id, original_folder, destination_folder, action_ts, primitive, connector_result, verification` — `message_id` MUST be the provider-immutable id, never a mutable list-view id) — any auto-archived row missing one of these fields is a FAIL. `cos-ops/_cos_undo_canary.json` exists, is ≤ 30 days old, and its `idempotent_replay` field reads `confirmed` — if auto-archive ran at all this run without a valid canary on file, that is an automatic FAIL (guard condition 5 was supposed to have blocked it) — `script` · **action_required**.
+- **E17** · Auto-archive undo-capability (v3.0, Codex X9; v5.7 lane-conditional): every auto-archived row's action-ledger entry carries the FULL field set from Phase 1.5's execution mechanics (`account, message_id, thread_id, key_scheme, mutation_lane, original_folder, destination_folder, action_ts, primitive, connector_result, verification`) — any auto-archived row missing one of these fields is a FAIL. **Key discipline per `key_scheme`:** `message-id` rows — `message_id` MUST be the provider-immutable id, never a mutable list-view id; `convid` rows (native-ui lane only) — `message_id` MUST be explicitly `null` (a non-null non-immutable value is a FAIL — a fabricated or list-view id is worse than none), `thread_id` MUST be the stable convid, and `members_moved` MUST be present (`1` for any auto-archived row — the single-Inbox-message restriction). A `key_scheme`/`mutation_lane` pair that mismatches (e.g. `convid` on a `rest` row) is a FAIL. **Canary (per-lane, v5.7):** `cos-ops/_cos_undo_canary.json` exists, its record FOR THE RUN'S ELECTED LANE (the `lanes` map entry; a legacy flat file counts as `rest` only) is ≤ 30 days old with `idempotent_replay: "confirmed"` and per-step receipts — a canary for a DIFFERENT lane than the elected one does NOT satisfy this check, and a canary file lacking per-step verification receipts is a FAIL (a written file is not a run drill) — if auto-archive ran at all this run without a valid lane-matching canary on file, that is an automatic FAIL (guard condition 5 was supposed to have blocked it) — `script` · **action_required**.
 
 - **E18** · Review-gate integrity (v4.4): IF Phase 4.6 registered or reviewed anything tonight — every reviewed version carries `findings.json` + a ledger entry appended tonight; every `record` was accepted (anchors verbatim) or its rejection is routed to ⚠ with validator output; zero web-egress calls occurred during reviews; every file write of the phase resolved inside `cos-ops/review_gate/`; brief component 7½ present (or `(none)`). Nothing registered AND nothing reviewed ⇒ explicit N/A — `script` · repair.
 
-- **E19** · Chip-projection integrity (v4.6): (a) if the chip gate is CLOSED (`chips_confirmed: true` absent from `overlay/cos/priorities.md`), ZERO P-chip applications occurred this run and the rollout-status banner line reads "awaiting name confirmation"; (b) if OPEN, every Phase-1.5 `act` conversation carries exactly ONE priority chip, applied message-level (every message of the conversation in Inbox), and no non-`act` conversation gained one; (c) every chip write's ledger entry asserts the ENTIRE post-write server-read set — the P-chip present AND the non-managed category subset unchanged (a bare `[P-chip]` overwrite, or a write verified only from the client view, is a FAIL); (d) the mutation lease was honored — a present, unexpired, foreign lease ⇒ zero mailbox mutations in the ledger + the holder named in the banner; an expired or malformed lease is reported; (e) the zero-mutation liveness preflight ran before Phase 1.5 (or the run failed closed with the OUTAGE banner and zero mutation attempts); (f) the rollout-status line is present on every run until steady state — `script` · **action_required**.
+- **E19** · Chip-projection integrity (v4.6): (a) if the chip gate is CLOSED (`chips_confirmed: true` absent from `overlay/cos/priorities.md`), ZERO P-chip applications occurred this run and the rollout-status banner line reads "awaiting name confirmation"; (b) if OPEN, every Phase-1.5 `act` conversation carries exactly ONE priority chip, applied message-level (every message of the conversation in Inbox), and no non-`act` conversation gained one; (c) every chip write's ledger entry asserts the ENTIRE post-write server-read set — the P-chip present AND the non-managed category subset unchanged (a bare `[P-chip]` overwrite, or a write verified only from the client view, is a FAIL; **v5.7: on the native-ui lane the full-set read is the Categories dialog or equivalent full-set surface — row-chip visibility alone is a FAIL at the same severity**); (d) the mutation lease was honored — a present, unexpired, foreign lease ⇒ zero mailbox mutations in the ledger + the holder named in the banner; an expired or malformed lease is reported; (e) the zero-mutation liveness preflight ran before Phase 1.5 (or the run failed closed with the OUTAGE banner and zero mutation attempts); (f) the rollout-status line is present on every run until steady state — `script` · **action_required**.
 
 - **E20** · Lifecycle reconciliation integrity (v4.7): (a) every chip clear this run carries the CLOSED trigger `owner_reply_is_latest_no_open_items` verbatim in its ledger entry — a clear ledgered with `thread_closed`/`meeting_passed`/`handled_by_others` alone (no `owner_reply_is_latest_no_open_items`) is a FAIL, those triggers may only de-escalate; (b) every re-level's journal shows the `add-new` step before its matching `remove-old` step (add-before-remove ordering) — a re-level missing the add-new step, or ordered remove-then-add, is a FAIL; (c) brief component 7¾ (CHIP LEDGER) is present (or `(none)`) and its added+re-leveled+cleared counts equal the reconciliation pass's own tally; (d) a clear-then-reply-within-3-days contradiction, if any occurred, is named in component 7¾ — `script` · **action_required**.
 
 - **E21** · Anticipation + authority-matrix conformance (v5.0): **(a)** brief component 7¼ (ANTICIPATE) is present (≤5 rows or `(none)`); no row duplicates a Phase-4 LATE/RADAR item; every row's suggested start is a ready-to-run prompt or an explicit `nothing yet` — never an auto-built deck/memo; a row present on the prior night and absent tonight carries a done/closed/past reason in the companion; **(b)** every EXECUTED action in tonight's ledgers maps to an AUTO-RESOLVE row of the authority matrix, every proposal maps to its DRAFT-FIRST row, and everything else appears only as HELD/ESCALATE — an executed action with no auto-resolve row (an unlisted action) is an automatic FAIL, never a repair-and-continue; **(c)** if any auto-resolve class ran without its LEDGER — or, for a class with a DEFINED drift monitor (archive, chip lifecycle), without its drift numbers (the standing drift obligation) — that class fell back to shadow/held and the banner names it; a class with no defined metric is never stopped for lacking one — `script` · **action_required**.
 
-- **E22** · Any-sender shadow-lane + inbox-zero metrics integrity (v5.1, LAN-01/FRM-02): **(a)** if `any_sender_lane` is ABSENT or unparseable in `overlay/cos/auto-archive.md`, ZERO rows were written to `any-sender-shadow-r<round>.jsonl` tonight and the shadow-counter banner line is OMITTED — a row written under an absent/OFF key is an automatic FAIL; **(b)** if `any_sender_lane: shadow`, every written row passed all Phase-1.5b screens (IsRead observed true, all four hard screens clear, received >7d) AND caused ZERO mailbox mutations — any mutation attributable to a Phase-1.5b row, under ANY value of the key including `live` with no matching authority-matrix amendment, is an automatic FAIL, not a repair-and-continue; **(c)** every row in the shadow ledger carries `shadow_date` and `lane: "any-sender-shadow"`; a row observed by Phase 1.5c as MATURE that shows `owner_replied`/`owner_flagged` is reported as a contradiction in the brief the same night it is graded — a contradiction computed but not surfaced is a FAIL; **(d)** tonight's `_cos_metrics.jsonl` row carries all thirteen v5.1 fields (`inbox_count, chips_p0, chips_p1, chips_p2, chips_p0_bound, oldest_chip_age_days, chips_added, chips_cleared, would_archive_count, any_sender_shadow_night, any_sender_shadow_count, any_sender_shadow_mature, any_sender_shadow_contradicted`) — a missing field is a FAIL; **(e)** brief component 9½ is present, its `would_archive_count` equals the Phase-1.5 `Would archive (N)` header total, and BOTH escalation lines fire exactly when their trigger holds (`chips_p0 > chips_p0_bound` names the inflating senders; `oldest_chip_age_days > 14` names the aged conversation) and are silent otherwise — an escalation that should have fired and did not, or one that fired without its trigger, is a FAIL — `script` · **action_required**.
+- **E22** · Any-sender shadow-lane + inbox-zero metrics integrity (v5.1, LAN-01/FRM-02; v5.8 run-obligation): **(a)** if `any_sender_lane` is ABSENT or unparseable in `overlay/cos/auto-archive.md`, ZERO rows were written to `any-sender-shadow-r<round>.jsonl` tonight and the shadow-counter banner line is OMITTED — a row written under an absent/OFF key is an automatic FAIL; **(a2, v5.8 — the vacuous-pass direction)** if the key reads `shadow`/`live` AND the mail leg was read-live this run, Phase 1.5b RAN and its ledger file for tonight's round EXISTS (rows, or an explicit zero-eligible marker row) — a shadow-enabled, mail-live night with NO shadow ledger written is a FAIL, never "not exercised"; `any_sender_shadow_night` incremented tonight; **(b)** if `any_sender_lane: shadow`, every written row passed all Phase-1.5b screens (IsRead observed true, all four hard screens clear, received >7d) AND caused ZERO mailbox mutations — any mutation attributable to a Phase-1.5b row, under ANY value of the key including `live` with no matching authority-matrix amendment, is an automatic FAIL, not a repair-and-continue; **(c)** every row in the shadow ledger carries `shadow_date` and `lane: "any-sender-shadow"`; a row observed by Phase 1.5c as MATURE that shows `owner_replied`/`owner_flagged` is reported as a contradiction in the brief the same night it is graded — a contradiction computed but not surfaced is a FAIL; **(d)** tonight's `_cos_metrics.jsonl` row carries all thirteen v5.1 fields (`inbox_count, chips_p0, chips_p1, chips_p2, chips_p0_bound, oldest_chip_age_days, chips_added, chips_cleared, would_archive_count, any_sender_shadow_night, any_sender_shadow_count, any_sender_shadow_mature, any_sender_shadow_contradicted`) — a missing field is a FAIL; **(e)** brief component 9½ is present, its `would_archive_count` equals the Phase-1.5 `Would archive (N)` header total, and BOTH escalation lines fire exactly when their trigger holds (`chips_p0 > chips_p0_bound` names the inflating senders; `oldest_chip_age_days > 14` names the aged conversation) and are silent otherwise — an escalation that should have fired and did not, or one that fired without its trigger, is a FAIL — `script` · **action_required**.
 - **E23** · Stale-chip digest + drain-vs-add trigger integrity (v5.2, s08 steady-state rot response): **(a)** on a Sunday SELF-REVIEW run, IF any OPEN chip's age exceeds 14 days, EXACTLY ONE `kind: stale-chip-digest` row was appended to `cos-ops/_recommendations_open.jsonl` this run, carrying every stale chip and one `clear these` option over the exact chip-id list — zero stale chips and a written row (or the reverse) is a FAIL; **(b)** the digest row's idempotency key is the sha of the sorted chip-id list, never a fixed/date-only key — a re-queued digest that collides with an unchanged prior week's key (so it never refreshes) is a FAIL; **(c)** the trailing 14-day `chips_cleared`/`chips_added` sums were computed from `_cos_metrics.jsonl` and, when `drained/day < added/day` holds over the full window, one of the ≤3 SELF-REVIEW proposals names the re-open trigger explicitly (cleared/day and added/day both stated) — a sustained shortfall with no named proposal is a FAIL; on a non-Sunday run this check is **N/A**, not skipped-silently — `script` · repair.
 
 - **E24** · Mail-leg transport-preflight reliability contract (v5.3, TRN-01/TRN-02): **(a)** Phase 0 step 3 names BOTH failure modes distinctly — mode (a) NOT PAIRED and mode (b) PAIRED BUT SIGNED OUT/MFA — a mail-leg degrade whose banner does not name which mode fired is a FAIL; **(b)** mode (a) exhausted its persistent poll budget (roughly every 30 s for up to ~6 minutes, ~12 attempts) before degrading — a mode-(a) degrade logged after fewer attempts than the stated budget (i.e. a reversion to the old single-120s-retry behavior) is a FAIL; **(c)** mode (b) degraded on the FIRST auth-check failure with no retry-budget burn — a mode-(b) degrade that consumed the mode-(a) polling budget before escalating is a FAIL; **(d)** every mail-leg degrade this run (either mode) has a matching entry in `cos-ops/_notify-markers/<mode-a|mode-b>-<TARGET DAY>` (created this run, or already `exists` from an earlier degrade today) — a degrade with no marker claim attempted is a FAIL; **(e)** no Graph/EWS/MS365-connector path was proposed or used for the mail leg — the only sanctioned mail lane remains the signed-in OWA browser tab — a mail-leg workaround naming any other transport is an automatic FAIL, not a repair-and-continue. Zero mail-leg degrades tonight ⇒ **N/A**, not skipped-silently — `script` · repair.
 - **E25** · Recurring-digest supersession integrity (v5.4, DIG-01): **(a)** every stream disposed under Phase 1.5e had **≥2** Inbox instances sharing the SAME normalized subject from the SAME recurring-automated sender — a disposed stream with only 1 instance, or instances that do not share a normalized subject, is a FAIL; **(b)** the single LATEST instance per stream (by `receivedDateTime`) was NEVER archived and NEVER declassified — an archived-or-declassified latest row is a FAIL, not a repair-and-continue; **(c)** every PRIOR instance archived under this phase has BOTH a declassify write (full category-set preserved, managed chip removed, server-read-verified) AND a matching action-ledger entry carrying the FULL undo-capable field set, written BEFORE the move — a prior instance archived without its chip removed, or with an incomplete ledger entry, is a FAIL; **(d)** zero P0/P1 rows were touched by this phase, at any confidence — an executed disposition on a P0/P1 row is an automatic FAIL; **(e)** zero disposition occurred for instances that did NOT share a normalized subject, or where the digest-vs-per-item nature was uncertain — a per-item stream (distinct ids surviving normalization) collapsed to keep-latest is an automatic FAIL, never a repair-and-continue; **(f)** `recurring_digest_supersession` in `overlay/cos/auto-archive.md` was honored — ABSENT or `true` allowed dispositions this run, `false` produced ZERO — a disposition under `false`, or zero dispositions despite eligible streams present and the key absent/true, is a FAIL; **(g)** every disposed row counted against the SAME per-run cap as Phase 1.5's auto-archive — a disposition that exceeded the shared cap is a FAIL — `script` · **action_required**.
 
-- **E26** · Full-inbox chip re-evaluation integrity (v5.5, RTG-01): **(a)** every thread re-evaluated this run belongs to the bounded batch — the per-run cap shared with Phase 1.5's auto-archive was never exceeded by this phase's dispositions, and the batch was drawn OLDEST-`last_reeval`-first (never-reeval'd threads first) — a batch drawn out of order, or a disposition count exceeding the shared cap, is a FAIL; **(b)** a thread Phase 1.5d already reconciled THIS run (inside its own 36h window) was NEVER also re-evaluated by this phase in the same run — a double-touched conversation is a FAIL; **(c)** every RESOLVED verdict carries documented resolution evidence (an owner reply after the ask, a passed deadline, an approval-granted notification, or a superseding thread) — a RESOLVED verdict backed only by "no reply seen" / silence is a FAIL; **(d)** zero threads with an UNCERTAIN resolution were archived or declassified — an uncertain thread's only allowed write is a `last_reeval` stamp; an uncertain thread that lost its chip or moved to Archive is a FAIL; **(e)** zero threads carrying an unsent draft (DRAFT-PROTECTED) were archived or declassified, regardless of the resolution guess — a draft-protected thread touched by a declassify/archive write is a FAIL; **(f)** every P0/P1 thread disposed as RESOLVED carries EXPLICIT documented resolution, never silence alone — a P0/P1 archived on an inferred-from-silence basis is an automatic FAIL, not a repair-and-continue; **(g)** `chip_reeval` in `overlay/cos/auto-archive.md` was honored exactly — ABSENT or an unrecognized value produced ZERO mutations from this phase (verdicts computed, `last_reeval` bookkeeping only), `shadow` produced ZERO mutations and wrote every verdict to the distinct `chip-reeval-shadow-r<round>.jsonl` ledger, and `live` executed on the audited path — a mutation under ABSENT/unrecognized/`shadow`, or zero execution under a properly-promoted `live`, is a FAIL, fixture-pinned BOTH ways; **(h)** every RESOLVED disposition's archive carries the FULL undo-capable field set (identical shape to Phase 1.5/1.5e's execution mechanics), written BEFORE the move, and counts against the shared per-run cap — an archived RESOLVED row missing a ledger field, or ordered move-before-ledger, is a FAIL; **(i)** every UNDER-CHIPPED/OVER-CHIPPED verdict resulted in a re-level (a managed-chip add/remove write, chip ledger 7¾) and NEVER an archive — a re-level verdict that archived the thread instead of re-leveling its chip is a FAIL — `script` · **action_required**.
+- **E26** · Full-inbox chip re-evaluation integrity (v5.5, RTG-01): **(a)** every thread re-evaluated this run belongs to the bounded batch — the per-run cap shared with Phase 1.5's auto-archive was never exceeded by this phase's dispositions, and the batch was drawn OLDEST-`last_reeval`-first (never-reeval'd threads first) — a batch drawn out of order, or a disposition count exceeding the shared cap, is a FAIL; **(b)** a thread Phase 1.5d already reconciled THIS run (inside its own 36h window) was NEVER also re-evaluated by this phase in the same run — a double-touched conversation is a FAIL; **(c)** every RESOLVED verdict carries documented resolution evidence (an owner reply after the ask, a passed deadline, an approval-granted notification, or a superseding thread) — a RESOLVED verdict backed only by "no reply seen" / silence is a FAIL; **(d)** zero threads with an UNCERTAIN resolution were archived or declassified — an uncertain thread's only allowed write is a `last_reeval` stamp; an uncertain thread that lost its chip or moved to Archive is a FAIL; **(e)** zero threads carrying an unsent OWNER draft (DRAFT-PROTECTED; v5.11 — an expired-class COS draft, ledger match + machine signature + >14d unsent, confers no protection) were archived or declassified, regardless of the resolution guess — a draft-protected thread touched by a declassify/archive write is a FAIL, and a discarded draft that was NOT expired-class by BOTH signals is an automatic FAIL; **(f)** every P0/P1 thread disposed as RESOLVED carries EXPLICIT documented resolution, never silence alone — a P0/P1 archived on an inferred-from-silence basis is an automatic FAIL, not a repair-and-continue; **(g)** `chip_reeval` in `overlay/cos/auto-archive.md` was honored exactly — ABSENT or an unrecognized value produced ZERO mutations from this phase (verdicts computed, `last_reeval` bookkeeping only), `shadow` produced ZERO mutations and wrote every verdict to the distinct `chip-reeval-shadow-r<round>.jsonl` ledger, and `live` executed on the audited path — a mutation under ABSENT/unrecognized/`shadow`, or zero execution under a properly-promoted `live`, is a FAIL, fixture-pinned BOTH ways; **(v5.8 run-obligation)** under `shadow`/`live` with a mail-live read and a non-empty cycling batch, ZERO verdicts written is ALSO a FAIL — "shadow not exercised" is valid only with the key absent/OFF, no live mail read, or an explicitly-reported empty batch; **(h)** every RESOLVED disposition's archive carries the FULL undo-capable field set (identical shape to Phase 1.5/1.5e's execution mechanics), written BEFORE the move, and counts against the shared per-run cap — an archived RESOLVED row missing a ledger field, or ordered move-before-ledger, is a FAIL; **(i)** every UNDER-CHIPPED/OVER-CHIPPED verdict resulted in a re-level (a managed-chip add/remove write, chip ledger 7¾) and NEVER an archive — a re-level verdict that archived the thread instead of re-leveling its chip is a FAIL — `script` · **action_required**.
 
 - **E27** · Mail-triage invocation tiering integrity (v5.6): **(a)** exactly ONE tier applied this run and the companion/banner names which (`delegated` | `standalone` | `degraded`) — a run with no tier record is a FAIL; **(b)** tier = `delegated` only when a triage skill was actually invoked (Skill tool call, or its installed SKILL.md read and followed) — a `delegated` record with no invocation evidence is a FAIL; **(c)** tier = `standalone` was entered ONLY when no triage skill was installed AND the ZERO-MUTATION LIVENESS PREFLIGHT succeeded THIS run — the probe result used for the tier decision IS the same probe Phase 1 already runs and logs before Phase 1.5/any mutation, never a second bespoke probe invented for this gate; a `standalone` record with no logged liveness-preflight PASS, or backed by any probe not already documented elsewhere in this run's artefacts, is a FAIL; **(d)** under `standalone`, this run's E1/E5/E8 state-file reconciliation resolved against COS's OWN ledgers (`cos-ops/_cos_archive_ledger_<date>.jsonl`, `cos-ops/_cos_chip_ledger_<date>.jsonl`, the Phase 1.5 verdict ledger) as the standalone state of record — a `standalone` run whose E1/E5/E8 pass cites an external triage-skill state file, or finds none at all, is a FAIL; **(e)** under `standalone`, every explicitly-restated safety rule held with ZERO weakening relative to the `delegated` tier — Inbox-only, never-unread, never-delete, never-send, the P0/P1/P2 taxonomy, capture-verify-before-archive, rule 11, rule 12, the mutation lease, the liveness preflight, the verified-batch protocol, the undo ledger's full field set, the seven v3.0 guard conditions, the chip gate, and every blast-radius floor — all evaluated by the SAME checks that already gate `delegated` runs (E1/E11/E12/E14/E15/E17/E19); a `standalone` run that skipped, loosened, or produced a materially different result on any of those checks than a `delegated` run would is a FAIL; **(f)** tier = `degraded` correctly made ZERO marks/archives — any mutation ledgered under a `degraded` tier is an automatic FAIL, not a repair-and-continue — `read` · **action_required**.
 
@@ -1876,7 +2156,7 @@ strip always has at least tonight's numbers even with no 7-day history yet.
 - **v4.4 review gate:** `cos-ops/review_gate/` — `review_gate.py` (watch / brief / ingest / record / merge / status CLI), `watch.json` (scan dirs + watchlist), per-family `ledger/`, `STOP` kill file, `drop/` for manual version drops. Add a family to the watch: add its key to `watch.json` `watchlist`, or drop one version into `drop/` (known families are then auto-watched). Build provenance + receipts: `automation_discovery/` (corpus.db offer 3, exports/receipts.md).
 - **v4.6 priority-chip projection:** taxonomy + chip gate live in `overlay/cos/priorities.md` (`chips_confirmed: true|false` + the three names/colors recorded verbatim — the runtime gate Phase 1 reads); mutation lease `cos-ops/_mutation_lease.json` (interactive sessions create/remove; the nightly only honors); tested reference implementation for assignment / desired-set diff / journal recovery / lease semantics: the engine's `brain.cos_chips` module (`tests/test_cos_chips.py` — fake mailbox + fault injection; the SKILL text and that module must not drift).
 - Capture drop-zone: `<brain-vault>/inbox/` (host `brain ingest`/nightly signs it).
-- Engine COS surface (engine ≥ 0.17.0 — `docs/cos-ops.md` in the brainiac repo): READ `$BRAIN_COS_OPS_DIR/shared/priority-map.md` (host-generated by `brain cos-priority-map`); WRITE verdicts to `$BRAIN_COS_OPS_DIR/drop/verdict-drop/shadow-ledger-r<round>.jsonl`, ingest manifests (v2.1, mount-absent path) to `$BRAIN_COS_OPS_DIR/drop/ingest-manifest/manifest-<date>.jsonl` (host side: `brain cos-ingest-sweep`, wired into `brain maintain`), corrections via `brain --role vm cos-propose --kind correction`, and ingestion candidates via plain `brain --role vm cos-propose --content "<note-md>"` (both land in `drop/proposal-drop/`, both go through the SAME claim→batch→answer→selective-commit broker — `docs/cos-ops.md` §2); host-only calibration: `brain cos-report`, evidence: `brain cos-evidence sign`. `host/` is never read or written by this run. Engine < 0.17.0 (no cos dir): skip Phase 1.5 ledger writes, the ingest-manifest path, AND Phase 1.6 entirely (mount-absent INGEST rows stay in Inbox, flagged BLOCKED as in v1), keep the READ/would-archive brief sections, note the degradation in the footer.
+- Engine COS surface (engine ≥ 0.17.0 — `docs/cos-ops.md` in the brainiac repo): READ `$BRAIN_COS_OPS_DIR/shared/priority-map.md` (host-generated by `brain cos-priority-map`); WRITE verdicts to `$BRAIN_COS_OPS_DIR/drop/verdict-drop/shadow-ledger-r<round>.jsonl`, corrections via `brain --role vm cos-propose --kind correction`, and ingestion candidates via plain `brain --role vm cos-propose --content "<note-md>"` (both land in `drop/proposal-drop/`, both go through the SAME claim→batch→answer→selective-commit broker — `docs/cos-ops.md` §2); host-only calibration: `brain cos-report`, evidence: `brain cos-evidence sign`. Basename-only ingest manifests are forbidden; without the downloads mount, capture is BLOCKED. `host/` is never read or written by this run. Engine < 0.17.0 (no cos dir): skip Phase 1.5 ledger writes and Phase 1.6 entirely, keep the READ/would-archive brief sections, and note the degradation in the footer.
 - **v4.0 auto-capture (ING-04):** criteria (min sample volume, zero-defect, Wilson lower-bound) live HOST-side in `$BRAIN_COS_OPS_DIR/host/autocap-config.json` (owner-editable, per-`pattern` overrides — never edited from this skill or from SKILL.md text) plus env-var defaults (`BRAIN_COS_AUTOCAP_MIN_VOLUME`, `BRAIN_COS_AUTOCAP_MIN_LOWER_BOUND`, `BRAIN_COS_AUTOCAP_UNDO_HOURS`); acceptance evidence is `$BRAIN_COS_OPS_DIR/host/proposals/outcomes.jsonl` (host-only). This skill only tags `pattern`/`bundle_version` (Phase 1.6 step 6) — engine ≥ the s08 build required, older engines simply never auto-capture (every candidate keeps flowing through the ordinary batch).
 - **v4.0 commitment spine (SP-01/SP-02):** ledger `$BRAIN_COS_OPS_DIR/host/commitments.sqlite` (host-only, event-sourced — never hand-edited); VM-readable projection `$BRAIN_COS_OPS_DIR/shared/spine-summary.md` (Phase 4). Engine ≥ the s08 build required; older engines degrade Phase 4's commitment half to the pre-v4.0 heuristic scan.
 - **v5.0 authority matrix + anticipation (SP-03/SP-04):** the three-lane matrix (§ Authority matrix — UNLISTED ⇒ ESCALATE; reversibility recorded per capability as undo-exists/undo-tested; lane-membership changes are owner rulings applied via the graduation path, never runtime drift; the standing drift obligation makes the OVERNIGHT LEDGER + `noise_contradicted` monitoring a permanent condition of the auto-resolve lane). Anticipation horizon = Phase 4½ feeding brief component 7¼; self-eval E21. Extras verdict (SP-05: day-shape line and JIT pre-meeting refresh both DROPPED on usage evidence) recorded at `<brain-vault>/.brain/cos-ops/evidence/s09-extras-verdict.json`.

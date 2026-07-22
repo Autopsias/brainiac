@@ -47,6 +47,13 @@ two never diverge — both build the MCP entry from the same
 AGENTS.md                ← CANONICAL conventions + the brain-usage paragraph (§5)
 CLAUDE.md                ← `@AGENTS.md` (Claude Code expands the import at startup)
 .gemini/settings.json    ← { "contextFileName": "AGENTS.md" }
+<cowork-ws>/CLAUDE.md    ← INLINE copy of AGENTS.md in a marked BRAIN-CONTRACT
+                           block, re-synced by tools/cowork_workspace_install.sh
+                           on every refresh. Inline, never an @import — VERIFIED
+                           2026-07-20 on a live Cowork workspace: Cowork
+                           auto-loads a workspace-root CLAUDE.md but does NOT
+                           expand @-imports (canary session showed
+                           "[brain contract loaded]" without the imported body)
 ```
 
 `AGENTS.md` carries the one-paragraph brain-usage note (self-discovery: §5
@@ -61,6 +68,7 @@ reaches that same paragraph; none re-states it.
 | **Claude Code (CLI)** | `CLAUDE.md` → `@AGENTS.md` import | Bash tool: `brain …` |
 | **Claude Desktop — Code tab** | `CLAUDE.md` → `@AGENTS.md` (same repo file) | its shell: `brain …` |
 | **Gemini CLI** | `.gemini/settings.json` sets `contextFileName=AGENTS.md` | shell: `brain …` |
+| **Cowork (Desktop VM)** | workspace-root `CLAUDE.md` auto-loaded at session start; contract INLINED in the marked BRAIN-CONTRACT block (@imports don't expand in Cowork). Probe: send `contract?` → `[brain contract loaded] [contract inlined]` = healthy; session-prompt paste = fallback | VM shell: `brain --role vm …` |
 | **Claude Desktop — Chat tab** | (cannot run a command) | OPTIONAL thin MCP adapter — see below |
 
 **Prereq for all shell harnesses:** `brain` must be on `PATH`. Local/host:

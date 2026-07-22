@@ -20,6 +20,7 @@ from . import config
 from . import frontmatter
 from .audit import AuditChain, KeyUnavailable
 from .index import BrainIndex, Hit
+from .lock import WriterLockBusy, writer_lock
 from .notes import load_note, safe_slug, sha256_text
 
 
@@ -293,10 +294,30 @@ class BrainCore:
                 seen_ids.add(hd["id"])
         decisions = decisions[:max(5, k // 2)]
         sources = [h for h in live if h.get("type") != "decision"][:k]
+        # Identity-confidence on tension candidates (engine-feedback 2026-07-19):
+        # a calendar-asserted transcript whose title the audio doesn't support
+        # can post-date a decision and surface as a tension purely on metadata.
+        # Carry the source's `identity:` stamp so the caller can discount a
+        # title/calendar-derived tension vs a content-verified one. Lazy
+        # frontmatter read of the few tension candidates only — no index column.
+        _identity_cache: dict[str, str] = {}
+
+        def _identity(s: dict[str, Any]) -> str:
+            p = s.get("path", "")
+            if p not in _identity_cache:
+                try:
+                    meta, _ = frontmatter.parse_text(
+                        Path(p).read_text(encoding="utf-8", errors="replace"))
+                    _identity_cache[p] = str(meta.get("identity", "") or "")
+                except OSError:
+                    _identity_cache[p] = ""
+            return _identity_cache[p]
+
         for d in decisions:
             d_date = d.get("date") or ""
             d["tensions"] = [
-                {"id": s["id"], "date": s.get("date", ""), "type": s.get("type", "")}
+                {"id": s["id"], "date": s.get("date", ""), "type": s.get("type", ""),
+                 "identity": _identity(s)}
                 for s in sources
                 if d_date and s.get("date") and s["date"] > d_date
             ]
@@ -380,9 +401,10 @@ class BrainCore:
         }
 
     # -- maintenance (HOST-broker only) ----------------------------------
-    def rebuild(self) -> dict[str, Any]:
+    def rebuild(self, *, json_mode: bool = False) -> dict[str, Any]:
         self._require_host("rebuild the index")
-        return self.index.rebuild(self.vault)
+        with writer_lock(config.writer_lock_path(self.vault), verb="rebuild"):
+            return self.index.rebuild(self.vault, json_mode=json_mode)
 
     def embedder_pending(self) -> bool:
         """True when the index's stored dense vectors were built with a
@@ -394,7 +416,7 @@ class BrainCore:
         embedder's ``model_id``/``dim``."""
         return not self.index.model_matches()
 
-    def warmup(self) -> dict[str, Any]:
+    def warmup(self, *, json_mode: bool = False) -> dict[str, Any]:
         """HOST-ONLY (S02/CS-01): resolve + download the live auto-embedder's
         model weights now, instead of on the first real semantic search.
 
@@ -416,12 +438,20 @@ class BrainCore:
         import time
 
         from .embed import get_embedder, model_cache_ready
+        from .progress import progress_note
 
         embedder = get_embedder(os.environ.get("BRAIN_EMBEDDER", "auto"))
         was_cached = model_cache_ready(embedder)
+        # OB-02: begin/end lines only -- hf_hub prints its own download bar to
+        # stderr during the load below (core.py, embed.py), so we narrate
+        # start/finish around it rather than duplicating its per-file progress.
+        progress_note(f"warmup: resolving {embedder.model_id}"
+                       f"{' (cached)' if was_cached else ' (downloading)'}...",
+                       json_mode=json_mode, verb="warmup")
         t0 = time.monotonic()
         embedder.embed("warmup")  # triggers the real load/download if needed
         elapsed = time.monotonic() - t0
+        progress_note(f"warmup: ready in {elapsed:.1f}s", json_mode=json_mode, verb="warmup")
         return {
             "model_id": embedder.model_id,
             "already_cached": bool(was_cached),
@@ -524,6 +554,17 @@ class BrainCore:
                                      "reason": f"duplicate-id: {nid!r} already exists"})
                     continue
                 content = draft.read_text(encoding="utf-8")
+                split = frontmatter.split(content)
+                if split is not None:
+                    from . import autolink as _autolink
+
+                    fm_block, body = split
+                    linked_body, _added = _autolink.apply_autolinks(
+                        body, title=note.title, origin=str(note.meta.get("origin", "")),
+                        vault=self.vault,
+                    )
+                    if linked_body != body:
+                        content = f"---{fm_block}---{linked_body}"
                 try:
                     self.write_note(rel, content,
                                     reason=f"drain-on-invoke promote {draft.name}",
@@ -577,7 +618,8 @@ class BrainCore:
             document_date=document_date, classification=classification,
         )
 
-    def sync(self, *, drain: bool = True, publish: bool = False) -> dict[str, Any]:
+    def sync(self, *, drain: bool = True, publish: bool = False,
+             json_mode: bool = False) -> dict[str, Any]:
         """Incremental index reconcile (IDX-03), draining capture drafts AND
         the ingestion drop zone first.
 
@@ -589,28 +631,29 @@ class BrainCore:
         note (closing the capture loop). Set ``drain=False`` only for a host
         read-only reconcile."""
         self._require_host("sync (mutate) the index")
-        drain_res = self.drain_drafts() if drain else {"promoted": 0, "skipped": 0, "drain": "off"}
-        if drain:
-            try:
-                ingest_res = self.ingest_dropzone()
-            except Exception as exc:
-                # C2: run_ingest's own per-file retry/quarantine machinery
-                # isolates a single poison file WITHOUT raising, but this is
-                # the last-resort backstop for anything that still escapes it
-                # (e.g. a manifest/failures-file I/O error). ingest_dropzone
-                # ran BEFORE index.sync with no try/except, so any escaping
-                # exception aborted index reconciliation and snapshot
-                # publication on every subsequent sync — one bad drop must
-                # never abort index maintenance.
-                ingest_res = {"processed": [], "error": f"{type(exc).__name__}: {exc}"}
-        else:
-            ingest_res = {"processed": [], "reason": "drain-off"}
-        idx_res = self.index.sync(self.vault)
-        idx_res["drain"] = drain_res
-        idx_res["ingest"] = ingest_res
-        if publish:
-            idx_res["snapshot"] = self.publish_snapshot()
-        return idx_res
+        with writer_lock(config.writer_lock_path(self.vault), verb="sync"):
+            drain_res = self.drain_drafts() if drain else {"promoted": 0, "skipped": 0, "drain": "off"}
+            if drain:
+                try:
+                    ingest_res = self.ingest_dropzone()
+                except Exception as exc:
+                    # C2: run_ingest's own per-file retry/quarantine machinery
+                    # isolates a single poison file WITHOUT raising, but this is
+                    # the last-resort backstop for anything that still escapes it
+                    # (e.g. a manifest/failures-file I/O error). ingest_dropzone
+                    # ran BEFORE index.sync with no try/except, so any escaping
+                    # exception aborted index reconciliation and snapshot
+                    # publication on every subsequent sync — one bad drop must
+                    # never abort index maintenance.
+                    ingest_res = {"processed": [], "error": f"{type(exc).__name__}: {exc}"}
+            else:
+                ingest_res = {"processed": [], "reason": "drain-off"}
+            idx_res = self.index.sync(self.vault, json_mode=json_mode)
+            idx_res["drain"] = drain_res
+            idx_res["ingest"] = ingest_res
+            if publish:
+                idx_res["snapshot"] = self.publish_snapshot()
+            return idx_res
 
     def publish_snapshot(self, dest: str | Path | None = None) -> dict[str, Any]:
         """Publish a read-only, generation-stamped snapshot of the authoritative
@@ -620,7 +663,8 @@ class BrainCore:
         from .snapshot import publish_snapshot as _publish
 
         dest_dir = Path(dest) if dest else config.snapshot_dir(self.vault)
-        return _publish(self.index.db_path, dest_dir).to_dict()
+        with writer_lock(config.writer_lock_path(self.vault), verb="snapshot"):
+            return _publish(self.index.db_path, dest_dir).to_dict()
 
     def restore_index_from_snapshot(
         self, *, force: bool = False, dry_run: bool = False
@@ -638,11 +682,17 @@ class BrainCore:
         current index (reversible ``.pre-restore-*.bak``) before overwriting; and
         verifies the note count post-restore.
         """
+        self._require_host("restore the index from a snapshot")
+        with writer_lock(config.writer_lock_path(self.vault), verb="restore-index"):
+            return self._restore_index_from_snapshot_locked(force=force, dry_run=dry_run)
+
+    def _restore_index_from_snapshot_locked(
+        self, *, force: bool, dry_run: bool
+    ) -> dict[str, Any]:
         import datetime as _dt
         import shutil as _sh
         import sqlite3 as _sq
 
-        self._require_host("restore the index from a snapshot")
         idx = config.index_path(self.vault)
         snap = config.snapshot_db_path(self.vault)
 
@@ -928,8 +978,25 @@ class BrainCore:
         a journal that the NEXT ``supersede`` call rolls back (restores the old
         note, then proceeds) before doing anything else — never a signed
         half-chain (HARDENED:codex).
+
+        CC-02 (finding 1, 2026-07-20 dedup batch): the ENTIRE critical section
+        (journal recovery, both signed writes, the trailing reindex) runs under
+        the SAME bounded single-writer lock ``sync``/``rebuild``/``snapshot``
+        use — previously `supersede` wrote both notes completely unlocked and
+        only its trailing ``self.sync()`` call ever touched the lock, so a
+        concurrent long-running writer (e.g. the hourly sync) could leave a
+        `supersede` call blocking silently for minutes with no bounded refusal.
+        One acquisition here means a busy writer is named and refused within
+        ``$BRAIN_WRITER_LOCK_SECONDS`` (default 30s) — never a multi-minute
+        silent block — and the lock's re-entrant depth counter means the
+        trailing ``self.sync()`` call's own acquisition is a same-process no-op,
+        not a second wait.
         """
         self._require_host("supersede notes (writes both sides of a version chain)")
+        with writer_lock(config.writer_lock_path(self.vault), verb="supersede"):
+            return self._supersede_locked(old_id, new_id, reason=reason)
+
+    def _supersede_locked(self, old_id: str, new_id: str, *, reason: str = "") -> dict[str, Any]:
         self._recover_pending_supersede()
 
         if old_id == new_id:
@@ -1168,6 +1235,7 @@ class BrainCore:
             drain_result=drain_res,
             snapshot_age_hours=age_hours,
             max_recent=max_recent,
+            maintain_state=self._load_maintain_state(),
         )
         result["egress"] = egress_report
         return result
@@ -1199,7 +1267,8 @@ class BrainCore:
         surfaced, egress_report = egress.apply_gate(recent, max_tier=max_tier)
 
         result = brief_mod.build_digest(
-            index_stats=stats, recent_notes=surfaced, days=days
+            index_stats=stats, recent_notes=surfaced, days=days,
+            maintain_state=self._load_maintain_state(),
         )
         result["egress"] = egress_report
         return result
@@ -1334,6 +1403,41 @@ class BrainCore:
         dated.write_text(html_text, encoding="utf-8")
         latest.write_text(html_text, encoding="utf-8")
         return {"path": str(dated), "latest_path": str(latest), "bytes": len(html_text)}
+
+    def health_report(self, *, today: Any = None) -> dict[str, Any]:
+        """Render + write the static HTML health report (``brain
+        health-report``) to ``.brain/brief/health-latest.html`` — a single
+        colored verdict (HEALTHY/DEGRADED/BROKEN) + an "act now" list +
+        maintain-branch/index/snapshot/trend tables, assembled entirely from
+        data the engine already collects (maintain-state.json,
+        health-history.jsonl, ``brain doctor``, ``status()``). HOST-ONLY:
+        writes a file, same posture as ``brief_html``/``digest_html``. See
+        ``brain.healthreport`` for the render contract."""
+        from . import healthreport as hr
+
+        self._require_host("render the health report")
+        data = hr.collect_health_report_data(self, today=today)
+        html_text = hr.render_health_report_html(data)
+
+        out_dir = config.brief_dir(self.vault)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / "health-latest.html"
+        path.write_text(html_text, encoding="utf-8")
+        return {"path": str(path), "verdict": data["verdict"], "act_now": data["act_now"]}
+
+    def graph_report(self, *, today: Any = None) -> dict[str, Any]:
+        """Render + write the static HTML graph explorer (``brain
+        graph-report``) to ``.brain/graph/graph-explorer.html`` — a
+        self-contained WebGL link-graph + 3D semantic-map page, rebuilt from
+        the graphify discovery build (``.brain/graph/graph.json``,
+        ``authoritative: false``) plus the live index. HOST-ONLY: reads the
+        writable index, writes a file. See ``brain.graphreport`` for the
+        payload/render contract. Never crashes on missing embeddings — see
+        that module's ``semantic_note`` degrade path."""
+        from . import graphreport as gr
+
+        self._require_host("render the graph report")
+        return gr.generate_graph_report(self, today=today)
 
     # -- maintenance rituals (CUT-03) --------------------------------------
     # check / health / curate / integrity / promote-scan + the `maintain`
@@ -1633,6 +1737,7 @@ class BrainCore:
     def graphify(
         self, *, force: bool = False, dry_run: bool = False, today: Any = None,
         max_tier: str = classification.VM_DEFAULT_MAX_TIER, candidate_limit: int = 20,
+        json_mode: bool = False,
     ) -> dict[str, Any]:
         """GRF-01: build the derived, non-authoritative discovery graph
         (ADR-0003 Ruling 6/(a) — supersedes the earlier "documented only"
@@ -1670,6 +1775,7 @@ class BrainCore:
         from . import graphify as gmod
         from . import maintenance as maint
         from .graph import build_graph
+        from .progress import progress_note
 
         self._require_host("build the graphify discovery graph")
         # [S04 fix 3/4] `today` is threaded EXPLICITLY (the CLI `--as-of` flag,
@@ -1702,19 +1808,35 @@ class BrainCore:
             }
 
         t0 = _time.monotonic()
+        progress_note(f"graphify: building discovery graph ({len(new_manifest)} notes)...",
+                      json_mode=json_mode, verb="graphify")
         try:
             link_graph = build_graph(conn)
+            progress_note("graphify: link graph built, computing PageRank + candidates...",
+                          json_mode=json_mode, verb="graphify")
             built = gmod.build_graph_artifact(conn, self.index.backend, link_graph, today=d)
         except Exception as exc:
             marker_path.write_text(_json.dumps({
                 "status": "build_failed", "error": f"{type(exc).__name__}: {exc}",
                 "attempted_at": d.isoformat(),
             }, indent=2), encoding="utf-8")
+            # Finding 4 (2026-07-20 dedup batch): a BUILD_FAILED.json marker
+            # alone is invisible to anything that doesn't specifically look
+            # under .brain/graph/ -- a RAW/manual `brain graphify` invocation
+            # (not via `maintain`) never touches maintain-state.json at all,
+            # so the failure was otherwise silent to `brain status`/the retro
+            # fold. This is a best-effort, ALWAYS-updated record, deliberately
+            # separate from maintain()'s own due/streak bookkeeping (`_mark`)
+            # so it can never conflict with that branch's monthly-floor logic.
+            self._note_graphify_build_outcome(
+                status="build_failed", detail=f"{type(exc).__name__}: {exc}",
+                attempted_at=d.isoformat())
             return {
                 "ritual": "graphify", "status": "build_failed", "published": False,
                 "error": f"{type(exc).__name__}: {exc}", "marker": str(marker_path),
             }
         duration = _time.monotonic() - t0
+        progress_note(f"graphify: built in {duration:.1f}s", json_mode=json_mode, verb="graphify")
 
         generation = int(old_state.get("generation") or 0) + 1
         artifact = {
@@ -1738,6 +1860,9 @@ class BrainCore:
                 "status": "invalid_artifact", "problems": problems,
                 "attempted_at": d.isoformat(),
             }, indent=2), encoding="utf-8")
+            self._note_graphify_build_outcome(
+                status="invalid_artifact", detail="; ".join(problems),
+                attempted_at=d.isoformat())
             return {
                 "ritual": "graphify", "status": "invalid_artifact", "published": False,
                 "problems": problems, "marker": str(marker_path),
@@ -1770,6 +1895,17 @@ class BrainCore:
         tmp_manifest = manifest_path.with_suffix(manifest_path.suffix + ".tmp")
         tmp_manifest.write_text(_json.dumps(new_state, indent=2, sort_keys=True), encoding="utf-8")
         _os.replace(tmp_manifest, manifest_path)
+        self._note_graphify_build_outcome(status="ok", attempted_at=d.isoformat())
+
+        # Graph explorer regen (part of THIS build, not a separate ritual): the
+        # underlying graph.json just changed, so the rendered explorer page is
+        # now stale. Best-effort — a render failure must never fail a
+        # successful graphify build (mirrors how health_report is wired into
+        # `maintain`, core.py's own `_mark`/try-except pattern below).
+        try:
+            self.graph_report(today=d)
+        except Exception:  # noqa: BLE001
+            pass
 
         return {
             "ritual": "graphify", "dry_run": False, "published": True,
@@ -2054,6 +2190,33 @@ class BrainCore:
     def _release_maintain_lock(self, lock_path: Path) -> None:
         lock_path.unlink(missing_ok=True)
 
+    def _mark_writer_busy(
+        self, state: dict[str, Any], branch: str, d: Any, exc: "WriterLockBusy"
+    ) -> None:
+        """CC-02 skip contract (s02 owns this definition; s05 consumes it).
+
+        A clean writer-busy skip is NOT a failure and NOT work completed:
+        - status literal ``skipped-writer-busy``
+        - refresh ``last_attempt``; NEVER increment ``consecutive_failures``
+        - record ``writer_busy_since`` (first consecutive skip) + holder
+          (pid/verb) metadata
+        - increment a SEPARATE ``consecutive_skips`` counter
+        - NEVER touch ``last_run`` / ``last_successful_index_run`` -- those
+          mean work completed, and are what liveness detection keys on.
+        """
+        prev = state.get(branch) if isinstance(state.get(branch), dict) else {}
+        entry = dict(prev)
+        entry["last_attempt"] = d.isoformat()
+        entry["status"] = "skipped-writer-busy"
+        entry["consecutive_skips"] = int(prev.get("consecutive_skips", 0)) + 1
+        entry["writer_busy_since"] = prev.get("writer_busy_since") or d.isoformat()
+        entry["writer_busy_holder"] = {
+            "pid": exc.holder.get("pid"), "verb": exc.holder.get("verb"),
+        }
+        # Left exactly as they were -- a skip is not a failure.
+        entry["consecutive_failures"] = int(prev.get("consecutive_failures", 0))
+        state[branch] = entry
+
     def _load_maintain_state(self) -> dict[str, Any]:
         import json as _json
 
@@ -2075,6 +2238,34 @@ class BrainCore:
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(_json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
         _os.replace(tmp, path)
+
+    def _note_graphify_build_outcome(
+        self, *, status: str, attempted_at: str, detail: str = "",
+    ) -> None:
+        """Best-effort, ALWAYS-updated record of the graphify build's last
+        outcome, persisted into ``.brain/maintain-state.json`` under the
+        ``graphify`` entry's ``last_build_*`` keys (finding 4, 2026-07-20
+        dedup batch) — deliberately SEPARATE from ``maintain()``'s own
+        ``_mark("graphify", ...)`` due/streak bookkeeping (`last_run`,
+        `consecutive_failures`, ...), so a raw/manual `brain graphify`
+        invocation (never wrapped by `maintain`) still leaves a trace
+        `brain status`/the retro fold can see, without ever perturbing
+        `maintain`'s own monthly-floor streak logic. Never raises — this is
+        observability, not a load-bearing write."""
+        try:
+            state = self._load_maintain_state()
+            prev = state.get("graphify") if isinstance(state.get("graphify"), dict) else {}
+            entry = dict(prev)
+            entry["last_build_attempt"] = attempted_at
+            entry["last_build_status"] = status
+            if detail:
+                entry["last_build_detail"] = detail
+            else:
+                entry.pop("last_build_detail", None)
+            state["graphify"] = entry
+            self._save_maintain_state(state)
+        except Exception:  # noqa: BLE001 — observability only, never blocking
+            pass
 
     def _maintain_heartbeat_summary(self, today: Any = None) -> dict[str, Any]:
         """``brain status`` surfacing (HARDENED:premortem) — a heartbeat older
@@ -2290,8 +2481,9 @@ class BrainCore:
     def cos_ingest_sweep(self, *, downloads_dir: str | Path | None = None,
                          dry_run: bool = False) -> dict[str, Any]:
         """HOST sweeper (v2.1 field bug b): claim VM ingest-manifest lines and
-        move exact-filename matches from the host downloads dir into
-        ``<vault>/inbox/`` (the ordinary signed-ingest drop zone)."""
+        move exact-filename matches from an explicitly configured dedicated
+        host staging dir into ``<vault>/inbox/``. Never defaults to the user's
+        shared ``~/Downloads`` directory."""
         from . import cos as cos_mod
 
         self._require_host("sweep host downloads into the ingest inbox")
@@ -2446,6 +2638,15 @@ class BrainCore:
         except Exception:
             pass  # seeding is best-effort; the empty note is still valid
         lines += ["", "## Work Done", "", "## Open Threads", "", "## Next Session", ""]
+        # LNK-02: dailies are born CHAINED — link yesterday's note when it
+        # exists, so machine-created dailies stop accruing one wikilink-orphan
+        # per day (field lesson 2026-07-21: 13 of the vault's 20 knowledge-layer
+        # orphans were exactly these). Only a resolvable link: the dangling
+        # target metric is an absolute-zero convention.
+        import datetime as _dt
+        prev_id = f"daily-{(today - _dt.timedelta(days=1)).isoformat()}"
+        if self.get(prev_id) is not None:
+            lines += ["## Related", f"- [[{prev_id}]]", ""]
         body = "\n".join(lines).rstrip() + "\n"
         self.capture(body, note_id=note_id, note_type="daily",
                      classification="Confidential",
@@ -2569,6 +2770,10 @@ class BrainCore:
                     entry["failed"] = False
                     entry["consecutive_failures"] = 0
                     entry.pop("error", None)
+                    # A real completed run clears any writer-busy skip streak.
+                    entry["consecutive_skips"] = 0
+                    entry.pop("writer_busy_since", None)
+                    entry.pop("writer_busy_holder", None)
                 else:
                     entry["status"] = "failed"
                     entry["failed"] = True
@@ -2711,6 +2916,48 @@ class BrainCore:
                             f"auto version-chain fold failed: {exc}",
                             "index/write path", "next maintain run"))
                     try:
+                        ddp_res = maint.auto_dedup_tier1(self)
+                        results["autodedup"] = ddp_res
+                        prev_daily = state.get("daily") if isinstance(
+                            state.get("daily"), dict) else {}
+                        state["daily"] = {
+                            **prev_daily,
+                            "autodedup_retired": len(ddp_res["retired"]),
+                            "autodedup_skipped_classification": len(ddp_res["skipped_classification"]),
+                            "autodedup_skipped_recurring": len(ddp_res["skipped_recurring"]),
+                        }
+                        if ddp_res["retired"]:
+                            auto_fixed.append(maint.auto_fixed_item(
+                                "auto-dedup", str(self.vault),
+                                f"auto-superseded {len(ddp_res['retired'])} "
+                                f"sha256-identical duplicate pair(s) (DDP-01)"))
+                        if ddp_res["skipped_classification"]:
+                            action_required.append(maint.action_required_item(
+                                f"{len(ddp_res['skipped_classification'])} sha256-identical "
+                                f"pair(s) span different classifications",
+                                "classification decisions are never automated",
+                                "review the pair and `brain supersede` by hand if the "
+                                "duplicate really is retired content",
+                                "auto-dedup"))
+                        if not dry_run and (ddp_res["retired"] or ddp_res["truncated"]):
+                            try:
+                                self._append_hot_once(
+                                    f"maintain:autodedup:{d.isoformat()}:"
+                                    f"{len(ddp_res['retired'])}:{ddp_res['truncated']}",
+                                    maint.render_autodedup_hot_entry(ddp_res, d),
+                                )
+                            except Exception as hot_exc:  # noqa: BLE001
+                                action_required.append(maint.action_required_item(
+                                    "auto-dedup hot-queue entry could not be written",
+                                    f"{type(hot_exc).__name__}: {hot_exc}",
+                                    "check .brain/memory/hot.md writability; the "
+                                    "dedup pass itself completed fine",
+                                    "auto-dedup"))
+                    except Exception as exc:
+                        blocked.append(maint.blocked_item(
+                            f"auto-dedup fold failed: {exc}",
+                            "index/write path", "next maintain run"))
+                    try:
                         pres = maint.auto_para(Path(self.vault))
                         results["auto_para"] = pres
                         if pres["moved"]:
@@ -2733,6 +2980,45 @@ class BrainCore:
                         blocked.append(maint.blocked_item(
                             f"navigation refresh failed: {exc}",
                             "filesystem", "next maintain run"))
+
+                    # LNK-03b: cheap DAILY knowledge-layer orphan counter
+                    # (not Wednesday-gated like the full `graph_hygiene`
+                    # branch below — measured ~11ms on a 2.5k-note synthetic
+                    # index, so the full metrics call runs every day rather
+                    # than needing a lighter carve-out). Persists `kl_orphans`
+                    # into state["daily"] + this run's health-history row
+                    # (maintenance.collect_health_metrics reads
+                    # results["kl_orphans"]); a SUSTAINED multi-day climb
+                    # (>= $BRAIN_ORPHAN_SUSTAINED_GROWTH over the trailing 7
+                    # RECORDED days) logs one hot.md line, idempotency-keyed
+                    # per ISO week so it fires at most once even if the
+                    # condition holds every day of that week. Never on the
+                    # first runs (no 7-day baseline yet). The weekly
+                    # `graph_hygiene` branch's own single-prior-run growth
+                    # alarm stays fully independent.
+                    try:
+                        from . import graph as graph_mod
+
+                        kl_metrics = graph_mod.graph_hygiene_metrics(self.index.conn)
+                        kl_count = kl_metrics.get("orphan_count", 0)
+                        results["kl_orphans"] = {"orphan_count": kl_count}
+                        prev_daily = state.get("daily") if isinstance(
+                            state.get("daily"), dict) else {}
+                        state["daily"] = {**prev_daily, "kl_orphans": kl_count}
+                        if not dry_run:
+                            history_before = maint.read_health_history(Path(self.vault))
+                            growth = maint.kl_orphan_sustained_growth(history_before, kl_count)
+                            if maint.should_alert_kl_orphan_sustained_growth(growth):
+                                iso = d.isocalendar()
+                                self._append_hot_once(
+                                    f"maintain:kl-orphans-sustained:{iso[0]}-W{iso[1]:02d}",
+                                    maint.render_kl_orphan_sustained_growth_hot_entry(
+                                        kl_count, growth, d),
+                                )
+                    except Exception as exc:
+                        blocked.append(maint.blocked_item(
+                            f"kl_orphans daily counter failed: {exc}",
+                            "index read", "next maintain run"))
 
                     # CUT-02: duplicate-retention prune — safe only because
                     # every candidate is re-verified through the full
@@ -2901,6 +3187,32 @@ class BrainCore:
                             f"{type(exc).__name__}: {exc}",
                             "create it manually with tools/brain_daily.py"))
                     _mark("daily", True)
+                except WriterLockBusy as exc:
+                    # CC-02/[HARDENED:adv-r1-consensus] contract: a long
+                    # rebuild can legitimately hold the writer lock for 90
+                    # minutes, so the hourly launchd job that can't acquire
+                    # it MUST exit cleanly, not error -- one long rebuild
+                    # would otherwise manufacture ~90 minutes of "failures"
+                    # and fire a spurious notification. This is deliberately
+                    # a DIFFERENT bucket than the generic-Exception branch
+                    # below: it must NEVER touch consecutive_failures,
+                    # last_run, or last_successful_index_run (those mean
+                    # WORK COMPLETED and are what liveness keys on) -- a
+                    # leaked/wedged lock would otherwise make every hourly
+                    # run "refresh last_attempt and skip cleanly" forever,
+                    # reporting HEALTHY while the system does zero work.
+                    self._mark_writer_busy(state, "daily", d, exc)
+                    if not dry_run:
+                        self._save_maintain_state(state)
+                    return {
+                        "ritual": "maintain", "dry_run": dry_run,
+                        "date": d.isoformat(), "status": "skipped-writer-busy",
+                        "note": f"writer busy (held by pid={exc.holder.get('pid')}, "
+                                f"verb={exc.holder.get('verb')}) — skipping this run",
+                        "held_by": exc.holder,
+                        "consecutive_skips": state.get("daily", {}).get("consecutive_skips"),
+                        "outcomes": maint.build_outcomes(auto_fixed, action_required, blocked),
+                    }
                 except Exception as exc:
                     blocked.append(maint.blocked_item(
                         "daily branch (sync/brief/recommendations-aging) raised",
@@ -2989,6 +3301,52 @@ class BrainCore:
                         f"{type(exc).__name__}: {exc}",
                         "re-run maintain after the underlying error is fixed"))
                     _mark("integrity", False, f"{type(exc).__name__}: {exc}")
+
+            if "graph_hygiene" in branches:
+                try:
+                    from . import graph as graph_mod
+
+                    metrics = graph_mod.graph_hygiene_metrics(self.index.conn)
+                    prev_entry = state.get("graph_hygiene") if isinstance(
+                        state.get("graph_hygiene"), dict) else {}
+                    prev_metrics = prev_entry.get("metrics") if isinstance(
+                        prev_entry.get("metrics"), dict) else None
+                    growth = maint.graph_hygiene_orphan_growth(prev_metrics, metrics)
+                    results["graph_hygiene"] = metrics
+                    # Stash the metrics INTO state before `_mark` so its
+                    # `dict(prev)` copy carries them forward (mirrors no other
+                    # branch needing extra state — this is the first one that
+                    # persists more than status bookkeeping).
+                    state["graph_hygiene"] = {**prev_entry, "metrics": metrics}
+                    if not dry_run and maint.should_alert_graph_hygiene_growth(growth):
+                        try:
+                            self._append_hot_once(
+                                f"maintain:graph_hygiene:{d.isoformat()}:{metrics.get('orphan_count')}",
+                                maint.render_graph_hygiene_hot_entry(metrics, growth, d),
+                            )
+                        except Exception as hot_exc:  # noqa: BLE001
+                            action_required.append(maint.action_required_item(
+                                "graph-hygiene hot-queue entry could not be written",
+                                f"{type(hot_exc).__name__}: {hot_exc}",
+                                "check .brain/memory/hot.md writability; the "
+                                "metrics themselves were computed fine",
+                                "graph hygiene"))
+                    if not dry_run:
+                        # Best-effort regen — the weekly fold just recomputed
+                        # hygiene metrics; the rendered explorer page should
+                        # reflect them too. A render failure never fails the
+                        # branch itself (mirrors the graphify success-path wiring).
+                        try:
+                            self.graph_report(today=d)
+                        except Exception:  # noqa: BLE001
+                            pass
+                    _mark("graph_hygiene", True)
+                except Exception as exc:
+                    blocked.append(maint.blocked_item(
+                        "graph_hygiene branch raised",
+                        f"{type(exc).__name__}: {exc}",
+                        "re-run maintain after the underlying error is fixed"))
+                    _mark("graph_hygiene", False, f"{type(exc).__name__}: {exc}")
 
             if "digest" in branches:
                 try:
@@ -3406,7 +3764,8 @@ class BrainCore:
                     pass            # blocked count alone still drives the alarm below.
                 try:
                     candidates = maint.pending_notifications(
-                        Path(self.vault), post_outcomes, trend_findings, d)
+                        Path(self.vault), post_outcomes, trend_findings, d,
+                        maintain_state=state)
                     notifications = maint.fire_and_mark_notifications(
                         Path(self.vault), candidates, d)
                 except Exception:  # noqa: BLE001 — a notify-path failure is cosmetic,
@@ -3433,6 +3792,14 @@ class BrainCore:
                 # last-writer-win their branch stamps, as they always have — a
                 # pre-existing maintain limitation, not something graphify adds.
                 self._save_maintain_state(state)
+
+                # Health-report regen: reads the state we just persisted
+                # above, so it reflects THIS run. Best-effort — a render
+                # failure must never fail the maintain umbrella itself.
+                try:
+                    self.health_report(today=d)
+                except Exception:  # noqa: BLE001
+                    pass
 
             return {
                 "ritual": "maintain", "dry_run": dry_run, "date": d.isoformat(),

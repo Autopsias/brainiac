@@ -123,7 +123,11 @@ whose id never appears as a target in `backlinks.md` (and is not `index.md`
 or `backlinks.md` itself) is an orphan: nothing links to it, so graph-expand/
 PPR multi-hop traversal can never reach it from another note. Report the list
 as `action_required` — link it from somewhere relevant, fold it into an
-existing note, or move it to `archive/`.
+existing note, or move it to `archive/`. If `.brain/curation/link-candidates-*.json`
+(if present) exists, read it first — it's a pre-computed, noise-filtered list of
+cosine-similar unlinked knowledge-layer pairs (ranked, with a rationale per
+pair) that turns "link it from somewhere relevant" into a ranked shortlist
+instead of a cold search.
 
 ## `lint-stale`
 

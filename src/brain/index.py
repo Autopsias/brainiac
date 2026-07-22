@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import hashlib
+import json
 import os
 import re
 import sqlite3
@@ -30,8 +31,10 @@ from typing import Any
 from . import config, frontmatter
 from . import classification as cls_mod
 from .chunk import chunk_text
+from .dbretry import with_write_retry
 from .embed import Embedder, get_embedder
 from .notes import Note, scan_vault
+from .progress import ProgressReporter
 from .vectors import SqliteVecBackend, VectorBackend, get_backend
 
 # Optional 3rd-party regex engine (mrab-regex) with a REAL per-call match
@@ -72,6 +75,35 @@ def _env_float(name: str, default: float) -> float:
         return float(os.environ[name])
     except (KeyError, ValueError):
         return default
+
+
+# near_dup boilerplate-caveat patterns (finding 3, 2026-07-20 dedup batch) --
+# recurring/templated artifact types whose near-dup score is boilerplate-prone.
+# fnmatch globs, checked against the note `id`. Configurable via
+# $BRAIN_INTEGRITY_BOILERPLATE_PATTERNS (comma-separated); the scanner still
+# REPORTS every qualifying pair either way -- this only adds a caveat field.
+_DEFAULT_BOILERPLATE_PATTERNS = (
+    "daily-*",
+    "graph-health-alert-*",
+    "audit-*-writes",
+    "*-transcript",
+)
+
+
+def _boilerplate_patterns() -> tuple[str, ...]:
+    raw = os.environ.get("BRAIN_INTEGRITY_BOILERPLATE_PATTERNS", "").strip()
+    if not raw:
+        return _DEFAULT_BOILERPLATE_PATTERNS
+    return tuple(p.strip() for p in raw.split(",") if p.strip())
+
+
+def _matches_boilerplate_pattern(note_id: str, patterns: tuple[str, ...]) -> str | None:
+    import fnmatch
+
+    for pat in patterns:
+        if fnmatch.fnmatch(note_id, pat):
+            return pat
+    return None
 
 
 # Temporal-intent detector for query-aware recency weighting (EN + PT — the
@@ -126,6 +158,7 @@ def _grep_bounded_search(compiled, text: str):
 
 
 SCHEMA_VERSION = 3  # TMP-02: bitemporal columns added (notes gain 6 new cols).
+INDEX_FORMAT_VERSION = 1  # RB-02: bumped whenever resume-compatibility breaks.
                     # Migration-safe by construction: sync()'s _schema_ready()
                     # check already forces a rebuild() on any version mismatch —
                     # no separate ALTER-TABLE migration path is needed.
@@ -179,6 +212,21 @@ class _NotePlan:
     row: dict[str, Any]
     chunks: list[Any]
     inputs: list[str]
+
+
+@dataclass
+class _ResumeState:
+    """Everything ``_rebuild_impl`` needs to continue a validated staging DB
+    (RB-02). Only ever built by ``_try_resume`` after EVERY persisted
+    invariant (schema/backend/model/dim/format + vault fingerprint) has been
+    confirmed to match -- see docs/adr/0007."""
+
+    committed_batches: int
+    committed_notes: int
+    start_chunk_rowid: int
+    vault_fingerprint: str
+    notes_per_batch: int
+    finished: bool = False
 
 
 class BrainIndex:
@@ -277,6 +325,17 @@ class BrainIndex:
             # the other writer's transaction to finish. 5s covers a normal
             # sync; a still-locked DB past that surfaces as a real error.
             self._conn.execute("PRAGMA busy_timeout=5000")
+            # CC-01: autocommit driver mode. Python's sqlite3 default
+            # (isolation_level="") opens an IMPLICIT DEFERRED transaction on
+            # the first DML statement -- and SQLite does NOT invoke the busy
+            # handler when a DEFERRED transaction tries to upgrade to a write
+            # lock (SQLITE_BUSY fires immediately, un-retriably; see
+            # sqlite.org/c3ref/busy_handler.html). rebuild()/sync() manage
+            # their own explicit BEGIN IMMEDIATE / COMMIT (see dbretry.py),
+            # so the write lock is taken up front and busy_timeout can
+            # legally wait. Every other statement here (single reads, single
+            # metadata writes) is unaffected -- it just commits itself.
+            self._conn.isolation_level = None
             if is_file_backed:
                 # WAL mode creates -wal/-shm sidecars on first write; make sure
                 # those inherit the same owner-only posture too (they can carry
@@ -456,88 +515,384 @@ class BrainIndex:
         c.execute("DELETE FROM notes WHERE rowid=?", (note_rowid,))
 
     # -- build (full) -----------------------------------------------------
-    def rebuild(self, vault: Path) -> dict[str, Any]:
-        """Rebuild the entire index from vault/ — crash-safe.
+    def _staging_paths(self) -> tuple[Path, Path]:
+        """Stable (no-pid) staging DB path + its advisory JSON manifest path.
+
+        RB-02: the pid-suffixed name from s03 let a killed rebuild's staging
+        DB survive on disk, but no SUCCESSOR process could ever find it (its
+        own pid differs). A stable name is required for resume to locate
+        prior work."""
+        tmp_path = self.db_path.with_name(self.db_path.name + ".rebuild.tmp")
+        manifest_path = self.db_path.with_name(self.db_path.name + ".rebuild.tmp.manifest.json")
+        return tmp_path, manifest_path
+
+    @staticmethod
+    def _vault_fingerprint(plans: "list[_NotePlan]") -> str:
+        """Cheap content fingerprint of the FULL planned note set.
+
+        Used to detect "the vault changed between the killed attempt and this
+        one" -- in which case resume must NOT continue (a stale partial next
+        to a changed vault could skip notes that changed, or miss deletes).
+        Built from (path, content_hash) pairs, which ``_plan_note`` already
+        computed for every note as part of planning -- no extra scan."""
+        parts = sorted(f"{p.row['path']}\x00{p.row['content_hash']}" for p in plans)
+        return hashlib.sha256("\x00".join(parts).encode("utf-8")).hexdigest()
+
+    def rebuild(self, vault: Path, *, json_mode: bool = False) -> dict[str, Any]:
+        """Rebuild the entire index from vault/ — crash-safe AND resumable.
 
         Builds into a TEMP db file and atomically swaps it into place on
         success (same posture as ``snapshot.publish_snapshot``), so a killed
-        rebuild leaves the prior live index untouched. Before this fix,
+        rebuild leaves the prior live index untouched. Before the s03 fix,
         ``_create_schema`` dropped the live tables FIRST and inserts landed at
-        the end — a kill mid-rebuild (a full re-embed of a large vault can run
-        an hour+) left the live index wiped (field report 2026-07-16: a killed
-        rebuild on a 2,312-note vault left 0 notes / 0 chunks).
+        the end — a kill mid-rebuild left the live index wiped (field report
+        2026-07-16: a killed rebuild on a 2,312-note vault left 0 notes / 0
+        chunks).
+
+        RB-02 (docs/adr/0007): a killed rebuild's staging DB is now a
+        deliberate, named, resumable artifact instead of being unlinked on
+        every non-success path. See ``_try_resume`` / ``_rebuild_impl`` /
+        ``_finalize_rebuild`` for the resume + durability protocol. The
+        invariant that matters is unchanged and, if anything, stronger: the
+        LIVE index is NEVER replaced by anything but a fully-committed,
+        fully-checkpointed staging DB.
 
         In-memory DBs (``:memory:``, test-only) build in place — there is
-        nothing to swap."""
+        nothing to swap, and therefore nothing to resume."""
         if self.db_path == Path(":memory:"):
-            return self._rebuild_impl(vault)
+            return self._rebuild_impl(vault, json_mode=json_mode)
 
-        tmp_path = self.db_path.with_name(self.db_path.name + f".rebuild.tmp.{os.getpid()}")
-        for p in (tmp_path, Path(str(tmp_path) + "-wal"), Path(str(tmp_path) + "-shm")):
-            p.unlink(missing_ok=True)
-
+        tmp_path, manifest_path = self._staging_paths()
         orig_db_path = self.db_path
+
+        resume_state = self._try_resume(tmp_path, manifest_path)
+
         self.close()
         self.db_path = tmp_path
         try:
-            result = self._rebuild_impl(vault)
-            # Checkpoint the temp DB's WAL into its main file so the file we
-            # swap in is fully self-contained (mirrors snapshot.py's
-            # wal_checkpoint(TRUNCATE) before publish).
-            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            self.close()
-            os.replace(tmp_path, orig_db_path)
+            # NOTE: this path is taken even when ``resume_state.finished`` is
+            # already true (all batches committed by a prior attempt, but the
+            # checkpoint+swap never happened -- most likely
+            # wal_checkpoint(TRUNCATE) was blocked by a reader, item 1/ruling
+            # 4). ``_rebuild_impl`` re-validates the vault fingerprint either
+            # way and, when it still matches, its batch loop skips every
+            # already-committed batch (``resume_from_batch`` covers all of
+            # them) -- so this is a cheap no-op re-plan, not a re-embed, and
+            # we still get fresh re-validation instead of trusting a stale
+            # "finished" marker against a vault that may have changed since.
+            result = self._rebuild_impl(vault, resume=resume_state, json_mode=json_mode)
+            self._finalize_rebuild(tmp_path, manifest_path, orig_db_path)
         except BaseException:
+            preserve = self._partial_is_resumable(tmp_path)
             self.close()
             self.db_path = orig_db_path
-            for p in (tmp_path, Path(str(tmp_path) + "-wal"), Path(str(tmp_path) + "-shm")):
-                p.unlink(missing_ok=True)
+            if not preserve:
+                self._discard_staging(tmp_path, manifest_path)
             raise
-        finally:
-            for p in (tmp_path, Path(str(tmp_path) + "-wal"), Path(str(tmp_path) + "-shm")):
-                p.unlink(missing_ok=True)
+        self.close()
+        self.db_path = orig_db_path
         # The just-replaced live DB has no matching sidecars of its own yet
-        # (the temp ones were checkpointed away above) — drop any stale
-        # leftovers from the PRIOR live DB so the next open starts clean.
+        # (the temp ones were checkpointed away in ``_finalize_rebuild``) —
+        # drop any stale leftovers from the PRIOR live DB so the next open
+        # starts clean.
         for suffix in ("-wal", "-shm"):
             Path(str(orig_db_path) + suffix).unlink(missing_ok=True)
-        self.db_path = orig_db_path
         result["db"] = str(self.db_path)
         return result
 
-    def _rebuild_impl(self, vault: Path) -> dict[str, Any]:
-        """Drop and rebuild the tables at ``self.db_path`` in place.
+    def _discard_staging(self, tmp_path: Path, manifest_path: Path) -> None:
+        for p in (tmp_path, Path(str(tmp_path) + "-wal"), Path(str(tmp_path) + "-shm"), manifest_path):
+            p.unlink(missing_ok=True)
+
+    def _partial_is_resumable(self, tmp_path: Path) -> bool:
+        """Best-effort check (item 4/ADR ruling 6): preserve a killed staging
+        DB only when it is a genuine, committed, in-progress partial — never
+        when validation of what IS there is uncertain (atomic-discard, item
+        7/ruling 7: when in doubt, throw it away)."""
+        if not tmp_path.is_file():
+            return False
+        try:
+            conn = sqlite3.connect(str(tmp_path))
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")  # forces WAL recovery on open
+                row = conn.execute(
+                    "SELECT v FROM meta WHERE k='finished'"
+                ).fetchone()
+                # Preserve BOTH a mid-progress partial (finished=false) and a
+                # fully-committed-but-unswapped one (finished=true, e.g. the
+                # checkpoint was blocked by a reader) -- both are legitimate
+                # resumable staging artifacts, never a leak.
+                if row is None or row[0] not in ("false", "true"):
+                    return False
+                batches = conn.execute(
+                    "SELECT v FROM meta WHERE k='committed_batches'"
+                ).fetchone()
+                return bool(batches) and int(batches[0]) >= 1
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            return False
+
+    def _try_resume(self, tmp_path: Path, manifest_path: Path) -> "_ResumeState | None":
+        """Validate a surviving staging DB against EVERY persisted invariant
+        (item 2/ruling 5) and, only on a full match, return the state needed
+        to continue it. Any mismatch, or any uncertainty at all, discards the
+        partial and returns ``None`` -- a clean rebuild from scratch (item
+        2/ruling 7: prefer atomic discard over surgical repair)."""
+        if not tmp_path.is_file():
+            self._discard_staging(tmp_path, manifest_path)
+            return None
+        # Cheap pre-flight via the advisory manifest, BEFORE opening the DB.
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            self._discard_staging(tmp_path, manifest_path)
+            return None
+        expected = {
+            "schema_version": str(SCHEMA_VERSION),
+            "index_format_version": str(INDEX_FORMAT_VERSION),
+            "vector_backend": self.backend.name,
+            "embed_model": self.embedder.model_id,
+            "embed_dim": str(self.embedder.dim),
+        }
+        if any(manifest.get(k) != v for k, v in expected.items()):
+            self._discard_staging(tmp_path, manifest_path)
+            return None
+        # Authoritative check: the meta table INSIDE the staging DB, reopened
+        # through SQLite's own WAL recovery (item 3/ruling 3) before we trust
+        # anything it reports.
+        try:
+            conn = sqlite3.connect(str(tmp_path))
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                meta = dict(conn.execute("SELECT k, v FROM meta").fetchall())
+                finished_marker = meta.get("finished")
+                if finished_marker not in ("false", "true"):
+                    self._discard_staging(tmp_path, manifest_path)
+                    return None
+                if any(meta.get(k) != v for k, v in expected.items()):
+                    self._discard_staging(tmp_path, manifest_path)
+                    return None
+                committed_batches = int(meta.get("committed_batches", "0") or "0")
+                if committed_batches < 1:
+                    self._discard_staging(tmp_path, manifest_path)
+                    return None
+                committed_notes = int(
+                    conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+                )
+                max_chunk_rowid = conn.execute(
+                    "SELECT COALESCE(MAX(rowid), 0) FROM chunks"
+                ).fetchone()[0]
+                vault_fingerprint = meta.get("vault_fingerprint")
+                notes_per_batch = meta.get("notes_per_batch")
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            self._discard_staging(tmp_path, manifest_path)
+            return None
+        if not vault_fingerprint or not notes_per_batch:
+            self._discard_staging(tmp_path, manifest_path)
+            return None
+        return _ResumeState(
+            committed_batches=committed_batches,
+            committed_notes=committed_notes,
+            start_chunk_rowid=int(max_chunk_rowid) + 1,
+            vault_fingerprint=vault_fingerprint,
+            notes_per_batch=int(notes_per_batch),
+            finished=(finished_marker == "true"),
+        )
+
+    def _finalize_rebuild(self, tmp_path: Path, manifest_path: Path, orig_db_path: Path) -> None:
+        """The durability protocol (item 1/ruling 4), IN THIS EXACT ORDER:
+
+        commit final batch + meta row (done inside ``_rebuild_impl``'s last
+        batch write) -> reopen + validate the meta row -> checkpoint the WAL
+        -> CONSUME the checkpoint result and refuse the swap unless it fully
+        truncated -> fsync the staging DB -> fsync its parent dir ->
+        ``os.replace`` -> fsync the parent dir again."""
+        self.close()
+        conn = sqlite3.connect(str(tmp_path))
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")  # reopen through WAL recovery
+            row = conn.execute("SELECT v FROM meta WHERE k='finished'").fetchone()
+            if row is None or row[0] != "true":
+                raise RuntimeError(
+                    "rebuild refused to swap: staging DB meta row does not say "
+                    "finished=true (a genuinely-finished rebuild always sets it "
+                    "in the same transaction as its final batch)"
+                )
+            busy, log_frames, checkpointed_frames = conn.execute(
+                "PRAGMA wal_checkpoint(TRUNCATE)"
+            ).fetchone()
+            if busy or log_frames or checkpointed_frames < 0:
+                raise RuntimeError(
+                    f"rebuild refused to swap: wal_checkpoint(TRUNCATE) did not "
+                    f"fully truncate (busy={busy}, log_frames={log_frames}) -- a "
+                    f"reader is very likely still holding a transaction open "
+                    f"against the staging DB; the final committed pages would "
+                    f"still live only in its WAL, so promoting it now could "
+                    f"install a silently-incomplete index"
+                )
+        finally:
+            conn.close()
+        fd = os.open(str(tmp_path), os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        dir_fd = os.open(str(tmp_path.parent), os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+            os.replace(tmp_path, orig_db_path)
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+        for p in (Path(str(tmp_path) + "-wal"), Path(str(tmp_path) + "-shm"), manifest_path):
+            p.unlink(missing_ok=True)
+
+    def _rebuild_impl(
+        self, vault: Path, *, resume: "_ResumeState | None" = None,
+        json_mode: bool = False,
+    ) -> dict[str, Any]:
+        """Drop and rebuild the tables at ``self.db_path`` in place -- or, when
+        ``resume`` is given, CONTINUE a previously-validated partial in place
+        (RB-02).
 
         S11 indexing speed fix: chunking / embedding / writing are now THREE
         separate passes. Previously ``_insert_note`` was called once per note
         and embedded only that note's ~2-10 chunks, so the ONNX session ran one
         tiny forward pass per note (~2254 for the real vault) that badly
         under-used the batch dimension and the intra-op threads. Now every note
-        is planned (chunked + prefixed) first, ALL chunk inputs are embedded in
-        ONE bulk batched call (fastembed batches internally — default 256 — and
-        saturates the cores), and only then are the rows + vectors written.
-        Same vectors, same retrieval — just far fewer, much larger forward
-        passes."""
-        self._create_schema()
+        is planned (chunked + prefixed) first.
+
+        RB-01: embedding + writing then run in NOTE BATCHES rather than one
+        giant bulk embed followed by one giant write at the end -- each
+        batch is embedded, written, and COMMITted before the next batch
+        starts, so progress is observable from outside (``SELECT count(*)``
+        against the temp DB grows batch by batch) instead of appearing all
+        at once at the very end.
+
+        RB-02 resume: batches ALREADY committed by a prior (killed) attempt
+        are skipped entirely -- but every note is still PLANNED (``_plan_note``
+        mutates ``_seen_ids`` as a side effect), so id-collision disambiguation
+        replays identically to a from-scratch run without a separate
+        rehydration step. ``chunk_rowid`` resumes from
+        ``MAX(chunks.rowid)+1`` read out of the validated partial (never
+        recomputed), so resumed batches cannot reuse a committed rowid and
+        silently mis-link vectors to chunks (the ADR's named danger)."""
+        conn = self.conn
+        if resume is None:
+            self._create_schema()
         self._seen_ids: set[str] = set()  # collision-only id dedup (real corpora)
-        # Pass 1: plan every note (chunk + contextual prefix + id dedup) — no embedding.
+        # Pass 1: plan every note (chunk + contextual prefix + id dedup) — no
+        # embedding. Done in full even on resume, both to rebuild ``_seen_ids``
+        # identically to the original run and to compute the vault fingerprint.
         plans: list[_NotePlan] = [
             self._plan_note(note, i)
             for i, note in enumerate(scan_vault(vault), start=1)
         ]
-        # Pass 2: embed ALL chunk inputs in ONE bulk batched call.
-        all_inputs = [inp for p in plans for inp in p.inputs]
-        all_vecs = (
-            self.embedder.embed_batch(all_inputs, is_query=False) if all_inputs else []
-        )
-        # Pass 3: write notes + FTS + chunks + vectors.
-        chunk_rowid = 1
-        vi = 0
-        for p in plans:
-            nch = len(p.inputs)
-            chunk_rowid = self._write_planned(p, all_vecs[vi : vi + nch], chunk_rowid)
-            vi += nch
-        self.conn.commit()
+        fingerprint = self._vault_fingerprint(plans)
+        resume_from_batch = 0
+        start_chunk_rowid = 1
+        if resume is not None:
+            if resume.vault_fingerprint != fingerprint:
+                # The vault changed between the killed attempt and now --
+                # atomic discard (item 2/ruling 7), never a surgical resume.
+                self._create_schema()
+                self._seen_ids = set()
+            else:
+                resume_from_batch = resume.committed_batches
+                start_chunk_rowid = resume.start_chunk_rowid
+        # Advisory manifest: written EARLY (before the first batch even
+        # commits), never at the end -- a mid-progress kill must leave a
+        # manifest behind too, so the NEXT process's cheap pre-flight check
+        # (``_try_resume``) has something to read. It is advisory-only; the
+        # meta row inside the DB (written per-batch above) is the completion
+        # authority, never this file.
+        if self.db_path != Path(":memory:"):
+            manifest_path = self.db_path.with_name(self.db_path.name + ".manifest.json")
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": str(SCHEMA_VERSION),
+                        "index_format_version": str(INDEX_FORMAT_VERSION),
+                        "vector_backend": self.backend.name,
+                        "embed_model": self.embedder.model_id,
+                        "embed_dim": str(self.embedder.dim),
+                    }
+                ),
+                encoding="utf-8",
+            )
+        # ponytail: reuse BRAIN_EMBED_BATCH's notion of "batch" at the note
+        # granularity too -- one knob, no new config surface. A note-batch is
+        # embedded via embed_batch's own internal (length-sorted) batching,
+        # so this is a coarser outer loop around the existing fine-grained one.
+        #
+        # RB-02: on resume, the batch SIZE must be the one the partial was
+        # built with, not whatever ``$BRAIN_REBUILD_NOTES_PER_BATCH`` says
+        # right now -- ``resume_from_batch`` is a count of BATCHES, and a
+        # different batch size shifts every batch boundary, so "skip the
+        # first N batches" would skip the wrong notes entirely (silent
+        # corruption, not a crash).
+        if resume is not None and resume_from_batch > 0:
+            notes_per_batch = resume.notes_per_batch
+        else:
+            notes_per_batch = max(1, int(os.environ.get("BRAIN_REBUILD_NOTES_PER_BATCH", "200")))
+        chunk_rowid = start_chunk_rowid
+        batch_starts = list(range(0, len(plans), notes_per_batch))
+        # OB-02: denominator is the TOTAL chunk count across every planned
+        # note (resumed or not) -- on resume, already-committed batches count
+        # as "done" via ``start_chunk_rowid`` rather than shrinking the total,
+        # so a resumed rebuild's percent line stays truthful (never restarts
+        # at 0% after a kill).
+        total_chunks = sum(len(p.inputs) for p in plans)
+        reporter = ProgressReporter("rebuild", total_chunks, json_mode=json_mode)
+        reporter.update(start_chunk_rowid - 1)
+        for batch_idx, batch_start in enumerate(batch_starts):
+            if batch_idx < resume_from_batch:
+                continue  # already committed by a prior (killed) attempt
+            batch = plans[batch_start : batch_start + notes_per_batch]
+            batch_inputs = [inp for p in batch for inp in p.inputs]
+            batch_vecs = (
+                self.embedder.embed_batch(batch_inputs, is_query=False)
+                if batch_inputs
+                else []
+            )
+            is_last_batch = batch_idx == len(batch_starts) - 1
+
+            def _write_batch(
+                batch=batch, batch_vecs=batch_vecs, start_rowid=chunk_rowid,
+                batch_idx=batch_idx, is_last_batch=is_last_batch,
+            ) -> int:
+                conn.execute("BEGIN IMMEDIATE")
+                crid = start_rowid
+                vi = 0
+                for p in batch:
+                    nch = len(p.inputs)
+                    crid = self._write_planned(p, batch_vecs[vi : vi + nch], crid)
+                    vi += nch
+                # RB-02: the completion marker (and resume bookkeeping) is a
+                # row in ``meta``, committed IN THE SAME TRANSACTION as the
+                # batch it belongs to -- never a separate filesystem write
+                # that could race the DB's own durability.
+                self._set_meta("committed_batches", str(batch_idx + 1))
+                self._set_meta("vault_fingerprint", fingerprint)
+                self._set_meta("index_format_version", str(INDEX_FORMAT_VERSION))
+                self._set_meta("notes_per_batch", str(notes_per_batch))
+                self._set_meta("finished", "true" if is_last_batch else "false")
+                conn.commit()
+                return crid
+
+            chunk_rowid = with_write_retry(_write_batch, conn=conn)
+            reporter.update(chunk_rowid - 1)
+        if not batch_starts:
+            # Empty vault: no batch ever ran, so nothing set "finished" yet.
+            conn.execute("BEGIN IMMEDIATE")
+            self._set_meta("committed_batches", "0")
+            self._set_meta("vault_fingerprint", fingerprint)
+            self._set_meta("index_format_version", str(INDEX_FORMAT_VERSION))
+            self._set_meta("finished", "true")
+            conn.commit()
         self._seen_ids = None  # scope dedup strictly to the rebuild loop
         return {
             "indexed": len(plans),
@@ -549,18 +904,18 @@ class BrainIndex:
         }
 
     # -- build (incremental, IDX-03) -------------------------------------
-    def sync(self, vault: Path) -> dict[str, Any]:
+    def sync(self, vault: Path, *, json_mode: bool = False) -> dict[str, Any]:
         """Incrementally reconcile the index with vault/ by path + content-hash.
 
         Only changed/new notes are re-indexed; notes whose file vanished are
         deleted (delete-propagation). A schema or embed-model mismatch forces a
         clean rebuild (mixing model vectors would corrupt retrieval)."""
         if not self._schema_ready():
-            res = self.rebuild(vault)
+            res = self.rebuild(vault, json_mode=json_mode)
             res["mode"] = "rebuild(no-schema)"
             return res
         if not self.model_matches():
-            res = self.rebuild(vault)
+            res = self.rebuild(vault, json_mode=json_mode)
             res["mode"] = "rebuild(model-change)"
             return res
 
@@ -575,71 +930,94 @@ class BrainIndex:
             for r in c.execute("SELECT path, rowid, content_hash FROM notes").fetchall()
         }
 
-        added = updated = unchanged = deleted = rebased = 0
-        chunk_rowid = self._next_rowid("chunks")
+        # CC-01: the whole mutation pass below is ONE BEGIN IMMEDIATE / COMMIT
+        # unit, retried as a whole on lock contention. It must be safe to
+        # re-run from scratch on retry, so it works from a FRESH copy of
+        # ``indexed`` each attempt (the closure mutates it locally) rather
+        # than the outer dict — a half-finished prior attempt is fully
+        # undone by ``conn.rollback()`` (see dbretry.with_write_retry), and
+        # re-running against a mutated outer ``indexed`` would double-apply
+        # the rebase step.
+        def _do_sync() -> dict[str, int]:
+            c.execute("BEGIN IMMEDIATE")
+            local_indexed = dict(indexed)
+            added = updated = unchanged = deleted = rebased = 0
+            chunk_rowid = self._next_rowid("chunks")
 
-        # Field bug 3 — content-hash-first REBASE, BEFORE any path-keyed pass.
-        # A vault move (or bulk rename) changes every path but not the bytes.
-        # Match a moved-but-identical note — its NEW path is absent from the
-        # index, but its content_hash equals an indexed row whose OLD path is
-        # gone from disk — and just UPDATE the stored path, keeping the note
-        # rowid, its chunks and its VECTORS. So a wholesale move is a metadata
-        # rebase, not a full re-embed (which once ran >45min at ~680% CPU).
-        gone: dict[str, list[tuple[str, int]]] = {}  # content_hash -> [(old_path, rowid)]
-        for path, (note_rowid, h) in indexed.items():
-            if path not in on_disk and h:
-                gone.setdefault(h, []).append((path, note_rowid))
-        if gone:
-            for path, note in on_disk.items():
-                if path in indexed:
-                    continue  # path unchanged — normal passes handle it
-                cands = gone.get(note.content_hash)
-                if not cands:
-                    continue  # new or genuinely-changed content — must re-embed
-                old_path, note_rowid = cands.pop()
-                c.execute("UPDATE notes SET path=? WHERE rowid=?", (path, note_rowid))
-                del indexed[old_path]
-                indexed[path] = (note_rowid, note.content_hash)
-                rebased += 1
+            # Field bug 3 — content-hash-first REBASE, BEFORE any path-keyed pass.
+            # A vault move (or bulk rename) changes every path but not the bytes.
+            # Match a moved-but-identical note — its NEW path is absent from the
+            # index, but its content_hash equals an indexed row whose OLD path is
+            # gone from disk — and just UPDATE the stored path, keeping the note
+            # rowid, its chunks and its VECTORS. So a wholesale move is a metadata
+            # rebase, not a full re-embed (which once ran >45min at ~680% CPU).
+            gone: dict[str, list[tuple[str, int]]] = {}  # content_hash -> [(old_path, rowid)]
+            for path, (note_rowid, h) in local_indexed.items():
+                if path not in on_disk and h:
+                    gone.setdefault(h, []).append((path, note_rowid))
+            if gone:
+                for path, note in on_disk.items():
+                    if path in local_indexed:
+                        continue  # path unchanged — normal passes handle it
+                    cands = gone.get(note.content_hash)
+                    if not cands:
+                        continue  # new or genuinely-changed content — must re-embed
+                    old_path, note_rowid = cands.pop()
+                    c.execute("UPDATE notes SET path=? WHERE rowid=?", (path, note_rowid))
+                    del local_indexed[old_path]
+                    local_indexed[path] = (note_rowid, note.content_hash)
+                    rebased += 1
 
-        # Delete-propagation FIRST (H-2): a renamed/moved note keeps its id but
-        # gets a new path, landing in both "path not in on_disk" (old path,
-        # deleted below) and "path not in indexed" (new path, inserted above).
-        # If we insert before deleting, the new-path insert can collide with
-        # the still-present old-path row on the UNIQUE `id` column. Deleting
-        # every stale path (by path, and belt-and-suspenders by id collision)
-        # before the insert/update pass makes rename-with-same-id a no-crash,
-        # normal reconcile.
-        for path, (note_rowid, _h) in indexed.items():
-            if path not in on_disk:
-                self._delete_note(note_rowid)
-                deleted += 1
+            # Delete-propagation FIRST (H-2): a renamed/moved note keeps its id but
+            # gets a new path, landing in both "path not in on_disk" (old path,
+            # deleted below) and "path not in indexed" (new path, inserted above).
+            # If we insert before deleting, the new-path insert can collide with
+            # the still-present old-path row on the UNIQUE `id` column. Deleting
+            # every stale path (by path, and belt-and-suspenders by id collision)
+            # before the insert/update pass makes rename-with-same-id a no-crash,
+            # normal reconcile.
+            for path, (note_rowid, _h) in local_indexed.items():
+                if path not in on_disk:
+                    self._delete_note(note_rowid)
+                    deleted += 1
 
-        # Re-fetch indexed ids after the deletion pass above so a same-id
-        # rename never hits "UNIQUE constraint failed: notes.id".
-        indexed_ids: dict[str, int] = {
-            r[0]: int(r[1])
-            for r in c.execute("SELECT id, rowid FROM notes").fetchall()
-        }
+            # Re-fetch indexed ids after the deletion pass above so a same-id
+            # rename never hits "UNIQUE constraint failed: notes.id".
+            indexed_ids: dict[str, int] = {
+                r[0]: int(r[1])
+                for r in c.execute("SELECT id, rowid FROM notes").fetchall()
+            }
 
-        for path, note in on_disk.items():
-            if path not in indexed:
-                if note.id in indexed_ids:
-                    self._delete_note(indexed_ids[note.id])
-                    del indexed_ids[note.id]
-                note_rowid = self._next_rowid("notes")
-                chunk_rowid = self._insert_note(note, note_rowid, chunk_rowid)
-                added += 1
-            elif indexed[path][1] != note.content_hash:
-                old_rowid = indexed[path][0]
-                self._delete_note(old_rowid)
-                # reuse the old note_rowid for stability
-                chunk_rowid = self._insert_note(note, old_rowid, chunk_rowid)
-                updated += 1
-            else:
-                unchanged += 1
+            reporter = ProgressReporter("sync", len(on_disk), json_mode=json_mode)
+            for i, (path, note) in enumerate(on_disk.items(), start=1):
+                if path not in local_indexed:
+                    if note.id in indexed_ids:
+                        self._delete_note(indexed_ids[note.id])
+                        del indexed_ids[note.id]
+                    note_rowid = self._next_rowid("notes")
+                    chunk_rowid = self._insert_note(note, note_rowid, chunk_rowid)
+                    added += 1
+                elif local_indexed[path][1] != note.content_hash:
+                    old_rowid = local_indexed[path][0]
+                    self._delete_note(old_rowid)
+                    # reuse the old note_rowid for stability
+                    chunk_rowid = self._insert_note(note, old_rowid, chunk_rowid)
+                    updated += 1
+                else:
+                    unchanged += 1
+                reporter.update(i)
 
-        self.conn.commit()
+            c.commit()
+            return {
+                "added": added, "updated": updated, "unchanged": unchanged,
+                "deleted": deleted, "rebased": rebased,
+            }
+
+        counts = with_write_retry(_do_sync, conn=c)
+        added, updated, unchanged, deleted, rebased = (
+            counts["added"], counts["updated"], counts["unchanged"],
+            counts["deleted"], counts["rebased"],
+        )
         total_chunks = int(
             c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
         )
@@ -1524,6 +1902,21 @@ class BrainIndex:
     def near_dup(self, *, min_score: float = 0.95, k: int = 5) -> list[dict[str, Any]]:
         """Corpus-wide near-duplicate scan (brain-cli-gaps.md G1).
 
+        Each pair carries a ``caveat`` field (``None`` when not applicable):
+        when BOTH members' ids match a recurring-artifact id pattern (default:
+        ``daily-*``, ``graph-health-alert-*``, ``audit-*-writes``,
+        ``*-transcript`` — override via ``$BRAIN_INTEGRITY_BOILERPLATE_PATTERNS``,
+        comma-separated ``fnmatch`` globs), the pair is still REPORTED — this is
+        a machine-readable caution, never a silent hide — but ``caveat`` explains
+        that shared template/boilerplate text (not real duplicate content) is a
+        likely driver of the high score, since these recurring artifact types
+        (auto-generated daily notes, alert digests, audit-write summaries,
+        transcripts) share large fixed spans by construction (finding 3,
+        2026-07-20 dedup batch: distinct transcripts of unrelated meetings
+        scored 0.995-0.998 purely from shared boilerplate). Full
+        boilerplate-stripping (actually excising the shared spans before
+        scoring) is out of scope — this is the minimal, honest signal.
+
         Repoints the old SC-cosine integrity-scan §A directly onto the brain
         vector backend — no MCP round-trip, no raw pairwise O(n^2) python cosine
         matrix. For EVERY note, probe the backend ANN index with that note's own
@@ -1597,11 +1990,22 @@ class BrainIndex:
                 if score > best.get(key, -1.0):
                     best[key] = score
 
+        boilerplate_patterns = _boilerplate_patterns()
         out: list[dict[str, Any]] = []
         for (a_id, b_id), score in best.items():
             a_row, b_row = self._note_row(self._rowid_of(a_id)), self._note_row(self._rowid_of(b_id))
             if not a_row or not b_row:
                 continue
+            a_pat = _matches_boilerplate_pattern(a_id, boilerplate_patterns)
+            b_pat = _matches_boilerplate_pattern(b_id, boilerplate_patterns)
+            caveat = None
+            if a_pat and b_pat:
+                caveat = (
+                    f"both notes match a recurring-artifact id pattern "
+                    f"({a_pat!r} / {b_pat!r}) -- high similarity may reflect "
+                    "shared template/boilerplate text rather than duplicate "
+                    "content; verify the actual bodies before superseding"
+                )
             out.append({
                 "a": {"id": a_row["id"], "title": a_row["title"],
                       "classification": a_row["classification"], "zone": a_row["zone"],
@@ -1610,6 +2014,7 @@ class BrainIndex:
                       "classification": b_row["classification"], "zone": b_row["zone"],
                       "path": b_row["path"]},
                 "score": round(score, 6),
+                "caveat": caveat,
             })
         out.sort(key=lambda d: -d["score"])
         return out

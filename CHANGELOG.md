@@ -7,6 +7,172 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.19.10] — 2026-07-21
+### Added
+- **COS migrated to Codex + native-ui mail lane hardened (kernel v5.7→v5.11).**
+  Mutation-lane election (`rest | native-ui`) per run with convid-keyed undo
+  and a per-lane undo canary; shadow-run obligation so the promotion bar can
+  actually be met; native-ui mechanics hardening (keyboard banned wholesale
+  on the OWA list, submenu-render confirmation + Deleted-Items absence check
+  in every move verification, bulk work routed to sender-scoped). v5.10 adds a
+  body-level deadline/response-request screen to aged-read archive eligibility;
+  v5.11 expires COS-authored reply drafts unsent >14d (presumed rejected,
+  ledgered and discarded by the nightly) so machine drafts stop conferring
+  draft-protection on their threads — dual-signal identification, any doubt
+  means the owner's draft and it stays untouchable.
+
+### Fixed
+- **Clean-room export no longer ships operator-specific paths.**
+  `scripts/brain-retrieval-watch.sh` now requires `BRAIN_VAULT` instead of
+  defaulting to the author's vault, `scripts/com.brainiac.retrievalwatch.plist`
+  became a placeholder template matching `brain-brief-mac.plist`
+  (`SCRIPTS_DIR`/`VAULT_PATH`/`HOME_DIR`), and `.codex/hooks.json` resolves its
+  hook scripts via `$(git rev-parse --show-toplevel)` (the pattern from Codex's
+  own hooks docs) rather than an absolute path — those hooks were inert for
+  every user but the author.
+- **Structural guard against the same class of leak** — `tests/
+  test_export_cleanroom.py` now fails if any exported file contains the running
+  operator's `$HOME`, denylist-free, so this can't recur silently.
+- **graphreport XSS** — unicode-escape the payload before splicing it into HTML.
+
+## [0.19.9] — 2026-07-21
+### Added
+- **LNK-02: dailies born chained.** The nightly daily-note fold links
+  [[daily-<yesterday>]] when it resolves — machine-created dailies stop
+  minting one wikilink-orphan per day.
+- **LNK-03: structural guard against future unlinked note creators.**
+  (a) A convention registry + mechanical discovery test: every call site of
+  the write_note choke point must declare its linking policy
+  (autolinked/chained/exempt-with-reason) or CI fails — the next fold cannot
+  ship born-orphan notes by accident. (b) A daily knowledge-layer orphan
+  counter (~11ms) persisted to every health-history row, with
+  sustained-growth escalation ($BRAIN_ORPHAN_SUSTAINED_GROWTH, default +5
+  over 7 days) to one weekly-keyed hot.md line; health-report trend gains
+  the daily column.
+
+## [0.19.8] — 2026-07-21
+### Added
+- **LNK-01 capture-time auto-linking.** Notes entering through the automated
+  paths (ingest, transcript ingest, workspace sweep, draft promotion) are
+  born linked: transcripts gain [[attendee]] links when a full-name match to
+  an existing person note exists (accent-folded, reusing the COS matcher;
+  never bare first names), swept documents link their origin when
+  unambiguous. Zero matches => note lands exactly as before; a linking
+  failure never blocks a capture. `$BRAIN_AUTOLINK=off` disables.
+### Fixed
+- **graph-report isolated-notes target scoped to the knowledge layer** —
+  raw/ sources, working files, and deliberate fixtures carry no linking
+  obligation and no longer redden the bar; the whole-vault count remains in
+  the payload as diagnostics.
+
+## [0.19.7] — 2026-07-21
+### Changed
+- **graph-report targets recalibrated to sourced benchmark bands** (owner
+  request). Point-perfection targets (100%/0) are replaced by
+  excellent/acceptable bands drawn from cited external evidence (Zettelkasten
+  practitioner vault analyses, giant-component network literature, MDM
+  duplicate-rate benchmarks), each carrying a source + confidence label
+  (community heuristic / analogical / strong). Island count replaced by
+  giant-component share as the fragmentation signal; exact-duplicates now a
+  rate; near-dup stays trend-only (no citable basis — none invented). The
+  aspirational vault-convention ideals remain visible as dashed ticks.
+
+## [0.19.6] — 2026-07-21
+### Added
+- **`brain graph-report`.** The 3D graph + semantic explorer is now an engine
+  verb: packaged WebGL template + live-data payload (live notes only, 3-comp
+  PCA, diagnostics, traceable targets, freshness banner), regenerated
+  automatically after every graphify build and with the weekly graph_hygiene
+  fold. Host-broker only; degrades to link-view-only if embeddings are
+  unavailable. The health report links it ("Open graph explorer" + graph
+  generation/build date).
+- **graph_hygiene first-run seeding** locked in by regression test: a vault
+  with no prior state runs the fold on the next daily pass regardless of
+  weekday, so the health surface carries graph metrics immediately after
+  install/upgrade.
+
+## [0.19.5] — 2026-07-21
+### Added
+- **DDP-01 high-confidence auto-dedup** (owner ruling 2026-07-20, automation
+  expansion). The nightly fold auto-supersedes sha256-identical-body note
+  pairs — same classification/zone/type required, recurring-artifact patterns
+  excluded, capped per run (`$BRAIN_AUTODEDUP_MAX_PER_RUN`, default 10), every
+  retirement through the audited reversible supersede path. Classification
+  mismatches are never automated; stats land in maintain-state +
+  health-history, hot.md logs only when something happened.
+- **Monthly retrieval-quality watch** (`scripts/brain-retrieval-watch.sh` +
+  plist template). Deterministic golden-set capture gated non-inferior
+  against a stored baseline; regression escalates via hot.md + notification
+  pointing at on-invoke `/autoresearch` (tuning itself stays unscheduled per
+  that skill's contract).
+- **Weekly synthesis link budget.** The Sunday session works the top
+  `$BRAIN_SYNTHESIS_LINK_BUDGET` (default 25) link-candidate pairs plus
+  graph_hygiene-logged orphans, genuine-relations-only.
+
+## [0.19.4] — 2026-07-20
+### Fixed
+- **Doctor from an installed engine.** Repo-drift surfaces (version SSOT,
+  committed stamp, dist COMPAT, plugin manifests) resolved `repo_root` inside
+  site-packages on any installed engine and returned gating UNKNOWNs — every
+  health report generated by a pinned engine read falsely DEGRADED. They are
+  now NOT_DETECTABLE with an explanatory row, and drift comparisons fall back
+  to the running engine's own version.
+
+## [0.19.3] — 2026-07-20
+### Added
+- **`brain health-report`.** One static, self-contained HTML health page
+  (verdict banner, act-now section, maintain-branch table, index/snapshot
+  stats, 14-day trend) rendered from existing state at the end of every
+  non-dry `maintain` run and on demand; host-broker only; linked from the
+  chief-of-staff morning brief.
+- **`graph_hygiene` weekly maintain fold.** Wednesday-gated branch computing
+  knowledge-layer wikilink orphans (generated maps excluded), dangling link
+  targets, and island count; persists to maintain-state + health-history,
+  renders a health-report section, and escalates orphan growth past
+  `$BRAIN_GRAPH_ORPHAN_GROWTH_MAX` into a hot.md log line.
+- **`vm-doctor` kernel skill.** In-Cowork (VM-leg) health/version diagnosis:
+  session bootstrap + the three read-only probes + one VERSION-READY verdict.
+### Fixed
+- **`supersede` now takes the single-writer lock.** Its signed writes ran
+  unprotected, silently blocking minutes under a concurrent `sync`; it now
+  gets the same bounded wait + holder-naming refusal as every other writer.
+- **`get_vectors` SQL `IN`-clause batching.** Unchunked parameter lists blew
+  SQLite's variable limit on ~2.5k-note vaults, crashing `graphify` dry runs;
+  failed graphify builds are also now visible in maintain-state, not just a
+  marker file.
+- **`brain integrity` boilerplate caveats.** Near-dup pairs matching
+  recurring-artifact patterns (transcripts, daily templates, generated
+  reports) carry a machine-readable `caveat` so consumers don't mistake
+  template similarity for duplication (still always reported).
+- **Doctor/report calibration.** `check_vendor_abi` ignores `_retired-*`
+  quarantine dirs; health-report reserves BROKEN for maintain escalation,
+  keeps short writer-busy skip streaks silent per the s05 contract, and
+  dedups doctor rows across duplicate registry entries.
+- **Writer-lock error honesty.** `WriterLockBusy` labels holder metadata as
+  best-effort (stale metadata possible) instead of asserting it as fact.
+
+## [0.19.2] — 2026-07-20
+### Fixed
+- **Index write concurrency.** `brain` writes now go through a bounded
+  retry-with-backoff helper (`dbretry.py`) plus a single-writer `flock` lock
+  around index writes (`lock.py`), closing the window where a concurrent
+  `sync`/`rebuild`/`maintain` could corrupt the sqlite index or race on the
+  WAL (CC-01/CC-02).
+- **Resumable rebuild.** `rebuild` now commits per-batch instead of in one
+  giant transaction (RB-01), and a killed/interrupted rebuild resumes from
+  its partial staging DB via resume metadata + a manifest instead of
+  restarting from scratch (RB-02) — the rebuild path that previously
+  destroyed this vault's index on interruption is now safe to kill and
+  resume.
+- **Progress observability.** `rebuild`/`sync`/`warmup`/`graphify` now emit
+  TTY-gated human progress lines and `--json` machine progress events
+  instead of running silently for the full duration (OB-01/OB-02).
+- **Maintenance liveness + failure escalation.** `brain maintain` now
+  tracks liveness on `last_run` and escalates loudly — a banner plus a
+  notification — once failures reach the existing `doctor` >=2-failure
+  gate, instead of failing silently until someone happens to run `doctor`
+  (ES-01).
+
 ## [0.19.1] — 2026-07-20
 ### Fixed
 - **Synthesis headless run hardening** (`brain-synthesis.sh`): default

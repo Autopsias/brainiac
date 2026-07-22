@@ -107,6 +107,11 @@ def ingest_transcript(
             "detail": f"archived-original target already holds different content: {archive_path}",
         }
 
+    from .. import autolink
+
+    text, autolink_added = autolink.apply_autolinks(
+        text, title=path.stem, origin=origin, vault=vault,
+    )
     body_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
     lang = language or detect_language(path.name)
     meta: dict[str, Any] = {
@@ -154,5 +159,5 @@ def ingest_transcript(
         "ok": True, "duplicate": False, "id": slug, "note": note_rel,
         "archived": str(archive_path.relative_to(vault)),
         "classification": classification, "origin": origin, "language": lang,
-        "file": str(path),
+        "file": str(path), "autolink_added": autolink_added,
     }

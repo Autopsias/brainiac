@@ -22,6 +22,21 @@ def _days_ago(n: int) -> str:
     return (datetime.date.today() - datetime.timedelta(days=n)).isoformat()
 
 
+def _maintain_alert(maintain_state: dict[str, Any] | None) -> dict[str, Any]:
+    """ES-01: pure fold of an already-loaded ``maintain-state.json`` dict into
+    the same escalation shape ``brain doctor`` and the notify path use
+    (``maintenance.maintain_escalation``) — one set of thresholds, three
+    consumers. ``maintain_state=None`` (no state handle threaded through) is
+    reported as no-alert rather than doing any I/O here — this module stays
+    pure per its own module docstring; the caller (``BrainCore``) is the one
+    that loads the file."""
+    if not maintain_state:
+        return {"escalate": False, "branches": []}
+    from . import maintenance as maint
+
+    return maint.maintain_escalation(maintain_state)
+
+
 def build_brief(
     *,
     index_stats: dict[str, Any],
@@ -30,6 +45,7 @@ def build_brief(
     drain_result: dict[str, Any],
     snapshot_age_hours: float | None,
     max_recent: int = 5,
+    maintain_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the morning brief data structure.
 
@@ -64,6 +80,8 @@ def build_brief(
     elif drain_promoted > 0:
         drain_note = f"drained {drain_promoted} capture(s)"
 
+    maintain_alert = _maintain_alert(maintain_state)
+
     return {
         "date": _today(),
         "notes": int(index_stats.get("notes", 0)),
@@ -78,12 +96,14 @@ def build_brief(
         "recent": recent_notes[:max_recent],
         "tripwire": tripwire,
         "drain_note": drain_note,
+        "maintain_alert": maintain_alert,
     }
 
 
 def format_brief(brief: dict[str, Any]) -> str:
     """Human-readable morning brief. Quiet — no plumbing noise."""
     lines = [f"brain brief · {brief['date']}"]
+    lines.extend(_maintain_alert_lines(brief.get("maintain_alert")))
     lines.append(f"  {brief['notes']} notes  {brief['chunks']} chunks")
 
     tw = brief.get("tripwire")
@@ -110,11 +130,26 @@ def format_brief(brief: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _maintain_alert_lines(maintain_alert: dict[str, Any] | None) -> list[str]:
+    """Shared text-brief/digest banner (ES-01) — one visible warning line per
+    escalated branch, always first, so a stale brief/digest is never silent."""
+    if not maintain_alert or not maintain_alert.get("escalate"):
+        return []
+    lines = []
+    for b in maintain_alert.get("branches", []):
+        lines.append(
+            f"  ⚠ MAINTENANCE ALERT: branch '{b['branch']}' — "
+            f"{'; '.join(b['reasons'])} — data may be stale, run `brain doctor`"
+        )
+    return lines
+
+
 def build_digest(
     *,
     index_stats: dict[str, Any],
     recent_notes: list[dict[str, Any]],
     days: int = 7,
+    maintain_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the weekly digest data structure."""
     cutoff = _days_ago(days)
@@ -126,6 +161,7 @@ def build_digest(
         "notes_total": int(index_stats.get("notes", 0)),
         "notes_in_period": len(in_period),
         "notes": in_period[:20],
+        "maintain_alert": _maintain_alert(maintain_state),
     }
 
 
@@ -133,9 +169,12 @@ def format_digest(digest: dict[str, Any]) -> str:
     """Human-readable weekly digest. Quiet."""
     lines = [
         f"brain digest · {digest['date']} (past {digest['period_days']}d)",
+    ]
+    lines.extend(_maintain_alert_lines(digest.get("maintain_alert")))
+    lines.append(
         f"  {digest['notes_total']} notes total  "
         f"  {digest['notes_in_period']} in period",
-    ]
+    )
     if digest.get("notes"):
         lines.append("  added/updated:")
         for n in digest["notes"]:
@@ -243,6 +282,24 @@ def _html_page(*, title: str, accent: str, body: str) -> str:
 """
 
 
+def _maintain_alert_html(maintain_alert: dict[str, Any] | None) -> str:
+    """ES-01 HTML banner — same escalation data as the text banner, shared
+    by ``render_brief_html`` and ``render_digest_html``. Every dynamic value
+    goes through ``_esc`` (codex-verify-r2 chokepoint)."""
+    if not maintain_alert or not maintain_alert.get("escalate"):
+        return ""
+    items = "".join(
+        f'<li><span class="id">{_esc(b["branch"])}</span> — '
+        f'{_esc("; ".join(b["reasons"]))}</li>'
+        for b in maintain_alert.get("branches", [])
+    )
+    return (
+        '<p class="warn">&#9888; MAINTENANCE ALERT — data below may be stale; '
+        'run <code>brain doctor</code>:</p>'
+        f'<ul class="list">{items}</ul>'
+    )
+
+
 def render_brief_html(
     brief: dict[str, Any],
     *,
@@ -276,6 +333,8 @@ def render_brief_html(
         f'<p class="meta">Morning brief &middot; {_esc(brief.get("date", ""))}{subtitle}</p>'
         f"</header>"
     )
+
+    alert_html = _maintain_alert_html(brief.get("maintain_alert"))
 
     maintenance_line = ""
     if autoresearch and autoresearch.get("stale"):
@@ -355,7 +414,7 @@ def render_brief_html(
     sec_stats = _section("Index health", stats_html)
 
     body = (
-        header + maintenance_line + sec_pending + sec_recent + sec_revisit
+        header + alert_html + maintenance_line + sec_pending + sec_recent + sec_revisit
         + sec_recs + sec_stats
     )
     return _html_page(title=f"{title} · {brief.get('date', '')}", accent=accent, body=body)
@@ -413,5 +472,6 @@ def render_digest_html(
         f'{_esc(digest.get("period_days", 7))} day(s), since {_esc(digest.get("period_start", ""))}</p>'
     )
 
-    body = header + _section("This week", summary + notes_html)
+    alert_html = _maintain_alert_html(digest.get("maintain_alert"))
+    body = header + alert_html + _section("This week", summary + notes_html)
     return _html_page(title=f"{title} · {digest.get('date', '')}", accent=accent, body=body)

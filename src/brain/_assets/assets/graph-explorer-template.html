@@ -1,0 +1,2351 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Brainiac Vault Explorer — Link Graph &amp; Semantic Map (3D)</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--page);
+    color: var(--ink-1);
+    overflow: hidden;
+  }
+
+  /* ---- theme tokens (palette.md reference instance) ---- */
+  .app {
+    --surface: #1a1a19;
+    --page: #0d0d0d;
+    --ink-1: #ffffff;
+    --ink-2: #c3c2b7;
+    --ink-muted: #898781;
+    --grid: #2c2c2a;
+    --baseline: #383835;
+    --border: rgba(255,255,255,0.10);
+    --accent: #3987e5;
+    --accent-soft: rgba(57,135,229,0.16);
+    --good: #0ca30c;
+    --warn: #fab219;
+    --serious: #ec835a;
+    --critical: #e66767;
+    --dup-red: #e66767;
+    --mismatch-amber: #c98500;
+  }
+  :root[data-theme="light"] .app,
+  .app.force-light {
+    --surface: #fcfcfb;
+    --page: #f9f9f7;
+    --ink-1: #0b0b0b;
+    --ink-2: #52514e;
+    --ink-muted: #898781;
+    --grid: #e1e0d9;
+    --baseline: #c3c2b7;
+    --border: rgba(11,11,11,0.10);
+    --accent: #2a78d6;
+    --accent-soft: rgba(42,120,214,0.12);
+    --good: #006300;
+    --warn: #eda100;
+    --serious: #eb6834;
+    --critical: #e34948;
+    --dup-red: #e34948;
+    --mismatch-amber: #eda100;
+  }
+
+  .app { display: flex; flex-direction: column; height: 100vh; background: var(--page); }
+
+  /* ---------------- topbar ---------------- */
+  .topbar {
+    display: flex; align-items: center; gap: 14px;
+    padding: 8px 14px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+  }
+  .brand { font-weight: 600; font-size: 13.5px; color: var(--ink-1); white-space: nowrap; }
+  .brand .authoritative-flag {
+    display: inline-block; margin-left: 8px; font-weight: 500; font-size: 10.5px;
+    color: var(--warn); border: 1px solid var(--warn); border-radius: 3px;
+    padding: 1px 5px; vertical-align: middle;
+  }
+  .tabs { display: flex; gap: 2px; background: var(--page); border-radius: 8px; padding: 2px; }
+  .tab {
+    appearance: none; border: none; background: transparent; color: var(--ink-2);
+    font: inherit; font-size: 12.5px; padding: 6px 12px; border-radius: 6px; cursor: pointer;
+  }
+  .tab.active { background: var(--surface); color: var(--ink-1); box-shadow: 0 0 0 1px var(--border); }
+  .controls { display: flex; align-items: center; gap: 10px; margin-left: auto; flex-wrap: wrap; }
+  #search {
+    background: var(--page); border: 1px solid var(--border); color: var(--ink-1);
+    border-radius: 6px; padding: 6px 10px; font: inherit; font-size: 12.5px; width: 220px;
+  }
+  #search::placeholder { color: var(--ink-muted); }
+  .mode-group { display: flex; gap: 2px; background: var(--page); border-radius: 8px; padding: 2px; }
+  .mode-btn {
+    appearance: none; border: none; background: transparent; color: var(--ink-2);
+    font: inherit; font-size: 11.5px; padding: 5px 9px; border-radius: 6px; cursor: pointer; white-space: nowrap;
+  }
+  .mode-btn.active { background: var(--accent-soft); color: var(--accent); }
+  .icon-btn {
+    appearance: none; border: 1px solid var(--border); background: var(--page); color: var(--ink-1);
+    border-radius: 6px; width: 30px; height: 30px; cursor: pointer; font-size: 14px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .icon-btn.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+
+  /* ---------------- workspace ---------------- */
+  .workspace { flex: 1 1 auto; display: flex; min-height: 0; }
+  .canvas-wrap { position: relative; flex: 1 1 auto; min-width: 0; background: var(--surface); }
+  canvas { position: absolute; top: 0; left: 0; display: block; width: 100%; height: 100%; cursor: grab; }
+  canvas.grabbing { cursor: grabbing; }
+
+  .layer-toggles {
+    position: absolute; left: 12px; top: 12px; display: flex; flex-direction: column; gap: 6px;
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+    font-size: 11.5px; color: var(--ink-2); backdrop-filter: blur(6px);
+  }
+  .layer-toggles label { display: flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+  .layer-toggles input { accent-color: var(--accent); }
+  .layer-toggles input[type="range"] { width: 100px; }
+  .layer-toggles .slider-row { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .layer-toggles .slider-row .slider-val { font-variant-numeric: tabular-nums; color: var(--ink-muted); width: 2.6em; }
+  .layer-toggles hr { border: none; border-top: 1px solid var(--border); margin: 2px 0; width: 100%; }
+  .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; flex: 0 0 auto; }
+  .swatch.line { width: 14px; height: 2px; border-radius: 1px; }
+
+  .legend {
+    position: absolute; right: 12px; bottom: 12px; max-width: 240px;
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+    font-size: 11px; color: var(--ink-2); backdrop-filter: blur(6px);
+  }
+  .legend-title { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-muted); margin-bottom: 6px; }
+  .legend-row {
+    display: flex; align-items: center; gap: 7px; padding: 3px 4px; border-radius: 5px;
+    cursor: pointer; justify-content: flex-start;
+  }
+  .legend-row:hover { background: var(--accent-soft); color: var(--ink-1); }
+  .legend-row.is-active { background: var(--accent-soft); color: var(--accent); }
+  .legend-row.is-dimmed { opacity: 0.4; }
+  .legend-row .swatch { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+  .legend-row .legend-label { flex: 1 1 auto; }
+  .legend-row .count { flex: 0 0 auto; color: var(--ink-muted); font-variant-numeric: tabular-nums; padding-left: 10px; }
+  .legend-row.is-active .count { color: var(--accent); }
+
+  .tooltip {
+    position: absolute; pointer-events: none; z-index: 20;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 9px; font-size: 11.5px; color: var(--ink-1); max-width: 280px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  }
+  .tooltip .t-title { font-weight: 600; margin-bottom: 2px; }
+  .tooltip .t-meta { color: var(--ink-muted); font-size: 10.5px; }
+
+  .view-footnote {
+    position: absolute; left: 12px; bottom: 12px; font-size: 10.5px; color: var(--ink-muted);
+    max-width: 46%;
+  }
+
+  /* ---------------- sidebar (targets + diagnostics) ---------------- */
+  .sidebar {
+    flex: 0 0 280px; background: var(--surface); border-left: 1px solid var(--border);
+    overflow-y: auto; padding: 12px;
+  }
+  .freshness-banner {
+    margin-bottom: 14px; padding: 8px 10px; border-radius: 6px;
+    background: var(--accent-soft); border: 1px solid var(--accent);
+    color: var(--ink-1); font-size: 11px; line-height: 1.5;
+  }
+  .freshness-banner b { color: var(--accent); }
+  .diag-section { margin-bottom: 16px; }
+  .diag-title {
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-muted);
+    margin: 0 0 8px;
+  }
+  .diag-row {
+    display: flex; justify-content: space-between; align-items: baseline; width: 100%;
+    background: none; border: none; color: var(--ink-2); font: inherit; font-size: 12px;
+    padding: 5px 6px; border-radius: 5px; cursor: pointer; text-align: left;
+  }
+  .diag-row:hover { background: var(--accent-soft); color: var(--ink-1); }
+  .diag-row.is-active { background: var(--accent-soft); color: var(--accent); }
+  .diag-row .v { font-weight: 600; color: var(--ink-1); font-variant-numeric: tabular-nums; }
+  .diag-row:hover .v, .diag-row.is-active .v { color: var(--accent); }
+  .diag-sub { font-size: 10.5px; color: var(--ink-muted); padding: 0 6px 6px; }
+  .hub-list { list-style: none; margin: 0; padding: 0; }
+  .hub-list li {
+    display: flex; justify-content: space-between; gap: 6px; font-size: 11.5px;
+    padding: 3px 6px; border-radius: 5px; cursor: pointer; color: var(--ink-2);
+  }
+  .hub-list li:hover { background: var(--accent-soft); color: var(--ink-1); }
+  .hub-list .hn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hub-list .hv { flex: 0 0 auto; font-variant-numeric: tabular-nums; color: var(--ink-muted); }
+
+  /* ---- targets panel ("where we are vs where we should be") ---- */
+  .target-item { margin-bottom: 13px; padding: 4px 6px; border-radius: 6px; }
+  .target-item.clickable { cursor: pointer; }
+  .target-item.clickable:hover { background: var(--accent-soft); }
+  .target-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 11.5px; color: var(--ink-2); margin-bottom: 4px; }
+  .target-head .target-label { flex: 1 1 auto; }
+  .target-head .target-val { flex: 0 0 auto; font-weight: 600; color: var(--ink-1); font-variant-numeric: tabular-nums; }
+  .target-track { height: 6px; border-radius: 3px; background: var(--grid); overflow: visible; position: relative; }
+  .target-fill { height: 100%; border-radius: 3px; }
+  .target-fill.trend {
+    background: repeating-linear-gradient(45deg, var(--ink-muted), var(--ink-muted) 4px, transparent 4px, transparent 8px);
+  }
+  .target-marker {
+    position: absolute; top: -2px; width: 2px; height: 10px; background: var(--ink-1); opacity: .55;
+  }
+  .target-marker.aspirational { background: var(--ink-muted); border-left: 1px dashed var(--ink-muted); width: 0; opacity: .85; }
+  .target-foot { font-size: 10px; color: var(--ink-muted); margin-top: 3px; }
+  .target-foot .conf { font-style: italic; }
+
+  /* ---------------- details panel ---------------- */
+  .details {
+    flex: 0 0 300px; background: var(--surface); border-left: 1px solid var(--border);
+    overflow-y: auto; padding: 14px;
+  }
+  .details.hidden { display: none; }
+  .details h2 { font-size: 14px; margin: 0 0 4px; color: var(--ink-1); }
+  .details .d-id { font-size: 11px; color: var(--ink-muted); margin-bottom: 12px; font-family: ui-monospace, monospace; }
+  .d-field { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid var(--grid); font-size: 12px; }
+  .d-field .k { color: var(--ink-muted); }
+  .d-field .v { color: var(--ink-1); font-weight: 500; }
+  .flag-row { display: flex; flex-wrap: wrap; gap: 5px; margin: 10px 0; }
+  .flag {
+    font-size: 10px; padding: 2px 7px; border-radius: 10px; border: 1px solid currentColor;
+  }
+  .flag.orphan { color: var(--warn); }
+  .flag.isolated { color: var(--critical); }
+  .flag.dup { color: var(--dup-red); }
+  .flag.mismatch { color: var(--mismatch-amber); }
+  .flag.notgraph { color: var(--ink-muted); }
+  .d-list-title { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-muted); margin: 14px 0 6px; }
+  .d-edge-list, .d-nb-list { list-style: none; margin: 0; padding: 0; }
+  .d-edge-list li, .d-nb-list li {
+    font-size: 11.5px; padding: 4px 0; color: var(--ink-2); border-bottom: 1px solid var(--grid);
+    display: flex; justify-content: space-between; gap: 6px; cursor: pointer;
+  }
+  .d-edge-list li:hover, .d-nb-list li:hover { color: var(--ink-1); }
+  .d-edge-list .kind, .d-nb-list .cos { color: var(--ink-muted); font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+  .close-details {
+    float: right; background: none; border: none; color: var(--ink-muted); cursor: pointer; font-size: 16px;
+  }
+  .empty-hint { color: var(--ink-muted); font-size: 12px; padding: 20px 4px; }
+
+  /* ---------------- footer ---------------- */
+  .footbar {
+    flex: 0 0 auto; display: flex; gap: 18px; flex-wrap: wrap;
+    padding: 6px 14px; background: var(--surface); border-top: 1px solid var(--border);
+    font-size: 10.5px; color: var(--ink-muted);
+  }
+  .footbar b { color: var(--ink-2); }
+  .footbar .discovery-flag { color: var(--warn); }
+
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-thumb { background: var(--baseline); border-radius: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+
+<div class="app" id="app">
+  <div class="topbar">
+    <div class="brand">Brainiac Vault Explorer<span class="authoritative-flag" id="authFlag">discovery layer</span></div>
+    <div class="tabs">
+      <button class="tab active" data-view="link">Link graph</button>
+      <button class="tab" data-view="semantic">Semantic map</button>
+    </div>
+    <div class="mode-group" id="dimGroup" title="3D: orbit/zoom/pan. 2D: precise reading, exact clicking.">
+      <button class="mode-btn active" data-dim="3d">3D</button>
+      <button class="mode-btn" data-dim="2d">2D</button>
+    </div>
+    <div class="controls">
+      <input type="search" id="search" placeholder="Search id or title…">
+      <div class="mode-group" id="colorModeGroup">
+        <button class="mode-btn active" data-mode="classification">Classification</button>
+        <button class="mode-btn" data-mode="type">Type</button>
+        <button class="mode-btn" data-mode="zone">PARA zone</button>
+      </div>
+      <button class="icon-btn" id="relayoutBtn" title="Re-run force layout">↻</button>
+      <button class="icon-btn active" id="autoRotateBtn" title="Toggle slow auto-rotate (kinetic depth effect — motion parallax reveals 3D structure). Any drag pauses it.">⟳</button>
+      <button class="icon-btn" id="themeToggle" title="Toggle light/dark">☀︎</button>
+    </div>
+  </div>
+
+  <div class="workspace">
+    <div class="canvas-wrap" id="canvasWrap">
+      <canvas id="canvas" style="display:none"></canvas>
+      <canvas id="canvas3d"></canvas>
+      <canvas id="labelOverlay" style="pointer-events:none;"></canvas>
+      <div class="layer-toggles" id="layerToggles"></div>
+      <div class="legend" id="legend"></div>
+      <div class="view-footnote" id="viewFootnote"></div>
+      <div class="tooltip" id="tooltip" hidden></div>
+    </div>
+    <aside class="sidebar" id="sidebar"></aside>
+    <aside class="details hidden" id="details"></aside>
+  </div>
+
+  <div class="footbar" id="footbar"></div>
+</div>
+
+<script type="application/json" id="payload-data">__BRAIN_GRAPHREPORT_PAYLOAD_JSON__</script>
+
+<script>
+(function () {
+  "use strict";
+
+  // ======================================================================
+  // 0. load payload
+  // ======================================================================
+  const RAW = JSON.parse(document.getElementById("payload-data").textContent);
+
+  const nodesById = new Map();
+  RAW.nodes.forEach(n => nodesById.set(n.id, n));
+  const pointsById = new Map();
+  RAW.points.forEach(p => pointsById.set(p.id, p));
+  const orphanSet = new Set(RAW.orphans);
+  const edgesByNode = new Map(); // id -> [{other, kind, dir}]
+  RAW.edges.forEach(e => {
+    if (!edgesByNode.has(e.from)) edgesByNode.set(e.from, []);
+    if (!edgesByNode.has(e.to)) edgesByNode.set(e.to, []);
+    edgesByNode.get(e.from).push({ other: e.to, kind: e.kind, dir: "out" });
+    edgesByNode.get(e.to).push({ other: e.from, kind: e.kind, dir: "in" });
+  });
+  const dupPairSet = new Set();
+  RAW.duplicate_pairs.forEach(p => { dupPairSet.add(p.a + "|" + p.b); dupPairSet.add(p.b + "|" + p.a); });
+  const mismatchPairSet = new Set();
+  RAW.mismatch_pairs.forEach(p => { mismatchPairSet.add(p.a + "|" + p.b); mismatchPairSet.add(p.b + "|" + p.a); });
+
+  // ======================================================================
+  // 1. color formula (dataviz skill: ordinal ramp for classification,
+  //    fixed-order categorical for type / zone) -- unchanged from the 2D
+  //    build, already validated (palette.md documented default).
+  // ======================================================================
+  const THEME = { mode: "dark" };
+
+  const CLASSIFICATION_ORDER = ["Public", "Internal", "Confidential", "Restricted", "MNPI"];
+  const CLASS_RAMP = {
+    dark:  ["#cde2fb", "#86b6ef", "#3987e5", "#256abf", "#184f95"],
+    light: ["#86b6ef", "#3987e5", "#256abf", "#184f95", "#0d366b"],
+  };
+
+  const CAT_SLOTS = {
+    dark:  ["#3987e5", "#008300", "#d55181", "#c98500", "#199e70", "#d95926", "#9085e9", "#e66767"],
+    light: ["#2a78d6", "#008300", "#e87ba4", "#eda100", "#1baf7a", "#eb6834", "#4a3aa7", "#e34948"],
+  };
+  const MUTED = { dark: "#55544e", light: "#c3c2b7" };
+
+  const TYPE_SLOT = {
+    note: 0, decision: 1, concept: 2, project: 3,
+    person: 4, company: 5, daily: 6, index: 7,
+  };
+  const TYPE_MUTED = new Set(["source", "draft", "source-derived"]);
+
+  const ZONE_SLOT = {
+    projects: 0, areas: 1, resources: 2, archive: 3,
+    "brain-root": 4, "cos-ops": 5, overlay: 6, raw: 7,
+  };
+
+  function classColor(cls) {
+    const i = CLASSIFICATION_ORDER.indexOf(cls);
+    const ramp = CLASS_RAMP[THEME.mode];
+    return ramp[i >= 0 ? i : ramp.length - 1];
+  }
+  function typeColor(t) {
+    if (TYPE_MUTED.has(t) || !(t in TYPE_SLOT)) return MUTED[THEME.mode];
+    return CAT_SLOTS[THEME.mode][TYPE_SLOT[t]];
+  }
+  function zoneColor(z) {
+    if (!(z in ZONE_SLOT)) return MUTED[THEME.mode];
+    return CAT_SLOTS[THEME.mode][ZONE_SLOT[z]];
+  }
+  const COLOR_MODES = {
+    classification: { fn: classColor, key: "classification", legendOrder: CLASSIFICATION_ORDER, kind: "ordinal" },
+    type: { fn: typeColor, key: "type", legendOrder: ["note","decision","concept","project","person","company","daily","index","(raw/draft)"], kind: "categorical" },
+    zone: { fn: zoneColor, key: "zone", legendOrder: ["projects","areas","resources","archive","brain-root","cos-ops","overlay","raw"], kind: "categorical" },
+  };
+  let colorMode = "classification";
+
+  function hexToRgb01(hex) {
+    const v = hex.replace("#", "");
+    const r = parseInt(v.substring(0, 2), 16) / 255;
+    const g = parseInt(v.substring(2, 4), 16) / 255;
+    const b = parseInt(v.substring(4, 6), 16) / 255;
+    return [r, g, b];
+  }
+
+  // ======================================================================
+  // 2. shared state (spans BOTH the 2D canvas and the 3D WebGL renderer,
+  //    and BOTH the link-graph and semantic-map views)
+  // ======================================================================
+  let currentView = "link";     // "link" | "semantic"
+  let mode3D = true;            // 3D is the default; 2D is the precision fallback
+  let selectedId = null;
+  let searchQuery = "";
+  let hoverId = null;
+  let hoverIsPoint = false;
+  // INFERRED off by default -- discovery-layer noise at full density (research:
+  // Eric J. Ma "Principles of Network Visualization" -- filter unnecessary edges
+  // before styling the rest); flip the "Show INFERRED edges" toggle to see them.
+  const layerState = { dup: true, mismatch: true, lens: true, inferred: false, topEdges: true };
+  const legendIsolate = new Set(); // raw key-values isolated via legend click; empty = show all
+
+  function isDimmedByLegend(keyVal) {
+    return legendIsolate.size > 0 && !legendIsolate.has(keyVal);
+  }
+  function isDimmed(id, keyVal) {
+    const bySearch = searchQuery && !matchIds.has(id);
+    return bySearch || isDimmedByLegend(keyVal);
+  }
+
+  // ---- edge opacity (user slider) + top-edges decluttering ----------------
+  let edgeOpacityMul = 1.0;
+  // "top edges" ranks WIKILINK edges by (endpoint degree sum) as a cheap proxy
+  // for importance -- this dataset carries no per-edge weight, so endpoint
+  // degree is the honest available signal (TGI-EB / divided-edge-bundling
+  // research: importance-based filtering is a legitimate declutter strategy
+  // even without full bundling). Capped at nodeCount*4 so small graphs show
+  // everything and only genuinely dense ones get thinned.
+  const TOP_EDGES_K = Math.max(200, Math.min(RAW.edges.length, RAW.nodes.length * 4));
+  const topEdgeSet = new Set();
+  (function rankEdges() {
+    const scored = RAW.edges
+      .map((e, idx) => {
+        const da = (nodesById.get(e.from) || {}).degree || 0;
+        const db = (nodesById.get(e.to) || {}).degree || 0;
+        return [idx, da + db];
+      })
+      .sort((a, b) => b[1] - a[1]);
+    for (let k = 0; k < Math.min(TOP_EDGES_K, scored.length); k++) topEdgeSet.add(scored[k][0]);
+  })();
+  function edgeVisible(e, idx) {
+    if (e.kind === "INFERRED" && !layerState.inferred) return false;
+    if (layerState.topEdges && !topEdgeSet.has(idx)) return false;
+    return true;
+  }
+
+  // ---- focus+context: hover/select brightens self + 1-2 hop neighborhood,
+  // ghosts everything else. Highest-leverage legibility fix for a hairball
+  // (Elmqvist et al., "Dynamic Transparency for 3D Visualization": dynamic
+  // occlusion management beats static transparency for target discovery).
+  // Cross-fades over FOCUS_ANIM_MS between the previous and next focus state
+  // so nothing pops.
+  const FOCUS_ANIM_MS = 150;
+  const GHOST_ALPHA = 0.05;
+  let focusSet = null, prevFocusSet = null, focusAnimStart = 0, focusAnimating = false;
+
+  function neighborhoodIds(id, hops) {
+    const out = new Set([id]);
+    let frontier = [id];
+    for (let h = 0; h < hops; h++) {
+      const next = [];
+      for (const cur of frontier) {
+        for (const e of (edgesByNode.get(cur) || [])) {
+          if (e.kind === "INFERRED" && !layerState.inferred) continue;
+          if (!out.has(e.other)) { out.add(e.other); next.push(e.other); }
+        }
+      }
+      frontier = next;
+      if (!frontier.length) break;
+    }
+    return out;
+  }
+  function semanticNeighborhoodIds(id) {
+    const out = new Set([id]);
+    (RAW.neighbors[id] || []).forEach(nb => out.add(nb.id));
+    return out;
+  }
+  function computeFocusSet() {
+    const id = hoverId || selectedId;
+    if (!id) return null;
+    if (currentView === "link") return neighborhoodIds(id, 2);
+    return semanticNeighborhoodIds(id);
+  }
+  function updateFocus() {
+    const next = computeFocusSet();
+    const changed = (next === null) !== (focusSet === null) ||
+      (next && focusSet && (next.size !== focusSet.size || ![...next].every(x => focusSet.has(x))));
+    if (!changed) return;
+    prevFocusSet = focusSet;
+    focusSet = next;
+    focusAnimStart = performance.now();
+    if (!focusAnimating) {
+      focusAnimating = true;
+      const tick = () => {
+        requestRender();
+        if (performance.now() - focusAnimStart < FOCUS_ANIM_MS) requestAnimationFrame(tick);
+        else focusAnimating = false;
+      };
+      requestAnimationFrame(tick);
+    }
+  }
+  function focusEase() {
+    const p = Math.min(1, (performance.now() - focusAnimStart) / FOCUS_ANIM_MS);
+    return p * p * (3 - 2 * p); // smoothstep
+  }
+  // blends id's alpha between the "no focus" baseAlpha and whichever of
+  // focusSet/prevFocusSet is relevant, so unrelated nodes don't flicker when
+  // focus moves from one node straight to another.
+  function focusAlpha(id, baseAlpha) {
+    if (!focusSet && !prevFocusSet) return baseAlpha;
+    const t = focusEase();
+    const from = prevFocusSet ? (prevFocusSet.has(id) ? 1 : GHOST_ALPHA) : baseAlpha;
+    const to = focusSet ? (focusSet.has(id) ? 1 : GHOST_ALPHA) : baseAlpha;
+    return from + (to - from) * t;
+  }
+  function focusEdgeAlpha(fromId, toId, baseAlpha) {
+    if (!focusSet && !prevFocusSet) return baseAlpha;
+    const t = focusEase();
+    const from = prevFocusSet ? ((prevFocusSet.has(fromId) && prevFocusSet.has(toId)) ? Math.max(baseAlpha, 0.5) : GHOST_ALPHA * 0.4) : baseAlpha;
+    const to = focusSet ? ((focusSet.has(fromId) && focusSet.has(toId)) ? Math.max(baseAlpha, 0.5) : GHOST_ALPHA * 0.4) : baseAlpha;
+    return from + (to - from) * t;
+  }
+
+  // ======================================================================
+  // 3. 2D canvas + camera (unchanged mechanics from the prior build)
+  // ======================================================================
+  const canvas = document.getElementById("canvas");
+  const ctx = canvas.getContext("2d");
+  const wrap = document.getElementById("canvasWrap");
+  const camera2D = { link: { x: 0, y: 0, zoom: 1 }, semantic: { x: 0, y: 0, zoom: 1 } };
+  let dpr = Math.max(1, window.devicePixelRatio || 1);
+
+  // ======================================================================
+  // 3b. 3D WebGL canvas + camera (orbit / zoom / shift-pan)
+  // ======================================================================
+  const canvas3d = document.getElementById("canvas3d");
+  const gl = canvas3d.getContext("webgl", { antialias: true, alpha: false, depth: true, preserveDrawingBuffer: false });
+  const labelOverlay = document.getElementById("labelOverlay");
+  const labelCtx = labelOverlay.getContext("2d");
+
+  // orbit camera: yaw/pitch around a target point, distance = zoom.
+  const camera3DState = {
+    link:     { yaw: 0.6, pitch: 0.35, dist: 900, target: { x: 0, y: 0, z: 0 } },
+    semantic: { yaw: 0.6, pitch: 0.35, dist: 1400, target: { x: 0, y: 0, z: 0 } },
+  };
+  const INITIAL_DIST = { link: camera3DState.link.dist, semantic: camera3DState.semantic.dist };
+  const PITCH_LIMIT = 1.45;
+
+  // ---- slow auto-rotate (kinetic depth effect) -----------------------------
+  // Motion parallax from a slow, continuous orbit is how humans read 3D
+  // structure without stereo vision (Wallach & O'Connell 1953, "The Kinetic
+  // Depth Effect"; still the standard citation for structure-from-motion).
+  // Any drag pauses it immediately; it resumes the instant the drag ends,
+  // matching the conventional OrbitControls.autoRotate UX.
+  let autoRotate = true;
+  const AUTO_ROTATE_RAD_PER_MS = 0.00028; // ~1 full turn per ~6 minutes
+  let lastFrameTime = 0;
+
+  function resizeCanvas() {
+    dpr = Math.max(1, window.devicePixelRatio || 1);
+    const r = wrap.getBoundingClientRect();
+    canvas.width = Math.round(r.width * dpr);
+    canvas.height = Math.round(r.height * dpr);
+    canvas3d.width = Math.round(r.width * dpr);
+    canvas3d.height = Math.round(r.height * dpr);
+    labelOverlay.width = Math.round(r.width * dpr);
+    labelOverlay.height = Math.round(r.height * dpr);
+    if (gl) gl.viewport(0, 0, canvas3d.width, canvas3d.height);
+  }
+  window.addEventListener("resize", resizeCanvas);
+
+  function worldToScreen(x, y, cam) {
+    const w = canvas.width, h = canvas.height;
+    return [
+      w / 2 + cam.x * dpr + x * cam.zoom * dpr,
+      h / 2 + cam.y * dpr + y * cam.zoom * dpr,
+    ];
+  }
+  function screenToWorld(px, py, cam) {
+    const w = canvas.width, h = canvas.height;
+    return [
+      (px - w / 2 - cam.x * dpr) / (cam.zoom * dpr),
+      (py - h / 2 - cam.y * dpr) / (cam.zoom * dpr),
+    ];
+  }
+
+  // -------- tiny column-major mat4 helpers (no external libs) --------
+  function mat4Perspective(fovy, aspect, near, far) {
+    const f = 1 / Math.tan(fovy / 2);
+    const out = new Float32Array(16);
+    out[0] = f / aspect; out[5] = f;
+    out[10] = (far + near) / (near - far); out[11] = -1;
+    out[14] = (2 * far * near) / (near - far);
+    return out;
+  }
+  function vec3Sub(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
+  function vec3Cross(a, b) { return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
+  function vec3Norm(a) { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0]/l, a[1]/l, a[2]/l]; }
+  function vec3Dot(a, b) { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
+
+  function mat4LookAt(eye, target, up) {
+    const z = vec3Norm(vec3Sub(eye, target)); // camera looks down -z
+    const x = vec3Norm(vec3Cross(up, z));
+    const y = vec3Cross(z, x);
+    const out = new Float32Array(16);
+    out[0]=x[0]; out[1]=y[0]; out[2]=z[0]; out[3]=0;
+    out[4]=x[1]; out[5]=y[1]; out[6]=z[1]; out[7]=0;
+    out[8]=x[2]; out[9]=y[2]; out[10]=z[2]; out[11]=0;
+    out[12] = -vec3Dot(x, eye); out[13] = -vec3Dot(y, eye); out[14] = -vec3Dot(z, eye); out[15] = 1;
+    return out;
+  }
+  function mat4Multiply(a, b) {
+    const out = new Float32Array(16);
+    for (let c = 0; c < 4; c++) {
+      for (let r = 0; r < 4; r++) {
+        let sum = 0;
+        for (let k = 0; k < 4; k++) sum += a[k*4 + r] * b[c*4 + k];
+        out[c*4 + r] = sum;
+      }
+    }
+    return out;
+  }
+  // apply a column-major mat4 to a vec4, matching the uniformMatrix4fv upload
+  // convention used below (transpose=false) -- kept in lockstep with the
+  // vertex shader's `uMVP * vec4(pos,1.0)` so CPU-side picking agrees with
+  // what the GPU actually draws.
+  function mat4TransformVec4(m, x, y, z, w) {
+    return [
+      m[0]*x + m[4]*y + m[8]*z  + m[12]*w,
+      m[1]*x + m[5]*y + m[9]*z  + m[13]*w,
+      m[2]*x + m[6]*y + m[10]*z + m[14]*w,
+      m[3]*x + m[7]*y + m[11]*z + m[15]*w,
+    ];
+  }
+
+  function orbitEye(cam) {
+    const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+    const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw);
+    return [
+      cam.target.x + cam.dist * cp * sy,
+      cam.target.y + cam.dist * sp,
+      cam.target.z + cam.dist * cp * cy,
+    ];
+  }
+  function orbitBasis(cam) {
+    const eye = orbitEye(cam);
+    const forward = vec3Norm(vec3Sub([cam.target.x, cam.target.y, cam.target.z], eye));
+    const worldUp = [0, 1, 0];
+    let right = vec3Cross(forward, worldUp);
+    if (Math.hypot(right[0], right[1], right[2]) < 1e-5) right = [1, 0, 0];
+    right = vec3Norm(right);
+    const up = vec3Norm(vec3Cross(right, forward));
+    return { eye, forward, right, up };
+  }
+  function mvpFor(cam, aspect) {
+    const eye = orbitEye(cam);
+    const view = mat4LookAt(eye, [cam.target.x, cam.target.y, cam.target.z], [0, 1, 0]);
+    const proj = mat4Perspective(Math.PI / 3.6, aspect, 1, cam.dist * 20 + 4000);
+    return mat4Multiply(proj, view);
+  }
+
+  function projectPoint(mvp, x, y, z, vw, vh) {
+    const clip = mat4TransformVec4(mvp, x, y, z, 1);
+    if (clip[3] <= 0.001) return null; // behind the camera
+    const ndcX = clip[0] / clip[3], ndcY = clip[1] / clip[3];
+    return { sx: (ndcX * 0.5 + 0.5) * vw, sy: (1 - (ndcY * 0.5 + 0.5)) * vh, w: clip[3] };
+  }
+
+  // pan / zoom / orbit (shared handlers, act on the active view's camera --
+  // 2D canvas gets the pan/zoom mechanics it always had; 3D canvas gets
+  // orbit-drag + shift-drag pan + wheel-dolly).
+  let dragging = false, dragLast = null, clickMoved = 0;
+
+  canvas.addEventListener("pointerdown", e => {
+    dragging = true; dragLast = [e.clientX, e.clientY];
+    canvas.classList.add("grabbing");
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener("pointerup", e => {
+    dragging = false; canvas.classList.remove("grabbing");
+    if (dragLast && clickMoved < 4) handleClick2D(e);
+    dragLast = null;
+  });
+  canvas.addEventListener("pointermove", e => {
+    const rect = canvas.getBoundingClientRect();
+    const px = (e.clientX - rect.left), py = (e.clientY - rect.top);
+    if (dragging && dragLast) {
+      const dx = e.clientX - dragLast[0], dy = e.clientY - dragLast[1];
+      clickMoved += Math.abs(dx) + Math.abs(dy);
+      const cam = camera2D[currentView];
+      cam.x += dx; cam.y += dy;
+      dragLast = [e.clientX, e.clientY];
+      requestRender();
+    } else {
+      clickMoved = 0;
+      handleHover2D(px * dpr, py * dpr, e.clientX, e.clientY);
+    }
+  });
+  canvas.addEventListener("pointerleave", () => { hoverId = null; updateFocus(); hideTooltip(); requestRender(); });
+  canvas.addEventListener("wheel", e => {
+    e.preventDefault();
+    const cam = camera2D[currentView];
+    const rect = canvas.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) * dpr, my = (e.clientY - rect.top) * dpr;
+    const [wx, wy] = screenToWorld(mx, my, cam);
+    const factor = Math.exp(-e.deltaY * 0.0016);
+    cam.zoom = Math.min(8, Math.max(0.02, cam.zoom * factor));
+    const [nx, ny] = screenToWorld(mx, my, cam);
+    cam.x += (nx - wx) * cam.zoom;
+    cam.y += (ny - wy) * cam.zoom;
+    requestRender();
+  }, { passive: false });
+
+  function handleClick2D(e) {
+    const rect = canvas.getBoundingClientRect();
+    const px = (e.clientX - rect.left) * dpr, py = (e.clientY - rect.top) * dpr;
+    const id = hitTest2D(px, py);
+    if (id) selectNode(id); else deselect();
+  }
+
+  // -------- 3D orbit/pan/zoom pointer handlers --------
+  let drag3DLast = null, drag3DMoved = 0;
+  canvas3d.addEventListener("pointerdown", e => {
+    drag3DLast = [e.clientX, e.clientY, e.shiftKey];
+    drag3DMoved = 0;
+    canvas3d.classList.add("grabbing");
+    canvas3d.setPointerCapture(e.pointerId);
+  });
+  canvas3d.addEventListener("pointerup", e => {
+    canvas3d.classList.remove("grabbing");
+    if (drag3DLast && drag3DMoved < 4) handleClick3D(e);
+    drag3DLast = null;
+  });
+  canvas3d.addEventListener("pointermove", e => {
+    const rect = canvas3d.getBoundingClientRect();
+    const px = e.clientX - rect.left, py = e.clientY - rect.top;
+    if (drag3DLast) {
+      const dx = e.clientX - drag3DLast[0], dy = e.clientY - drag3DLast[1];
+      drag3DMoved += Math.abs(dx) + Math.abs(dy);
+      const cam = camera3DState[currentView];
+      if (e.shiftKey) {
+        const { right, up } = orbitBasis(cam);
+        const panScale = cam.dist * 0.0016;
+        cam.target.x += (-dx * panScale) * right[0] + (dy * panScale) * up[0];
+        cam.target.y += (-dx * panScale) * right[1] + (dy * panScale) * up[1];
+        cam.target.z += (-dx * panScale) * right[2] + (dy * panScale) * up[2];
+      } else {
+        cam.yaw -= dx * 0.0055;
+        cam.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, cam.pitch - dy * 0.0055));
+      }
+      drag3DLast = [e.clientX, e.clientY];
+      requestRender();
+    } else {
+      handleHover3D(px, py, e.clientX, e.clientY);
+    }
+  });
+  canvas3d.addEventListener("pointerleave", () => { hoverId = null; updateFocus(); hideTooltip(); requestRender(); });
+  canvas3d.addEventListener("wheel", e => {
+    e.preventDefault();
+    const cam = camera3DState[currentView];
+    const factor = Math.exp(e.deltaY * 0.0016);
+    cam.dist = Math.max(30, Math.min(20000, cam.dist * factor));
+    requestRender();
+  }, { passive: false });
+
+  function handleClick3D(e) {
+    const rect = canvas3d.getBoundingClientRect();
+    const px = e.clientX - rect.left, py = e.clientY - rect.top;
+    const id = hitTest3D(px, py);
+    if (id) selectNode(id); else deselect();
+  }
+
+  // ======================================================================
+  // 4. LINK GRAPH -- 2D force layout (unchanged: Fruchterman-Reingold)
+  // ======================================================================
+  const linkNodes = RAW.nodes.map(n => ({ ref: n, x: 0, y: 0, vx: 0, vy: 0 }));
+  const linkNodeById = new Map();
+  linkNodes.forEach(ln => linkNodeById.set(ln.ref.id, ln));
+
+  (function seedPositions() {
+    const nonOrphans = linkNodes.filter(ln => !orphanSet.has(ln.ref.id));
+    const orphans = linkNodes.filter(ln => orphanSet.has(ln.ref.id));
+    orphans.sort((a, b) => {
+      const t = a.ref.type.localeCompare(b.ref.type);
+      if (t) return t;
+      return a.ref.classification.localeCompare(b.ref.classification);
+    });
+    const innerR = 60 * Math.sqrt(nonOrphans.length / 6);
+    nonOrphans.forEach(ln => {
+      const a = Math.random() * Math.PI * 2;
+      const r = innerR * Math.sqrt(Math.random());
+      ln.x = Math.cos(a) * r; ln.y = Math.sin(a) * r;
+    });
+    const ringR = innerR * 1.65 + 80;
+    orphans.forEach((ln, i) => {
+      const a = (i / orphans.length) * Math.PI * 2;
+      ln.ringX = Math.cos(a) * ringR; ln.ringY = Math.sin(a) * ringR;
+      ln.x = ln.ringX; ln.y = ln.ringY;
+      ln.isOrphanRing = true;
+    });
+    linkNodes.__ringR = ringR;
+    linkNodes.__innerR = innerR;
+  })();
+
+  const K_LAYOUT = 40;
+  const REPEL_CELL = K_LAYOUT;
+  const REPEL_CUTOFF2 = (K_LAYOUT * 2.4) ** 2;
+  const RING_SPRING_K = 0.14;
+  const GRAVITY_K = 0.0012;
+  const DAMPING = 0.80;
+  const MAX_SPEED = 46;
+  const JITTER = 0.6;
+
+  let simAlpha = 1, simRunning = true;
+  const SIM_DECAY = 0.985, SIM_FLOOR = 0.012, MAX_SIM_MS_PER_FRAME = 22;
+
+  function buildGrid2D() {
+    const grid = new Map();
+    for (const ln of linkNodes) {
+      const cx = Math.floor(ln.x / REPEL_CELL), cy = Math.floor(ln.y / REPEL_CELL);
+      const key = cx * 100000 + cy;
+      let arr = grid.get(key);
+      if (!arr) { arr = []; grid.set(key, arr); }
+      arr.push(ln);
+    }
+    return grid;
+  }
+
+  function stepPhysics2D(alpha) {
+    const grid = buildGrid2D();
+    const K2 = K_LAYOUT * K_LAYOUT;
+    for (const ln of linkNodes) {
+      const cx = Math.floor(ln.x / REPEL_CELL), cy = Math.floor(ln.y / REPEL_CELL);
+      let fx = 0, fy = 0;
+      for (let dx = -2; dx <= 2; dx++) {
+        for (let dy = -2; dy <= 2; dy++) {
+          const arr = grid.get((cx + dx) * 100000 + (cy + dy));
+          if (!arr) continue;
+          for (const o of arr) {
+            if (o === ln) continue;
+            let ddx = ln.x - o.x, ddy = ln.y - o.y;
+            let d2 = ddx * ddx + ddy * ddy;
+            if (d2 > REPEL_CUTOFF2) continue;
+            if (d2 < 1) { ddx = (Math.random() - 0.5) * 2; ddy = (Math.random() - 0.5) * 2; d2 = 1; }
+            const d = Math.sqrt(d2);
+            const f = K2 / d2;
+            fx += (ddx / d) * f; fy += (ddy / d) * f;
+          }
+        }
+      }
+      ln.fx = fx; ln.fy = fy;
+    }
+    for (const e of RAW.edges) {
+      const a = linkNodeById.get(e.from), b = linkNodeById.get(e.to);
+      if (!a || !b) continue;
+      const ddx = b.x - a.x, ddy = b.y - a.y;
+      const d = Math.sqrt(ddx * ddx + ddy * ddy) || 0.001;
+      const force = (d * d) / K_LAYOUT;
+      const nx = ddx / d, ny = ddy / d;
+      a.fx += nx * force; a.fy += ny * force;
+      b.fx -= nx * force; b.fy -= ny * force;
+    }
+    for (const ln of linkNodes) {
+      if (ln.isOrphanRing) {
+        ln.fx += (ln.ringX - ln.x) * RING_SPRING_K;
+        ln.fy += (ln.ringY - ln.y) * RING_SPRING_K;
+      } else {
+        ln.fx += -ln.x * GRAVITY_K;
+        ln.fy += -ln.y * GRAVITY_K;
+      }
+      ln.fx += (Math.random() - 0.5) * JITTER;
+      ln.fy += (Math.random() - 0.5) * JITTER;
+      ln.vx = (ln.vx + ln.fx * alpha) * DAMPING;
+      ln.vy = (ln.vy + ln.fy * alpha) * DAMPING;
+      const sp = Math.hypot(ln.vx, ln.vy);
+      if (sp > MAX_SPEED) { ln.vx *= MAX_SPEED / sp; ln.vy *= MAX_SPEED / sp; }
+      ln.x += ln.vx * alpha;
+      ln.y += ln.vy * alpha;
+    }
+  }
+
+  // ======================================================================
+  // 4b. LINK GRAPH -- 3D force layout (same FR balance, extended with z;
+  //     independent node/camera state from the 2D layout so toggling
+  //     dimensions never disturbs the other's layout).
+  // ======================================================================
+  const linkNodes3D = RAW.nodes.map(n => ({ ref: n, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 }));
+  const linkNode3DById = new Map();
+  linkNodes3D.forEach(ln => linkNode3DById.set(ln.ref.id, ln));
+
+  (function seedPositions3D() {
+    const nonOrphans = linkNodes3D.filter(ln => !orphanSet.has(ln.ref.id));
+    const orphans = linkNodes3D.filter(ln => orphanSet.has(ln.ref.id));
+    orphans.sort((a, b) => {
+      const t = a.ref.type.localeCompare(b.ref.type);
+      if (t) return t;
+      return a.ref.classification.localeCompare(b.ref.classification);
+    });
+    const innerR = 70 * Math.cbrt(Math.max(nonOrphans.length, 1) / 3);
+    nonOrphans.forEach(ln => {
+      const u = Math.random(), v = Math.random();
+      const theta = 2 * Math.PI * u, phi = Math.acos(2 * v - 1);
+      const r = innerR * Math.cbrt(Math.random());
+      ln.x = r * Math.sin(phi) * Math.cos(theta);
+      ln.y = r * Math.sin(phi) * Math.sin(theta);
+      ln.z = r * Math.cos(phi);
+    });
+    const shellR = innerR * 1.7 + 90;
+    orphans.forEach(ln => {
+      const u = Math.random(), v = Math.random();
+      const theta = 2 * Math.PI * u, phi = Math.acos(2 * v - 1);
+      ln.shellX = shellR * Math.sin(phi) * Math.cos(theta);
+      ln.shellY = shellR * Math.sin(phi) * Math.sin(theta);
+      ln.shellZ = shellR * Math.cos(phi);
+      ln.x = ln.shellX; ln.y = ln.shellY; ln.z = ln.shellZ;
+      ln.isOrphanShell = true;
+    });
+    linkNodes3D.__shellR = shellR;
+    linkNodes3D.__innerR = innerR;
+  })();
+
+  const K3 = 46; // natural edge length, 3D world units (slightly larger cells --
+                 // fewer occupants per cell in a volume than in an area)
+  const REPEL_CELL3 = K3;
+  const REPEL_CUTOFF3_2 = (K3 * 2.2) ** 2;
+  const SHELL_SPRING_K = 0.14, GRAVITY3_K = 0.0012, DAMPING3 = 0.80, MAX_SPEED3 = 50, JITTER3 = 0.6;
+
+  let simAlpha3 = 1, simRunning3 = true;
+
+  function buildGrid3D() {
+    const grid = new Map();
+    for (const ln of linkNodes3D) {
+      const cx = Math.floor(ln.x / REPEL_CELL3), cy = Math.floor(ln.y / REPEL_CELL3), cz = Math.floor(ln.z / REPEL_CELL3);
+      const key = cx + "_" + cy + "_" + cz;
+      let arr = grid.get(key);
+      if (!arr) { arr = []; grid.set(key, arr); }
+      arr.push(ln);
+    }
+    return grid;
+  }
+
+  function stepPhysics3D(alpha) {
+    const grid = buildGrid3D();
+    const K2 = K3 * K3;
+    for (const ln of linkNodes3D) {
+      const cx = Math.floor(ln.x / REPEL_CELL3), cy = Math.floor(ln.y / REPEL_CELL3), cz = Math.floor(ln.z / REPEL_CELL3);
+      let fx = 0, fy = 0, fz = 0;
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dz = -1; dz <= 1; dz++) {
+            const arr = grid.get((cx + dx) + "_" + (cy + dy) + "_" + (cz + dz));
+            if (!arr) continue;
+            for (const o of arr) {
+              if (o === ln) continue;
+              let ddx = ln.x - o.x, ddy = ln.y - o.y, ddz = ln.z - o.z;
+              let d2 = ddx * ddx + ddy * ddy + ddz * ddz;
+              if (d2 > REPEL_CUTOFF3_2) continue;
+              if (d2 < 1) { ddx = (Math.random()-0.5)*2; ddy = (Math.random()-0.5)*2; ddz = (Math.random()-0.5)*2; d2 = 1; }
+              const d = Math.sqrt(d2);
+              const f = K2 / d2;
+              fx += (ddx / d) * f; fy += (ddy / d) * f; fz += (ddz / d) * f;
+            }
+          }
+        }
+      }
+      ln.fx = fx; ln.fy = fy; ln.fz = fz;
+    }
+    for (const e of RAW.edges) {
+      const a = linkNode3DById.get(e.from), b = linkNode3DById.get(e.to);
+      if (!a || !b) continue;
+      const ddx = b.x - a.x, ddy = b.y - a.y, ddz = b.z - a.z;
+      const d = Math.sqrt(ddx*ddx + ddy*ddy + ddz*ddz) || 0.001;
+      const force = (d * d) / K3;
+      const nx = ddx / d, ny = ddy / d, nz = ddz / d;
+      a.fx += nx * force; a.fy += ny * force; a.fz += nz * force;
+      b.fx -= nx * force; b.fy -= ny * force; b.fz -= nz * force;
+    }
+    for (const ln of linkNodes3D) {
+      if (ln.isOrphanShell) {
+        ln.fx += (ln.shellX - ln.x) * SHELL_SPRING_K;
+        ln.fy += (ln.shellY - ln.y) * SHELL_SPRING_K;
+        ln.fz += (ln.shellZ - ln.z) * SHELL_SPRING_K;
+      } else {
+        ln.fx += -ln.x * GRAVITY3_K; ln.fy += -ln.y * GRAVITY3_K; ln.fz += -ln.z * GRAVITY3_K;
+      }
+      ln.fx += (Math.random()-0.5) * JITTER3;
+      ln.fy += (Math.random()-0.5) * JITTER3;
+      ln.fz += (Math.random()-0.5) * JITTER3;
+      ln.vx = (ln.vx + ln.fx * alpha) * DAMPING3;
+      ln.vy = (ln.vy + ln.fy * alpha) * DAMPING3;
+      ln.vz = (ln.vz + ln.fz * alpha) * DAMPING3;
+      const sp = Math.hypot(ln.vx, ln.vy, ln.vz);
+      if (sp > MAX_SPEED3) { const s = MAX_SPEED3 / sp; ln.vx *= s; ln.vy *= s; ln.vz *= s; }
+      ln.x += ln.vx * alpha; ln.y += ln.vy * alpha; ln.z += ln.vz * alpha;
+    }
+  }
+
+  // ponytail: neither dimension's orbit/pan camera drag perturbs node
+  // positions -- "reheat on drag" is interpreted as "reheat via the
+  // existing relayout control", since this build has no per-node drag
+  // (camera orbit isn't data movement). Add real node-dragging -> reheat
+  // if that interaction is wanted later.
+  function relayout() {
+    simAlpha = 1; simRunning = true;
+    linkNodes.forEach(ln => { ln.vx = 0; ln.vy = 0; if (!ln.isOrphanRing) { ln.x += (Math.random()-0.5)*40; ln.y += (Math.random()-0.5)*40; } });
+    simAlpha3 = 1; simRunning3 = true;
+    linkNodes3D.forEach(ln => { ln.vx = 0; ln.vy = 0; ln.vz = 0; if (!ln.isOrphanShell) { ln.x += (Math.random()-0.5)*40; ln.y += (Math.random()-0.5)*40; ln.z += (Math.random()-0.5)*40; } });
+    requestRender();
+  }
+  document.getElementById("relayoutBtn").addEventListener("click", relayout);
+
+  // ======================================================================
+  // 5. SEMANTIC MAP -- static 3-component PCA scatter (2D view uses the
+  //    first two components only; PC1/PC2 are identical whether the
+  //    extraction ran 2 or 3 components, so the 2D read is unaffected).
+  // ======================================================================
+  const SEMANTIC_SCALE = 900;
+  (function scaleSemantic() {
+    let maxAbs = 0;
+    RAW.points.forEach(p => { maxAbs = Math.max(maxAbs, Math.abs(p.x), Math.abs(p.y), Math.abs(p.z || 0)); });
+    const s = maxAbs > 0 ? SEMANTIC_SCALE / maxAbs : 1;
+    RAW.points.forEach(p => { p.sx = p.x * s; p.sy = p.y * s; p.sz = (p.z || 0) * s; });
+  })();
+
+  // ======================================================================
+  // 6. render loop
+  // ======================================================================
+  let renderQueued = false;
+  function requestRender() {
+    if (renderQueued) return;
+    renderQueued = true;
+    requestAnimationFrame(frame);
+  }
+
+  function frame(now) {
+    renderQueued = false;
+    const dt = lastFrameTime ? Math.min(now - lastFrameTime, 100) : 0;
+    lastFrameTime = now;
+    // NOTE: requestRender() here must fire even when dt is 0 (the very first
+    // frame after a boot or a resume-from-pause always has dt===0 since there
+    // is no previous timestamp yet) -- otherwise the self-sustaining rAF
+    // chain never re-arms itself and auto-rotate silently never resumes.
+    // Only the yaw increment itself is gated on dt>0 (skip applying a
+    // zero-length rotation, nothing more).
+    if (mode3D && autoRotate && !drag3DLast) {
+      if (dt > 0) camera3DState[currentView].yaw += AUTO_ROTATE_RAD_PER_MS * dt;
+      requestRender();
+    }
+    if (currentView === "link") {
+      if (!mode3D && simRunning) {
+        const t0 = performance.now();
+        let iters = 0;
+        while (performance.now() - t0 < MAX_SIM_MS_PER_FRAME && simAlpha > SIM_FLOOR) {
+          stepPhysics2D(simAlpha); simAlpha *= SIM_DECAY; iters++;
+          if (iters > 6) break;
+        }
+        if (simAlpha <= SIM_FLOOR) simRunning = false;
+      } else if (mode3D && simRunning3) {
+        const t0 = performance.now();
+        let iters = 0;
+        while (performance.now() - t0 < MAX_SIM_MS_PER_FRAME && simAlpha3 > SIM_FLOOR) {
+          stepPhysics3D(simAlpha3); simAlpha3 *= SIM_DECAY; iters++;
+          if (iters > 6) break;
+        }
+        if (simAlpha3 <= SIM_FLOOR) simRunning3 = false;
+      }
+    }
+    draw();
+    const stillSimming = currentView === "link" && ((!mode3D && simRunning) || (mode3D && simRunning3));
+    if (stillSimming) requestRender();
+  }
+
+  function draw() {
+    if (mode3D) {
+      canvas.style.display = "none";
+      canvas3d.style.display = "block";
+      labelOverlay.style.display = "block";
+      draw3D();
+      drawLabelOverlay();
+    } else {
+      canvas3d.style.display = "none";
+      canvas.style.display = "block";
+      labelOverlay.style.display = "none";
+      draw2D();
+    }
+  }
+
+  function draw2D() {
+    const w = canvas.width, h = canvas.height;
+    const cssBg = getCssVar("--surface");
+    ctx.save();
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = cssBg;
+    ctx.fillRect(0, 0, w, h);
+    if (currentView === "link") drawLinkGraph2D(); else drawSemanticMap2D();
+    ctx.restore();
+  }
+
+  function getCssVar(name) {
+    return getComputedStyle(document.getElementById("app")).getPropertyValue(name).trim();
+  }
+
+  const matchIds = new Set();
+  function recomputeSearch() {
+    matchIds.clear();
+    if (!searchQuery) return;
+    const q = searchQuery.toLowerCase();
+    RAW.nodes.forEach(n => { if (n.id.toLowerCase().includes(q) || (n.title||"").toLowerCase().includes(q)) matchIds.add(n.id); });
+    RAW.points.forEach(p => { if (p.id.toLowerCase().includes(q) || (p.title||"").toLowerCase().includes(q)) matchIds.add(p.id); });
+  }
+
+  function drawLinkGraph2D() {
+    const cam = camera2D.link;
+    ctx.lineWidth = 1;
+    // additive-style "lighter" compositing in dark mode mirrors the 3D
+    // renderer's see-through edges; light mode keeps normal alpha compositing
+    // (additive on a light background just saturates to white).
+    ctx.globalCompositeOperation = isAdditiveTheme() ? "lighter" : "source-over";
+    RAW.edges.forEach((e, idx) => {
+      if (!edgeVisible(e, idx)) return;
+      const a = linkNodeById.get(e.from), b = linkNodeById.get(e.to);
+      if (!a || !b) return;
+      const [ax, ay] = worldToScreen(a.x, a.y, cam);
+      const [bx, by] = worldToScreen(b.x, b.y, cam);
+      const dimmed = (searchQuery && !(matchIds.has(e.from) || matchIds.has(e.to)));
+      let alpha = dimmed ? 0.02 : (e.kind === "WIKILINK" ? 0.16 : 0.09);
+      alpha = focusEdgeAlpha(e.from, e.to, alpha) * edgeOpacityMul;
+      ctx.globalAlpha = clampEdgeAlpha(alpha);
+      ctx.strokeStyle = getCssVar("--ink-muted");
+      if (e.kind === "INFERRED") ctx.setLineDash([3, 3]); else ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
+
+    const mode = COLOR_MODES[colorMode];
+    for (const ln of linkNodes) {
+      const n = ln.ref;
+      const [sx, sy] = worldToScreen(ln.x, ln.y, cam);
+      if (sx < -20 || sy < -20 || sx > canvas.width + 20 || sy > canvas.height + 20) continue;
+      const r = Math.max(2, Math.sqrt(Math.max(n.degree, 0.4))) * dpr * clampZoomRadius(cam.zoom);
+      const dimmed = isDimmed(n.id, n[mode.key]);
+      const isSel = n.id === selectedId;
+      const isHover = n.id === hoverId;
+      ctx.globalAlpha = focusAlpha(n.id, dimmed ? 0.10 : 1);
+      ctx.beginPath();
+      ctx.arc(sx, sy, r, 0, Math.PI * 2);
+      ctx.fillStyle = mode.fn(n[mode.key]);
+      ctx.fill();
+      if (n.orphan) {
+        ctx.lineWidth = 1 * dpr;
+        ctx.strokeStyle = getCssVar("--warn");
+        ctx.globalAlpha = dimmed ? 0.08 : 0.85;
+        ctx.stroke();
+      }
+      if (isSel || isHover) {
+        ctx.save();
+        ctx.globalAlpha = 1;
+        ctx.shadowColor = getCssVar("--accent");
+        ctx.shadowBlur = isSel ? 14 * dpr : 6 * dpr;
+        ctx.lineWidth = 2 * dpr;
+        ctx.strokeStyle = getCssVar("--accent");
+        ctx.beginPath();
+        ctx.arc(sx, sy, r + 2 * dpr, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function clampZoomRadius(zoom) {
+    return Math.min(2.2, Math.max(0.55, Math.sqrt(zoom)));
+  }
+
+  function drawSemanticMap2D() {
+    const cam = camera2D.semantic;
+    const mode = COLOR_MODES[colorMode];
+
+    function drawArcs(pairs, color, on) {
+      if (!on) return;
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = color;
+      ctx.globalCompositeOperation = isAdditiveTheme() ? "lighter" : "source-over";
+      for (const p of pairs) {
+        const a = pointsById.get(p.a), b = pointsById.get(p.b);
+        if (!a || !b) continue;
+        const [ax, ay] = worldToScreen(a.sx, a.sy, cam);
+        const [bx, by] = worldToScreen(b.sx, b.sy, cam);
+        const dimmed = searchQuery && !(matchIds.has(p.a) || matchIds.has(p.b));
+        ctx.globalAlpha = clampEdgeAlpha((dimmed ? 0.05 : 0.35) * edgeOpacityMul);
+        const mx = (ax + bx) / 2, my = (ay + by) / 2 - Math.hypot(bx - ax, by - ay) * 0.06;
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.quadraticCurveTo(mx, my, bx, by);
+        ctx.stroke();
+      }
+      ctx.globalCompositeOperation = "source-over";
+    }
+    drawArcs(RAW.mismatch_pairs, getCssVar("--mismatch-amber"), layerState.mismatch);
+    drawArcs(RAW.duplicate_pairs, getCssVar("--dup-red"), layerState.dup);
+
+    if (layerState.lens && selectedId && RAW.neighbors[selectedId]) {
+      const a = pointsById.get(selectedId);
+      if (a) {
+        const [ax, ay] = worldToScreen(a.sx, a.sy, cam);
+        ctx.lineWidth = 1.4;
+        ctx.strokeStyle = getCssVar("--accent");
+        RAW.neighbors[selectedId].forEach(nb => {
+          const b = pointsById.get(nb.id);
+          if (!b) return;
+          const [bx, by] = worldToScreen(b.sx, b.sy, cam);
+          ctx.globalAlpha = 0.55;
+          ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = getCssVar("--ink-1");
+          ctx.font = `${11 * dpr}px system-ui, sans-serif`;
+          ctx.fillText(nb.cosine.toFixed(2), (ax + bx) / 2 + 4, (ay + by) / 2 - 4);
+        });
+      }
+    }
+    ctx.globalAlpha = 1;
+
+    for (const p of RAW.points) {
+      const [sx, sy] = worldToScreen(p.sx, p.sy, cam);
+      if (sx < -20 || sy < -20 || sx > canvas.width + 20 || sy > canvas.height + 20) continue;
+      const dimmed = isDimmed(p.id, p[mode.key]);
+      const isSel = p.id === selectedId;
+      const isHover = p.id === hoverId;
+      const r = 3.4 * dpr * clampZoomRadius(cam.zoom);
+      ctx.globalAlpha = focusAlpha(p.id, dimmed ? 0.08 : (p.in_graph ? 0.92 : 0.55));
+      ctx.beginPath();
+      ctx.arc(sx, sy, r, 0, Math.PI * 2);
+      ctx.fillStyle = mode.fn(p[mode.key]);
+      ctx.fill();
+      if (!p.in_graph) {
+        ctx.lineWidth = 1 * dpr;
+        ctx.strokeStyle = getCssVar("--ink-muted");
+        ctx.setLineDash([2, 2]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      if (isSel || isHover) {
+        ctx.save();
+        ctx.globalAlpha = 1;
+        ctx.shadowColor = getCssVar("--accent");
+        ctx.shadowBlur = isSel ? 14 * dpr : 6 * dpr;
+        ctx.lineWidth = 2 * dpr;
+        ctx.strokeStyle = getCssVar("--accent");
+        ctx.beginPath();
+        ctx.arc(sx, sy, r + 2.4 * dpr, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ======================================================================
+  // 6b. 3D WebGL renderer
+  // ======================================================================
+  function compileShader(type, src) {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+      console.error(gl.getShaderInfoLog(sh));
+    }
+    return sh;
+  }
+  function linkProgram(vsSrc, fsSrc) {
+    const prog = gl.createProgram();
+    gl.attachShader(prog, compileShader(gl.VERTEX_SHADER, vsSrc));
+    gl.attachShader(prog, compileShader(gl.FRAGMENT_SHADER, fsSrc));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      console.error(gl.getProgramInfoLog(prog));
+    }
+    return prog;
+  }
+
+  const POINT_VS = `
+    attribute vec3 aPos;
+    attribute vec4 aColor;
+    attribute float aSize;
+    attribute float aOrphan;
+    uniform mat4 uMVP;
+    uniform float uPointScale;
+    uniform float uFogNear;
+    uniform float uFogFar;
+    varying vec4 vColor;
+    varying float vOrphan;
+    void main() {
+      vec4 clip = uMVP * vec4(aPos, 1.0);
+      gl_Position = clip;
+      float w = max(clip.w, 0.001);
+      gl_PointSize = clamp(uPointScale * aSize / w, 2.0, 46.0);
+      // depth cueing (Munzner/Ware "space perception" -- atmospheric fog as a
+      // static depth cue): pow()-shaped curve instead of a linear mix so the
+      // near/mid/far bands read as ~3 distinguishable layers rather than one
+      // smooth gradient; floor keeps the far side always visible (never a
+      // full vanish, so you can still read structure through the near layer).
+      float lin = 1.0 - clamp((w - uFogNear) / max(uFogFar - uFogNear, 1.0), 0.0, 1.0);
+      float fog = 0.22 + 0.78 * pow(lin, 1.6);
+      vColor = vec4(aColor.rgb, aColor.a * fog);
+      vOrphan = aOrphan;
+    }
+  `;
+  const POINT_FS = `
+    precision mediump float;
+    varying vec4 vColor;
+    varying float vOrphan;
+    uniform float uRingMode;
+    uniform vec3 uHighlightColor;
+    void main() {
+      vec2 c = gl_PointCoord - vec2(0.5);
+      float d = length(c) * 2.0;
+      if (uRingMode > 0.5) {
+        if (d < 0.68 || d > 1.0) discard;
+        gl_FragColor = vec4(uHighlightColor, 0.95);
+        return;
+      }
+      if (d > 1.0) discard;
+      vec3 rgb = vColor.rgb;
+      if (vOrphan > 0.5 && d > 0.76) {
+        rgb = mix(rgb, vec3(0.98, 0.70, 0.10), 0.85);
+      }
+      float edgeFade = smoothstep(1.0, 0.85, d);
+      gl_FragColor = vec4(rgb, vColor.a * edgeFade);
+    }
+  `;
+  const LINE_VS = `
+    attribute vec3 aPos;
+    attribute vec4 aColor;
+    uniform mat4 uMVP;
+    uniform float uFogNear;
+    uniform float uFogFar;
+    varying vec4 vColor;
+    void main() {
+      vec4 clip = uMVP * vec4(aPos, 1.0);
+      gl_Position = clip;
+      float w = max(clip.w, 0.001);
+      // edges keep a slightly lower floor than nodes (they're the "haze",
+      // nodes are the anchors) but never fully disappear either.
+      float lin = 1.0 - clamp((w - uFogNear) / max(uFogFar - uFogNear, 1.0), 0.0, 1.0);
+      float fog = 0.16 + 0.84 * pow(lin, 1.3);
+      vColor = vec4(aColor.rgb, aColor.a * fog);
+    }
+  `;
+  const LINE_FS = `
+    precision mediump float;
+    varying vec4 vColor;
+    void main() { gl_FragColor = vColor; }
+  `;
+
+  const pointProgram = linkProgram(POINT_VS, POINT_FS);
+  const lineProgram = linkProgram(LINE_VS, LINE_FS);
+
+  const pointAttribs = {
+    aPos: gl.getAttribLocation(pointProgram, "aPos"),
+    aColor: gl.getAttribLocation(pointProgram, "aColor"),
+    aSize: gl.getAttribLocation(pointProgram, "aSize"),
+    aOrphan: gl.getAttribLocation(pointProgram, "aOrphan"),
+  };
+  const pointUniforms = {
+    uMVP: gl.getUniformLocation(pointProgram, "uMVP"),
+    uPointScale: gl.getUniformLocation(pointProgram, "uPointScale"),
+    uFogNear: gl.getUniformLocation(pointProgram, "uFogNear"),
+    uFogFar: gl.getUniformLocation(pointProgram, "uFogFar"),
+    uRingMode: gl.getUniformLocation(pointProgram, "uRingMode"),
+    uHighlightColor: gl.getUniformLocation(pointProgram, "uHighlightColor"),
+  };
+  const lineAttribs = {
+    aPos: gl.getAttribLocation(lineProgram, "aPos"),
+    aColor: gl.getAttribLocation(lineProgram, "aColor"),
+  };
+  const lineUniforms = {
+    uMVP: gl.getUniformLocation(lineProgram, "uMVP"),
+    uFogNear: gl.getUniformLocation(lineProgram, "uFogNear"),
+    uFogFar: gl.getUniformLocation(lineProgram, "uFogFar"),
+  };
+
+  const pointPosBuf = gl.createBuffer();
+  const pointColorBuf = gl.createBuffer();
+  const pointSizeBuf = gl.createBuffer();
+  const pointOrphanBuf = gl.createBuffer();
+  const linePosBuf = gl.createBuffer();
+  const lineColorBuf = gl.createBuffer();
+  const highlightPosBuf = gl.createBuffer();
+
+  // static wireframe sphere (orphan halo shell), one per dataset scale
+  function buildSphereWireframe(radius, rings, segs) {
+    const verts = [];
+    for (let r = 0; r < rings; r++) {
+      const lat = (Math.PI * (r + 0.5)) / rings;
+      for (let s = 0; s < segs; s++) {
+        const a0 = (2 * Math.PI * s) / segs, a1 = (2 * Math.PI * (s + 1)) / segs;
+        const y = radius * Math.cos(lat), rr = radius * Math.sin(lat);
+        verts.push(rr*Math.cos(a0), y, rr*Math.sin(a0), rr*Math.cos(a1), y, rr*Math.sin(a1));
+      }
+    }
+    // a few meridians too, for depth read
+    for (let m = 0; m < 6; m++) {
+      const a = (2 * Math.PI * m) / 6;
+      for (let r = 0; r < rings; r++) {
+        const lat0 = (Math.PI * r) / rings, lat1 = (Math.PI * (r + 1)) / rings;
+        verts.push(
+          radius*Math.sin(lat0)*Math.cos(a), radius*Math.cos(lat0), radius*Math.sin(lat0)*Math.sin(a),
+          radius*Math.sin(lat1)*Math.cos(a), radius*Math.cos(lat1), radius*Math.sin(lat1)*Math.sin(a)
+        );
+      }
+    }
+    return new Float32Array(verts);
+  }
+  let sphereLink = buildSphereWireframe(linkNodes3D.__shellR || 200, 8, 24);
+  const sphereSemanticR = SEMANTIC_SCALE * 1.05;
+  let sphereSemantic = buildSphereWireframe(sphereSemanticR, 8, 24);
+  const sphereBuf = gl.createBuffer();
+
+  function uploadFloat(buf, arr) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, arr, gl.DYNAMIC_DRAW);
+  }
+
+  function nodeBaseColor(entity, mode) {
+    const hex = mode.fn(entity[mode.key]);
+    return hexToRgb01(hex);
+  }
+
+  // ---- transparency model (research: Elmqvist/Assarsson/Tsigas "Dynamic
+  // Transparency for 3D Visualization" -- X-ray-style occlusion management
+  // outperforms a static transparent surface for target discovery; WebGL
+  // additive blending is inherently order-independent, so it needs no depth
+  // sort to look right). Dark mode -> additive glow (edges read as brightness
+  // where they overlap, and the far side of the graph shows THROUGH the near
+  // side). Light mode -> additive would just saturate to white, so it falls
+  // back to standard alpha there. Edges never write or test depth, so a node
+  // in front can never incorrectly erase an edge behind it from the buffer.
+  function isAdditiveTheme() { return THEME.mode === "dark"; }
+  function beginEdgePass() {
+    gl.disable(gl.DEPTH_TEST);
+    gl.depthMask(false);
+    if (isAdditiveTheme()) gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+    else gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  }
+  function endEdgePass() {
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthMask(true);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  }
+  // additive can take alpha > 1 (just brighter, GPU clamps the final pixel);
+  // standard alpha blending cannot, so light mode is capped at 1.
+  function clampEdgeAlpha(a) {
+    return Math.max(0, isAdditiveTheme() ? Math.min(3, a) : Math.min(1, a));
+  }
+
+  function draw3D() {
+    const w = canvas3d.width, h = canvas3d.height;
+    const bg = hexToRgb01(getCssVar("--surface") || "#1a1a19"); // hexToRgb01 strips '#' itself
+    gl.clearColor(bg[0], bg[1], bg[2], 1);
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.viewport(0, 0, w, h);
+
+    const cam = camera3DState[currentView];
+    const aspect = w / Math.max(h, 1);
+    const mvp = mvpFor(cam, aspect);
+    const fogNear = cam.dist * 0.4, fogFar = cam.dist * 2.6;
+
+    if (currentView === "link") draw3DLinkGraph(mvp, fogNear, fogFar);
+    else draw3DSemanticMap(mvp, fogNear, fogFar);
+  }
+
+  function draw3DSphereShell(mvp, fogNear, fogFar, radius, verts) {
+    beginEdgePass();
+    gl.useProgram(lineProgram);
+    gl.uniformMatrix4fv(lineUniforms.uMVP, false, mvp);
+    gl.uniform1f(lineUniforms.uFogNear, fogNear);
+    gl.uniform1f(lineUniforms.uFogFar, fogFar);
+    uploadFloat(sphereBuf, verts);
+    gl.enableVertexAttribArray(lineAttribs.aPos);
+    gl.vertexAttribPointer(lineAttribs.aPos, 3, gl.FLOAT, false, 0, 0);
+    // single flat muted color for the whole shell -- constant color attribute
+    // via vertexAttrib1/4f (no color buffer needed for a monochrome shell)
+    gl.disableVertexAttribArray(lineAttribs.aColor);
+    gl.vertexAttrib4f(lineAttribs.aColor, 0.55, 0.54, 0.49, 0.10);
+    gl.drawArrays(gl.LINES, 0, verts.length / 3);
+    endEdgePass();
+  }
+
+  function draw3DLinkGraph(mvp, fogNear, fogFar) {
+    const mode = COLOR_MODES[colorMode];
+
+    // orphan halo shell
+    draw3DSphereShell(mvp, fogNear, fogFar, linkNodes3D.__shellR, sphereLink);
+
+    // edges -- top-edges declutter (importance = endpoint degree sum, this
+    // dataset carries no per-edge weight) + INFERRED hidden by default +
+    // focus/context ghosting + user opacity slider, all folded into one alpha.
+    const edgeVerts = [];
+    const edgeColors = [];
+    const mutedRgb = hexToRgb01(MUTED[THEME.mode]);
+    RAW.edges.forEach((e, idx) => {
+      if (!edgeVisible(e, idx)) return;
+      const a = linkNode3DById.get(e.from), b = linkNode3DById.get(e.to);
+      if (!a || !b) return;
+      const searchDimmed = searchQuery && !(matchIds.has(e.from) || matchIds.has(e.to));
+      let alpha = searchDimmed ? 0.015 : (e.kind === "WIKILINK" ? 0.14 : 0.07);
+      alpha = focusEdgeAlpha(e.from, e.to, alpha) * edgeOpacityMul;
+      alpha = clampEdgeAlpha(alpha);
+      edgeVerts.push(a.x, a.y, a.z, b.x, b.y, b.z);
+      edgeColors.push(mutedRgb[0], mutedRgb[1], mutedRgb[2], alpha, mutedRgb[0], mutedRgb[1], mutedRgb[2], alpha);
+    });
+    if (edgeVerts.length) {
+      beginEdgePass();
+      gl.useProgram(lineProgram);
+      gl.uniformMatrix4fv(lineUniforms.uMVP, false, mvp);
+      gl.uniform1f(lineUniforms.uFogNear, fogNear);
+      gl.uniform1f(lineUniforms.uFogFar, fogFar);
+      uploadFloat(linePosBuf, new Float32Array(edgeVerts));
+      gl.enableVertexAttribArray(lineAttribs.aPos);
+      gl.vertexAttribPointer(lineAttribs.aPos, 3, gl.FLOAT, false, 0, 0);
+      uploadFloat(lineColorBuf, new Float32Array(edgeColors));
+      gl.enableVertexAttribArray(lineAttribs.aColor);
+      gl.vertexAttribPointer(lineAttribs.aColor, 4, gl.FLOAT, false, 0, 0);
+      gl.drawArrays(gl.LINES, 0, edgeVerts.length / 3);
+      endEdgePass();
+    }
+
+    // nodes
+    const n = linkNodes3D.length;
+    const pos = new Float32Array(n * 3);
+    const col = new Float32Array(n * 4);
+    const size = new Float32Array(n);
+    const orph = new Float32Array(n);
+    let i = 0;
+    for (const ln of linkNodes3D) {
+      const ref = ln.ref;
+      pos[i*3] = ln.x; pos[i*3+1] = ln.y; pos[i*3+2] = ln.z;
+      const rgb = nodeBaseColor(ref, mode);
+      const dimmed = isDimmed(ref.id, ref[mode.key]);
+      const a = focusAlpha(ref.id, dimmed ? 0.10 : 0.92);
+      col[i*4] = rgb[0]; col[i*4+1] = rgb[1]; col[i*4+2] = rgb[2]; col[i*4+3] = a;
+      size[i] = Math.max(3.2, Math.sqrt(Math.max(ref.degree, 0.4)) * 3.2);
+      orph[i] = ref.orphan ? 1 : 0;
+      i++;
+    }
+    gl.useProgram(pointProgram);
+    gl.uniformMatrix4fv(pointUniforms.uMVP, false, mvp);
+    gl.uniform1f(pointUniforms.uPointScale, 5200);
+    gl.uniform1f(pointUniforms.uFogNear, fogNear);
+    gl.uniform1f(pointUniforms.uFogFar, fogFar);
+    gl.uniform1f(pointUniforms.uRingMode, 0);
+    uploadFloat(pointPosBuf, pos);
+    gl.enableVertexAttribArray(pointAttribs.aPos);
+    gl.vertexAttribPointer(pointAttribs.aPos, 3, gl.FLOAT, false, 0, 0);
+    uploadFloat(pointColorBuf, col);
+    gl.enableVertexAttribArray(pointAttribs.aColor);
+    gl.vertexAttribPointer(pointAttribs.aColor, 4, gl.FLOAT, false, 0, 0);
+    uploadFloat(pointSizeBuf, size);
+    gl.enableVertexAttribArray(pointAttribs.aSize);
+    gl.vertexAttribPointer(pointAttribs.aSize, 1, gl.FLOAT, false, 0, 0);
+    uploadFloat(pointOrphanBuf, orph);
+    gl.enableVertexAttribArray(pointAttribs.aOrphan);
+    gl.vertexAttribPointer(pointAttribs.aOrphan, 1, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.POINTS, 0, n);
+
+    draw3DHighlight(mvp, fogNear, fogFar, id => { const ln = linkNode3DById.get(id); return ln ? [ln.x, ln.y, ln.z] : null; });
+  }
+
+  function draw3DSemanticMap(mvp, fogNear, fogFar) {
+    const mode = COLOR_MODES[colorMode];
+
+    draw3DSphereShell(mvp, fogNear, fogFar, sphereSemanticR, sphereSemantic);
+
+    function drawArcSet(pairs, color, on) {
+      if (!on || !pairs.length) return;
+      const verts = [], cols = [];
+      for (const p of pairs) {
+        const a = pointsById.get(p.a), b = pointsById.get(p.b);
+        if (!a || !b) continue;
+        const dimmed = searchQuery && !(matchIds.has(p.a) || matchIds.has(p.b));
+        let alpha = dimmed ? 0.04 : 0.4;
+        alpha = clampEdgeAlpha(alpha * edgeOpacityMul);
+        verts.push(a.sx, a.sy, a.sz, b.sx, b.sy, b.sz);
+        cols.push(color[0], color[1], color[2], alpha, color[0], color[1], color[2], alpha);
+      }
+      if (!verts.length) return;
+      beginEdgePass();
+      gl.useProgram(lineProgram);
+      gl.uniformMatrix4fv(lineUniforms.uMVP, false, mvp);
+      gl.uniform1f(lineUniforms.uFogNear, fogNear);
+      gl.uniform1f(lineUniforms.uFogFar, fogFar);
+      uploadFloat(linePosBuf, new Float32Array(verts));
+      gl.enableVertexAttribArray(lineAttribs.aPos);
+      gl.vertexAttribPointer(lineAttribs.aPos, 3, gl.FLOAT, false, 0, 0);
+      uploadFloat(lineColorBuf, new Float32Array(cols));
+      gl.enableVertexAttribArray(lineAttribs.aColor);
+      gl.vertexAttribPointer(lineAttribs.aColor, 4, gl.FLOAT, false, 0, 0);
+      gl.drawArrays(gl.LINES, 0, verts.length / 3);
+      endEdgePass();
+    }
+    // 3D arcs are drawn as straight segments (depth already separates
+    // overlapping pairs -- the 2D quadratic-curve bow was purely to dodge
+    // straight-line overlap on a flat plane).
+    drawArcSet(RAW.mismatch_pairs, hexToRgb01("#c98500"), layerState.mismatch);
+    drawArcSet(RAW.duplicate_pairs, hexToRgb01("#e66767"), layerState.dup);
+
+    if (layerState.lens && selectedId && RAW.neighbors[selectedId]) {
+      const a = pointsById.get(selectedId);
+      if (a) {
+        const verts = [], cols = [];
+        const accent = hexToRgb01(getCssVar("--accent") || "#3987e5");
+        RAW.neighbors[selectedId].forEach(nb => {
+          const b = pointsById.get(nb.id);
+          if (!b) return;
+          verts.push(a.sx, a.sy, a.sz, b.sx, b.sy, b.sz);
+          cols.push(accent[0], accent[1], accent[2], 0.6, accent[0], accent[1], accent[2], 0.6);
+        });
+        if (verts.length) {
+          beginEdgePass();
+          gl.useProgram(lineProgram);
+          gl.uniformMatrix4fv(lineUniforms.uMVP, false, mvp);
+          gl.uniform1f(lineUniforms.uFogNear, fogNear);
+          gl.uniform1f(lineUniforms.uFogFar, fogFar);
+          uploadFloat(linePosBuf, new Float32Array(verts));
+          gl.enableVertexAttribArray(lineAttribs.aPos);
+          gl.vertexAttribPointer(lineAttribs.aPos, 3, gl.FLOAT, false, 0, 0);
+          uploadFloat(lineColorBuf, new Float32Array(cols));
+          gl.enableVertexAttribArray(lineAttribs.aColor);
+          gl.vertexAttribPointer(lineAttribs.aColor, 4, gl.FLOAT, false, 0, 0);
+          gl.drawArrays(gl.LINES, 0, verts.length / 3);
+          endEdgePass();
+        }
+      }
+    }
+
+    const n = RAW.points.length;
+    const pos = new Float32Array(n * 3);
+    const col = new Float32Array(n * 4);
+    const size = new Float32Array(n);
+    const orph = new Float32Array(n);
+    let i = 0;
+    for (const p of RAW.points) {
+      pos[i*3] = p.sx; pos[i*3+1] = p.sy; pos[i*3+2] = p.sz;
+      const rgb = nodeBaseColor(p, mode);
+      const dimmed = isDimmed(p.id, p[mode.key]);
+      const a = focusAlpha(p.id, dimmed ? 0.08 : (p.in_graph ? 0.9 : 0.5));
+      col[i*4] = rgb[0]; col[i*4+1] = rgb[1]; col[i*4+2] = rgb[2]; col[i*4+3] = a;
+      size[i] = 5.2;
+      orph[i] = 0;
+      i++;
+    }
+    gl.useProgram(pointProgram);
+    gl.uniformMatrix4fv(pointUniforms.uMVP, false, mvp);
+    gl.uniform1f(pointUniforms.uPointScale, 5200);
+    gl.uniform1f(pointUniforms.uFogNear, fogNear);
+    gl.uniform1f(pointUniforms.uFogFar, fogFar);
+    gl.uniform1f(pointUniforms.uRingMode, 0);
+    uploadFloat(pointPosBuf, pos);
+    gl.enableVertexAttribArray(pointAttribs.aPos);
+    gl.vertexAttribPointer(pointAttribs.aPos, 3, gl.FLOAT, false, 0, 0);
+    uploadFloat(pointColorBuf, col);
+    gl.enableVertexAttribArray(pointAttribs.aColor);
+    gl.vertexAttribPointer(pointAttribs.aColor, 4, gl.FLOAT, false, 0, 0);
+    uploadFloat(pointSizeBuf, size);
+    gl.enableVertexAttribArray(pointAttribs.aSize);
+    gl.vertexAttribPointer(pointAttribs.aSize, 1, gl.FLOAT, false, 0, 0);
+    uploadFloat(pointOrphanBuf, orph);
+    gl.enableVertexAttribArray(pointAttribs.aOrphan);
+    gl.vertexAttribPointer(pointAttribs.aOrphan, 1, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.POINTS, 0, n);
+
+    draw3DHighlight(mvp, fogNear, fogFar, id => { const p = pointsById.get(id); return p ? [p.sx, p.sy, p.sz] : null; });
+  }
+
+  function draw3DHighlight(mvp, fogNear, fogFar, coordsFor) {
+    const ids = [];
+    if (hoverId && hoverId !== selectedId) ids.push([hoverId, 0.5]);
+    if (selectedId) ids.push([selectedId, 1]);
+    if (!ids.length) return;
+    // subtle bloom: additive in dark mode so the selection ring reads as a
+    // soft glow rather than a flat outline; standard alpha in light mode
+    // (additive would just wash the ring out against a white background).
+    gl.disable(gl.DEPTH_TEST);
+    if (isAdditiveTheme()) gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+    gl.useProgram(pointProgram);
+    gl.uniformMatrix4fv(pointUniforms.uMVP, false, mvp);
+    gl.uniform1f(pointUniforms.uFogNear, fogNear * 100); // effectively disable fog fade on the ring
+    gl.uniform1f(pointUniforms.uFogFar, fogFar * 100);
+    gl.uniform1f(pointUniforms.uRingMode, 1);
+    const accent = hexToRgb01(getCssVar("--accent").startsWith("#") ? getCssVar("--accent") : "#3987e5");
+    gl.uniform3f(pointUniforms.uHighlightColor, accent[0], accent[1], accent[2]);
+    for (const [id, boost] of ids) {
+      const c = coordsFor(id);
+      if (!c) continue;
+      uploadFloat(highlightPosBuf, new Float32Array(c));
+      gl.enableVertexAttribArray(pointAttribs.aPos);
+      gl.vertexAttribPointer(pointAttribs.aPos, 3, gl.FLOAT, false, 0, 0);
+      gl.disableVertexAttribArray(pointAttribs.aColor);
+      gl.vertexAttrib4f(pointAttribs.aColor, accent[0], accent[1], accent[2], 1);
+      gl.disableVertexAttribArray(pointAttribs.aSize);
+      gl.vertexAttrib1f(pointAttribs.aSize, 12 + boost * 6);
+      gl.disableVertexAttribArray(pointAttribs.aOrphan);
+      gl.vertexAttrib1f(pointAttribs.aOrphan, 0);
+      gl.uniform1f(pointUniforms.uPointScale, 5200 * (2.4 + boost));
+      gl.drawArrays(gl.POINTS, 0, 1);
+    }
+    gl.uniform1f(pointUniforms.uRingMode, 0);
+    gl.enable(gl.DEPTH_TEST);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  }
+
+  // ======================================================================
+  // 6c. label overlay (2D canvas layered over the WebGL canvas, projecting
+  // through the SAME mvp/projectPoint math already used for picking).
+  // Billboard text-in-WebGL is heavier than this is worth here; a 2D overlay
+  // is the standard, cheap alternative. Only the nearest-to-camera N labels
+  // draw (LOD -- more appear as you zoom in), plus hover/selection always
+  // label regardless of depth rank, so you never lose track of what you
+  // picked.
+  // ======================================================================
+  const LABEL_BASE_COUNT = 12, LABEL_MAX_COUNT = 40;
+  function truncateLabel(s, n) { return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+
+  function drawLabelOverlay() {
+    labelCtx.clearRect(0, 0, labelOverlay.width, labelOverlay.height);
+    if (!mode3D || currentView !== "link" && currentView !== "semantic") return;
+    const cam = camera3DState[currentView];
+    const vw = labelOverlay.width, vh = labelOverlay.height;
+    const aspect = vw / Math.max(vh, 1);
+    const mvp = mvpFor(cam, aspect);
+
+    const list = currentView === "link"
+      ? linkNodes3D.map(ln => ({ id: ln.ref.id, title: ln.ref.title, x: ln.x, y: ln.y, z: ln.z }))
+      : RAW.points.map(p => ({ id: p.id, title: p.title, x: p.sx, y: p.sy, z: p.sz }));
+
+    const projected = [];
+    for (const item of list) {
+      const proj = projectPoint(mvp, item.x, item.y, item.z, vw, vh);
+      if (!proj) continue;
+      if (proj.sx < -60 || proj.sx > vw + 60 || proj.sy < -60 || proj.sy > vh + 60) continue;
+      projected.push({ id: item.id, title: item.title, sx: proj.sx, sy: proj.sy, w: proj.w });
+    }
+    projected.sort((a, b) => a.w - b.w); // nearest-to-camera first
+
+    // LOD: zooming in (smaller cam.dist relative to where this view started)
+    // reveals more labels, up to LABEL_MAX_COUNT.
+    const zoomRatio = INITIAL_DIST[currentView] / Math.max(cam.dist, 1);
+    const count = Math.max(LABEL_BASE_COUNT, Math.min(LABEL_MAX_COUNT, Math.round(LABEL_BASE_COUNT * zoomRatio)));
+
+    const shown = new Map();
+    for (const item of projected.slice(0, count)) shown.set(item.id, item);
+    // hover/selection always label, even off the nearest-N cut.
+    for (const id of [selectedId, hoverId]) {
+      if (id && !shown.has(id)) {
+        const found = projected.find(p => p.id === id);
+        if (found) shown.set(id, found);
+      }
+    }
+    if (!shown.size) return;
+
+    const accent = getCssVar("--accent") || "#3987e5";
+    const ink = getCssVar("--ink-1") || "#ffffff";
+    labelCtx.font = `${11 * dpr}px system-ui, -apple-system, sans-serif`;
+    labelCtx.textBaseline = "middle";
+    shown.forEach(item => {
+      const isFocus = item.id === selectedId || item.id === hoverId;
+      labelCtx.fillStyle = isFocus ? accent : ink;
+      labelCtx.globalAlpha = isFocus ? 1 : 0.72;
+      labelCtx.font = isFocus
+        ? `600 ${11.5 * dpr}px system-ui, -apple-system, sans-serif`
+        : `${10.5 * dpr}px system-ui, -apple-system, sans-serif`;
+      labelCtx.fillText(truncateLabel(item.title || item.id, 30), item.sx + 7 * dpr, item.sy);
+    });
+    labelCtx.globalAlpha = 1;
+  }
+
+  // ======================================================================
+  // 7. hit testing / hover / tooltip
+  // ======================================================================
+  function hitTest2D(px, py) {
+    let best = null, bestD2 = Infinity;
+    if (currentView === "link") {
+      const cam = camera2D.link;
+      for (const ln of linkNodes) {
+        const [sx, sy] = worldToScreen(ln.x, ln.y, cam);
+        const r = Math.max(2, Math.sqrt(Math.max(ln.ref.degree, 0.4))) * dpr * clampZoomRadius(cam.zoom);
+        const hit = Math.max(r, 10 * dpr);
+        const d2 = (sx - px) ** 2 + (sy - py) ** 2;
+        if (d2 < hit * hit && d2 < bestD2) { bestD2 = d2; best = ln.ref.id; }
+      }
+    } else {
+      const cam = camera2D.semantic;
+      for (const p of RAW.points) {
+        const [sx, sy] = worldToScreen(p.sx, p.sy, cam);
+        const hit = 10 * dpr;
+        const d2 = (sx - px) ** 2 + (sy - py) ** 2;
+        if (d2 < hit * hit && d2 < bestD2) { bestD2 = d2; best = p.id; }
+      }
+    }
+    return best;
+  }
+
+  // nearest-projected-point-within-radius: project every candidate through
+  // the same MVP the GPU used this frame, then pick smallest screen distance
+  // (ties broken by nearer camera, i.e. smaller w).
+  function hitTest3D(px, py) {
+    const cam = camera3DState[currentView];
+    const aspect = canvas3d.clientWidth / Math.max(canvas3d.clientHeight, 1);
+    const mvp = mvpFor(cam, aspect);
+    const vw = canvas3d.clientWidth, vh = canvas3d.clientHeight;
+    const HIT_R2 = 14 * 14;
+    let best = null, bestW = Infinity;
+    const list = currentView === "link"
+      ? linkNodes3D.map(ln => [ln.ref.id, ln.x, ln.y, ln.z])
+      : RAW.points.map(p => [p.id, p.sx, p.sy, p.sz]);
+    for (const [id, x, y, z] of list) {
+      const proj = projectPoint(mvp, x, y, z, vw, vh);
+      if (!proj) continue;
+      const d2 = (proj.sx - px) ** 2 + (proj.sy - py) ** 2;
+      // within the pick radius: keep whichever candidate is nearest the
+      // camera (smallest w) -- avoids a far node "winning" just because
+      // perspective happened to land it a hair closer to the cursor.
+      if (d2 <= HIT_R2 && proj.w < bestW) { best = id; bestW = proj.w; }
+    }
+    return best;
+  }
+
+  const tooltipEl = document.getElementById("tooltip");
+  function hideTooltip() { tooltipEl.hidden = true; }
+  function showTooltipFor(id, clientX, clientY) {
+    if (!id) { hideTooltip(); return; }
+    const n = nodesById.get(id) || pointsById.get(id);
+    if (!n) { hideTooltip(); return; }
+    const wrapRect = wrap.getBoundingClientRect();
+    tooltipEl.hidden = false;
+    tooltipEl.style.left = (clientX - wrapRect.left + 14) + "px";
+    tooltipEl.style.top = (clientY - wrapRect.top + 14) + "px";
+    tooltipEl.innerHTML = "";
+    const t = document.createElement("div"); t.className = "t-title"; t.textContent = n.title || id;
+    const m = document.createElement("div"); m.className = "t-meta"; m.textContent = `${n.type} · ${n.classification}`;
+    tooltipEl.appendChild(t); tooltipEl.appendChild(m);
+  }
+  function handleHover2D(px, py, clientX, clientY) {
+    const id = hitTest2D(px, py);
+    if (id !== hoverId) { hoverId = id; updateFocus(); requestRender(); }
+    showTooltipFor(id, clientX, clientY);
+  }
+  function handleHover3D(px, py, clientX, clientY) {
+    const id = hitTest3D(px, py);
+    if (id !== hoverId) { hoverId = id; updateFocus(); requestRender(); }
+    showTooltipFor(id, clientX, clientY);
+  }
+
+  // ======================================================================
+  // 8. selection / details panel (dimension-agnostic)
+  // ======================================================================
+  const detailsEl = document.getElementById("details");
+  function deselect() {
+    selectedId = null;
+    detailsEl.classList.add("hidden");
+    updateFocus();
+    requestRender();
+  }
+  function selectNode(id) {
+    selectedId = id;
+    renderDetails(id);
+    detailsEl.classList.remove("hidden");
+    updateFocus();
+    requestRender();
+  }
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape") {
+      hoverId = null;
+      deselect();
+      hideTooltip();
+    }
+  });
+
+  function renderDetails(id) {
+    const n = nodesById.get(id);
+    const p = pointsById.get(id);
+    const title = (n && n.title) || (p && p.title) || id;
+    const type = (n && n.type) || (p && p.type) || "?";
+    const cls = (n && n.classification) || (p && p.classification) || "?";
+    const zone = (n && n.zone) || (p && p.zone) || "?";
+    const degree = n ? n.degree : 0;
+    const wikiDegree = n ? n.wiki_degree : 0;
+
+    const flags = [];
+    if (n && n.orphan) flags.push(["orphan", n.truly_isolated ? "isolated (no edges at all)" : "orphan (no WIKILINK, INFERRED only)"]);
+    if (n && n.dup_suspect) flags.push(["dup", "duplicate suspect"]);
+    if (n && n.mismatch_flag) flags.push(["mismatch", "unlinked semantic match"]);
+    if (p && !p.in_graph) flags.push(["notgraph", "not in graph.json (post-build capture)"]);
+
+    detailsEl.innerHTML = "";
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "close-details"; closeBtn.textContent = "✕";
+    closeBtn.addEventListener("click", deselect);
+    detailsEl.appendChild(closeBtn);
+
+    const h2 = document.createElement("h2"); h2.textContent = title; detailsEl.appendChild(h2);
+    const idEl = document.createElement("div"); idEl.className = "d-id"; idEl.textContent = id; detailsEl.appendChild(idEl);
+
+    const flagRow = document.createElement("div"); flagRow.className = "flag-row";
+    flags.forEach(([cls2, label]) => {
+      const f = document.createElement("span"); f.className = "flag " + cls2; f.textContent = label;
+      flagRow.appendChild(f);
+    });
+    if (flags.length) detailsEl.appendChild(flagRow);
+
+    [["Type", type], ["Classification", cls], ["PARA zone", zone],
+     ["Degree (all edges)", degree], ["WIKILINK degree", wikiDegree]]
+      .forEach(([k, v]) => {
+        const row = document.createElement("div"); row.className = "d-field";
+        const kEl = document.createElement("span"); kEl.className = "k"; kEl.textContent = k;
+        const vEl = document.createElement("span"); vEl.className = "v"; vEl.textContent = v;
+        row.appendChild(kEl); row.appendChild(vEl);
+        detailsEl.appendChild(row);
+      });
+
+    if (n) {
+      const edges = (edgesByNode.get(id) || []).slice(0, 60);
+      const lt = document.createElement("div"); lt.className = "d-list-title";
+      lt.textContent = `Edges (${(edgesByNode.get(id) || []).length})`;
+      detailsEl.appendChild(lt);
+      const ul = document.createElement("ul"); ul.className = "d-edge-list";
+      edges.forEach(e => {
+        const li = document.createElement("li");
+        const nameEl = document.createElement("span");
+        nameEl.textContent = (nodesById.get(e.other) || {}).title || e.other;
+        const kindEl = document.createElement("span"); kindEl.className = "kind";
+        kindEl.textContent = e.kind === "WIKILINK" ? "wiki" : "inferred";
+        li.appendChild(nameEl); li.appendChild(kindEl);
+        li.addEventListener("click", () => selectNode(e.other));
+        ul.appendChild(li);
+      });
+      detailsEl.appendChild(ul);
+    }
+
+    if (RAW.neighbors[id]) {
+      const lt = document.createElement("div"); lt.className = "d-list-title";
+      lt.textContent = "Top semantic neighbors";
+      detailsEl.appendChild(lt);
+      const ul = document.createElement("ul"); ul.className = "d-nb-list";
+      RAW.neighbors[id].forEach(nb => {
+        const li = document.createElement("li");
+        const nameEl = document.createElement("span");
+        nameEl.textContent = (pointsById.get(nb.id) || {}).title || nb.id;
+        const cosEl = document.createElement("span"); cosEl.className = "cos";
+        cosEl.textContent = nb.cosine.toFixed(3);
+        li.appendChild(nameEl); li.appendChild(cosEl);
+        li.addEventListener("click", () => selectNode(nb.id));
+        ul.appendChild(li);
+      });
+      detailsEl.appendChild(ul);
+    }
+  }
+
+  // ======================================================================
+  // 9. sidebar (targets + diagnostics) + legend + layer toggles + footer
+  // ======================================================================
+  const sidebarEl = document.getElementById("sidebar");
+  function diagRow(label, value, onClick, sub) {
+    const row = document.createElement("button");
+    row.className = "diag-row";
+    const l = document.createElement("span"); l.textContent = label;
+    const v = document.createElement("span"); v.className = "v"; v.textContent = value;
+    row.appendChild(l); row.appendChild(v);
+    if (onClick) row.addEventListener("click", onClick);
+    return row;
+  }
+  function section(title) {
+    const sec = document.createElement("div"); sec.className = "diag-section";
+    const h = document.createElement("div"); h.className = "diag-title"; h.textContent = title;
+    sec.appendChild(h);
+    sidebarEl.appendChild(sec);
+    return sec;
+  }
+
+  // Bands, not points: every non-trend target carries {excellent, acceptable}
+  // sourced from the 2026-07-21 external-benchmark research pass (see
+  // graphreport.py's _SRC_* constants for the full citations). "excellent"
+  // and "good" are real, sourced outcomes seen in mature vaults/networks —
+  // never re-tighten these back to a 100%-perfection point.
+  function statusColor(status) {
+    if (status === "excellent") return "var(--good)";
+    if (status === "good") return "var(--warn)";
+    if (status === "needs_work") return "var(--critical)";
+    return "var(--ink-muted)";
+  }
+
+  function fmtVal(t, v) {
+    if (v === null || v === undefined) return "";
+    return t.unit === "%" ? `${v}%` : (t.unit === "per 1k" ? `${v}/1k` : `${v}`);
+  }
+
+  // Maps a raw metric value to a 0-100 bar position. "higher_pct" metrics are
+  // already 0-100 (direct position); "lower_pct" inverts (0% = full bar);
+  // "lower_count" has no natural ceiling, so it scales against a soft ceiling
+  // derived from the acceptable band + n_total (same shape as the old
+  // point-target bar, just referencing the band instead of a single number).
+  function scalePos(t, v) {
+    if (v === null || v === undefined) return null;
+    if (t.direction === "higher_pct") return Math.max(0, Math.min(100, v));
+    if (t.direction === "lower_pct") return Math.max(0, Math.min(100, 100 - v));
+    const ceiling = Math.max((t.acceptable || 0) + 1, (t.n_total || 10) * 0.05, t.current, v, 10);
+    if (v <= 0) return 100;
+    return Math.max(0, 100 - (v / ceiling) * 100);
+  }
+
+  function targetFillPct(t) {
+    if (t.status === "trend") return 100;
+    return Math.max(2, scalePos(t, t.current));
+  }
+
+  function buildTargets() {
+    const sec = section("Where we are vs where we should be");
+    RAW.targets.forEach(t => {
+      const item = document.createElement("div"); item.className = "target-item";
+      const src = t.source || {};
+      item.title = [src.label, src.url, src.confidence ? `confidence: ${src.confidence}` : null]
+        .filter(Boolean).join("\n");
+      const head = document.createElement("div"); head.className = "target-head";
+      const label = document.createElement("span"); label.className = "target-label"; label.textContent = t.label;
+      const val = document.createElement("span"); val.className = "target-val";
+      val.textContent = fmtVal(t, t.current);
+      head.appendChild(label); head.appendChild(val);
+      item.appendChild(head);
+
+      const track = document.createElement("div"); track.className = "target-track";
+      const fill = document.createElement("div");
+      fill.className = "target-fill" + (t.status === "trend" ? " trend" : "");
+      fill.style.width = targetFillPct(t) + "%";
+      if (t.status !== "trend") fill.style.background = statusColor(t.status);
+      track.appendChild(fill);
+
+      if (t.status !== "trend") {
+        const accPos = scalePos(t, t.acceptable);
+        if (accPos !== null) {
+          const m = document.createElement("div"); m.className = "target-marker";
+          m.style.left = `calc(${accPos}% - 1px)`; m.title = `acceptable: ${fmtVal(t, t.acceptable)}`;
+          track.appendChild(m);
+        }
+        if (t.aspirational !== undefined && t.aspirational !== null && t.aspirational !== t.excellent) {
+          const aspPos = scalePos(t, t.aspirational);
+          if (aspPos !== null) {
+            const am = document.createElement("div"); am.className = "target-marker aspirational";
+            am.style.left = `calc(${aspPos}% - 1px)`;
+            am.title = `vault-convention ideal: ${fmtVal(t, t.aspirational)}`;
+            track.appendChild(am);
+          }
+        }
+      }
+      item.appendChild(track);
+
+      const foot = document.createElement("div"); foot.className = "target-foot";
+      if (t.status === "trend") {
+        foot.textContent = "trend only — no sourced benchmark (heuristic)";
+      } else {
+        const bandTxt = `excellent ${fmtVal(t, t.excellent)} · acceptable ${fmtVal(t, t.acceptable)}`;
+        const confTxt = src.confidence ? ` (${src.confidence})` : "";
+        foot.innerHTML = `${bandTxt}<br><span class="conf">${confTxt.slice(2, -1)}</span>`;
+      }
+      item.appendChild(foot);
+
+      if (t.offending_ids && t.offending_ids.length) {
+        item.classList.add("clickable");
+        item.addEventListener("click", () => highlightTarget(t));
+      }
+      sec.appendChild(item);
+    });
+  }
+
+  const SEMANTIC_TARGET_IDS = new Set(["exact_dup_pairs", "near_dup_clusters_per_1k"]);
+  function highlightTarget(t) {
+    switchView(SEMANTIC_TARGET_IDS.has(t.id) ? "semantic" : "link");
+    document.getElementById("search").value = "";
+    matchIds.clear();
+    t.offending_ids.forEach(id => matchIds.add(id));
+    searchQuery = "__target__"; // sentinel: enables dim-the-rest rendering via matchIds
+    requestRender();
+  }
+
+  function buildFreshnessBanner() {
+    const banner = document.createElement("div");
+    banner.className = "freshness-banner";
+    banner.innerHTML = `<b>Data as of ${RAW.generated_at}</b> &mdash; graph build gen ${RAW.graph_generation} `
+      + `(built ${RAW.graph_built_at}) &mdash; regenerate: this page is a static snapshot.`
+      + (RAW.semantic_note ? `<br><b>&#9888; ${RAW.semantic_note}</b>` : "");
+    sidebarEl.appendChild(banner);
+  }
+
+  function buildSidebar() {
+    sidebarEl.innerHTML = "";
+    const c = RAW.counts;
+
+    buildFreshnessBanner();
+    buildTargets();
+
+    const overview = section("Overview");
+    overview.appendChild(diagRow("Graph nodes", c.graph_nodes.toLocaleString()));
+    overview.appendChild(diagRow("Graph edges", c.graph_edges.toLocaleString()));
+    overview.appendChild(diagRow("Semantic points", c.semantic_points.toLocaleString()));
+    const notGraphSub = document.createElement("div"); notGraphSub.className = "diag-sub";
+    notGraphSub.textContent = `${c.notes_missing_from_graph} notes indexed after the last graphify build — not yet in graph.json`;
+    overview.appendChild(notGraphSub);
+
+    const health = section("Graph health");
+    health.appendChild(diagRow("Orphans (no WIKILINK)", c.orphans.toLocaleString(), () => { searchToIds(RAW.orphans); }));
+    const orphSub = document.createElement("div"); orphSub.className = "diag-sub";
+    orphSub.textContent = `of which ${c.orphans_truly_isolated} have zero edges of any kind`;
+    health.appendChild(orphSub);
+    health.appendChild(diagRow("Dangling link targets", c.dangling_edges.toLocaleString()));
+    const dangSub = document.createElement("div"); dangSub.className = "diag-sub";
+    dangSub.textContent = c.dangling_edges === 0 ? "none found — every edge resolves to a known node" : "edges pointing at a missing note id";
+    health.appendChild(dangSub);
+    health.appendChild(diagRow("Connected components", c.components.toLocaleString()));
+    const compSub = document.createElement("div"); compSub.className = "diag-sub";
+    compSub.textContent = "top 5 sizes: " + RAW.component_sizes_top5.join(", ");
+    health.appendChild(compSub);
+
+    const semantics = section("Semantic diagnostics");
+    // Data-honesty fix: the raw pair count inflates ~10-400x on transitive
+    // chains (a version family v14..v21 contributes C(8,2)=28 pairs for what
+    // is really ONE duplicate). Lead with the seed-anchored cluster count;
+    // keep the raw pair count as a labelled footnote, never as the headline.
+    semantics.appendChild(diagRow("Duplicate clusters (seed-anchored, cos≥0.97)", (c.duplicate_clusters_seed_anchored ?? c.duplicate_pairs_raw_count).toLocaleString(), () => { switchView("semantic"); layerState.dup = true; syncLayerToggles(); requestRender(); }));
+    const dupSub = document.createElement("div"); dupSub.className = "diag-sub";
+    dupSub.textContent = c.duplicate_clusters_seed_anchored !== undefined
+      ? `${c.duplicate_pairs_raw_count.toLocaleString()} raw pairs before dedup (chained via transitive similarity) — top ${c.duplicate_pairs} shown as red arcs on the semantic map`
+      : `naive pair count — inflated by transitive chaining; top ${c.duplicate_pairs} shown as red arcs on the semantic map`;
+    semantics.appendChild(dupSub);
+    semantics.appendChild(diagRow("Link↔semantic mismatches", c.mismatch_pairs_raw_count.toLocaleString(), () => { switchView("semantic"); layerState.mismatch = true; syncLayerToggles(); requestRender(); }));
+    const misSub = document.createElement("div"); misSub.className = "diag-sub"; misSub.textContent = `top ${c.mismatch_pairs} shown as amber arcs (cos≥0.85, no edge)`;
+    semantics.appendChild(misSub);
+
+    const zoneSec = section("PARA zones");
+    Object.entries(RAW.zone_counts).sort((a,b)=>b[1]-a[1]).forEach(([z, n]) => {
+      zoneSec.appendChild(diagRow(z, n.toLocaleString(), () => { colorMode = "zone"; syncModeButtons(); requestRender(); }));
+    });
+
+    const hubSec = section("Top 20 hubs (degree)");
+    const ul = document.createElement("ul"); ul.className = "hub-list";
+    RAW.top_hubs.forEach(h => {
+      const li = document.createElement("li");
+      const hn = document.createElement("span"); hn.className = "hn"; hn.textContent = (nodesById.get(h.id)||{}).title || h.id;
+      const hv = document.createElement("span"); hv.className = "hv"; hv.textContent = h.degree;
+      li.appendChild(hn); li.appendChild(hv);
+      li.addEventListener("click", () => { switchView("link"); selectNode(h.id); });
+      ul.appendChild(li);
+    });
+    hubSec.appendChild(ul);
+  }
+
+  function searchToIds(ids) {
+    document.getElementById("search").value = "";
+    searchQuery = "";
+    matchIds.clear();
+    ids.forEach(id => matchIds.add(id));
+    searchQuery = "__set__";
+    requestRender();
+  }
+
+  // ======================================================================
+  // legend: live counts per swatch, click-to-isolate
+  // ======================================================================
+  function legendKeysFor(label) {
+    if (colorMode === "type" && label === "(raw/draft)") return Array.from(TYPE_MUTED);
+    return [label];
+  }
+  function computeLegendCounts(mode) {
+    const counts = new Map();
+    const dataset = currentView === "link" ? RAW.nodes : RAW.points;
+    dataset.forEach(d => {
+      const key = d[mode.key];
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    return counts;
+  }
+  function buildLegend() {
+    const legendEl = document.getElementById("legend");
+    legendEl.innerHTML = "";
+    const mode = COLOR_MODES[colorMode];
+    const counts = computeLegendCounts(mode);
+    const title = document.createElement("div"); title.className = "legend-title";
+    title.textContent = colorMode === "classification" ? "Classification (Public → MNPI) — click to isolate" : (colorMode === "type" ? "Note type — click to isolate" : "PARA zone — click to isolate");
+    legendEl.appendChild(title);
+    mode.legendOrder.forEach(label => {
+      const colorKey = label === "(raw/draft)" ? "source" : label;
+      const keys = legendKeysFor(label);
+      const n = keys.reduce((s, k) => s + (counts.get(k) || 0), 0);
+      const row = document.createElement("div");
+      const isolated = legendIsolate.size > 0 && keys.every(k => legendIsolate.has(k));
+      row.className = "legend-row" + (legendIsolate.size > 0 && !isolated ? " is-dimmed" : "") + (isolated ? " is-active" : "");
+      const sw = document.createElement("span"); sw.className = "swatch";
+      sw.style.background = mode.fn(colorKey);
+      const lab = document.createElement("span"); lab.className = "legend-label"; lab.textContent = label;
+      const cnt = document.createElement("span"); cnt.className = "count"; cnt.textContent = n.toLocaleString();
+      row.appendChild(sw); row.appendChild(lab); row.appendChild(cnt);
+      row.addEventListener("click", () => toggleLegendIsolate(label));
+      legendEl.appendChild(row);
+    });
+  }
+  function toggleLegendIsolate(label) {
+    const keys = legendKeysFor(label);
+    const allIn = keys.every(k => legendIsolate.has(k));
+    if (allIn) keys.forEach(k => legendIsolate.delete(k));
+    else keys.forEach(k => legendIsolate.add(k));
+    buildLegend();
+    requestRender();
+  }
+
+  function buildLayerToggles() {
+    const el = document.getElementById("layerToggles");
+    el.innerHTML = "";
+    if (currentView === "link") {
+      el.appendChild(toggleRow("topEdges", `Top edges only (top ${TOP_EDGES_K.toLocaleString()} by degree)`, layerState.topEdges, v => { layerState.topEdges = v; requestRender(); }));
+      el.appendChild(toggleRow("inferred", "Show INFERRED edges (discovery noise)", layerState.inferred, v => { layerState.inferred = v; requestRender(); }));
+    } else {
+      el.appendChild(toggleRow("dup", "Duplicate suspects (cos≥0.97)", layerState.dup, v => { layerState.dup = v; requestRender(); }, "var(--dup-red)"));
+      el.appendChild(toggleRow("mismatch", "Unlinked matches (cos≥0.85)", layerState.mismatch, v => { layerState.mismatch = v; requestRender(); }, "var(--mismatch-amber)"));
+      el.appendChild(toggleRow("lens", "Neighbor lens (selected node)", layerState.lens, v => { layerState.lens = v; requestRender(); }, "var(--accent)"));
+    }
+    const hr = document.createElement("hr"); el.appendChild(hr);
+    el.appendChild(sliderRow("edgeOpacity", "Edge opacity", 0.2, 2.5, 0.1, edgeOpacityMul, v => { edgeOpacityMul = v; requestRender(); }));
+  }
+  function toggleRow(key, label, checked, onChange, color) {
+    const l = document.createElement("label");
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = checked;
+    cb.addEventListener("change", () => onChange(cb.checked));
+    l.appendChild(cb);
+    if (color) { const sw = document.createElement("span"); sw.className = "swatch line"; sw.style.background = color; l.appendChild(sw); }
+    const span = document.createElement("span"); span.textContent = label;
+    l.appendChild(span);
+    return l;
+  }
+  function sliderRow(key, label, min, max, step, value, onInput) {
+    const row = document.createElement("div"); row.className = "slider-row";
+    const span = document.createElement("span"); span.textContent = label;
+    const input = document.createElement("input");
+    input.type = "range"; input.min = min; input.max = max; input.step = step; input.value = value;
+    const valEl = document.createElement("span"); valEl.className = "slider-val"; valEl.textContent = Number(value).toFixed(1) + "×";
+    input.addEventListener("input", () => {
+      const v = parseFloat(input.value);
+      valEl.textContent = v.toFixed(1) + "×";
+      onInput(v);
+    });
+    row.appendChild(span); row.appendChild(input); row.appendChild(valEl);
+    return row;
+  }
+  function syncLayerToggles() { buildLayerToggles(); }
+
+  function buildFootnote() {
+    const el = document.getElementById("viewFootnote");
+    const dimTxt = mode3D ? "Drag to orbit · shift-drag to pan · wheel to zoom." : "Drag to pan · wheel to zoom.";
+    if (currentView === "link") {
+      el.textContent = `${mode3D ? "3D" : "2D"} force-directed layout, discovery layer only (authoritative:false). Orphan ${mode3D ? "shell" : "ring"} = zero WIKILINK degree. ${dimTxt}`;
+    } else {
+      const ev = RAW.explained_variance;
+      const sumStr = ((ev[0]+ev[1]+ev[2])*100).toFixed(1);
+      el.textContent = `PCA axes carry no intrinsic meaning — position only reflects relative distance. Explained variance: PC1 ${(ev[0]*100).toFixed(1)}% · PC2 ${(ev[1]*100).toFixed(1)}% · PC3 ${(ev[2]*100).toFixed(1)}% (${sumStr}% of ${RAW.embed_dim}-dim space, 3 components). ${dimTxt}`;
+    }
+  }
+
+  function buildFooter() {
+    const el = document.getElementById("footbar");
+    el.innerHTML = "";
+    const ev = RAW.explained_variance;
+    const items = [
+      `Generated <b>${RAW.generated_at}</b>`,
+      `Engine <b>v${RAW.engine_version}</b>`,
+      `Graph build <b>gen ${RAW.graph_generation}</b> (${RAW.graph_built_at})`,
+      `<span class="discovery-flag">graph layer authoritative:false — discovery only</span>`,
+      `Embed model <b>${RAW.embed_model}</b> (${RAW.embed_dim}d, mean-pooled per note, L2-normalized)`,
+      `PCA explained variance (3 comps) <b>${(ev[0]*100).toFixed(1)}% + ${(ev[1]*100).toFixed(1)}% + ${(ev[2]*100).toFixed(1)}% = ${((ev[0]+ev[1]+ev[2])*100).toFixed(1)}%</b>`,
+    ];
+    items.forEach(html => { const s = document.createElement("span"); s.innerHTML = html; el.appendChild(s); });
+  }
+
+  // ======================================================================
+  // 10. top bar wiring
+  // ======================================================================
+  function switchView(view) {
+    currentView = view;
+    document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.view === view));
+    document.getElementById("relayoutBtn").style.display = view === "link" ? "" : "none";
+    legendIsolate.clear();
+    buildLayerToggles();
+    buildLegend();
+    buildFootnote();
+    requestRender();
+  }
+  document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => switchView(t.dataset.view)));
+
+  function syncModeButtons() {
+    document.querySelectorAll(".mode-btn[data-mode]").forEach(b => b.classList.toggle("active", b.dataset.mode === colorMode));
+    legendIsolate.clear();
+    buildLegend();
+  }
+  document.querySelectorAll(".mode-btn[data-mode]").forEach(b => b.addEventListener("click", () => {
+    colorMode = b.dataset.mode; syncModeButtons(); requestRender();
+  }));
+
+  function syncDimButtons() {
+    document.querySelectorAll(".mode-btn[data-dim]").forEach(b => b.classList.toggle("active", (b.dataset.dim === "3d") === mode3D));
+  }
+  document.querySelectorAll(".mode-btn[data-dim]").forEach(b => b.addEventListener("click", () => {
+    mode3D = b.dataset.dim === "3d";
+    syncDimButtons();
+    buildFootnote();
+    requestRender();
+  }));
+
+  document.getElementById("search").addEventListener("input", e => {
+    searchQuery = e.target.value.trim();
+    recomputeSearch();
+    requestRender();
+  });
+
+  document.getElementById("themeToggle").addEventListener("click", () => {
+    const root = document.documentElement;
+    const next = THEME.mode === "dark" ? "light" : "dark";
+    THEME.mode = next;
+    root.setAttribute("data-theme", next);
+    document.getElementById("themeToggle").textContent = next === "dark" ? "☀︎" : "🌙";
+    buildLegend();
+    requestRender();
+  });
+
+  const autoRotateBtn = document.getElementById("autoRotateBtn");
+  autoRotateBtn.addEventListener("click", () => {
+    autoRotate = !autoRotate;
+    autoRotateBtn.classList.toggle("active", autoRotate);
+    lastFrameTime = 0; // avoid one big dt jump from time spent paused
+    requestRender();
+  });
+
+  // ======================================================================
+  // 11. boot
+  // ======================================================================
+  document.getElementById("authFlag").title = "graph.json is a discovery layer (graphify), never authoritative — confirm hits via search/get.";
+  resizeCanvas();
+  syncDimButtons();
+  buildSidebar();
+  buildLegend();
+  buildLayerToggles();
+  buildFootnote();
+  buildFooter();
+  requestRender();
+
+  setInterval(() => {
+    if (currentView === "link" && ((!mode3D && simRunning) || (mode3D && simRunning3))) requestRender();
+  }, 200);
+})();
+</script>
+</body>
+</html>

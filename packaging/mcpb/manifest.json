@@ -68,9 +68,9 @@
     "max_tier": {
       "type": "string",
       "title": "Max egress tier",
-      "description": "Classification ceiling for this session: Public, Internal, Confidential, Restricted, or MNPI. Matches the host CLI default (full vault) \u2014 narrow it if you want a capped read surface. This bundle never widens the ceiling the engine itself enforces.",
+      "description": "Classification ceiling for this LLM-facing session: Public, Internal, Confidential, Restricted, or MNPI. Defaults conservatively to Internal; raise it only for an explicitly approved server. This bundle never widens the ceiling the engine itself enforces.",
       "required": false,
-      "default": "MNPI"
+      "default": "Internal"
     }
   },
   "compatibility": {

@@ -97,7 +97,7 @@ corrected_tier, ts, actor)` in `host/corrections.sqlite`,
 update/delete path; a duplicate key raises, an unknown key (one not present
 in the `verdict-drop/shadow-ledger*.jsonl` drop) raises.
 
-**How Ricardo's one-line Cowork correction reaches it** (defined contract):
+**How the owner's one-line Cowork correction reaches it** (defined contract):
 
 1. In Cowork the VM runs `brain cos-propose --kind correction --content
    '{"round": 3, "msg_key": "m-abc", "corrected_bucket": "urgent",

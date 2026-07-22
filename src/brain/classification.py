@@ -41,7 +41,8 @@ if DEFAULT_MAX_TIER not in RANK:
     DEFAULT_MAX_TIER = "MNPI"
 
 # Conservative default for the untrusted read+draft leg (role=vm): surface
-# Public + Internal only unless a human explicitly elevates with --max-tier.
+# Public + Internal only. A caller may narrow this with --max-tier but cannot
+# raise it past the operator-owned VM_EGRESS_CEILING_ENV below.
 VM_DEFAULT_MAX_TIER = "Internal"
 
 # Hard server-side ceiling for the untrusted VM leg (codex 2026-07-19). On

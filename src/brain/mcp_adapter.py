@@ -25,18 +25,16 @@ READ_TOOLS = ("search", "get", "recent", "bases_query", "dossier")
 
 # Server-side egress ceiling (SEC-01 hardening). A caller-supplied ``max_tier``
 # was previously honored unbounded — an MCP client could simply ASK for
-# ``max_tier="MNPI"`` and receive it. That is a human-gated elevation on the
-# CLI (an explicit ``--max-tier`` flag someone typed), but the MCP transport has
-# no equivalent "a person is watching this" signal, so the adapter now clamps
+# ``max_tier="MNPI"`` and receive it. The MCP transport has no reliable
+# "a person is watching this" signal, so the adapter clamps
 # EVERY request to a ceiling the operator configures out-of-band. A caller may
 # still request something NARROWER than the ceiling (always honored); it can
 # never request higher.
 EGRESS_CEILING_ENV_VAR = "BRAIN_MAX_EGRESS_TIER"
-DEFAULT_EGRESS_CEILING_TIER = "MNPI"  # matches cls.DEFAULT_MAX_TIER: the MCP
-# adapter is a HOST-side surface (Chat tab / Cowork MCP-on-host), so it gets
-# the same full-vault default as the host CLI (owner decision, 2026-07-10).
-# Operators who want a hard server-side cap set $BRAIN_MAX_EGRESS_TIER; the
-# clamp mechanism below is unchanged and still narrows every request to it.
+DEFAULT_EGRESS_CEILING_TIER = cls.VM_DEFAULT_MAX_TIER
+# MCP is an unattended LLM-facing transport, even when its process runs on the
+# host. Keep its unset ceiling conservative; an operator may raise it only via
+# the out-of-band environment variable.
 
 
 def _egress_ceiling_tier() -> str:
@@ -149,7 +147,8 @@ def serve(vault: str | None = None) -> None:  # pragma: no cover - transport glu
     server = FastMCP("brain")
 
     @server.tool()
-    def search(query: str, k: int = 10, max_tier: str = cls.DEFAULT_MAX_TIER) -> dict:
+    def search(query: str, k: int = 10,
+               max_tier: str = cls.VM_DEFAULT_MAX_TIER) -> dict:
         """Hybrid (BM25+dense) retrieval over the vault, egress-filtered.
 
         Every hit carries `date` (its valid time), `is_latest_version`, and
@@ -170,7 +169,7 @@ def serve(vault: str | None = None) -> None:  # pragma: no cover - transport glu
         return dispatch("search", {"query": query, "k": k, "max_tier": max_tier}, core=core)
 
     @server.tool()
-    def get(id: str, max_tier: str = cls.DEFAULT_MAX_TIER) -> dict:
+    def get(id: str, max_tier: str = cls.VM_DEFAULT_MAX_TIER) -> dict:
         """Fetch one full note by id, egress-filtered. Inspect
         `superseded_by` / `previous_version` / `is_latest_version` on the
         result to walk a version chain ("previous version", "what replaced
@@ -178,14 +177,15 @@ def serve(vault: str | None = None) -> None:  # pragma: no cover - transport glu
         return dispatch("get", {"id": id, "max_tier": max_tier}, core=core)
 
     @server.tool()
-    def recent(n: int = 10, max_tier: str = cls.DEFAULT_MAX_TIER) -> dict:
+    def recent(n: int = 10, max_tier: str = cls.VM_DEFAULT_MAX_TIER) -> dict:
         """List the most recently created/updated notes, egress-filtered —
         the cheapest way to see what entered the vault lately (use after a
         search whose freshness block reported newer sources)."""
         return dispatch("recent", {"n": n, "max_tier": max_tier}, core=core)
 
     @server.tool()
-    def dossier(query: str, k: int = 12, max_tier: str = cls.DEFAULT_MAX_TIER) -> dict:
+    def dossier(query: str, k: int = 12,
+                max_tier: str = cls.VM_DEFAULT_MAX_TIER) -> dict:
         """THE ONE-CALL SWEEP for decision-state questions ("what have we
         decided", "latest decisions", "current state of X"). Returns the
         decision layer and the sources under consideration SEPARATED, with
@@ -199,7 +199,7 @@ def serve(vault: str | None = None) -> None:  # pragma: no cover - transport glu
     @server.tool()
     def bases_query(where: dict | None = None, k: int = 50,
                     latest_only: bool = False, as_of: str = "",
-                    max_tier: str = cls.DEFAULT_MAX_TIER) -> dict:
+                    max_tier: str = cls.VM_DEFAULT_MAX_TIER) -> dict:
         """Structured frontmatter query (no embedding), egress-filtered.
         `where` filters exact frontmatter keys (e.g. {"type": "decision"}).
         TEMPORAL ROUTING: for "what's current/latest" use latest_only=True

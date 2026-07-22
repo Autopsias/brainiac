@@ -24,6 +24,10 @@ FINAL stage before stdout. A harness self-discovers the whole contract from
     brain draft-capture [--id ID] [--source]   # VM-side capture: stage a DRAFT
     brain status [--json]                  # snapshot gen/age + pending drafts
     brain doctor [--json]                  # health + version table, ALL surfaces (read-only)
+    brain health-report [--json]           # static HTML health page -> .brain/brief/
+                                            # health-latest.html [HOST]
+    brain graph-report [--json]            # static HTML graph explorer -> .brain/graph/
+                                            # graph-explorer.html [HOST]
     brain sync [--publish]                 # incremental upsert + drain drafts [HOST]
     brain snapshot [--dest DIR]            # publish read-only snapshot        [HOST]
     brain rebuild [--vault DIR]            # rebuild the derived index (safe)
@@ -57,6 +61,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from typing import Any
 
@@ -339,10 +344,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--name", default="brainiac",
                     help="server name/key in the config (default: %(default)s) — "
                          "use a distinct name per vault")
-    sp.add_argument("--max-tier", default="MNPI",
+    sp.add_argument("--max-tier", default="Internal",
                     help="egress ceiling for this MCP server (default: %(default)s "
-                         "= full vault, matching the host CLI default; narrow to "
-                         "e.g. Internal for a server that must stay capped)")
+                         "= conservative LLM-facing cap; explicitly raise only "
+                         "for an approved server)")
     sp.add_argument("--json", action="store_true")
 
     sp = sub.add_parser(
@@ -359,9 +364,10 @@ def build_parser() -> argparse.ArgumentParser:
                          "CLAUDE.md/AGENTS.md/.gemini/settings.json live")
     sp.add_argument("--name", default="brainiac",
                     help="MCP server name for --client claude-desktop (default: %(default)s)")
-    sp.add_argument("--max-tier", default="MNPI",
+    sp.add_argument("--max-tier", default="Internal",
                     help="egress ceiling baked into the claude-desktop MCP stanza "
-                         "(default: %(default)s = full vault, matches `mcp-config`)")
+                         "(default: %(default)s = conservative cap, matches "
+                         "`mcp-config`)")
     sp.add_argument("--marketplace-source", default=_connect.DEFAULT_MARKETPLACE_SOURCE,
                     help="source passed to `claude plugin marketplace add` for "
                          "--client claude-code (default: %(default)s)")
@@ -557,14 +563,17 @@ def build_parser() -> argparse.ArgumentParser:
         "cos-ingest-sweep",
         help="HOST-only (also wired into `brain maintain`): claim VM "
              "ingest-manifest lines (drop/ingest-manifest/) and MOVE "
-             "exact-filename matches from the host downloads dir (default "
-             "~/Downloads, or $BRAIN_COS_DOWNLOADS_DIR) into <vault>/inbox/ "
-             "for normal signed ingest. Basename-only filenames, symlinks "
+             "exact-filename matches from an explicitly configured dedicated "
+             "host-only staging dir ($BRAIN_COS_DOWNLOADS_DIR) into "
+             "<vault>/inbox/ for normal signed ingest. Disabled when unset; "
+             "shared ~/Downloads and symlinked dirs are refused. Basename-only "
+             "filenames and file symlinks are "
              "refused, 200MB cap, append-only claims (idempotent); files the "
              "manifest does not name are never touched.",
     )
     sp.add_argument("--downloads-dir", default=None,
-                    help="host downloads dir to sweep (default: ~/Downloads)")
+                    help="dedicated host-only download staging dir to sweep "
+                         "(default: $BRAIN_COS_DOWNLOADS_DIR; unset disables)")
     sp.add_argument("--dry-run", action="store_true",
                     help="report matches without moving or claiming anything")
     sp.add_argument("--json", action="store_true")
@@ -620,6 +629,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("rebuild", help="rebuild the derived index from vault/ (always safe)")
     sp.add_argument("--json", action="store_true")
+    sp.add_argument("--progress", action="store_true",
+                    help="force stderr progress lines even when stderr isn't a TTY "
+                         "(same as BRAIN_PROGRESS=1)")
 
     sp = sub.add_parser(
         "warmup",
@@ -631,6 +643,9 @@ def build_parser() -> argparse.ArgumentParser:
              "if `brain status` reported embedder: pending.",
     )
     sp.add_argument("--json", action="store_true")
+    sp.add_argument("--progress", action="store_true",
+                    help="force stderr progress lines even when stderr isn't a TTY "
+                         "(same as BRAIN_PROGRESS=1)")
 
     sp = sub.add_parser(
         "sync",
@@ -642,6 +657,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--publish", action="store_true",
                     help="republish the read-only snapshot after reconcile so the VM's "
                          "next read sees the just-committed note (closes the capture loop)")
+    sp.add_argument("--progress", action="store_true",
+                    help="force stderr progress lines even when stderr isn't a TTY "
+                         "(same as BRAIN_PROGRESS=1)")
     sp.add_argument("--json", action="store_true")
 
     sp = sub.add_parser(
@@ -774,6 +792,22 @@ def build_parser() -> argparse.ArgumentParser:
              "(host-only — a new file-egress surface, ADR-0003 Ruling c; refused on role=vm)",
     )
 
+    sp = sub.add_parser(
+        "health-report",
+        help="render the static HTML health report (verdict + act-now + "
+             "maintain/index/trend tables) to .brain/brief/health-latest.html "
+             "(host-only — refused on role=vm)",
+    )
+    sp.add_argument("--json", action="store_true")
+
+    sp = sub.add_parser(
+        "graph-report",
+        help="render the static HTML graph explorer (WebGL link graph + 3D "
+             "semantic map) to .brain/graph/graph-explorer.html "
+             "(host-only — refused on role=vm)",
+    )
+    sp.add_argument("--json", action="store_true")
+
     # -- maintenance rituals (CUT-03) — HOST-broker only, refused on role=vm --
     sp = sub.add_parser(
         "check", help="daily-check fold: index reconcile + drain drafts + status (host)")
@@ -863,6 +897,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--dry-run", action="store_true",
                     help="build + report only; never publish graph.json")
     sp.add_argument("-n", type=int, default=20, help="max candidates to surface (default: 20)")
+    sp.add_argument("--progress", action="store_true",
+                    help="force stderr progress lines even when stderr isn't a TTY "
+                         "(same as BRAIN_PROGRESS=1)")
     add_common(sp)
 
     return p
@@ -1109,10 +1146,9 @@ def _main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     role = config.role(getattr(args, "role", None))
     # Role-aware egress default (owner decision, 2026-07-10): the trusted host
-    # surfaces the FULL vault unless --max-tier narrows it; the untrusted VM
-    # leg keeps the conservative Internal cap. An explicit --max-tier always
-    # wins on either role — argparse leaves it None only when the flag was
-    # not typed.
+    # surfaces the FULL vault unless --max-tier changes it; the untrusted VM
+    # leg starts at Internal. argparse leaves max_tier None only when the flag
+    # was not typed; the VM-specific hard clamp is applied immediately below.
     if getattr(args, "max_tier", "unset") is None:
         args.max_tier = (cls.VM_DEFAULT_MAX_TIER if role == config.ROLE_VM
                          else cls.DEFAULT_MAX_TIER)
@@ -1411,8 +1447,12 @@ def _main(argv: list[str] | None = None) -> int:
             for h in decisions:
                 lines.append(f"  {h['id']}  ({h['classification']})  {h.get('date') or 'undated'}")
                 for x in h.get("tensions", []):
+                    ident = x.get("identity", "")
+                    caveat = (" [identity: %s — title/calendar-derived, weigh accordingly]" % ident
+                              if ident and ident not in ("content-verified", "filename")
+                              else "")
                     lines.append(f"    !! newer source post-dates this decision: "
-                                 f"{x['id']} ({x['date']}) — report the tension, "
+                                 f"{x['id']} ({x['date']}){caveat} — report the tension, "
                                  f"never promote the proposal")
             lines.append(f"== sources under consideration ({len(sources)}) ==")
             lines += [f"  {h['id']}  <{h.get('type') or '?'}>  {h.get('date') or 'undated'}"
@@ -1754,8 +1794,10 @@ def _main(argv: list[str] | None = None) -> int:
         return 0
 
     if cmd == "rebuild":
+        if getattr(args, "progress", False):
+            os.environ["BRAIN_PROGRESS"] = "1"
         try:
-            res = core.rebuild()
+            res = core.rebuild(json_mode=args.json)
         except Exception as exc:  # H-4: no raw tracebacks from maintenance cmds
             _emit({"error": type(exc).__name__, "detail": str(exc)} if args.json
                   else f"rebuild failed ({type(exc).__name__}): {exc}", args.json)
@@ -1767,8 +1809,10 @@ def _main(argv: list[str] | None = None) -> int:
         return 0
 
     if cmd == "warmup":
+        if getattr(args, "progress", False):
+            os.environ["BRAIN_PROGRESS"] = "1"
         try:
-            res = core.warmup()
+            res = core.warmup(json_mode=args.json)
         except Exception as exc:  # H-4: no raw tracebacks from maintenance cmds
             _emit({"error": type(exc).__name__, "detail": str(exc)} if args.json
                   else f"warmup failed ({type(exc).__name__}): {exc}", args.json)
@@ -1782,8 +1826,10 @@ def _main(argv: list[str] | None = None) -> int:
         return 0
 
     if cmd == "sync":
+        if getattr(args, "progress", False):
+            os.environ["BRAIN_PROGRESS"] = "1"
         try:
-            res = core.sync(drain=not args.no_drain, publish=args.publish)
+            res = core.sync(drain=not args.no_drain, publish=args.publish, json_mode=args.json)
         except Exception as exc:  # H-4
             _emit({"error": type(exc).__name__, "detail": str(exc)} if args.json
                   else f"sync failed ({type(exc).__name__}): {exc}", args.json)
@@ -2127,6 +2173,27 @@ def _main(argv: list[str] | None = None) -> int:
             _emit(None, False, format_digest(res))
         return 0
 
+    if cmd == "health-report":
+        res = core.health_report()
+        if args.json:
+            _emit(res, True)
+        else:
+            _emit(None, False,
+                  f"health report [{res['verdict']}] written -> {res['path']}"
+                  + (f" ({len(res['act_now'])} item(s) need attention)" if res["act_now"] else ""))
+        return 0 if res["verdict"] != "BROKEN" else 1
+
+    if cmd == "graph-report":
+        res = core.graph_report()
+        if args.json:
+            _emit(res, True)
+        else:
+            _emit(None, False,
+                  f"graph report written -> {res['path']} "
+                  f"(gen {res['graph_generation']}, {res['nodes']} nodes, "
+                  f"{res['edges']} edges, {res['points']} points)")
+        return 0
+
     # -- maintenance rituals (CUT-03) --------------------------------------
     from . import maintenance as maint
 
@@ -2313,8 +2380,11 @@ def _main(argv: list[str] | None = None) -> int:
         return 0
 
     if cmd == "graphify":
+        if getattr(args, "progress", False):
+            os.environ["BRAIN_PROGRESS"] = "1"
         res = core.graphify(force=args.force, dry_run=args.dry_run,
-                             max_tier=args.max_tier, candidate_limit=args.n)
+                             max_tier=args.max_tier, candidate_limit=args.n,
+                             json_mode=args.json)
         if args.json:
             _emit(res, True)
         elif res.get("skipped"):

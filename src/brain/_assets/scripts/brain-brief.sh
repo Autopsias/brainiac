@@ -77,7 +77,10 @@ fi
   # republish snapshot) + brief, THEN whichever of health/integrity/digest is
   # due today (date-gated). graphify is documented-only (no build invoked --
   # the discovery graph stays separate tooling per task-disposition.md row 7).
-  "$BRAIN_BIN" maintain --json
+  # BRAIN_AUTO_UPDATE=1 (ADR-0005 v2 amendment): opt IN to the unattended
+  # engine auto-apply here in the SCHEDULED runner ONLY — a manual `brain
+  # maintain` or a test never pip-upgrades the machine (the gate defaults off).
+  BRAIN_AUTO_UPDATE=1 "$BRAIN_BIN" maintain --json
 } >> "$LOG" 2>&1
 
 # Rotate logs older than 30 days.

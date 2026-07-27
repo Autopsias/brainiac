@@ -103,11 +103,23 @@ One command, whatever you installed with:
 brain update            # add --dry-run to preview; never touches your notes
 ```
 
-It detects your install channel (uv / pipx / pip / editable), upgrades the
-engine, refreshes the Claude Code plugins if present, and verifies with
-`brain doctor`. In Claude Code, `/brainiac-update` runs the same thing. Just want
-a read-only health check? `brain doctor` prints a ✅/⚠️ table with the exact fix
-for anything stale.
+It detects your install channel (uv / pipx / pip / venv-wheel / editable),
+upgrades the engine, refreshes the Claude Code plugins if present, re-stages
+every registered Cowork workspace, and verifies with `brain doctor`. In Claude
+Code, `/brainiac-update` runs the same thing.
+
+**You rarely need to run it.** The hourly `brain-nightly` host task auto-applies
+a newer version unattended — it only commits the update when the post-update
+`brain doctor` is all-green *and* a real query embed succeeds; a failed version
+is never silently retried. Every session start shows a one-line banner when an
+update was applied, failed, or is waiting (read from
+`~/.brainiac/update-state.json`, no engine call). The one surface that still
+needs a human is the Cowork Desktop skill store (structurally unscriptable) —
+and `brain update` prints that one-click instruction *only when it is actually
+stale*.
+
+Just want a read-only health check? `brain doctor` prints a ✅/⚠️ table with the
+exact fix for anything stale.
 
 ## Using it with a new project (second vault, third, ...)
 

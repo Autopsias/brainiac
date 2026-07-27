@@ -1031,6 +1031,33 @@ def render_promote_scan_hot_entry(candidates: list[dict[str, Any]], today: datet
     return "\n".join(lines) + "\n"
 
 
+def render_cos_waiting_hot_entry(
+    waiting: list[str], today: datetime.date,
+) -> str:
+    """Log line for COS proposals held back by batch backpressure (ing-02).
+
+    The owner queue holds at most one broker slot, so proposals claimed while
+    a batch is open wait for the next one. That is correct — but it was
+    INVISIBLE: two proposals sat unseen for two days behind an unanswered
+    batch (measured 2026-07-27). This is a LOG entry, never an owner queue
+    item: answering the open batch releases them automatically."""
+    lines = [f"## {today.isoformat()} — COS proposals waiting"]
+    lines.append(
+        f"- **Context:** {len(waiting)} COS proposal(s) are held behind the "
+        "currently-open ingestion batch (one owner-inbox broker slot at a "
+        "time). Answering the open batch releases them into the next one."
+    )
+    for pid in waiting[:10]:
+        lines.append(f"  - `{pid}`")
+    if len(waiting) > 10:
+        lines.append(f"  - … {len(waiting) - 10} more")
+    lines.append(
+        "- **No action needed:** this is the LOG, not a queue — the next "
+        "broker run batches them once the open slot clears."
+    )
+    return "\n".join(lines) + "\n"
+
+
 # ---------------------------------------------------------------------------
 # hot.md rotation (retro signature ``hot-md-bloat``): handoff.md already
 # auto-rotates to archive/ at ~15 KB (docs/session-memory.md); hot.md gets the
@@ -1043,6 +1070,11 @@ def render_promote_scan_hot_entry(candidates: list[dict[str, Any]], today: datet
 HOT_MD_ROTATE_KEEP_DAYS = 7
 
 
+def _joined_len(blocks: list[str]) -> int:
+    """Byte length of ``blocks`` once joined the way ``kept_text`` is."""
+    return len(("\n\n".join(blocks) + "\n").encode("utf-8")) if blocks else 0
+
+
 def rotate_hot_md(
     text: str, today: datetime.date, *,
     max_bytes: int | None = None, keep_days: int = HOT_MD_ROTATE_KEEP_DAYS,
@@ -1053,9 +1085,19 @@ def rotate_hot_md(
     When over, every idempotency-keyed block whose ``## <date>`` header is
     older than ``keep_days`` AND that carries no open ``**Owner input
     needed`` line moves to ``rotated_text``, key line included. Unkeyed
-    preamble, recent entries, and unresolved entries are always kept — a
-    soft cap: a file full of open owner questions stays over the limit
-    rather than losing one."""
+    preamble and recent entries are always kept.
+
+    Aged UNRESOLVED blocks are preferred-kept, not kept unconditionally: if
+    the file is still over ``max_bytes`` once the resolved ones are gone,
+    they rotate too, oldest first, until it fits. Exempting them forever
+    made the cap unenforceable — measured 2026-07-27, a live hot.md sat at
+    60 KB (2x the cap) because 47 of 51 blocks, up to 20 days old, carried
+    an ``**Owner input needed`` line that no fold ever cleared. Under the
+    PUSH model (AGENTS.md §9) a real owner decision belongs in
+    ``inbox.jsonl``; an unresolved marker aging out in hot.md is a log
+    entry, not a queue item, and rotation ARCHIVES it (key line included)
+    rather than dropping it. Recent entries are still never rotated, so a
+    freshly-raised owner question always stays in the live file."""
     from .retro import _HEADER_DATE_RE, _KEY_RE, HOT_MD_SOFT_MAX_BYTES
 
     limit = HOT_MD_SOFT_MAX_BYTES if max_bytes is None else max_bytes
@@ -1063,6 +1105,7 @@ def rotate_hot_md(
         return text, ""
     kept: list[str] = []
     rotated: list[str] = []
+    deferred: list[tuple[datetime.date, int, str]] = []  # aged+unresolved
     for part in re.split(r"\n(?=<!--\s*idempotency-key:)", text):
         block = part.strip("\n")
         if not block:
@@ -1071,6 +1114,7 @@ def rotate_hot_md(
             kept.append(block)  # unkeyed preamble/tail — never rotated
             continue
         aged = False
+        entry_date: datetime.date | None = None
         m = _HEADER_DATE_RE.search(block)
         if m:
             try:
@@ -1079,7 +1123,21 @@ def rotate_hot_md(
             except ValueError:
                 aged = False
         unresolved = "**Owner input needed" in block
-        (rotated if aged and not unresolved else kept).append(block)
+        if aged and unresolved and entry_date is not None:
+            # Preferred-kept: reconsidered below only if still over the cap.
+            deferred.append((entry_date, len(kept), block))
+            kept.append(block)
+        else:
+            (rotated if aged else kept).append(block)
+    # Second pass: still over the cap, so give up the oldest aged+unresolved
+    # blocks (oldest first) until it fits. They are archived, never dropped.
+    if deferred and _joined_len(kept) > limit:
+        for _, slot, block in sorted(deferred, key=lambda d: d[0]):
+            kept[slot] = ""
+            rotated.append(block)
+            if _joined_len([k for k in kept if k]) <= limit:
+                break
+        kept = [k for k in kept if k]
     if not rotated:
         return text, ""
     kept_text = ("\n\n".join(kept) + "\n") if kept else ""
@@ -1484,7 +1542,26 @@ def auto_version_chains(core: Any) -> dict[str, Any]:
     — never a raw frontmatter poke). Idempotent: an already-retired
     predecessor is skipped; a predecessor already superseded by something
     OUTSIDE the computed chain (a human's manual call) freezes its family —
-    reported, never overridden."""
+    reported, never overridden.
+
+    A family is only chained when its order is UNAMBIGUOUS — version numbers
+    all distinct AND non-decreasing in valid-date once sorted by number. The
+    family key strips one leading capture-date prefix so re-captures line up,
+    which also merges genuinely INDEPENDENT series of the same document; when
+    it does, the linear (number, date) sort invents nonsense. Measured
+    2026-07-27 on a live vault, two shapes: one family held `…-v2` three
+    times (three separate captures months apart) and the computed chain
+    linked v1 -> v1 and ran BACKWARDS in time (the later v1 superseded by
+    the earlier v2); another had distinct numbers but numbers and dates
+    disagreed (a mid-sequence version dated two months BEFORE its
+    neighbours) and carried two live heads. Such families were saved only
+    by the conflict
+    freeze, which then re-reported them as owner action every run — an alert
+    with no owner action behind it, since the MANUAL chains were already
+    correct. Ambiguous families are now skipped quietly (``skipped_ambiguous``
+    — informational, never action-required); ``skipped_conflict`` keeps its
+    original meaning: an orderable family whose manual chain disagrees, which
+    IS a human call."""
     rows = core.index.conn.execute(
         "SELECT id, is_latest_version, superseded_by, "
         "COALESCE(NULLIF(effective_date,''), NULLIF(document_date,''), created) "
@@ -1499,13 +1576,26 @@ def auto_version_chains(core: Any) -> dict[str, Any]:
             (num, str(vdate or ""), str(nid),
              {"is_latest": str(ilv or ""), "superseded_by": str(sup_by or "")}))
 
-    report: dict[str, Any] = {"chained": [], "skipped_conflict": [], "errors": []}
+    report: dict[str, Any] = {"chained": [], "skipped_conflict": [],
+                              "skipped_ambiguous": [], "errors": []}
     for fam, members in sorted(families.items()):
         if len(members) < 2:
             continue
         members.sort()
         ordered = [m[2] for m in members]
         meta = {m[2]: m[3] for m in members}
+        # Unambiguous-order gate (see docstring). Duplicate version numbers
+        # mean several captures of the SAME document version — not a
+        # supersession — and a valid-date that moves backwards as the version
+        # number rises means numbers and time disagree about what is newer.
+        # Either way the engine cannot derive the order, so it declines
+        # instead of inventing one.
+        nums = [m[0] for m in members]
+        dates = [m[1] for m in members]
+        if len(set(nums)) != len(nums) or any(
+                b and a and b < a for a, b in zip(dates, dates[1:])):
+            report["skipped_ambiguous"].append(fam)
+            continue
         # A manual chain pointing outside the computed order freezes the family.
         conflict = any(
             meta[nid]["superseded_by"] and meta[nid]["superseded_by"] != ordered[i + 1]

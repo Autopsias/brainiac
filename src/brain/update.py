@@ -33,10 +33,13 @@ from .doctor import (
     CHANNEL_PIP_USER,
     CHANNEL_PIPX,
     CHANNEL_PYPI_UV,
+    CHANNEL_VENV_WHEEL,
     _compare,
     _ssot_version,
     check_installed_cli_plugins,
     detect_install_channel,
+    fetch_pypi_latest_version,
+    marketplace_install_location,
     render_human,
     run_doctor,
 )
@@ -49,6 +52,26 @@ from .doctor import (
 # --------------------------------------------------------------------------
 
 Runner = Callable[..., "subprocess.CompletedProcess[str]"]
+
+
+def _packaged_script(name: str, engine_src: Optional[Path] = None) -> Optional[Path]:
+    """Resolve a bundled script (``vm-selftest.sh``, ``brainiac-alerts.sh``)
+    from either the packaged wheel mirror (``brain/_assets/scripts/``) or the
+    checkout's own ``scripts/`` original — first hit wins. Returns None if
+    neither exists."""
+    candidates: list[Path] = []
+    try:
+        from importlib.resources import files
+        candidates.append(Path(str(files("brain") / "_assets" / "scripts" / name)))
+    except Exception:
+        pass
+    if engine_src is not None:
+        candidates.append(engine_src / "src" / "brain" / "_assets" / "scripts" / name)
+        candidates.append(engine_src / "scripts" / name)
+    for c in candidates:
+        if c.is_file():
+            return c
+    return None
 
 
 def _default_runner(cmd: list[str], **kwargs: Any) -> "subprocess.CompletedProcess[str]":
@@ -218,42 +241,62 @@ def apply_plugin_action(
 
 def resolve_engine_source(
     *, explicit: Optional[str] = None, repo_root: Optional[Path] = None,
-) -> Path:
-    """Resolve the engine checkout to `pip install -e` against, in order:
+    claude_home: Optional[Path] = None,
+) -> Optional[Path]:
+    """Resolve the engine checkout to build/refresh against, in order (RC1):
 
-    1. an explicit override (config / CLI flag / $BRAINIAC_ENGINE_SRC),
-    2. the repo root this module itself ships from (the canonical checkout
-       when `brain update` is invoked from within it),
-    3. `$HOME/brainiac` ONLY as a last-resort convention, never assumed blind.
+    1. an explicit override (config / CLI flag),
+    2. ``$BRAINIAC_ENGINE_SRC``,
+    3. an explicit ``repo_root`` (caller-supplied),
+    4. the repo root this module ships from — but ONLY when it actually carries
+       a ``pyproject.toml`` (a wheel install resolves this inside site-packages,
+       which has none — the exact RC1 mis-resolution),
+    5. the marketplace's ``installLocation`` (known_marketplaces.json), again
+       pyproject-guarded — the one already-persisted pointer to the real
+       checkout on a directory-source install,
+    6. ``None`` — no checkout resolvable. The downstream gate then honestly
+       skips dist-rebuild / workspace re-stage instead of pointing pip at a
+       nonexistent ``~/brainiac`` (the deleted last-resort fallback).
     """
     if explicit:
         return Path(explicit).expanduser().resolve()
-    if os.environ.get("BRAINIAC_ENGINE_SRC"):
-        return Path(os.environ["BRAINIAC_ENGINE_SRC"]).expanduser().resolve()
+    env = os.environ.get("BRAINIAC_ENGINE_SRC")
+    if env:
+        return Path(env).expanduser().resolve()
     if repo_root is not None:
         return repo_root.resolve()
     inferred = Path(__file__).resolve().parent.parent.parent
     if (inferred / "pyproject.toml").exists():
         return inferred
-    return Path.home() / "brainiac"
+    claude_home = claude_home or (Path.home() / ".claude")
+    loc = marketplace_install_location(claude_home)
+    if loc and (loc / "pyproject.toml").exists():
+        return loc
+    return None
+
+
+def _venv_bin(venv_dir: Path, name: str) -> Path:
+    """Path to an executable inside a venv, cross-platform (Windows fix): POSIX
+    venvs put executables in ``bin/`` bare; Windows in ``Scripts\\`` with a
+    ``.exe`` suffix."""
+    if os.name == "nt":
+        return venv_dir / "Scripts" / f"{name}.exe"
+    return venv_dir / "bin" / name
 
 
 def refresh_engine_venv(
-    engine_src: Path, brainiac_home: Path, run: Runner = _default_runner,
+    engine_src: Optional[Path], brainiac_home: Path, run: Runner = _default_runner,
 ) -> dict:
-    """Channel-aware refresh (PYP-04): detect which of the four channels the
-    host is actually on — the legacy editable dev checkout
-    (``~/.brainiac/venv``, pre-PyPI / --dev / offline) or one of the three
-    PyPI channels `install.sh`/`install.ps1` try in order (uv tool / pipx /
-    pip --user) — and run THAT channel's own upgrade command. A PyPI-first
-    default install never creates ``~/.brainiac/venv``, so unconditionally
-    running `pip install -e` there (the pre-S07 behavior) would silently
-    no-op forever on a real PyPI install; detecting the live channel via the
-    PATH-resolved `brain` binary is what makes `/brainiac-update` self-heal
-    the right thing regardless of how the engine was installed.
+    """Channel-aware refresh (PYP-04 / RC2): detect which channel the host is
+    actually on — the legacy editable dev checkout, a plain wheel in
+    ``~/.brainiac/venv`` (RC2: previously misdetected as editable), or one of
+    the three PyPI channels (uv tool / pipx / pip --user) — and run THAT
+    channel's own upgrade command. Detecting the live channel via the
+    PATH-resolved `brain` binary is what makes `brain update` self-heal the
+    right thing regardless of how the engine was installed.
     """
     legacy_venv_dir = brainiac_home / "venv"
-    legacy_bin = legacy_venv_dir / "bin" / "brain"
+    legacy_bin = _venv_bin(legacy_venv_dir, "brain")
     which_brain = shutil.which("brain")
     brain_bin: Optional[Path] = legacy_bin if legacy_bin.exists() else (
         Path(which_brain) if which_brain else None
@@ -270,6 +313,7 @@ def refresh_engine_venv(
             return "unknown"
 
     old_version = _read_version(brain_bin)
+    has_checkout = engine_src is not None and (engine_src / "pyproject.toml").exists()
 
     if channel == CHANNEL_PYPI_UV:
         install_out = run(["uv", "tool", "upgrade", "brainiac-cli"])
@@ -278,10 +322,32 @@ def refresh_engine_venv(
     elif channel == CHANNEL_PIP_USER:
         install_out = run([sys.executable, "-m", "pip", "install", "--user",
                            "--upgrade", "brainiac-cli[mcp]"])
-    else:  # editable-checkout — the pre-PyPI / --dev / offline path, unchanged
-        if not (legacy_venv_dir / "bin" / "pip").exists():
+    elif channel == CHANNEL_VENV_WHEEL:
+        # RC2: a NON-editable wheel in ~/.brainiac/venv — upgrade IN-VENV, never
+        # `pip install -e` (which would flip a wheel install into editable and
+        # bind it to a checkout path). Prefer the local checkout build when one
+        # exists (this machine: the SSOT may be newer than a not-yet-published
+        # PyPI), else pull the published wheel.
+        pip = _venv_bin(legacy_venv_dir, "pip")
+        target = f"{engine_src}[mcp]" if has_checkout else "brainiac-cli[mcp]"
+        install_out = run([str(pip), "install", "--upgrade", target])
+        brain_bin = legacy_bin
+    else:  # editable-checkout — the pre-PyPI / --dev / offline path
+        if not has_checkout:
+            # Fail fast with an actionable message instead of `pip install -e`
+            # against None / a nonexistent path (the old ~/brainiac footgun).
+            return {
+                "ok": False,
+                "old_version": old_version,
+                "new_version": old_version,
+                "detail": ("editable-checkout channel but no engine checkout resolved — "
+                           "pass --engine-src <clone> or set $BRAINIAC_ENGINE_SRC to a "
+                           "checkout with pyproject.toml"),
+                "channel": channel,
+            }
+        if not _venv_bin(legacy_venv_dir, "pip").exists():
             run(["python3", "-m", "venv", str(legacy_venv_dir)])
-        pip = legacy_venv_dir / "bin" / "pip"
+        pip = _venv_bin(legacy_venv_dir, "pip")
         install_out = run([str(pip), "install", "--upgrade", "-e", f"{engine_src}[mcp]"])
         brain_bin = legacy_bin
 
@@ -294,6 +360,97 @@ def refresh_engine_venv(
         "detail": (install_out.stdout or install_out.stderr or "").strip(),
         "channel": channel,
     }
+
+
+# --------------------------------------------------------------------------
+# Update-available detection (RC5) + the update-state record. `brain doctor`'s
+# maintainer-facing `--check-registry` row answers "is the marketplace ahead of
+# PyPI"; this is the CONSUMER-facing "is a newer version available to ME, on my
+# channel" — channel-aware and zero-network when a local checkout is the SSOT.
+# --------------------------------------------------------------------------
+
+def check_update_available(
+    installed: Optional[str],
+    channel: str,
+    engine_src: Optional[Path],
+    *,
+    fetch: Callable[[], Optional[str]] = fetch_pypi_latest_version,
+) -> dict:
+    """Channel-aware: a local-checkout channel compares ``installed`` against the
+    checkout's own SSOT (``pyproject.toml`` — no network); a PyPI channel does
+    the existing 3s-timeout PyPI fetch. A ``None`` latest, or a downgrade
+    (latest <= installed), reports ``available: False`` — never nags."""
+    latest: Optional[str] = None
+    source: Optional[str] = None
+    has_checkout = engine_src is not None and (engine_src / "pyproject.toml").exists()
+    if channel in (CHANNEL_EDITABLE, CHANNEL_VENV_WHEEL) and has_checkout:
+        latest = _ssot_version(engine_src)  # type: ignore[arg-type]
+        source = "local-ssot"
+    elif channel in (CHANNEL_PYPI_UV, CHANNEL_PIPX, CHANNEL_PIP_USER, CHANNEL_VENV_WHEEL):
+        latest = fetch()
+        source = "pypi"
+    if not latest or not installed:
+        return {"available": False, "installed": installed, "latest": latest, "source": source}
+    available = _compare(installed, latest) < 0
+    return {"available": available, "installed": installed, "latest": latest, "source": source}
+
+
+def detect_and_check_update(
+    brainiac_home: Path, claude_home: Optional[Path] = None, run: Runner = _default_runner,
+) -> dict:
+    """One-call detection the hourly maintain auto-apply uses: resolve the live
+    channel + installed version + engine source, then answer "is a newer
+    version available to this machine". Zero network on a local-checkout
+    channel; a 3s PyPI fetch otherwise (via ``check_update_available``)."""
+    claude_home = claude_home or (Path.home() / ".claude")
+    legacy_bin = _venv_bin(brainiac_home / "venv", "brain")
+    which_brain = shutil.which("brain")
+    brain_bin: Optional[Path] = legacy_bin if legacy_bin.exists() else (
+        Path(which_brain) if which_brain else None
+    )
+    channel = detect_install_channel(brain_bin) if brain_bin else CHANNEL_EDITABLE
+    installed: Optional[str] = None
+    if brain_bin and Path(brain_bin).exists():
+        try:
+            out = run([str(brain_bin), "--version"])
+            txt = (out.stdout or out.stderr or "").strip()
+            m = re.search(r"(\d+\.\d+\.\d+\S*)", txt)
+            installed = m.group(1) if m else (txt or None)
+        except Exception:
+            installed = None
+    engine_src = resolve_engine_source(claude_home=claude_home)
+    avail = check_update_available(installed, channel, engine_src)
+    return {**avail, "channel": channel, "engine_src": engine_src,
+            "brain_bin": str(brain_bin) if brain_bin else None}
+
+
+def update_state_path(brainiac_home: Path) -> Path:
+    return brainiac_home / "update-state.json"
+
+
+def read_update_state(brainiac_home: Path) -> Optional[dict]:
+    try:
+        import json
+        return json.loads(update_state_path(brainiac_home).read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def write_update_state(
+    brainiac_home: Path, *, status: str, installed: Optional[str] = None,
+    latest: Optional[str] = None, source: Optional[str] = None,
+    at: Optional[str] = None, detail: str = "",
+) -> Path:
+    """Persist the auto-update record the session-start hook reads (file-only,
+    no engine call). ``status`` ∈ {available, applied, failed}."""
+    import json
+    p = update_state_path(brainiac_home)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        "status": status, "installed": installed, "latest": latest,
+        "source": source, "at": at, "detail": detail,
+    }), encoding="utf-8")
+    return p
 
 
 # --------------------------------------------------------------------------
@@ -400,6 +557,15 @@ def stage_engine_and_skills(engine_src: Path, workspace_path: str) -> dict:
     agents_src = engine_src / "AGENTS.md"
     if agents_src.exists():
         shutil.copyfile(agents_src, brain_dir / "AGENTS.md")
+
+    # vm-selftest.sh — the un-fakeable PASS/FAIL retrieval self-test every
+    # workspace carries (step 8). Ships in the wheel via _assets/scripts; stage
+    # it 0755 so a Cowork session can `bash vault/.brain/vm-selftest.sh`.
+    selftest_src = _packaged_script("vm-selftest.sh", engine_src)
+    if selftest_src is not None:
+        dst = brain_dir / "vm-selftest.sh"
+        shutil.copyfile(selftest_src, dst)
+        dst.chmod(0o755)
 
     ssot = _ssot_version(engine_src)
     staged = _read_version_stamp(engine_dir / "brain" / "_version.py")
@@ -546,19 +712,16 @@ def run_update(
     """
     brainiac_home = brainiac_home or Path(os.environ.get("BRAINIAC_HOME", Path.home() / ".brainiac"))
     claude_home = claude_home or (Path.home() / ".claude")
-    resolved_engine_src = resolve_engine_source(explicit=engine_src)
+    resolved_engine_src = resolve_engine_source(explicit=engine_src, claude_home=claude_home)
 
     result: dict[str, Any] = {
         "ok": False,
         "steps": {},
         "before_after": [],
-        "residual_human_steps": [
-            "Desktop/Cowork plugin store: no external CLI — this run only DETECTS "
-            "staleness (see the manual-required rows in `brain doctor`); to UPDATE, "
-            "in a Cowork session use /skill-creator to repackage + Save-and-Replace "
-            "the stale skill(s) — /brainiac-update is host-only and refuses in Cowork "
-            "— then re-run `brain doctor` on the host to confirm it took.",
-        ],
+        # RC6/step 9: the Cowork Desktop-store residue line is printed ONLY
+        # when `brain doctor` actually reports that surface stale (populated
+        # after after_doctor below) — a current store gets no noise.
+        "residual_human_steps": [],
     }
 
     # Step 0 — preflight capability probe (HARDEN:consensus-HIGH)
@@ -667,9 +830,12 @@ def run_update(
     # install has none by default, and only Cowork workspaces need either
     # step. Gate on the checkout actually existing so a host-only PyPI
     # install's `brain update` never fails on a step it doesn't need.
-    engine_src_available = (resolved_engine_src / "pyproject.toml").exists()
+    engine_src_available = (
+        resolved_engine_src is not None and (resolved_engine_src / "pyproject.toml").exists()
+    )
     no_checkout_detail = (
-        f"skipped — no local checkout at {resolved_engine_src} (a PyPI-first install "
+        f"skipped — no local checkout resolved (tried explicit/$BRAINIAC_ENGINE_SRC/"
+        f"__file__/marketplace installLocation) (a PyPI-first install "
         "has none by default; only needed to re-stage Cowork workspaces — clone "
         "https://github.com/Autopsias/brainiac.git and pass --engine-src, or set "
         "$BRAINIAC_ENGINE_SRC, if you use Cowork)"
@@ -699,6 +865,24 @@ def run_update(
     # Step 5 — brain doctor verify (final pass/fail).
     after_doctor = run_doctor(brainiac_home=brainiac_home, claude_home=claude_home)
     result["steps"]["doctor_after"] = render_human(after_doctor)
+
+    # Step 9 — Cowork Desktop plugin-store residue: print the one manual
+    # instruction ONLY when the store is actually stale (a store version below
+    # SSOT). The row is always MANUAL_REQUIRED (never gates), so we read its raw
+    # version and compare against SSOT ourselves.
+    ssot_after = after_doctor.get("ssot_version") or "0.0.0"
+    desktop_stale = any(
+        r["surface"].startswith("Desktop/Cowork plugin store")
+        and (r.get("raw") or {}).get("version")
+        and _compare(str(r["raw"]["version"]), ssot_after) < 0
+        for r in after_doctor["rows"]
+    )
+    if desktop_stale:
+        result["residual_human_steps"].append(
+            "Desktop/Cowork plugin store is STALE and has no external CLI: in a "
+            "Cowork session use /skill-creator to repackage + Save-and-Replace the "
+            "stale skill(s) — /brainiac-update is host-only and refuses in Cowork — "
+            "then re-run `brain doctor` on the host to confirm it took.")
 
     # Before -> after table across the surfaces that actually changed intent.
     table = []

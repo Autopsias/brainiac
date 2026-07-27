@@ -127,11 +127,41 @@ _TITLES = {
 }
 
 
+# Their evidence is a live measurement that drifts every run (a byte count),
+# so hashing it would mint a new "problem" on every scan and nothing would
+# ever stay resolved. The SIGNATURE is the identity for these.
+_FINGERPRINT_IGNORES_EVIDENCE = frozenset({"hot-md-bloat"})
+
+
+def evidence_fingerprint(signature: str, evidence: list[str]) -> str:
+    """Stable short hash of ``signature`` + its DISTINCT evidence set.
+
+    The de-dup handle for engine-feedback prompts. Keying the file on the run
+    date alone re-filed an unchanged signature under a fresh name every retro
+    run, and moving the old file to ``resolved/`` did not stop it — measured
+    2026-07-27: `absolute-paths` (fixed 2026-07-13) and `duplicate-findings`
+    (fixed 2026-07-20) were still being re-filed off unchanged 2026-07-10/07-12
+    hot.md entries, because hot.md is append-only history and never loses them.
+    Fingerprinting the evidence makes "same problem" mean the same file, so a
+    resolved fingerprint stays resolved while genuinely NEW evidence still files.
+
+    Signatures in ``_FINGERPRINT_IGNORES_EVIDENCE`` hash on the signature
+    alone — their "evidence" is a fluctuating MEASUREMENT, not an identity."""
+    import hashlib
+    parts = [signature]
+    if signature not in _FINGERPRINT_IGNORES_EVIDENCE:
+        parts.extend(sorted(set(evidence)))
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:12]
+
+
 def render_engine_feedback(signature: str, evidence: list[str],
                            today: datetime.date) -> tuple[str, str]:
     """Return ``(slug, markdown)`` — a ready-to-run engine-repo prompt for one
-    signature, shaped like the field report that motivated this redesign."""
-    slug = f"{today.isoformat()}-{signature}"
+    signature, shaped like the field report that motivated this redesign.
+
+    The slug carries the evidence fingerprint, so an unchanged finding resolves
+    to the same stem on every future run (see ``evidence_fingerprint``)."""
+    slug = f"{today.isoformat()}-{signature}-{evidence_fingerprint(signature, evidence)}"
     title = _TITLES.get(signature, signature)
     ev = "\n".join(f"- `{e}`" for e in evidence[:20])
     if len(evidence) > 20:

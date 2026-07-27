@@ -2600,6 +2600,7 @@ class BrainCore:
         evidence map plus the feedback files written."""
         from . import retro as rmod
         import datetime as _dt
+        import re
         self._require_host("run the retro fold")
         d = today or _dt.date.today()
 
@@ -2610,13 +2611,29 @@ class BrainCore:
 
         written: list[str] = []
         fb_dir = self._engine_feedback_dir()
+        # De-dup on the EVIDENCE FINGERPRINT across both the open queue and
+        # resolved/ — not on the dated filename. hot.md is append-only, so the
+        # entries proving a signature never disappear; keying the file on the
+        # run date re-filed an already-fixed, already-resolved defect under a
+        # fresh name every run (measured 2026-07-27). A fingerprint already
+        # sitting in resolved/ is a defect the operator has closed: never
+        # re-open it. Genuinely new evidence yields a new fingerprint and files.
+        seen = {
+            m.group(1)
+            for p in list(fb_dir.glob("*.md")) + list((fb_dir / "resolved").glob("*.md"))
+            for m in [re.search(r"-([0-9a-f]{12})\.md$", p.name)] if m
+        }
         for signature, evidence in findings.items():
+            fp = rmod.evidence_fingerprint(signature, evidence)
+            if fp in seen:
+                continue
             slug, md = rmod.render_engine_feedback(signature, evidence, d)
             fpath = fb_dir / f"{slug}.md"
             if not fpath.exists():
                 fb_dir.mkdir(parents=True, exist_ok=True)
                 fpath.write_text(md, encoding="utf-8")
                 written.append(fpath.name)
+                seen.add(fp)
         return {"date": d.isoformat(), "findings": findings, "feedback_written": written}
 
     def pending_engine_feedback(self) -> list[str]:
@@ -2683,6 +2700,82 @@ class BrainCore:
         if newly:
             open_path.write_text(maint.render_recommendation_lines(updated), encoding="utf-8")
         return {"scanned": len(entries), "surfaced": len(newly), "appended_to_hot": appended}
+
+    def _maybe_auto_update(self, today: Any) -> dict[str, Any]:
+        """Hourly auto-apply of a newer engine version (owner decision
+        2026-07-25). Safety rails: attempt-once-per-version (a failed version
+        is never auto-retried until a manual `brain update` or a NEWER version
+        appears), writer-lock aware (defers cleanly if a hand-run rebuild holds
+        the single-writer lock), and post-update VERIFY as the gate
+        (``run_update`` returns ok only when after-doctor is all-current AND a
+        real query embed passes). Writes ``~/.brainiac/update-state.json`` for
+        the session-start banner. Never raises past its own try in
+        ``maintain`` — the caller wraps it too."""
+        import os as _os
+        from pathlib import Path as _Path
+
+        from . import update as brain_update
+
+        # Auto-apply is a SCHEDULED-TASK behavior only: the hourly brain-nightly
+        # runner (scripts/brain-brief.sh) sets BRAIN_AUTO_UPDATE=1. A manual
+        # `brain maintain`, an interactive session, and the test suite must NEVER
+        # trigger an unattended pip upgrade / plugin reinstall of the machine —
+        # so default OFF and require the explicit opt-in the scheduler provides.
+        if _os.environ.get("BRAIN_AUTO_UPDATE") != "1":
+            return {"auto_update": "disabled", "reason": "BRAIN_AUTO_UPDATE!=1 (scheduled-task only)"}
+
+        brainiac_home = _Path(_os.environ.get("BRAINIAC_HOME", _Path.home() / ".brainiac"))
+        if config.is_managed():
+            return {"auto_update": "skipped", "reason": "managed endpoint"}
+
+        info = brain_update.detect_and_check_update(brainiac_home)
+        prev = brain_update.read_update_state(brainiac_home)
+        latest = info.get("latest")
+        installed = info.get("installed")
+
+        if not info.get("available"):
+            # A previously-DEFERRED "available" nag that is no longer available
+            # (applied manually, or superseded) gets cleared so the banner stops.
+            if prev and prev.get("status") == "available":
+                try:
+                    brain_update.update_state_path(brainiac_home).unlink()
+                except FileNotFoundError:
+                    pass
+            return {"auto_update": "none", "installed": installed, "latest": latest}
+
+        # attempt-once-per-version: never auto-retry a version that already failed.
+        if prev and prev.get("status") == "failed" and prev.get("latest") == latest:
+            return {"auto_update": "skipped", "reason": "version already failed", "latest": latest}
+
+        # writer-lock aware: if a hand-run rebuild/sync holds the single-writer
+        # lock, defer (mark 'available') and let next hour retry — same posture
+        # as the daily branch's skipped-writer-busy.
+        from .lock import WriterLockBusy, writer_lock
+        try:
+            with writer_lock(config.writer_lock_path(self.vault), verb="update-probe", timeout=0.1):
+                pass
+        except WriterLockBusy as exc:
+            brain_update.write_update_state(
+                brainiac_home, status="available", installed=installed, latest=latest,
+                source=info.get("source"), at=today.isoformat(),
+                detail=f"deferred — writer busy (pid={exc.holder.get('pid')})")
+            return {"auto_update": "deferred", "reason": "writer busy", "latest": latest}
+
+        report = brain_update.run_update(brainiac_home=brainiac_home)
+        if report.get("ok"):
+            brain_update.write_update_state(
+                brainiac_home, status="applied", installed=installed, latest=latest,
+                source=info.get("source"), at=today.isoformat(),
+                detail="auto-applied by brain-nightly")
+            return {"auto_update": "applied", "latest": latest}
+        # post-update verify is the gate: run_update already ran after-doctor +
+        # a real query embed; a non-ok result means a step failed. Record it
+        # loudly (banner) and DON'T auto-retry this version.
+        brain_update.write_update_state(
+            brainiac_home, status="failed", installed=installed, latest=latest,
+            source=info.get("source"), at=today.isoformat(),
+            detail=(report.get("notes") or "update pipeline reported not-ok")[:200])
+        return {"auto_update": "failed", "latest": latest, "notes": report.get("notes")}
 
     def maintain(
         self, *, dry_run: bool = False, today: Any = None,
@@ -2843,6 +2936,20 @@ class BrainCore:
                             f"queued COS ingestion batch "
                             f"{cos_res['batch']['batch_id']} "
                             f"({len(cos_res['batch']['candidates'])} candidate(s))"))
+                    waiting = (cos_res.get("batch", {}) or {}).get("waiting") or []
+                    if waiting:
+                        # Backpressure (ing-02) is correct, but SILENT
+                        # backpressure is not — proposals queued behind an
+                        # unanswered batch were invisible to the owner for two
+                        # days (measured 2026-07-27). hot.md is the LOG (§9):
+                        # keyed on the DISTINCT waiting-id set, so an unchanged
+                        # queue isn't re-reported every hour.
+                        self._append_hot_once(
+                            "maintain:cos-broker-waiting:"
+                            + maint.promote_scan_finding_key(
+                                [{"id": i} for i in waiting]),
+                            maint.render_cos_waiting_hot_entry(waiting, d),
+                        )
                     consumed = cos_res.get("consumed", {}) or {}
                     if consumed.get("accepted"):
                         auto_fixed.append(maint.auto_fixed_item(
@@ -3794,6 +3901,25 @@ class BrainCore:
             results["notifications"] = notifications
 
             if not dry_run:
+                # Auto-apply a newer engine version (owner decision 2026-07-25).
+                # Broad try/except — maintain itself NEVER dies on the update
+                # machinery (and _maybe_auto_update wraps its own internals too).
+                try:
+                    au = self._maybe_auto_update(d)
+                    results["auto_update"] = au
+                    if au.get("auto_update") == "applied":
+                        auto_fixed.append(maint.auto_fixed_item(
+                            "auto-update", "brain update",
+                            f"auto-updated engine to {au.get('latest')}"))
+                    elif au.get("auto_update") == "failed":
+                        blocked.append(maint.blocked_item(
+                            f"auto-update to {au.get('latest')} FAILED: {au.get('notes')}",
+                            "update pipeline", "run `brain update` manually"))
+                except Exception as exc:  # noqa: BLE001
+                    blocked.append(maint.blocked_item(
+                        f"auto-update check/apply raised: {type(exc).__name__}: {exc}",
+                        "update machinery", "next maintain run"))
+
                 # hot-md-bloat: rotate aged/resolved entries to archive/ once
                 # the live file exceeds the soft cap. Best-effort hygiene —
                 # never allowed to fail the maintain run.

@@ -562,7 +562,19 @@ def enqueue_batch(core, now: _dt.datetime | None = None) -> dict[str, Any]:
     now = now or _utcnow()
     vault = core.vault
     if open_batches(vault):
-        return {"enqueued": False, "reason": "batch-already-open (backpressure)"}
+        # Report WHAT is waiting, not just that something is. Backpressure is
+        # correct (one broker slot), but silent backpressure is not: measured
+        # 2026-07-27, two proposals claimed 27 minutes after a batch opened sat
+        # invisible for two days — the owner inbox showed the open batch and
+        # nothing hinted that answering it would release more. The waiting ids
+        # let `maintain` surface a count so the queue is never a surprise.
+        # A proposal stays in pending/ until its batch is CONSUMED, so exclude
+        # the ones already queued in the open batch — only genuinely
+        # held-back proposals count as waiting.
+        queued = {c["id"] for b in open_batches(vault) for c in b.get("candidates", [])}
+        waiting = [m["id"] for m in _pending_metas(vault) if m["id"] not in queued]
+        return {"enqueued": False, "reason": "batch-already-open (backpressure)",
+                "waiting": waiting}
     metas = _pending_metas(vault)
     # Exclude proposals already queued in a (still-open) batch — defensive; an
     # open batch already blocks above.

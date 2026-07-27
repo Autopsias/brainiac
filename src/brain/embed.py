@@ -449,6 +449,11 @@ class OnnxEmbedder:
             or cache_dir
             or os.environ.get("BRAIN_MODEL_CACHE")
             or os.environ.get("BRAIN_EMBED_ONNX_DIR")
+            # Zero-config fallback for the staged VM runtime: locate the bundled
+            # model beside the engine, so offline embedding works even when a
+            # Cowork session's bootstrap forgot to export BRAIN_MODEL_CACHE.
+            # No-op on a pip install (no sibling model dir) → normal HF path.
+            or self._staged_model_dir()
         )
         self._sess = None
         self._tok = None
@@ -513,6 +518,31 @@ class OnnxEmbedder:
                 ) from exc
         return self._sess
 
+    def _staged_model_dir(self) -> str | None:
+        """Zero-config model location for the staged VM runtime — NO env var.
+
+        Returns the first candidate dir that holds ``self._onnx_file`` +
+        ``tokenizer.json`` (the case-1 no-HF snapshot layout), else None.
+        Candidates: ``$BRAIN_RUNTIME_DIR/model`` if set, then a ``model/``
+        dir beside the staged engine (``.brain/engine/brain/embed.py`` →
+        ``.brain/model``). On a pip install there is no sibling ``model/``, so
+        this returns None and the normal huggingface_hub path is unchanged —
+        this is why blocking hf_hub on the host has no effect, but a Cowork VM
+        (no hf_hub) still embeds offline regardless of its bootstrap.
+        """
+        cands: list[str] = []
+        rt = os.environ.get("BRAIN_RUNTIME_DIR")
+        if rt:
+            cands.append(os.path.join(rt, "model"))
+        here = os.path.dirname(os.path.abspath(__file__))          # .brain/engine/brain
+        cands.append(os.path.join(os.path.dirname(os.path.dirname(here)), "model"))  # .brain/model
+        for d in cands:
+            if os.path.isfile(os.path.join(d, self._onnx_file)) and os.path.isfile(
+                os.path.join(d, "tokenizer.json")
+            ):
+                return d
+        return None
+
     def _resolve_model_files(self) -> tuple[str, str]:
         """Resolve (onnx_path, base_dir) across three offline/online layouts:
 
@@ -553,7 +583,20 @@ class OnnxEmbedder:
                 f"local_dir {self._local_dir!r} is neither a snapshot dir nor an "
                 f"HF cache root for {self._hf_repo!r}"
             )
-        from huggingface_hub import snapshot_download
+        try:
+            from huggingface_hub import snapshot_download
+        except ImportError as exc:
+            # No local model was found (no env var, no staged model beside the
+            # engine) AND huggingface_hub isn't installed to download one. Name
+            # the real cause instead of a bare "No module named 'huggingface_hub'"
+            # — the latter sent a whole diagnosis down a vendoring rabbit hole.
+            raise EmbedderUnavailable(
+                f"no local model found for {self.model_id!r} and huggingface_hub is "
+                f"not installed to download one. In an offline/staged runtime "
+                f"(e.g. a Cowork VM) set $BRAIN_MODEL_CACHE to a dir containing "
+                f"{self._onnx_file!r} + tokenizer.json (the staged .brain/model/), "
+                f"or run `brain warmup` on a host with network access."
+            ) from exc
 
         base = snapshot_download(self._hf_repo, allow_patterns=pat, revision=self._revision)
         return os.path.join(base, self._onnx_file), base

@@ -242,6 +242,15 @@ echo "[install] staged skill bundle version: $STAGED_SKILL_VERSION (matches engi
 echo "[install] task manifest -> $BRAIN_DIR/routines/manifest.json"
 cp -f "$REPO/routines/manifest.json" "$BRAIN_DIR/routines/manifest.json"
 
+# (e1) vm-selftest.sh — the un-fakeable PASS/FAIL retrieval self-test staged
+# into every workspace (0755) so a Cowork session can run
+# `bash vault/.brain/vm-selftest.sh` and show the verdict verbatim.
+if [ -f "$REPO/scripts/vm-selftest.sh" ]; then
+  echo "[install] vm self-test -> $BRAIN_DIR/vm-selftest.sh"
+  cp -f "$REPO/scripts/vm-selftest.sh" "$BRAIN_DIR/vm-selftest.sh"
+  chmod 0755 "$BRAIN_DIR/vm-selftest.sh"
+fi
+
 # (e2) the conventions contract + session prompt. Cowork DOES auto-load a
 # workspace-root CLAUDE.md at session start (verified 2026-07: Cowork shares
 # Claude Code's claudeMd loader; the old "no auto-read from a mounted folder"

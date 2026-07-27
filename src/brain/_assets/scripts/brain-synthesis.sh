@@ -179,6 +179,40 @@ PY
     rm -f -- "$SETTINGS_JSON" "$MCP_JSON"
     continue
   fi
+  # FL-03 — COS retro miner, HOST-SIDE and fixed-argv, before the model runs.
+  # It reads the vault's own COS ledgers and appends at most 5 decidable owner
+  # questions to .brain/memory/inbox.jsonl, which the SessionStart hook already
+  # surfaces as "OWNER INBOX: N pending".
+  #
+  # WHY HERE AND NOT IN THE PROMPT: the confined session below denies Bash and
+  # ships no shell tool, so the model physically cannot run this — an
+  # invocation added to the prompt would be dead text. This is the same trusted
+  # host lane the fixed-argv status/doctor/publish calls already use, and it
+  # needs NO widening of the model's permission allowlist: the miner runs
+  # outside the sandbox and the model's existing Read(vault) covers its output.
+  # Pure python, no model call, no network. It never raises (it reports
+  # `no-data` / `no-patterns` / `miner-error` as data) but `|| true` keeps even
+  # an interpreter-level failure from ending the vault's synthesis pass.
+  # RESOLUTION ORDER, and the order matters: launchd runs the INSTALLED
+  # `<engine>/_assets/scripts/brain-synthesis.sh`, and a registered workspace
+  # has NO `tools/` dir (verified 2026-07-27 against the real registry), so a
+  # workspace-only lookup would resolve nowhere and the miner would never run —
+  # dead code that looks wired. The miner therefore rides the wheel beside this
+  # script (package_clients.py ENGINE_ASSET_FILES) and is found script-relative
+  # first; a workspace copy and an env override are accepted after that. A
+  # miss is LOGGED, never silent.
+  RETRO_TOOL=""
+  for cand in "${BRAIN_COS_RETRO:-}" \
+              "$(dirname "$0")/../tools/cos_retro.py" \
+              "$WS/tools/cos_retro.py"; do
+    if [ -n "$cand" ] && [ -f "$cand" ]; then RETRO_TOOL="$cand"; break; fi
+  done
+  if [ -n "$RETRO_TOOL" ]; then
+    RETRO_OUT=$(python3 "$RETRO_TOOL" --vault "$VAULT" 2>&1 || true)
+    log "cos-retro: $RETRO_OUT"
+  else
+    log "cos-retro: SKIP — cos_retro.py not found beside $0 or in $WS/tools"
+  fi
   STATUS_DIAG=$(BRAIN_VAULT="$VAULT" "$BRAIN_BIN" --role vm status --json 2>&1 || true)
   DOCTOR_DIAG=$(BRAIN_VAULT="$VAULT" "$BRAIN_BIN" --role vm doctor --json 2>&1 || true)
   RUN_PROMPT="$PROMPT

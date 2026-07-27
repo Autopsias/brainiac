@@ -1,16 +1,17 @@
 ---
 name: vault-eval
-description: "Run the retrieval-quality eval against a brain-substrate vault — five dimensions: S (supersession-correct), X (retrieval-complete), T (temporal-correct), MH (multi-hop), CAL (calibration/refusal). Use monthly, and as the go-live gate after any structural change to the substrate (embedder swap, index rebuild, a change to which read tools the harness composes). Triggers: 'run the eval', 'vault eval', 'retrieval eval', 'monthly eval', 'go-live gate', 'score retrieval'. Also covers the quantitative Recall@k harness (eval/harness.py + eval/gate.py in this repo) for A/B non-inferiority checks against a frozen baseline run. Outputs a dated baseline file with per-question scores and an aggregate. Do NOT use for ad-hoc retrieval probes — write those to a scratch note instead."
+description: "Run the retrieval-quality eval against a brain-substrate vault — five dimensions: S (supersession-correct), X (retrieval-complete), T (temporal-correct), MH (multi-hop), CAL (calibration/refusal). Use monthly, and as the go-live gate after any structural change to the substrate (embedder swap, index rebuild, a change to which read tools the harness composes). Triggers: 'run the eval', 'vault eval', 'retrieval eval', 'monthly eval', 'go-live gate', 'score retrieval'. Also covers the quantitative Recall@k harness (eval/harness.py + eval/gate.py in this repo) for A/B non-inferiority checks against a frozen baseline run, AND the shared-corpus cross-engine A/B (eval/PORTABLE-CONTRACT.md): scoring a SECOND engine (e.g. Memento) that indexes the same corpus against the same golden set + qrels through the same gate — triggers: 'cross-engine eval', 'compare engines', 'A/B against memento', 'head-to-head retrieval', 'score memento on the golden set'. Outputs a dated baseline file with per-question scores and an aggregate. Do NOT use for ad-hoc retrieval probes — write those to a scratch note instead."
 ---
 
 # vault-eval (brain-substrate kernel)
 
-Two eval surfaces, both brain-backed, serving different questions:
+Three eval surfaces serving different questions:
 
 | Surface | Question it answers | Tooling |
 |---|---|---|
 | **Qualitative cascade eval (this skill, primary)** | "Does the model, using the brain's composable read tools, answer real questions correctly — supersession, completeness, timing, multi-hop, calibration?" | hand-written questions + `brain search/grep/bases-query/graph-expand/get` |
 | **Quantitative Recall@k harness** | "Did a substrate/embedder change regress retrieval, measured against a frozen golden set?" | `eval/harness.py` + `eval/gate.py` in this repo |
+| **Cross-engine A/B (shared corpus)** | "Does a DIFFERENT engine indexing the same corpus rank better or worse than brain, on the same golden set + qrels?" | per-engine capture adapters + the same `harness_direct.py`/`gate.py` — contract: `eval/PORTABLE-CONTRACT.md` |
 
 ## When to run
 
@@ -121,6 +122,38 @@ This harness compares against a **frozen, committed baseline run file**,
 never a live call to the system being replaced — see `eval/harness.py`'s
 docstring for the full methodology.
 
+## Cross-engine A/B (shared corpus)
+
+When another engine (e.g. Memento) indexes **the same corpus** as the vault,
+score both against the SAME golden set + qrels. `eval/PORTABLE-CONTRACT.md`
+is the SSOT (schemas §1–2, shared-corpus conditions §6); this is the run
+checklist:
+
+1. **Preflight — ingest coverage.** Verify every qrels doc exists in BOTH
+   engines (doc-inventory diff); exclude/annotate queries whose relevant
+   docs one side lacks. Without this the A/B measures ingest coverage, not
+   ranking. Also confirm the doc-key map (`{engine_source_key:
+   canonical_vault_path}`, lives next to the qrels) is current.
+2. **Capture both runs, same golden file:**
+   ```bash
+   # brain side (in-process)
+   python3 eval/capture_run.py --golden eval/golden_set.json \
+     --vault "$BRAIN_VAULT" --system brain-baseline \
+     --out eval/runs/xengine-brain.json
+   # foreign engine side (its adapter; Memento shown — API must be up)
+   python3 <memento-repo>/apps/api/scripts/capture_ir_run.py \
+     --golden eval/golden_set.json --system memento-baseline \
+     --doc-key source --map eval/qrels/<engine>-map.json \
+     --out eval/runs/xengine-memento.json
+   ```
+3. **A run with a non-trivial `scope.unmapped_keys` tail is not
+   gate-worthy** — fix the map and re-capture before scoring.
+4. **Score + gate** (same commands as the Recall@k harness above, using
+   `harness_direct.py` with the two run files as `--current`/`--new`).
+5. **Read the gate within its limits:** the p95 latency check binds within
+   an engine, not across transports (in-process vs HTTP) — cross-engine
+   latency is informational only.
+
 ## Pass-bar rationale
 
 80% per dimension rather than on the aggregate, for the same reason a
@@ -137,4 +170,5 @@ four dimensions and broken on the fifth still has a broken dimension.
 
 - `AGENTS.md` §5 (agentic tool surface, RET-04) — the composable-tools model this eval scores against
 - `eval/harness.py`, `eval/gate.py` — the quantitative Recall@k A/B harness
+- `eval/PORTABLE-CONTRACT.md` — run-file/qrels schemas, probe-class invariants, shared-corpus cross-engine rules
 - `brain --help` — full verb + flag reference

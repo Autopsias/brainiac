@@ -68,6 +68,7 @@ KERNEL_SKILLS = [
     "voice",
     "brain-inbox",
     "vm-doctor",
+    "graph-explorer",
 ]
 EXTRAS_SKILLS = [
     "curation",
@@ -372,6 +373,16 @@ ENGINE_ASSET_FILES = [
     "scripts/brain-brief.sh",
     "scripts/brain-synthesis.sh",
     "scripts/brain-synthesis-mac.plist",
+    # session-start alert hook (installer copies it into ~/.claude/hooks/) +
+    # the un-fakeable Cowork VM retrieval self-test (staged into every
+    # workspace by update.stage_engine_and_skills / cowork_workspace_install.sh)
+    "scripts/brainiac-alerts.sh",
+    "scripts/vm-selftest.sh",
+    # FL-03 COS retro miner. brain-synthesis.sh resolves it SCRIPT-RELATIVE
+    # (`../tools/cos_retro.py`), so it must ride the wheel beside the wrapper:
+    # launchd runs the INSTALLED `_assets/scripts/brain-synthesis.sh`, and a
+    # registered workspace has no `tools/` dir of its own.
+    "tools/cos_retro.py",
     # `brain graph-report` HTML shell — the payload <script type="application/
     # json"> block is spliced in at render time by src/brain/graphreport.py;
     # everything else here is static (CSS/JS/WebGL viewer).

@@ -9,7 +9,7 @@
     {
       "name": "brainiac-kernel",
       "source": "./plugins/brainiac-kernel",
-      "description": "Core brain-substrate skills for daily second-brain use: kb-curator, promote, vault-ingestion, vault-eval, save-conversation, voice.",
+      "description": "Core brain-substrate skills for daily second-brain use: kb-curator, promote, vault-ingestion, vault-eval, save-conversation, voice, graph-explorer (open the vault's visual link-graph + semantic map).",
       "category": "productivity"
     },
     {

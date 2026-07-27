@@ -589,3 +589,65 @@ per-finding confidences and the 6-month premortem:
 `_plans/cowork-split-staging-v0-10-8-2026-07-08/HARDEN-VIEW.md` (archived) + its `ARCHIVED.md`.
 
 **No version bump** (no code changed; documentation-only decision record).
+
+---
+
+## Amendment (2026-07-25, v0.19.12) — `brain update` v2: resolve-correctly, self-apply, verify
+
+A live `brain update --dry-run` on a wheel+checkout host (the common real shape)
+showed the ADR-0005 pipeline mis-resolving its inputs and silently degrading on
+six surfaces. This amendment fixes them at the root and adds unattended
+auto-apply. It does not change the four-verbs trust split or the host/VM posture.
+
+**Sixth install channel.** `detect_install_channel` now recognises
+`venv-wheel` — a plain wheel install under `~/.brainiac/venv` (dist-info, no
+`__editable__*.pth`). Previously misdetected as `editable-checkout`, which would
+`pip install -e` a wrong path. Discrimination is the `.pth` marker an editable
+install leaves under site-packages (POSIX `lib/*/site-packages`, Windows
+`Lib/site-packages`). A `venv-wheel` upgrades IN-VENV (never `-e`), preferring
+the local checkout build when one exists (the SSOT may lead an unpublished
+PyPI).
+
+**installLocation is the resolution order's authority.**
+`known_marketplaces.json → <name>.installLocation` is the one already-persisted,
+pyproject-guarded pointer to the engine checkout. One shared resolver
+(`doctor.marketplace_install_location`) now backs: `marketplace_dir` (a
+directory-source marketplace is no longer read as "not installed"), the
+`repo_root` retry (a wheel install whose `__file__` resolves into site-packages
+recovers the real checkout instead of falsely reporting "installed engine, no
+checkout"), the installed-plugin rows, and `update.resolve_engine_source` (whose
+`~/brainiac` last-resort fallback is deleted — the chain now honestly ends in
+`None`, and dist-rebuild / Cowork re-stage skip cleanly rather than pointing pip
+at a nonexistent path).
+
+**Marker contract.** `~/.brainiac/update-state.json`
+(`{status, installed, latest, source, at, detail}`):
+- **Writer:** the hourly `maintain` auto-apply flow (`BrainCore._maybe_auto_update`),
+  gated on `BRAIN_AUTO_UPDATE=1` — set ONLY by the scheduled runner
+  (`scripts/brain-brief.sh`). A manual `brain maintain`, an interactive session,
+  and the test suite never trigger an unattended pip upgrade / plugin reinstall
+  (the gate defaults off). It applies a newer version through the full
+  `run_update` pipeline unattended,
+  with three rails: (1) *attempt-once-per-version* — a `failed` version is never
+  auto-retried until a manual `brain update` or a newer version supersedes it;
+  (2) *writer-lock aware* — defers cleanly (`status: available`) if a hand-run
+  rebuild/sync holds the single-writer lock; (3) *post-update verify is the
+  gate* — success requires the after-`doctor` all-required-current AND a real
+  query embed passing (`check_embedder_liveness`), else `status: failed` with the
+  step detail. The whole thing is wrapped in a broad try/except: maintain never
+  dies on the update machinery.
+- **Reader:** the session-start hook (`scripts/brainiac-alerts.sh`), pure
+  file-read — no engine call, no network. `applied`/`failed`/`available` each map
+  to one banner line; anything with `at` older than 7d is ignored (dead-maintain
+  guard).
+- **Cleared by:** the update path — a previously-deferred `available` nag is
+  removed once the update is no longer available (applied manually or superseded).
+
+**VM self-test as product.** `scripts/vm-selftest.sh` (an un-fakeable PASS/FAIL
+retrieval check that exercises the REAL semantic search, not a status/doctor
+proxy) is staged into every workspace at `<vault>/.brain/vm-selftest.sh` (0755)
+by both `update.stage_engine_and_skills` and `cowork_workspace_install.sh`.
+
+**RC6 stays a one-click residue.** The Cowork Desktop skill store is
+structurally unscriptable; `brain doctor` DETECTS its staleness and `brain
+update` prints the one-click instruction ONLY when that row is actually stale.

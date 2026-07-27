@@ -7,6 +7,123 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.19.15] — 2026-07-27
+### Fixed
+- **The version-chain fold raised owner alerts that had no owner action behind
+  them.** `version_family_key` strips one leading capture-date prefix so
+  re-captures of a document line up — which also merges genuinely INDEPENDENT
+  series, and then the linear (number, date) sort invents an order that isn't
+  real. Measured 2026-07-27 on a live vault, two shapes: one family held
+  `…-v2` three times (three separate captures months apart) and the computed
+  chain linked v1 → v1 and ran BACKWARDS in time (the later v1 superseded by
+  the earlier v2); another had distinct numbers but numbers and dates
+  disagreed (a mid-sequence version dated two months BEFORE its neighbours)
+  plus two live heads. Only the conflict freeze saved them — and
+  it then re-reported them as owner action on every run, even though the
+  MANUAL chains were already correct. A family is now chained only when its
+  order is unambiguous (version numbers distinct AND dates non-decreasing as
+  numbers rise); ambiguous families skip into `skipped_ambiguous`, which is
+  informational and never action-required. `skipped_conflict` keeps its
+  original meaning: an orderable family whose manual chain disagrees, which
+  IS a human call. Measured effect on that vault: 32 families → 13 still
+  chain (all already correct), 19 skip quietly, 0 owner alerts.
+  (`maintenance.auto_version_chains`)
+
+## [0.19.14] — 2026-07-27
+### Fixed
+- **`hot.md` grew without bound, so its soft cap was unenforceable.**
+  Aged entries carrying an `**Owner input needed` line were exempt from
+  rotation *unconditionally*, and nothing ever cleared that marker — a live
+  `hot.md` sat at 60 KB (2x the 32 KB cap) with 47 of 51 blocks exempt, some
+  20 days old. Unresolved blocks are now PREFERRED-kept, not kept forever:
+  once the aged+resolved ones are gone, they rotate too, oldest first, until
+  the file fits. Recent entries are still never rotated, so a freshly-raised
+  owner question always stays live, and rotation archives (never drops) with
+  the idempotency-key line intact. (`maintenance.rotate_hot_md`)
+- **The retro fold re-filed engine-feedback prompts for defects already
+  fixed, and re-opened ones the operator had resolved.** Prompt files were
+  keyed on the RUN DATE while `hot.md` is append-only history, so the entries
+  proving a signature never disappear and each run minted a fresh filename —
+  `absolute-paths` (fixed 2026-07-13) and `duplicate-findings` (fixed
+  2026-07-20) were still being filed off unchanged 07-10/07-12 entries, and
+  moving a prompt to `resolved/` did not stop it. Prompts now carry an
+  evidence fingerprint and de-dup across both the open queue and `resolved/`;
+  genuinely new evidence still files. Signatures whose evidence is a
+  fluctuating measurement (`hot-md-bloat`) fingerprint on the signature alone.
+  (`retro.evidence_fingerprint`, `BrainCore.retro`)
+- **COS batch backpressure was silent.** The one-broker-slot rule (ing-02) is
+  correct, but proposals claimed while a batch is open were invisible: two
+  sat unseen for two days behind an unanswered batch. `enqueue_batch` now
+  reports the held-back ids and `maintain` logs them to `hot.md`, keyed on the
+  distinct waiting set so an unchanged queue isn't re-reported hourly.
+  (`cos.enqueue_batch`, `BrainCore.maintain`)
+
+## [0.19.13] — 2026-07-25
+### Fixed
+- **`doctor` reported an engine-version mismatch in the wrong direction, and a
+  four-day stale pin was the cost.** `check_host_venv` compares the installed
+  venv against `ssot` — the version of the engine *running* the check — so a
+  mismatch has two opposite causes and two opposite fixes. Both read the same.
+  Measured: the hourly `brain-nightly`'s `$BRAIN_BIN` was pinned to
+  `dist/engines/brainiac-0.19.9` while the venv held `0.19.12`; doctor emitted
+  `installed 0.19.12 != SSOT 0.19.9` and prescribed `/brainiac-update`, which
+  would have "upgraded" a venv already three versions newer. The pinned engine
+  ran stale for four days with no other signal, and every `src/brain` fix in
+  that window was absent from the scheduled job. The `installed > ssot` branch
+  now says the RUNNING engine is behind, names `$BRAIN_BIN` and the launchd
+  plist as where the pin lives, and says explicitly not to run
+  `/brainiac-update`. `_version_tuple` compares numerically — `0.19.9 <
+  0.19.12` is precisely the ordering a string compare inverts.
+- **`run_doctor_vm` judged the staged vendor ABI against the running
+  interpreter.** The `.brain/vendor` tree is staged to be imported by the
+  Cowork VM's pinned 3.10 and by nothing else, so a host-side `brain doctor`
+  compared correctly-staged cp310 wheels against the host's 3.14 and reported
+  STALE ("the vendored wheels cannot import here"). That false verdict is what
+  `health-latest.html` publishes and what the chief-of-staff brief header reads
+  per contract, so a false engine-health banner rode out to a morning brief on
+  an otherwise clean run. Now judged against `_VM_PYTHON`, matching the
+  `run_doctor()` call site; a genuine cp311-for-3.10 mismatch — the 2026-07-18
+  ten-run `EmbedderUnavailable` outage — still gates.
+- **`tests/test_concurrency.py` was testing the harness, not the lock.** Every
+  spawned child now gets `PYTHONPATH` via a shared `_child_env()`. `brain` is
+  importable only through `conftest`'s in-process `sys.path.insert`, which
+  subprocesses never inherit, so all five two-process writer-lock tests were
+  dying on `ModuleNotFoundError` and reading as lock failures.
+
+## [0.19.12] — 2026-07-25
+### Fixed
+- **`brain update` v2 — one-command, all-platform, self-applying (ADR-0005
+  amendment).** A live `--dry-run` proved the pipeline mis-resolved its inputs
+  on a wheel+checkout install and silently degraded on six surfaces. Fixed at
+  the root:
+  - **Shared resolver** — `doctor.marketplace_install_location()` reads
+    `known_marketplaces.json → installLocation`, the one already-persisted
+    pointer to the engine checkout. It now backs `marketplace_dir`, the
+    `repo_root` retry (a wheel install no longer mis-reports "installed engine,
+    no checkout"), and the installed-plugin rows (a directory-source
+    marketplace is no longer read as "not installed"). RC1/RC3/RC4.
+  - **Sixth install channel** `venv-wheel` — a plain wheel in `~/.brainiac/venv`
+    is no longer misdetected as `editable-checkout` (disambiguated on the
+    `__editable__*.pth` marker); it upgrades IN-VENV, never `pip install -e`.
+    RC2.
+  - **`resolve_engine_source`** — honest fallback chain ending in `None`
+    (deleted the nonexistent `~/brainiac` last resort); dist-rebuild + Cowork
+    re-stage skip cleanly when no checkout is resolvable. `_venv_bin` helper
+    fixes the Windows `Scripts\*.exe` path. RC1.
+  - **Auto-apply (owner decision 2026-07-25)** — the hourly `brain-nightly`
+    host broker applies a newer version unattended, with safety rails:
+    attempt-once-per-version, writer-lock-aware clean defer, and post-update
+    verify (after-doctor all-current + a real query embed) as the gate. Writes
+    `~/.brainiac/update-state.json`. RC5.
+  - **Session-start banner** — `scripts/brainiac-alerts.sh` reads the marker
+    (file-only, no engine call/network) and says when an update applied,
+    failed, or is available.
+  - **VM self-test as product** — `scripts/vm-selftest.sh` (un-fakeable
+    PASS/FAIL retrieval check) staged into every workspace at
+    `<vault>/.brain/vm-selftest.sh` (0755).
+  - **Cowork residue line** printed ONLY when the Desktop plugin store is
+    actually stale (RC6 stays a detected+verified one-click, not remembered).
+
 ## [0.19.11] — 2026-07-22
 ### Fixed
 - **Capture-inbox trust boundary hardened (codex 2026-07-22).** The drain

@@ -101,6 +101,32 @@ def _read_json(path: Path) -> Optional[dict]:
         return None
 
 
+def marketplace_install_location(claude_home: Path, name: str = "brainiac") -> Optional[Path]:
+    """The one already-persisted authoritative pointer to the marketplace's
+    on-disk checkout (RC1/RC3/RC4). ``~/.claude/plugins/known_marketplaces.json``
+    is a FLAT dict keyed by marketplace name (verified on-machine: no
+    "marketplaces" wrapper — same read as ``check_stale_name_plugins``), each
+    value carrying an ``installLocation``. A directory-source marketplace (this
+    machine: ``installLocation`` == the engine checkout) records the REAL path
+    there, so reading it fixes three bugs at once: the hardcoded
+    ``marketplaces/<name>`` guess that read a directory-source install as "not
+    installed" (RC3), the ``__file__``-inference that mislocated ``repo_root``
+    on a wheel install (RC1/RC4), and the ``~/brainiac`` engine-src fallback
+    (RC1). Returns ``None`` when the file, the key, or the dir is absent —
+    every caller keeps its own fallback."""
+    known = _read_json(claude_home / "plugins" / "known_marketplaces.json")
+    if not isinstance(known, dict):
+        return None
+    entry = known.get(name)
+    if not isinstance(entry, dict):
+        return None
+    loc = entry.get("installLocation")
+    if not loc:
+        return None
+    p = Path(str(loc)).expanduser()
+    return p if p.is_dir() else None
+
+
 # --------------------------------------------------------------------------
 # Surface 1 — Version SSOT (pyproject.toml)
 # --------------------------------------------------------------------------
@@ -154,6 +180,7 @@ def check_committed_stamp(repo_root: Path, ssot: str) -> dict:
 # --------------------------------------------------------------------------
 
 CHANNEL_EDITABLE = "editable-checkout"
+CHANNEL_VENV_WHEEL = "venv-wheel"
 CHANNEL_PYPI_UV = "pypi-uv"
 CHANNEL_PIPX = "pipx"
 CHANNEL_PIP_USER = "pip-user"
@@ -168,18 +195,33 @@ _CHANNEL_UPGRADE_CMD = {
     CHANNEL_PYPI_UV: "uv tool upgrade brainiac-cli",
     CHANNEL_PIPX: "pipx upgrade brainiac-cli",
     CHANNEL_PIP_USER: "python3 -m pip install --user --upgrade 'brainiac-cli[mcp]'",
+    CHANNEL_VENV_WHEEL: "<~/.brainiac/venv>/bin/pip install --upgrade 'brainiac-cli[mcp]' "
+                        "(or the local checkout build); /brainiac-update resolves it",
     CHANNEL_EDITABLE: "git pull in the checkout, then: pip install --upgrade -e '<checkout>[mcp]'",
 }
 
 
 def detect_install_channel(brain_bin: Optional[Path]) -> str:
     """Best-effort, offline channel classification from a resolved `brain`
-    executable path. Pure function — no PATH/network probing here."""
+    executable path. Pure except the ONE filesystem probe the ``~/.brainiac/
+    venv`` case needs (RC2): a venv there is EITHER the legacy editable dev
+    checkout (``pip install -e`` leaves an ``__editable__*.pth`` under
+    site-packages) OR a plain wheel install (``pip install brainiac-cli`` —
+    dist-info, no ``.pth``). The old regex assumed editable unconditionally
+    and would ``pip install -e`` a wrong path; disambiguate on the marker the
+    editable install actually leaves behind."""
     if brain_bin is None:
         return CHANNEL_UNKNOWN
     p = str(brain_bin)
     if re.search(r"\.brainiac[/\\]+venv", p):
-        return CHANNEL_EDITABLE
+        # brain_bin = <venv>/bin/brain (POSIX) or <venv>\Scripts\brain.exe
+        # (Windows) — the venv root is the grandparent either way.
+        venv_dir = Path(brain_bin).parent.parent
+        editable_markers = (
+            list((venv_dir / "lib").glob("*/site-packages/__editable__*"))     # POSIX
+            + list((venv_dir / "Lib" / "site-packages").glob("__editable__*"))  # Windows
+        )
+        return CHANNEL_EDITABLE if editable_markers else CHANNEL_VENV_WHEEL
     if re.search(r"[/\\]uv[/\\]tools[/\\]", p) or re.search(r"[/\\]uv[/\\]bin[/\\]", p):
         return CHANNEL_PYPI_UV
     if "pipx" in p:
@@ -194,6 +236,17 @@ def detect_install_channel(brain_bin: Optional[Path]) -> str:
 # inside this pure-ish function, so tests stay deterministic regardless of
 # what's on the live PATH — see test_host_venv_* in tests/test_doctor.py).
 # --------------------------------------------------------------------------
+
+def _version_tuple(v: str) -> Optional[tuple[int, int, int]]:
+    """(major, minor, patch) for comparison, or None if unparseable.
+
+    ponytail: numeric prefix only — enough to order 0.19.9 < 0.19.12 (which a
+    string compare gets WRONG, and that ordering is the whole point here). No
+    `packaging` dependency for three integers.
+    """
+    m = re.match(r"(\d+)\.(\d+)\.(\d+)", (v or "").strip())
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
+
 
 def check_host_venv(brainiac_home: Path, ssot: str, resolved_brain: Optional[Path] = None) -> dict:
     legacy_bin = brainiac_home / "venv" / "bin" / "brain"
@@ -218,8 +271,37 @@ def check_host_venv(brainiac_home: Path, ssot: str, resolved_brain: Optional[Pat
     if installed == ssot:
         return _row("Host engine venv", CURRENT, f"{installed} == SSOT {ssot} (channel: {channel})",
                     raw={"installed": installed, "channel": channel})
+    # DIRECTION MATTERS (2026-07-25). `ssot` is the version of the engine RUNNING
+    # this check, so a mismatch has two opposite causes and opposite fixes:
+    #
+    #   installed < ssot  -> the venv is behind      -> /brainiac-update (original case)
+    #   installed > ssot  -> WE are behind: this check is running from a PINNED
+    #                        engine older than what's installed -> restage/repoint
+    #                        the pin. /brainiac-update here is actively wrong; it
+    #                        would "upgrade" a venv that is already newer.
+    #
+    # Measured: the nightly's BRAIN_BIN was pinned to dist/engines/brainiac-0.19.9
+    # while the venv held 0.19.12. It reported "installed 0.19.12 != SSOT 0.19.9"
+    # and prescribed /brainiac-update — so the pinned engine sat 3 versions stale
+    # for 4 days, its only symptom a health banner that read as the opposite
+    # problem. Naming the direction is the whole fix.
+    inst_v, ssot_v = _version_tuple(installed), _version_tuple(ssot)
+    if inst_v and ssot_v and inst_v > ssot_v:
+        return _row(
+            "Host engine venv", STALE,
+            f"THIS ENGINE is behind the installed one — running {ssot}, installed is "
+            f"{installed} (channel: {channel}). The venv is fine; whatever pinned this "
+            f"engine (e.g. a scheduled job's $BRAIN_BIN) is stale.",
+            remediation="repoint the pin at the current engine — check $BRAIN_BIN in "
+                        "~/Library/LaunchAgents/com.brainiac.*.plist, and stage a fresh "
+                        "one with tools/cos_canary_install.sh <version> if needed. Do NOT "
+                        "run /brainiac-update: the installed venv is already newer.",
+            raw={"installed": installed, "running": ssot, "channel": channel,
+                 "direction": "running-engine-behind"})
     return _row("Host engine venv", STALE, f"installed {installed} != SSOT {ssot} (channel: {channel})",
-                remediation="/brainiac-update", raw={"installed": installed, "channel": channel})
+                remediation="/brainiac-update",
+                raw={"installed": installed, "channel": channel,
+                     "direction": "venv-behind"})
 
 
 # --------------------------------------------------------------------------
@@ -277,9 +359,13 @@ def check_plugin_manifests(repo_root: Path, ssot: str) -> list[dict]:
 
 def check_installed_cli_plugins(
     claude_home: Path, ssot: str, marketplace_name: str = "brainiac",
+    marketplace_dir: Optional[Path] = None,
 ) -> list[dict]:
     rows = []
-    marketplace_dir = claude_home / "plugins" / "marketplaces" / marketplace_name
+    # RC3: a directory-source marketplace lives at known_marketplaces.json's
+    # installLocation, NOT the hardcoded marketplaces/<name> dir — the caller
+    # passes the resolved dir; keep the hardcoded guess only as the fallback.
+    marketplace_dir = marketplace_dir or (claude_home / "plugins" / "marketplaces" / marketplace_name)
     for pname in PLUGIN_NAMES:
         surface = f"Installed CLI plugin ({pname})"
         mkt_json = marketplace_dir / "plugins" / pname / ".claude-plugin" / "plugin.json"
@@ -933,15 +1019,37 @@ def check_embedder_liveness() -> dict:
     interpreter that actually runs `brain` (the exact Cowork-VM failure that
     lost a retrieval eval to a hash fallback). Note this is distinct from
     ``check_vm_model_cache`` — the model files can be present on disk yet the
-    runtime still unable to load them. Reads only process/env state: no model
-    load, no side effects, safe in the read-only doctor."""
+    runtime still unable to load them. The cheap import probe stays read-only;
+    when it passes, we then exercise a REAL 1-token query embed (a model load,
+    no vault/index side effects) so "available" cannot false-green — the exact
+    Cowork-VM gap where onnxruntime imported, model files were present, yet
+    query-embed died because the model dir wasn't found."""
     from .embed import probe_auto_embedder
 
     surface = "Semantic embedder (live runtime)"
     state, backend = probe_auto_embedder()
     if state == "real":
-        return _row(surface, CURRENT, f"real semantic embedder available ({backend})",
-                    raw={"state": state, "backend": backend})
+        # The import probe only proves onnxruntime/tokenizers load — NOT that the
+        # model resolves and embeds. Run an actual query embed to verify.
+        try:
+            from .embed import get_embedder
+
+            vec = get_embedder("onnx").embed("probe", is_query=True)
+            if not vec:
+                raise RuntimeError("embed returned an empty vector")
+            return _row(surface, CURRENT,
+                        f"verified — a live query embed succeeded ({backend}, dim={len(vec)})",
+                        raw={"state": state, "backend": backend, "probe_dim": len(vec)})
+        except Exception as exc:
+            return _row(surface, STALE,
+                        f"onnxruntime imports but a REAL query embed FAILED "
+                        f"({type(exc).__name__}: {exc}) — semantic search is dead "
+                        f"despite the runtime looking present",
+                        remediation="set $BRAIN_MODEL_CACHE to the staged model dir "
+                                    "(.brain/model with onnx/model.onnx + tokenizer.json) "
+                                    "or run `brain warmup`; then re-run `brain doctor`",
+                        raw={"state": state, "backend": backend,
+                             "error": f"{type(exc).__name__}: {exc}"})
     if state == "explicit-hash":
         # Deliberate offline/test choice — never gates, never alarms.
         return _row(surface, UNMANAGED,
@@ -1043,10 +1151,18 @@ def run_doctor_vm(vault: Optional[str | os.PathLike[str]] = None) -> dict[str, A
     rows.append(check_vm_model_cache(vault_path))
     # 2026-07-18 field report: name a staged-ABI mismatch ("vendor is cp311 but
     # interpreter is 3.10") instead of a bare EmbedderUnavailable downstream.
-    import sys as _sys
-
+    #
+    # Judge against _VM_PYTHON, NOT the running interpreter (2026-07-25): this
+    # vendor dir is staged to be imported by the COWORK VM's pinned 3.10, and by
+    # nothing else. Passing sys.version_info made a host-side `brain doctor`
+    # compare cp310 wheels against the host's 3.14 and report STALE
+    # ("the vendored wheels cannot import here") for a correctly-staged vault —
+    # a false DEGRADED that propagated into health-latest.html and out through
+    # COS's brief header, which reads that verdict per contract. On the VM the
+    # two are equal, so this changes nothing where the check actually applies.
+    # Matches the run_doctor() call site below, which already used _VM_PYTHON.
     rows.append(check_vendor_abi(config.brain_runtime_dir(vault_path) / "vendor",
-                                 _sys.version_info[:2]))
+                                 _VM_PYTHON))
     rows.append(check_embedder_liveness())  # DV-03: model files present ≠ embedder loads
     rows.append(check_vm_maintain_heartbeat(vault_path))
     rows.extend(_row(s, NOT_DETECTABLE,
@@ -1108,7 +1224,17 @@ def run_doctor(
         from . import connect
 
         app_support_dir = connect.claude_desktop_config_path().parent
-    marketplace_dir = marketplace_dir or (claude_home / "plugins" / "marketplaces" / marketplace_name)
+    # RC1/RC3/RC4: the marketplace's real on-disk location comes from
+    # known_marketplaces.json → installLocation (a directory-source
+    # marketplace is NOT under marketplaces/<name>). Resolve it once and reuse
+    # for both the marketplace-cache row and the installed-plugin rows; keep
+    # the hardcoded path as the last fallback.
+    resolved_marketplace = marketplace_install_location(claude_home, marketplace_name)
+    marketplace_dir = (
+        marketplace_dir
+        or resolved_marketplace
+        or (claude_home / "plugins" / "marketplaces" / marketplace_name)
+    )
 
     registry_unavailable = False
     if registry_entries is None:
@@ -1137,6 +1263,16 @@ def run_doctor(
     # the v0.19.3 pre-restage verification). Without a checkout the honest
     # answer is NOT_DETECTABLE, and drift comparisons fall back to the running
     # engine's own version.
+    # RC4: when __file__-inference lands somewhere without a pyproject (a wheel
+    # install resolves repo_root inside site-packages), retry via the
+    # marketplace installLocation — the real checkout on a directory-source
+    # install. This turns a falsely "installed engine, no checkout" host back
+    # into a full dev-checkout doctor run (staged-workspace rows, SSOT drift).
+    if not (repo_root / "pyproject.toml").is_file():
+        retry = resolved_marketplace
+        if retry and (retry / "pyproject.toml").is_file() and (retry / "src" / "brain").is_dir():
+            repo_root = retry
+
     is_dev_checkout = (repo_root / "pyproject.toml").is_file() and (repo_root / "src" / "brain").is_dir()
 
     ssot = _ssot_version(repo_root) if is_dev_checkout else None
@@ -1165,7 +1301,8 @@ def run_doctor(
     if is_dev_checkout:
         rows.append(check_dist_compat(repo_root, ssot))
         rows.extend(check_plugin_manifests(repo_root, ssot))
-    rows.extend(check_installed_cli_plugins(claude_home, ssot, marketplace_name))
+    rows.extend(check_installed_cli_plugins(claude_home, ssot, marketplace_name,
+                                            marketplace_dir=marketplace_dir))
     rows.extend(check_stale_name_plugins(claude_home))
     if registry_unavailable:
         rows.append(_row(

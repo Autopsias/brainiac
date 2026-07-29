@@ -1,0 +1,658 @@
+#!/usr/bin/env python3
+"""Guarded end-to-end public release pipeline (runbook §7.6-§8 in one command).
+
+    python3 tools/publish_public.py v0.19.18 --denylist ~/brainiac-release-groundtruth.txt
+    python3 tools/publish_public.py v0.19.18 --denylist <path> --dry-run       # verify only, no gates
+    python3 tools/publish_public.py v0.19.18 --denylist <path> --from npm      # resume after a partial run
+
+Owner decision 2026-07-29 (amending the runbook's earlier "publishing is
+never scripted" rule): the pipeline ORCHESTRATES the release, but every
+irreversible act — TestPyPI upload, PyPI upload, npm publish, public git
+push — stops at an interactive gate that states what has been verified, what
+is about to happen and why it cannot be undone, and proceeds only when the
+operator types the exact version string. Automation composes the steps; the
+human still performs each act.
+
+Why this exists (measured, 2026-07-29): the manual chain shipped v0.19.17 to
+PyPI WITHOUT the Windows fixes that were already committed — the tag was cut
+one commit too early and nothing cross-checked tag content against intent.
+The same day's post-mortem found two more latent classes: the clean-room
+export copies file BODIES from the working tree (so a concurrent session's
+uncommitted work would have shipped), and the only Windows CI signal had been
+red for six days on dependabot branches where nobody read it.
+
+Structural guarantees (not gate-dependent):
+- Everything is built from a THROWAWAY WORKTREE at the tag. The dev repo's
+  working tree — including any concurrent session's uncommitted work — cannot
+  reach the artifact.
+- The contamination scanner must first find a PLANTED canary (a real term
+  from the operator's denylist injected into a scratch copy). A scanner that
+  cannot fail is not allowed to pass anything (the 0.16.0 lesson: a blank
+  denylist line silently zeroed every scan for twelve releases).
+- The built sdist is extracted and scanned again — the artifact that ships,
+  not just the tree it was built from.
+- The public push happens from a FRESH CLONE of the public repo in a temp
+  dir. This repo's `disabled-public-DO-NOT-PUSH` remote is never touched,
+  never re-enabled, never pushed (ADR-0001 unchanged).
+- No credential is ever read, written, or probed: twine/npm/git run in the
+  operator's own authenticated sessions and prompt on their own.
+
+Every phase appends to `_evidence/releases/publish-<version>.md` as it
+completes, so an aborted run leaves a truthful partial transcript.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as _dt
+import hashlib
+import json
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+PUBLIC_REMOTE_NAME = "disabled-public-DO-NOT-PUSH"  # fetch URL is the public repo; push URL is disabled and stays so
+DIST_MATRIX_WORKFLOW = "distribution-matrix.yml"
+
+PHASES = [
+    "preflight", "worktree", "tests", "export", "build", "windows-ci",
+    "testpypi", "pypi", "npm", "public-git", "post-verify",
+]
+
+
+class PublishError(Exception):
+    pass
+
+
+class GateDeclined(Exception):
+    pass
+
+
+def _run(cmd: list[str], *, cwd: Path | None = None, interactive: bool = False,
+         timeout: int | None = 1800) -> subprocess.CompletedProcess:
+    """Interactive=True hands the terminal to the child (twine/npm prompting
+    for the operator's own credentials — this script never sees them)."""
+    if interactive:
+        return subprocess.run(cmd, cwd=cwd, timeout=timeout)
+    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+
+
+def _need(proc: subprocess.CompletedProcess, what: str) -> subprocess.CompletedProcess:
+    if proc.returncode != 0:
+        out = getattr(proc, "stdout", "") or ""
+        err = getattr(proc, "stderr", "") or ""
+        raise PublishError(f"{what} failed (exit {proc.returncode})\n{out}\n{err}")
+    return proc
+
+
+# --------------------------------------------------------------------------
+# evidence transcript — appended per phase so a crash leaves a partial record
+# --------------------------------------------------------------------------
+
+class Evidence:
+    def __init__(self, version: str):
+        self.path = REPO_ROOT / "_evidence" / "releases" / f"publish-{version}.md"
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.path.exists():
+            self.path.write_text(
+                f"# Publish transcript — {version}\n\n"
+                f"Started {_dt.datetime.now().astimezone().isoformat(timespec='seconds')} "
+                f"by tools/publish_public.py. Appended per phase; an aborted run\n"
+                f"leaves this record truthful and partial.\n\n", encoding="utf-8")
+
+    def record(self, phase: str, status: str, detail: str = "") -> None:
+        stamp = _dt.datetime.now().astimezone().isoformat(timespec="seconds")
+        body = f"## {phase} — {status}\n{stamp}\n"
+        if detail:
+            body += f"\n{detail.rstrip()}\n"
+        with self.path.open("a", encoding="utf-8") as f:
+            f.write(body + "\n")
+
+
+# --------------------------------------------------------------------------
+# the human gate
+# --------------------------------------------------------------------------
+
+def gate(version: str, act: str, why: str, verified: list[str], *,
+         input_fn=input, dry_run: bool = False,
+         confirmed: bool = False, consent_note: str | None = None) -> str:
+    """Stop before an irreversible act. Two consent shapes, both deliberate:
+
+    - Terminal run: the operator types the exact version string — a
+      keystroke naming what ships, not a 'y'.
+    - Harness run (`--confirm <act> --consent-note "..."`): the act was
+      pre-authorized by the owner IN THE SAME SESSION (e.g. answering an
+      AskUserQuestion decision card after reading the verified summary);
+      the note recording who/how goes into the evidence transcript. A
+      pre-authorization names ONE act — there is no --confirm-everything.
+
+    Returns a one-line provenance string for the evidence transcript."""
+    print(f"\n{'─' * 62}")
+    print(f"GATE: {act}")
+    print(f"  Why this gate exists: {why}")
+    print("  Verified so far:")
+    for item in verified:
+        print(f"    - {item}")
+    if dry_run:
+        print("  (--dry-run: stopping here, nothing uploaded or pushed)")
+        raise GateDeclined(f"dry-run stop before: {act}")
+    if confirmed:
+        print(f"  pre-authorized: {consent_note}")
+        return f"pre-authorized — {consent_note}"
+    if not sys.stdin.isatty():
+        raise PublishError(
+            f"gate '{act}' needs consent but there is no terminal to ask on — "
+            f"either run interactively, or pass --confirm <act> with "
+            f"--consent-note '<who authorized it and how>' after the owner "
+            f"approved this specific act in-session")
+    answer = input_fn(f"  Type the version to proceed [{version}], anything else aborts: ").strip()
+    if answer != version:
+        raise GateDeclined(f"operator declined at gate: {act} (typed {answer!r})")
+    return "operator typed the version at the interactive gate"
+
+
+# --------------------------------------------------------------------------
+# phases
+# --------------------------------------------------------------------------
+
+def phase_preflight(tag: str) -> str:
+    """Tag exists; tag name matches the pyproject version AT THE TAG; that
+    version is not already on PyPI and is not below PyPI's latest."""
+    if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
+        raise PublishError(f"tag must look like vX.Y.Z, got {tag!r}")
+    version = tag[1:]
+    _need(_run(["git", "rev-parse", "--verify", f"refs/tags/{tag}"], cwd=REPO_ROOT),
+          f"tag {tag} not found locally")
+    show = _need(_run(["git", "show", f"{tag}:pyproject.toml"], cwd=REPO_ROOT),
+                 f"pyproject.toml missing at {tag}")
+    m = re.search(r'(?m)^version\s*=\s*"([^"]+)"', show.stdout)
+    tagged_version = m.group(1) if m else None
+    if tagged_version != version:
+        # THE 0.19.17 failure class: the tag and the code it points at disagree.
+        raise PublishError(
+            f"tag {tag} points at a commit whose pyproject version is "
+            f"{tagged_version!r} — the tag was cut on the wrong commit")
+    # PyPI monotonicity — query the public JSON API (read-only, no auth).
+    proc = _run(["curl", "-fsS", "--max-time", "30",
+                 "https://pypi.org/pypi/brainiac-cli/json"])
+    if proc.returncode == 0:
+        data = json.loads(proc.stdout)
+        released = set(data.get("releases", {}))
+        latest = data["info"]["version"]
+        if version in released:
+            raise PublishError(
+                f"{version} is already on PyPI — uploads are permanent per "
+                f"version; cut a new patch instead of re-publishing")
+        def _key(v: str) -> tuple[int, ...]:
+            return tuple(int(x) for x in v.split(".")[:3] if x.isdigit())
+        if _key(version) <= _key(latest):
+            raise PublishError(
+                f"{version} is not above PyPI's current latest {latest} — "
+                f"publishing it would not become the default install")
+        return f"tag/version consistent; PyPI latest {latest}, {version} is new and above it"
+    return "tag/version consistent; PyPI unreachable (offline?) — monotonicity NOT verified"
+
+
+def phase_worktree(tag: str, scratch: Path) -> Path:
+    """A throwaway worktree at the tag: the ONLY tree anything downstream
+    reads. Structurally excludes the dev repo's (possibly dirty) working tree."""
+    wt = scratch / "worktree"
+    _need(_run(["git", "worktree", "add", "--detach", str(wt), tag], cwd=REPO_ROOT),
+          "worktree add")
+    status = _need(_run(["git", "status", "--porcelain"], cwd=wt), "worktree status")
+    if status.stdout.strip():
+        raise PublishError(f"fresh worktree at {tag} is not clean:\n{status.stdout}")
+    return wt
+
+
+def phase_tests(worktree: Path) -> str:
+    proc = _run([sys.executable, "-m", "pytest", "-q"], cwd=worktree, timeout=3600)
+    tail = "\n".join(proc.stdout.strip().splitlines()[-3:])
+    if proc.returncode != 0:
+        raise PublishError(f"test suite failed in the tag worktree:\n{tail}")
+    return tail.splitlines()[-1] if tail else "passed"
+
+
+def _load_denylist_terms(denylist: Path) -> list[str]:
+    terms = [ln for ln in denylist.read_text(encoding="utf-8").splitlines()
+             if ln.strip() and not ln.lstrip().startswith("#")]
+    if not terms:
+        raise PublishError(f"denylist {denylist} has no usable terms after stripping comments/blanks")
+    return terms
+
+
+def _scan_tree(target: Path, terms: list[str]) -> int:
+    """Whole-word, case-insensitive fixed-string scan; returns hit count.
+    Same rg/grep split as tools/publish_release.py (ripgrep preferred: BSD
+    grep effectively hangs on multi-MB single-line JSON)."""
+    with tempfile.NamedTemporaryFile("w", suffix=".denylist", delete=False,
+                                     encoding="utf-8") as tf:
+        tf.write("\n".join(terms) + "\n")
+        pat = tf.name
+    try:
+        if shutil.which("rg"):
+            proc = _run(["rg", "-Foiw", "--hidden", "--no-ignore", "-f", pat, str(target)])
+        else:
+            proc = _run(["grep", "-rFoiwI", "-f", pat, str(target)])
+        return len([ln for ln in (proc.stdout or "").splitlines() if ln.strip()])
+    finally:
+        Path(pat).unlink(missing_ok=True)
+
+
+def scanner_self_test(terms: list[str], scan=_scan_tree) -> None:
+    """Prove the scanner CAN fail before trusting any all-clear it produces.
+    Plants a real denylist term in a scratch tree; the scan must find it.
+    (The 0.16.0 contamination gate returned 0 for every release for months —
+    a gate that cannot fail is indistinguishable from a gate that passes.)"""
+    with tempfile.TemporaryDirectory(prefix="canary-") as d:
+        canary = Path(d) / "canary.txt"
+        canary.write_text(f"planted {terms[0]} canary\n", encoding="utf-8")
+        found = scan(Path(d), terms)
+    if found < 1:
+        raise PublishError(
+            "contamination scanner FAILED ITS SELF-TEST: a planted denylist "
+            "term was not detected — every all-clear it has produced is "
+            "untrustworthy; fix the scanner before releasing anything")
+
+
+def phase_export(worktree: Path, scratch: Path, denylist: Path) -> Path:
+    """Clean-room export FROM THE TAG WORKTREE + contamination hard gate,
+    with the scanner self-test run first."""
+    export_dir = scratch / "export"
+    _need(_run([sys.executable, str(worktree / "tools" / "export_cleanroom.py"),
+                "--output", str(export_dir), "--repo-root", str(worktree)],
+               cwd=worktree), "export_cleanroom.py")
+    terms = _load_denylist_terms(denylist)
+    scanner_self_test(terms)
+    hits = _scan_tree(export_dir, terms)
+    if hits:
+        raise PublishError(
+            f"contamination scan found {hits} hit(s) in the export tree — "
+            f"hard gate, no override; scrub the tracked files and re-tag")
+    return export_dir
+
+
+def phase_build(export_dir: Path, version: str, denylist: Path) -> list[Path]:
+    """Build sdist+wheel FROM THE EXPORT (never the dev tree), then extract
+    and scan the sdist — gate the artifact that ships, not its inputs.
+
+    Prefer `uv build` (self-contained, and immune to the trap below); fall
+    back to `python -m build`. NOTE the probe must not run from the repo
+    root: this repo's `build/` OUTPUT DIRECTORY shadows the pypa `build`
+    module there ("'build' is a package and cannot be directly executed"),
+    which reads as build-not-installed when it is."""
+    if shutil.which("uv"):
+        _need(_run(["uv", "build"], cwd=export_dir, timeout=1200), "uv build")
+    else:
+        with tempfile.TemporaryDirectory(prefix="probe-") as neutral:
+            if _run([sys.executable, "-m", "build", "--version"],
+                    cwd=Path(neutral)).returncode != 0:
+                raise PublishError(
+                    "neither uv nor the 'build' package is available — install one "
+                    "in YOUR env (python3 -m pip install --upgrade build twine), "
+                    "never this repo's")
+        _need(_run([sys.executable, "-m", "build"], cwd=export_dir, timeout=1200),
+              "python -m build")
+    dist = export_dir / "dist"
+    artifacts = sorted(dist.glob(f"brainiac_cli-{version}*"))
+    wheels = [p for p in artifacts if p.suffix == ".whl"]
+    sdists = [p for p in artifacts if p.name.endswith(".tar.gz")]
+    if not wheels or not sdists:
+        built = [p.name for p in dist.glob("*")]
+        raise PublishError(
+            f"expected brainiac_cli-{version} wheel + sdist, found: {built} — "
+            f"version skew between tag and build")
+    terms = _load_denylist_terms(denylist)
+    with tempfile.TemporaryDirectory(prefix="sdist-scan-") as d:
+        with tarfile.open(sdists[0]) as tar:
+            tar.extractall(d, filter="data")
+        hits = _scan_tree(Path(d), terms)
+    if hits:
+        raise PublishError(
+            f"contamination scan found {hits} hit(s) INSIDE the built sdist — "
+            f"the tree scan missed something the artifact carries; hard gate")
+    return artifacts
+
+
+def phase_windows_ci(accept_reason: str | None) -> str:
+    """The only automated Windows signal lives on the public repo's
+    distribution-matrix workflow — and its failures land on dependabot
+    branches where they read as noise (that is how the fcntl blocker sat red
+    for six days while 0.19.11 shipped). Read the latest run on ANY branch.
+
+    Caveat the gate cannot close: GitHub runners use pwsh 7, so the
+    PowerShell-5.1 encoding class never reproduces there — that class is
+    guarded by tests/test_windows_portability.py instead."""
+    proc = _run(["gh", "api",
+                 f"repos/Autopsias/brainiac/actions/workflows/{DIST_MATRIX_WORKFLOW}/runs?per_page=1"])
+    if proc.returncode != 0:
+        if accept_reason:
+            return f"UNREACHABLE, explicitly accepted: {accept_reason}"
+        raise PublishError(
+            "cannot read the distribution-matrix workflow (gh api failed) — "
+            "pass --accept-windows-ci '<reason>' to proceed without the signal")
+    runs = json.loads(proc.stdout).get("workflow_runs", [])
+    if not runs:
+        if accept_reason:
+            return f"NO RUNS, explicitly accepted: {accept_reason}"
+        raise PublishError("distribution-matrix has no runs — pass --accept-windows-ci '<reason>'")
+    latest = runs[0]
+    line = (f"{latest['conclusion']} on {latest['head_branch']} at {latest['created_at']}"
+            f" ({latest['html_url']})")
+    if latest["conclusion"] != "success":
+        if accept_reason:
+            return f"latest run {line} — explicitly accepted: {accept_reason}"
+        raise PublishError(
+            f"latest distribution-matrix run is {line}.\n"
+            f"A red run on a dependabot branch is STILL a real Windows failure "
+            f"(2026-07-23 lesson). Read the log; pass --accept-windows-ci "
+            f"'<reason>' only if the failure is genuinely unrelated")
+    return line
+
+
+def _clean_venv_check(version: str, index_args: list[str], scratch: Path, label: str) -> str:
+    """Install brainiac-cli==version into a throwaway venv and require
+    `brain --version` to print exactly the version. Never this repo's venv."""
+    venv = scratch / f"venv-{label}"
+    _need(_run([sys.executable, "-m", "venv", str(venv)]), "venv create")
+    pip = venv / "bin" / "pip"
+    brain = venv / "bin" / "brain"
+    _need(_run([str(pip), "install", "--quiet", *index_args, f"brainiac-cli=={version}"],
+               timeout=1200), f"pip install from {label}")
+    out = _need(_run([str(brain), "--version"]), "brain --version").stdout.strip()
+    if version not in out:
+        raise PublishError(f"{label} artifact prints {out!r}, expected {version}")
+    return f"installed from {label}; brain --version -> {out}"
+
+
+def phase_testpypi(artifacts: list[Path], version: str, scratch: Path) -> str:
+    """Upload to TestPyPI (operator's own twine auth), verify from a clean venv."""
+    proc = _run([sys.executable, "-m", "twine", "upload", "--repository", "testpypi",
+                 *[str(p) for p in artifacts]], interactive=True)
+    _need(proc, "twine upload to testpypi")
+    return _clean_venv_check(
+        version,
+        ["--index-url", "https://test.pypi.org/simple/",
+         "--extra-index-url", "https://pypi.org/simple/"],
+        scratch, "testpypi")
+
+
+def phase_pypi(artifacts: list[Path], version: str, scratch: Path) -> str:
+    """Upload to production PyPI, then verify the served artifact is
+    byte-identical to what was built (sha256 over pip download)."""
+    proc = _run([sys.executable, "-m", "twine", "upload", *[str(p) for p in artifacts]],
+                interactive=True)
+    _need(proc, "twine upload to pypi")
+    dl = scratch / "pypi-download"
+    dl.mkdir(exist_ok=True)
+    _need(_run([sys.executable, "-m", "pip", "download", "--no-deps", "-d", str(dl),
+                f"brainiac-cli=={version}"], timeout=600), "pip download from pypi")
+    local = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in artifacts}
+    served = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in dl.glob("brainiac_cli-*")}
+    for name, digest in served.items():
+        if name in local and local[name] != digest:
+            raise PublishError(f"PyPI serves a DIFFERENT {name} than was built — investigate immediately")
+    checked = ", ".join(sorted(served)) or "(none downloadable yet)"
+    return f"sha256 verified against built artifacts: {checked}"
+
+
+def phase_npm(export_dir: Path, version: str, scratch: Path,
+              gate_fn) -> str:
+    """Pack + smoke-test the npx bootstrap from the EXPORT tree, gate, publish,
+    verify the registry serves the new version."""
+    pkg = export_dir / "packaging" / "npm" / "brainiac-install"
+    pack_dir = scratch / "npm-pack"
+    pack_dir.mkdir(exist_ok=True)
+    _need(_run(["npm", "pack", "--pack-destination", str(pack_dir)], cwd=pkg), "npm pack")
+    tarballs = list(pack_dir.glob(f"brainiac-install-{version}.tgz"))
+    if not tarballs:
+        raise PublishError(f"npm pack produced no brainiac-install-{version}.tgz — version skew")
+    prefix = pack_dir / "install-prefix"
+    _need(_run(["npm", "install", "-g", "--prefix", str(prefix),
+                "--install-strategy=hoisted", str(tarballs[0])], cwd=pack_dir, timeout=600),
+          "npm install of packed tarball")
+    _need(_run([str(prefix / "bin" / "brainiac-install"), "--dry-run"]),
+          "brainiac-install --dry-run smoke")
+    gate_fn("npm", "publish brainiac-install to npm",
+            "npm publishes are permanent per version; the bootstrap must point "
+            "at a PyPI version that exists (it does — the pypi phase passed)",
+            [f"tarball packed at {version} and smoke-tested (--dry-run exit 0)",
+             "PyPI publish verified in the previous phase"])
+    _need(_run(["npm", "publish", "--access", "public"], cwd=pkg, interactive=True),
+          "npm publish")
+    view = _need(_run(["npm", "view", f"brainiac-install@{version}", "version"]),
+                 "npm view of the published version")
+    if version not in view.stdout:
+        raise PublishError(f"npm registry does not serve {version} yet: {view.stdout!r}")
+    return f"npm serves brainiac-install@{version}"
+
+
+def sync_export_into_clone(export_dir: Path, clone: Path) -> None:
+    """Make the clone's tree EQUAL the export tree, preserving only .git.
+    Deliberately not rsync --exclude (an unanchored exclude once deleted every
+    nested manifest.json on the public repo — v0.19.0 post-mortem): delete
+    everything except .git, copy the export in, byte-for-byte equality."""
+    for child in clone.iterdir():
+        if child.name == ".git":
+            continue
+        shutil.rmtree(child) if child.is_dir() else child.unlink()
+    for child in export_dir.iterdir():
+        dst = clone / child.name
+        shutil.copytree(child, dst) if child.is_dir() else shutil.copy2(child, dst)
+
+
+def phase_public_git(export_dir: Path, version: str, scratch: Path,
+                     denylist: Path, gate_fn) -> str:
+    """Fresh clone of the public repo -> tree := export -> squashed commit ->
+    tag -> re-scan the final tree -> gate -> push FROM THE CLONE."""
+    url_proc = _need(_run(["git", "remote", "get-url", PUBLIC_REMOTE_NAME], cwd=REPO_ROOT),
+                     f"reading the public repo URL from remote {PUBLIC_REMOTE_NAME}")
+    url = url_proc.stdout.strip()
+    clone = scratch / "public-clone"
+    _need(_run(["git", "clone", "--depth", "50", url, str(clone)], timeout=600), "clone public repo")
+    default_branch = _need(_run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=clone),
+                           "detect default branch").stdout.strip()
+
+    sync_export_into_clone(export_dir, clone)
+    # The built dist/ must not ship in the git tree (public .gitignore carries
+    # dist/, but the equality sync above would re-add it if present).
+    shutil.rmtree(clone / "dist", ignore_errors=True)
+
+    _need(_run(["git", "add", "-A"], cwd=clone), "git add")
+    diff = _need(_run(["git", "diff", "--cached", "--stat"], cwd=clone), "git diff --stat")
+    stat_tail = "\n".join(diff.stdout.strip().splitlines()[-5:]) or "(no changes?)"
+    if not diff.stdout.strip():
+        raise PublishError("public clone shows no changes vs the export — is this version already published?")
+
+    # Final scan on the EXACT tree that will be pushed (minus .git).
+    terms = _load_denylist_terms(denylist)
+    scanner_self_test(terms)
+    with tempfile.TemporaryDirectory(prefix="pubscan-") as d:
+        probe = Path(d) / "tree"
+        shutil.copytree(clone, probe, ignore=shutil.ignore_patterns(".git"))
+        hits = _scan_tree(probe, terms)
+    if hits:
+        raise PublishError(f"contamination scan found {hits} hit(s) in the final public tree — hard gate")
+
+    _need(_run(["git", "commit", "-q", "-m", f"release: v{version}"], cwd=clone), "git commit")
+    _need(_run(["git", "tag", "-a", f"v{version}", "-m", f"brainiac v{version}"], cwd=clone), "git tag")
+
+    gate_fn("public-git", f"push v{version} to {url} ({default_branch} + tag)",
+            "a public push is visible immediately and can only be superseded, "
+            "not unpublished; this is the last gate",
+            [f"squashed commit on {default_branch} from the verified export",
+             f"final-tree contamination scan: 0 hits (self-test passed)",
+             f"diffstat tail: {stat_tail}",
+             "PyPI + npm phases verified for this version"])
+    _need(_run(["git", "push", "origin", default_branch], cwd=clone, interactive=True,
+               timeout=600), "git push branch")
+    _need(_run(["git", "push", "origin", f"v{version}"], cwd=clone, interactive=True,
+               timeout=600), "git push tag")
+    head = _need(_run(["git", "rev-parse", "HEAD"], cwd=clone), "rev-parse").stdout.strip()
+    return f"pushed {head[:9]} to {default_branch} + tag v{version}"
+
+
+def phase_post_verify(version: str, scratch: Path) -> str:
+    """The consumption paths a new user actually takes, from clean environments."""
+    lines = [_clean_venv_check(version, [], scratch, "pypi-final")]
+    proc = _run(["gh", "api", f"repos/Autopsias/brainiac/git/refs/tags/v{version}"])
+    lines.append(f"public tag v{version}: {'visible' if proc.returncode == 0 else 'NOT VISIBLE YET'}")
+    npx = _run(["npx", "--yes", f"brainiac-install@{version}", "--dry-run"], timeout=600)
+    lines.append(f"npx brainiac-install@{version} --dry-run: exit {npx.returncode}")
+    if npx.returncode != 0:
+        raise PublishError("npx verification failed:\n" + (npx.stdout or "") + (npx.stderr or ""))
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------
+# driver
+# --------------------------------------------------------------------------
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("tag", help="the LOCAL release tag to publish, e.g. v0.19.18")
+    parser.add_argument("--denylist", required=True,
+                        help="external ground-truth denylist (never committed)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="run every verification, stop at the first gate")
+    parser.add_argument("--from", dest="from_phase", choices=PHASES, default=None,
+                        help="resume from this phase (verification phases before it re-run "
+                             "cheaply; upload phases are skipped only if BEFORE this one)")
+    parser.add_argument("--skip-tests", action="store_true",
+                        help="skip the full suite (recorded in evidence — only when the "
+                             "same tag's suite already ran this session)")
+    parser.add_argument("--accept-windows-ci", metavar="REASON", default=None,
+                        help="proceed despite a missing/red distribution-matrix signal; "
+                             "the reason is recorded in the evidence transcript")
+    parser.add_argument("--confirm", action="append", default=[], metavar="ACT",
+                        choices=["testpypi", "pypi", "npm", "public-git"],
+                        help="pre-authorize ONE irreversible act (repeatable). For "
+                             "harness-driven runs where the owner approved that "
+                             "specific act in-session; requires --consent-note")
+    parser.add_argument("--consent-note", default=None,
+                        help="who authorized the --confirm'd acts and how (e.g. "
+                             "'owner via AskUserQuestion, session 2026-07-30'); "
+                             "recorded verbatim in the evidence transcript")
+    args = parser.parse_args()
+    if args.confirm and not args.consent_note:
+        parser.error("--confirm requires --consent-note '<who authorized it and how>'")
+
+    tag = args.tag
+    version = tag[1:] if tag.startswith("v") else tag
+    tag = f"v{version}"
+    denylist = Path(args.denylist).expanduser()
+    ev = Evidence(version)
+    start_idx = PHASES.index(args.from_phase) if args.from_phase else 0
+
+    def do(phase: str):
+        return PHASES.index(phase) >= start_idx
+
+    def gate_fn(key: str, act: str, why: str, verified: list[str]) -> None:
+        provenance = gate(version, act, why, verified, dry_run=args.dry_run,
+                          confirmed=key in args.confirm,
+                          consent_note=args.consent_note)
+        ev.record(f"gate:{key}", "authorized", provenance)
+
+    verified: list[str] = []
+    scratch = Path(tempfile.mkdtemp(prefix=f"publish-{version}-"))
+    worktree = None
+    try:
+        print(f"publish_public: {tag} — scratch at {scratch}")
+
+        summary = phase_preflight(tag)
+        ev.record("preflight", "OK", summary); verified.append(summary)
+        print(f"[1/{len(PHASES)}] preflight: {summary}")
+
+        worktree = phase_worktree(tag, scratch)
+        ev.record("worktree", "OK", str(worktree)); verified.append(f"clean worktree at {tag}")
+        print(f"[2/{len(PHASES)}] worktree: clean at {tag}")
+
+        if args.skip_tests:
+            ev.record("tests", "SKIPPED", "--skip-tests passed; operator asserts the suite ran for this tag")
+            verified.append("tests: SKIPPED by operator flag")
+            print(f"[3/{len(PHASES)}] tests: SKIPPED (--skip-tests)")
+        else:
+            summary = phase_tests(worktree)
+            ev.record("tests", "OK", summary); verified.append(f"suite: {summary}")
+            print(f"[3/{len(PHASES)}] tests: {summary}")
+
+        export_dir = phase_export(worktree, scratch, denylist)
+        ev.record("export", "OK", "0 hits; scanner self-test passed")
+        verified.append("export contamination scan: 0 hits (scanner self-test passed)")
+        print(f"[4/{len(PHASES)}] export + contamination gate: 0 hits (self-test passed)")
+
+        artifacts = phase_build(export_dir, version, denylist)
+        names = ", ".join(p.name for p in artifacts)
+        ev.record("build", "OK", names); verified.append(f"built from export: {names}")
+        print(f"[5/{len(PHASES)}] build from export: {names} (sdist re-scanned: 0 hits)")
+
+        summary = phase_windows_ci(args.accept_windows_ci)
+        ev.record("windows-ci", "OK", summary); verified.append(f"windows CI: {summary}")
+        print(f"[6/{len(PHASES)}] windows CI signal: {summary}")
+
+        if do("testpypi"):
+            gate_fn("testpypi", "upload to TestPyPI",
+                    "uploads are permanent per version — a bad artifact burns the number "
+                    "even on the test index",
+                    verified)
+            summary = phase_testpypi(artifacts, version, scratch)
+            ev.record("testpypi", "OK", summary); verified.append(f"testpypi: {summary}")
+            print(f"[7/{len(PHASES)}] testpypi: {summary}")
+        else:
+            print(f"[7/{len(PHASES)}] testpypi: skipped (--from {args.from_phase})")
+
+        if do("pypi"):
+            gate_fn("pypi", "upload to PRODUCTION PyPI",
+                    "this instantly becomes what every `pip install brainiac-cli` gets; "
+                    "it can be yanked but never unpublished",
+                    verified)
+            summary = phase_pypi(artifacts, version, scratch)
+            ev.record("pypi", "OK", summary); verified.append(f"pypi: {summary}")
+            print(f"[8/{len(PHASES)}] pypi: {summary}")
+        else:
+            print(f"[8/{len(PHASES)}] pypi: skipped (--from {args.from_phase})")
+
+        if do("npm"):
+            summary = phase_npm(export_dir, version, scratch, gate_fn)
+            ev.record("npm", "OK", summary); verified.append(f"npm: {summary}")
+            print(f"[9/{len(PHASES)}] npm: {summary}")
+        else:
+            print(f"[9/{len(PHASES)}] npm: skipped (--from {args.from_phase})")
+
+        if do("public-git"):
+            summary = phase_public_git(export_dir, version, scratch, denylist, gate_fn)
+            ev.record("public-git", "OK", summary); verified.append(summary)
+            print(f"[10/{len(PHASES)}] public git: {summary}")
+        else:
+            print(f"[10/{len(PHASES)}] public git: skipped (--from {args.from_phase})")
+
+        summary = phase_post_verify(version, scratch)
+        ev.record("post-verify", "OK", summary)
+        print(f"[11/{len(PHASES)}] post-verify:\n{summary}")
+
+        ev.record("DONE", "OK", f"v{version} fully published and verified")
+        print(f"\nDONE — transcript: {ev.path}")
+        return 0
+
+    except GateDeclined as exc:
+        ev.record("ABORTED", "operator", str(exc))
+        print(f"\nStopped: {exc}\nNothing after this point was uploaded or pushed. "
+              f"Transcript: {ev.path}")
+        return 2
+    except PublishError as exc:
+        ev.record("FAILED", "gate", str(exc))
+        print(f"\nFAILED: {exc}\nTranscript: {ev.path}", file=sys.stderr)
+        return 1
+    finally:
+        if worktree is not None:
+            _run(["git", "worktree", "remove", "--force", str(worktree)], cwd=REPO_ROOT)
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

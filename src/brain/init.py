@@ -781,7 +781,15 @@ def run_full_init(
     task_hard_fail = (
         isinstance(apply_result, dict) and apply_result.get("exit_code") not in (0, None)
     )
-    ok = bool(validation["valid"]) and not task_hard_fail
+    # An index build that was ATTEMPTED and FAILED is a hard failure, not a
+    # soft degradation. `--apply` promises the seeded notes are searchable; if
+    # the rebuild died, `brain search` returns zero hits forever with no error
+    # anywhere. That combination -- install reports success, retrieval is
+    # silently empty -- is exactly how three Windows I/O bugs reached a pilot
+    # user in 0.19.11 without anyone noticing for five minutes (enterprise
+    # pilot, 2026-07-29). A skipped build (dry-run, nothing seeded) stays neutral.
+    index_hard_fail = bool(index_report.get("performed")) and not index_report.get("ok")
+    ok = bool(validation["valid"]) and not task_hard_fail and not index_hard_fail
 
     return {
         "action": "init-full",

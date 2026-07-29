@@ -160,15 +160,19 @@ BRAIN_VAULT=~/my-brain/vault brain search "welcome" --json</code></pre>
   <h2 id="windows">2 · Brand-new machine — Windows (PowerShell, no WSL)</h2>
 <pre><code># 1. install (same channel chain; adds `brain` to your User PATH if needed)
 irm https://raw.githubusercontent.com/Autopsias/brainiac/main/install.ps1 -OutFile install.ps1
-.\install.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1
 # → if it says PATH was updated, open a NEW terminal before continuing
 
-# 2. vault + first search
+# 2. vault + first search — init also registers the hourly maintenance task
 $env:BRAIN_VAULT = 'C:\ws\vault'; brain init --full --apply
-$env:BRAIN_VAULT = 'C:\ws\vault'; brain search "welcome" --json
-
-# 3. register the hourly maintenance task for this vault
-.\scripts\install-brief-windows.ps1 -VaultPath C:\ws\vault</code></pre>
+$env:BRAIN_VAULT = 'C:\ws\vault'; brain search "welcome" --json</code></pre>
+  <div class="callout"><strong>Why <code>-ExecutionPolicy Bypass</code>:</strong> Windows ships with
+    the default policy <code>Restricted</code>, which refuses to run <em>any</em> <code>.ps1</code>
+    file. The flag applies to that one process only — it never changes the machine or user policy.
+    Check yours with <code>Get-ExecutionPolicy</code>.</div>
+  <div class="callout"><strong>If <code>brain</code> is not found after install:</strong> the
+    installer prints the exact directory to add to your User PATH. Open a new terminal first — a
+    PATH change never reaches an already-open one.</div>
   <div class="callout"><strong>Known gap on Windows:</strong> the weekly <code>brain-synthesis</code>
     task is not auto-registered (only the hourly umbrella is). Everything else — capture, search,
     maintenance folds — is at parity.</div>
@@ -207,14 +211,14 @@ brain rebuild                                            # if importing into a n
     notes without a <code>classification:</code> label are <strong>invisible to search</strong> until
     classified (deny-by-default) — mass-classification is part of a real migration, not polish.</p>
 
-  <h2 id="model">5 · The embedding model — when the ~465 MB download happens</h2>
+  <h2 id="model">5 · The embedding model — when the ~465 MiB (~487 MB) download happens</h2>
   <p>Brainiac separates “installed and searchable” from “semantic search at full quality”, so
     installation never blocks on a big download:</p>
   <div class="wide">
   <table>
     <tr><th>Stage</th><th>What runs</th><th>Network</th></tr>
     <tr><td>install + init</td><td>index built with the offline placeholder embedder (hash) — lexical search works</td><td>none</td></tr>
-    <tr><td><code>brain warmup</code> (or first real semantic use)</td><td>downloads <code>multilingual-e5-small</code> (ONNX, ~465&nbsp;MB, one-time, cached)</td><td>Hugging Face, once</td></tr>
+    <tr><td><code>brain warmup</code> (or first real semantic use)</td><td>downloads <code>multilingual-e5-small</code> (ONNX, ~465&nbsp;MiB (~487&nbsp;MB), one-time, cached)</td><td>Hugging Face, once</td></tr>
     <tr><td><code>brain sync</code> after warmup</td><td>re-embeds the index with the real model</td><td>none</td></tr>
   </table>
   </div>
@@ -232,7 +236,7 @@ brain rebuild                                            # if importing into a n
     <text x="392" y="72" text-anchor="middle" class="ts">downloads multilingual-e5-small</text>
     <text x="392" y="87" text-anchor="middle" class="ts">(ONNX, one-time, cached)</text>
     <rect x="317" y="97" width="150" height="17" rx="8" class="b2"/>
-    <text x="392" y="109" text-anchor="middle" class="ta">network: ~465 MB, once</text>
+    <text x="392" y="109" text-anchor="middle" class="ta">network: ~465 MiB, once</text>
     <line x1="506" y1="74" x2="538" y2="74" class="a"/><polygon points="536,70 536,78 544,74" class="ah"/>
     <rect x="548" y="28" width="220" height="92" rx="10" class="b"/>
     <text x="658" y="52" text-anchor="middle" class="tt">3 · brain sync</text>

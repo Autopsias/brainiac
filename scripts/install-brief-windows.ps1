@@ -1,4 +1,4 @@
-# install-brief-windows.ps1 — install brain-daily-brief as a Windows Scheduled Task (UX-02)
+# install-brief-windows.ps1 - install brain-daily-brief as a Windows Scheduled Task (UX-02)
 #
 # Usage (run as the same user who will run brain, NOT as Administrator):
 #   .\scripts\install-brief-windows.ps1 -VaultPath C:\Users\you\brain\vault
@@ -13,7 +13,7 @@
 # profile-a-brain-audit-key) and is resolved AT RUNTIME by the brain process
 # itself (audit.py resolve_signing_key(), env -> keyring fallthrough). It is
 # NEVER embedded in this script, the task action, or the task XML. See
-# docs/operations/s09-evidence.md § Scheduled-task threat model.
+# docs/operations/s09-evidence.md section Scheduled-task threat model.
 param(
     [Parameter(Mandatory=$true)]
     [string]$VaultPath,
@@ -56,7 +56,7 @@ try {
 } catch {
     Write-Warning "audit-key provisioning failed: $_"
     Write-Warning "Captures will not be drained (drain fails closed, unsigned)."
-    Write-Warning "Run '$BrainExe audit-key' manually later — no reinstall needed."
+    Write-Warning "Run '$BrainExe audit-key' manually later - no reinstall needed."
 }
 
 $logFile = "$LogDir\brief-$(Get-Date -Format 'yyyy-MM-dd').log"
@@ -78,7 +78,7 @@ Get-ChildItem '$LogDir\brief-*.log' | Where-Object { `$_.LastWriteTime -lt (Get-
 $action   = New-ScheduledTaskAction -Execute "powershell.exe" `
               -Argument "-NonInteractive -WindowStyle Hidden -Command `"$scriptBlock`""
 # HOURLY (owner decision 2026-07-11, parity with the macOS installer):
-# ingestion is frequent — every firing runs the incremental/idempotent work;
+# ingestion is frequent - every firing runs the incremental/idempotent work;
 # weekly/monthly branches stay date-gated inside `brain maintain`.
 $trigger  = New-ScheduledTaskTrigger -Once -At (Get-Date).Date `
               -RepetitionInterval (New-TimeSpan -Hours 1)

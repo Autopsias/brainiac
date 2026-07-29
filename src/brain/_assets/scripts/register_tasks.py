@@ -221,11 +221,42 @@ def register_host_leg(manifest: dict, *, apply: bool) -> dict:
         report["probe_detail"] = detail
         report["action"] = "update (Register-ScheduledTask -Force is idempotent — re-running re-points the task at the new `brain maintain` body)" if already else "create"
         report["install_script"] = str(REPO_ROOT / "scripts" / "install-brief-windows.ps1")
-        report["apply_result"] = (
-            "Run from an elevated-NOT-required PowerShell prompt (Windows leg cannot be "
-            "driven from this Mac host): "
-            f"powershell -File {report['install_script']} -VaultPath <path-to-vault>"
-        )
+        # Symmetric with the Darwin leg above: we are ON Windows here
+        # (platform.system() said so), so --apply must actually register the
+        # task. It previously only ever printed a command -- and one carrying
+        # a Mac-authored excuse ("cannot be driven from this Mac host") plus a
+        # repo-relative path that a PyPI install does not have, so a Windows
+        # user was told to run a file they had no copy of and ended up with no
+        # scheduled task at all (enterprise pilot, 2026-07-29).
+        # -ExecutionPolicy Bypass scopes to THIS process only; it never
+        # changes the machine or user policy. Task Scheduler registration in
+        # the user context needs no elevation.
+        argv = [
+            "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", report["install_script"], "-VaultPath", vault or "",
+        ]
+        if apply:
+            if not vault:
+                report["apply_result"] = (
+                    "SKIPPED - BRAIN_VAULT not set; set BRAIN_VAULT=<path> and re-run --apply")
+            else:
+                try:
+                    proc = subprocess.run(
+                        argv, cwd=REPO_ROOT, env=_os_environ(),
+                        capture_output=True, text=True, timeout=120,
+                    )
+                    report["apply_result"] = {
+                        "exit_code": proc.returncode,
+                        "stdout": proc.stdout.strip(),
+                        "stderr": proc.stderr.strip(),
+                    }
+                except (OSError, subprocess.SubprocessError) as exc:
+                    report["apply_result"] = {
+                        "exit_code": 1, "stdout": "",
+                        "stderr": f"{type(exc).__name__}: {exc}",
+                    }
+        else:
+            report["apply_result"] = "DRY-RUN - would run: " + " ".join(argv)
 
     else:
         report["already_registered"] = None

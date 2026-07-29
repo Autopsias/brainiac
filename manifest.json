@@ -42,6 +42,7 @@
     ".claude/skills/improve/SKILL.md",
     ".claude/skills/kb-curator/SKILL.md",
     ".claude/skills/promote/SKILL.md",
+    ".claude/skills/publish-release/SKILL.md",
     ".claude/skills/save-conversation/SKILL.md",
     ".claude/skills/setup-cowork/SKILL.md",
     ".claude/skills/task-registrar/SKILL.md",
@@ -333,6 +334,7 @@
     "tools/hash_source_vault.py",
     "tools/package_clients.py",
     "tools/probe_xlingual.py",
+    "tools/publish_public.py",
     "tools/publish_release.py",
     "tools/release.py",
     "tools/validate.py",
@@ -352,5 +354,5 @@
     "vault/raw/2026-06-27-arctic-vs-e5-benchmark.md",
     "vault/raw/README.md"
   ],
-  "count": 351
+  "count": 353
 }

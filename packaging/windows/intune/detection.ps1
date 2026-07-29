@@ -1,8 +1,8 @@
 <#
-detection.ps1 — Intune Win32 app custom detection rule.
+detection.ps1 - Intune Win32 app custom detection rule.
 Exit 0 + STDOUT  => app detected (installed). Exit 0 + no output => not detected.
 Keys on the per-user install stamp written by install.cmd. USER-context safe
-(reads %LOCALAPPDATA% of the running user — Intune evaluates this in user context).
+(reads %LOCALAPPDATA% of the running user - Intune evaluates this in user context).
 #>
 $ver = "0.2.0"
 $stamp = Join-Path $env:LOCALAPPDATA "Programs\brain\.version"

@@ -889,7 +889,31 @@ def looks_like_vm_stage(repo_root: Optional[Path] = None) -> bool:
     this structural fallback is what keeps a role-less VM invocation from
     hitting the host-only code path."""
     root = repo_root or Path(__file__).resolve().parent.parent.parent
+    # POSITIVE signal first: the staged copy is written to
+    # `<vault>/.brain/engine/brain/` by tools/cowork_workspace_install.sh, so
+    # a `.brain` path component IS the stage -- unambiguous, and true of
+    # nothing else.
+    #
+    # The absence-based test below cannot stand alone: an ORDINARY PyPI wheel
+    # in site-packages also lacks tools/ and pyproject.toml, so every
+    # pip/uv/pipx install was misdetected as a VM stage and `brain doctor`
+    # ran the VM leg -- telling a Windows laptop user to "run brain doctor on
+    # the host Mac" and diagnosing a Cowork workspace that did not exist
+    # (enterprise pilot, 2026-07-29). Keep it only where it is safe: a copy that is
+    # neither an installed package nor a checkout.
+    if ".brain" in root.parts or ".brain" in Path(__file__).resolve().parts:
+        return True
+    if _in_site_packages(Path(__file__).resolve()):
+        return False
     return not (root / "tools" / "workspace_registry.py").exists() and _ssot_version(root) is None
+
+
+def _in_site_packages(path: Path) -> bool:
+    """True when this module was imported from an installed package tree
+    (POSIX ``lib/pythonX.Y/site-packages`` or Windows ``Lib\\site-packages``),
+    rather than a source checkout or a staged copy."""
+    parts = {p.lower() for p in path.parts}
+    return bool(parts & {"site-packages", "dist-packages"})
 
 
 def _read_version_stamp(path: Path) -> Optional[str]:

@@ -309,6 +309,10 @@ never-touch assertions — an update must leave `.brain/memory/`,
 
 ## 7.6. Publish to PyPI (human-run) — MUST precede Step 8 (PYP-03)
 
+> **Prefer §7.10's guarded pipeline** (`tools/publish_public.py`) — it runs
+> this section's steps with the same human act preserved at the upload
+> gates. The commands below are the reference/fallback.
+
 **Ordering contract (binding, not a suggestion):** publishing to PyPI (and,
 later, npm) **PRECEDES** the clean-room export in Step 8. §7's fresh-user
 consumption path and every "PyPI-first" doc this repo now ships
@@ -423,18 +427,55 @@ plan's human-checkpoint session).
 
 ## 7.8. Windows pre-release acceptance checklist (human-run, release gate)
 
+> **Why this section is not optional — read before skipping it.** Release
+> 0.19.11 shipped to a Windows pilot with three I/O bugs that made `brain
+> rebuild` fail after indexing every note. `brain init` still reported
+> success, so `brain search` returned zero results with no error anywhere.
+> Step 3 below is exactly the check that would have caught it.
+>
+> Two automated signals exist and neither stopped the release:
+>
+> - **`tests/test_windows_portability.py`** fault-injects Windows I/O
+>   semantics and now runs inside the ordinary `pytest -q` gate (Step 1 of
+>   this runbook). It covers the `fcntl`/`fsync`/directory-fd class and the
+>   PowerShell-encoding class. It is NOT a substitute for a real run.
+> - **The `distribution-matrix` workflow** on the public export repo builds
+>   and smoke-tests on `windows-latest`. It **did** catch the `fcntl` bug on
+>   2026-07-23 — on dependabot PR branches, where the failures were read as
+>   dependabot noise and the release went out six days later. **Check this
+>   workflow's most recent run on ANY branch before publishing**, and note
+>   that it only re-runs when the export repo is refreshed, so a stale export
+>   means a stale signal.
+>
+> One caveat the CI cannot cover: GitHub's Windows runners use `pwsh`
+> (PowerShell 7), which reads BOM-less UTF-8 correctly. The em-dash parse
+> failure only reproduces under **Windows PowerShell 5.1**, the default on a
+> corporate desktop. That class is guarded only by the ASCII test above and
+> by step 1 below on a real machine.
+
 A fresh, **non-admin** Windows machine (or VM) — never the release
 operator's own dev box, which already has stale state from prior installs.
 Transcript of this run is release evidence, same class as the soak report in
 §1.
 
+0. **Confirm the shell is Windows PowerShell 5.1**, not `pwsh` 7 — run
+   `$PSVersionTable.PSVersion`. 5.1 is what a corporate desktop launches by
+   default and is the only shell that reproduces the ANSI/encoding class of
+   failure. Also record `Get-ExecutionPolicy`; the default `Restricted`
+   refuses every `.ps1`, so the documented invocation is
+   `powershell -ExecutionPolicy Bypass -File .\install.ps1`.
 1. **Install:** `.\install.ps1` (default PyPI-first path — confirm it tries
    uv → pipx → pip --user and reports which one succeeded; also run
    `.\install.ps1 -Dev` separately if a checkout is available, to confirm the
-   dev/offline path still works).
+   dev/offline path still works). If it prints a PATH directory, confirm that
+   directory **actually exists** before moving on.
 2. **Init:** `brain init --full --apply` against a fresh vault folder.
-3. **First search:** confirm the seeded sample notes are findable
-   (`brain search "..." --json` returns results, no embedder warning).
+   Confirm it **exits 0** (`$LASTEXITCODE`) — a failed index build now makes
+   init exit non-zero rather than reporting a clean install.
+3. **First search — THE decisive check, never skip:** confirm the seeded
+   sample notes are findable (`brain search "welcome" --json` returns a
+   NON-EMPTY `results` array, no embedder warning). Zero results here means
+   the index was never written, regardless of what any earlier step printed.
 4. **Verify scheduled-task registration — BOTH host tasks, not just one:**
    ```
    .\scripts\install-brief-windows.ps1 -VaultPath <path>
@@ -458,6 +499,9 @@ Transcript of this run is release evidence, same class as the soak report in
 ---
 
 ## 7.9. Publish to npm (human-run) — after PyPI, before Step 8 (SUI-01)
+
+> **Prefer §7.10's guarded pipeline** — it runs this section with the same
+> gate before `npm publish`. The commands below are the reference/fallback.
 
 The `brainiac-install` npx bootstrap (`packaging/npm/brainiac-install/`) is
 published to npm **after** §7.6's PyPI publish completes and **before** Step
@@ -538,9 +582,16 @@ history), tagged `v<X.Y.Z>`. This step is **always a human, deliberate act**:
 3. Eyeballs the redacted contamination-scan report from §5 one more time.
 4. Pushes — from that separate clone/remote, never from this repo.
 
-No script, skill, or agent in this repo ever performs step 4, or re-enables
-`disabled-public-DO-NOT-PUSH`'s push URL. If any tooling is ever found to
-attempt `git push` toward that remote, treat it as a bug against this ADR.
+The one sanctioned scripted path for step 4 is §7.10's
+`tools/publish_public.py` (owner decision 2026-07-30): it pushes from a
+fresh clone in a temp dir, only after an interactive gate where the
+operator types the version — the deliberate human act this section has
+always required, relocated into the pipeline. What remains absolute:
+no tooling ever pushes toward, or re-enables, this repo's
+`disabled-public-DO-NOT-PUSH` remote — attempting it is a bug against
+ADR-0001 (`tests/test_publish_public.py` asserts this against the
+pipeline's source), and no unattended/headless process ever performs
+the push (the gate requires an interactive keystroke by construction).
 
 ---
 
@@ -572,6 +623,67 @@ If a published release turns out to be defective or itself contaminated:
    local tag stays exactly as it was cut; it is release **provenance**
    ("what local commit produced the bad public artifact"), not a live pointer
    to what's currently public.
+
+---
+
+## 7.10. Guarded one-command publish — `tools/publish_public.py` (owner decision 2026-07-30)
+
+**This is now the sanctioned way to run §7.6 → §8**, amending the earlier
+"publishing is never scripted" rule. The amendment's shape: automation
+COMPOSES the steps; the human still PERFORMS each irreversible act, because
+the pipeline stops at an interactive gate before every one of them —
+TestPyPI upload, PyPI upload, npm publish, public git push — states what has
+been verified and why the act cannot be undone, and proceeds only when the
+operator types the exact version string. `--dry-run` runs every verification
+and stops at the first gate.
+
+In a Claude Code session, `/publish-release` drives this end to end —
+version cut, dry-run, one owner decision card, then the pipeline with
+per-act `--confirm` consent recorded in evidence.
+
+```
+python3 tools/publish_public.py v<X.Y.Z> --denylist ~/brainiac-release-groundtruth.txt
+python3 tools/publish_public.py v<X.Y.Z> --denylist <path> --dry-run     # verify only
+python3 tools/publish_public.py v<X.Y.Z> --denylist <path> --from npm    # resume a partial run
+```
+
+Why it exists (measured, 2026-07-29): the manual chain shipped v0.19.17 to
+PyPI without the Windows fixes already committed — the tag was cut one
+commit early and no step cross-checked tag content against intent. The
+pipeline closes that class structurally, not just procedurally:
+
+- **Everything builds from a throwaway worktree at the tag.** The dev tree's
+  uncommitted state (e.g. a concurrent session's WIP) cannot reach the
+  artifact — `export_cleanroom.py` copies file bodies from disk, so running
+  it from the working tree was a real leak vector.
+- **Tag/version cross-check** — the tag's own `pyproject.toml` must carry the
+  version the tag names, and that version must be new on PyPI and above its
+  latest (the v0.19.17 class fails here).
+- **The contamination scanner must catch a planted canary** before its
+  all-clear counts (the 0.16.0 false-pass class fails here), and the **built
+  sdist is extracted and re-scanned** — the artifact that ships, not just the
+  tree.
+- **The Windows CI signal is a hard gate** — the latest distribution-matrix
+  run on ANY branch must be green; a red run on a dependabot branch blocks
+  (the 0.19.11 class). `--accept-windows-ci '<reason>'` overrides with the
+  reason recorded in evidence — legitimate when the red run is the very bug
+  the release fixes, since the signal only recovers after the publish.
+- **Post-publish verification is the real user path**: clean-venv
+  `pip install` + `brain --version`, sha256 of the PyPI-served artifact
+  against what was built, `npx brainiac-install@<ver> --dry-run`, public tag
+  visibility.
+- **Every phase appends to `_evidence/releases/publish-<version>.md`** as it
+  completes — an aborted run leaves a truthful partial transcript, and
+  resuming with `--from <phase>` never re-runs a completed upload.
+
+Unchanged invariants: no script reads, writes, or probes any credential
+(twine/npm/git prompt in the operator's own session); the public push happens
+from a fresh clone in a temp dir; this repo's `disabled-public-DO-NOT-PUSH`
+remote is never pushed or reconfigured (ADR-0001 intact — and
+`tests/test_publish_public.py` asserts both invariants against the source);
+`tools/release.py` still never gains an upload subcommand. The manual steps
+in §7.6/§7.9/§8 remain the documented fallback and the reference for what
+the pipeline does.
 
 ---
 

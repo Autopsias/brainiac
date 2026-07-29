@@ -1,16 +1,16 @@
 <#
-sign_windows.ps1 — Authenticode-sign the one-dir bundle with Azure Trusted
+sign_windows.ps1 - Authenticode-sign the one-dir bundle with Azure Trusted
 Signing (formerly "Azure Code Signing" / "Trusted Signing"), with an RFC-3161
 timestamp.  >>> PENDING EXTERNAL: PW-2 (Azure Trusted Signing onboarding) <<<
 
 WHY Azure Trusted Signing and NOT an EV cert (consensus HARDENED note):
   - The load-bearing trust control on a managed organization endpoint is the Intune
     Managed Installer / WDAC trust (see intune\), NOT SmartScreen reputation.
-  - EV certs NO LONGER auto-bypass SmartScreen in 2026 — buying one is pointless
+  - EV certs NO LONGER auto-bypass SmartScreen in 2026 - buying one is pointless
     here. Azure Trusted Signing (~$10/mo) gives a valid Authenticode signature +
     RFC-3161 timestamp, which is all WDAC/Defender need.
 
-REGION GATING (HARDENED:claude — verify BEFORE booking):
+REGION GATING (HARDENED:claude - verify BEFORE booking):
   Azure Trusted Signing Public Trust identities are only issuable from accounts
   whose billing region is US / CA / EU / UK. Confirm the organization's tenant's region is
   eligible during PW-2 onboarding; if not, the contingency is a second signing
@@ -20,7 +20,7 @@ MAR-2026 INTERMEDIATE-CA MIGRATION CONTINGENCY (consensus HARDENED note):
   In Mar-2026 the Azure Trusted Signing intermediate CA rotated; some valid
   signatures briefly raised SmartScreen warnings until the new chain seeded.
   Because we rely on Managed-Installer/WDAC trust (not SmartScreen) this does NOT
-  block managed-device install — but document it, and the contingency is a
+  block managed-device install - but document it, and the contingency is a
   reputation wait-out or a second signing identity. See the runbook.
 
 PREREQUISITES (all PENDING until PW-2 completes):
@@ -41,7 +41,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $dist = "$Repo\dist\brain"
-if (-not (Test-Path "$dist\brain.exe")) { throw "no built bundle at $dist — run build_windows.ps1 first" }
+if (-not (Test-Path "$dist\brain.exe")) { throw "no built bundle at $dist - run build_windows.ps1 first" }
 
 # Sign EVERY PE in the one-dir bundle (the exe + bundled .dll/.pyd), so WDAC's
 # per-file signature check passes on all of them, and timestamp each so the
@@ -57,7 +57,7 @@ foreach ($pe in $pes) {
 }
 
 # Verify + emit the SIGNED hash list (this is the hash list that goes in the
-# approval evidence pack — see _evidence/s07/sha256-artifacts.txt for the unsigned set).
+# approval evidence pack - see _evidence/s07/sha256-artifacts.txt for the unsigned set).
 & $SignTool verify /pa /v "$dist\brain.exe"
 Get-ChildItem $dist -Recurse -Include *.exe,*.dll,*.pyd |
   Get-FileHash -Algorithm SHA256 |

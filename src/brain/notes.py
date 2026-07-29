@@ -182,6 +182,17 @@ def scan_vault(vault: Path) -> Iterator[Note]:
         # the index.
         if rel_parts and rel_parts[0] == "inbox":
             continue
+        # The overlay is the owner's PERSONALIZATION layer (voice/brand/
+        # keywords/people/cos settings), read from the filesystem by the
+        # drafting skills -- configuration, not knowledge. It carries
+        # `overlay_type:`, never the note schema's `classification:`, so
+        # indexing it both polluted retrieval with settings files and ranked
+        # every one of them as MNPI (unlabelled => most restrictive). A fresh
+        # `brain init` vault indexed 8 notes of which 4 were overlay config
+        # (reported by a Windows pilot user, 2026-07-29). Same posture as
+        # .brain/: present on disk, never a search hit.
+        if rel_parts and rel_parts[0] == "overlay":
+            continue
         # C5: raw/originals/ holds the archived, immutable ORIGINAL file a
         # handler claimed during ingestion (e.g. a promoted .md's own source
         # copy) — it is evidence, never a real note, and must not be

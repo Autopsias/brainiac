@@ -1032,18 +1032,28 @@ class BrainIndex:
                 )
         finally:
             conn.close()
-        fd = os.open(str(tmp_path), os.O_RDONLY)
+        # O_RDWR, not O_RDONLY: Windows' FlushFileBuffers requires a handle
+        # opened for WRITE and fails the whole rebuild with [Errno 9] on a
+        # read-only one, after every note has already been indexed.
+        fd = os.open(str(tmp_path), os.O_RDWR)
         try:
             os.fsync(fd)
         finally:
             os.close(fd)
-        dir_fd = os.open(str(tmp_path.parent), os.O_RDONLY)
-        try:
-            os.fsync(dir_fd)
+        if os.name == "posix":
+            dir_fd = os.open(str(tmp_path.parent), os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+                os.replace(tmp_path, orig_db_path)
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        else:
+            # ponytail: Windows cannot open a directory as a file descriptor,
+            # so the rename record cannot be fsynced. os.replace is still
+            # atomic on NTFS -- only the post-crash durability window for the
+            # rename itself widens, never the index contents (fsynced above).
             os.replace(tmp_path, orig_db_path)
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
         for p in (Path(str(tmp_path) + "-wal"), Path(str(tmp_path) + "-shm"), manifest_path):
             p.unlink(missing_ok=True)
 

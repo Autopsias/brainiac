@@ -158,26 +158,35 @@ export BRAIN_EMBEDDER=auto                                     # uses the cache;
   <p>With it on, the endpoint <strong>refuses <code>brain update</code></strong> (updates come from your
     pipeline) and <strong>ignores env/shell key custody</strong> — the OS keystore is the only key
     source (§5).</p>
-  <div class="callout"><strong>Critical interaction — the scheduled task's key.</strong> The default
-    launchd/Task-Scheduler template injects the signing key as a <code>BRAIN_AUDIT_KEY_PEM</code> env
-    literal in the task. Under <code>BRAIN_MANAGED=1</code> that source is ignored, so the signing task
-    must get its key from the keystore instead. When you register the maintenance task on a managed
-    endpoint:
+  <div class="callout"><strong>Critical interaction — the scheduled task's key.</strong> Under
+    <code>BRAIN_MANAGED=1</code> the engine ignores <code>BRAIN_AUDIT_KEY_PEM</code> entirely, so the
+    maintenance task must get its key from the OS keystore. <strong>Both installers now handle this
+    for you</strong> — the Windows task never carried key material, and the macOS installer refuses to
+    bake a PEM into the <code>.plist</code> when managed mode is on (writing one there would leave a
+    private key in a plaintext file that nothing would ever read). You still need to:
     <ul>
-      <li><strong>Remove</strong> the <code>BRAIN_AUDIT_KEY_PEM</code> entry from the generated task
-        (macOS: delete that key/string pair from the <code>.plist</code>'s
-        <code>EnvironmentVariables</code>; Windows: don't set it on the task).</li>
       <li><strong>Add</strong> <code>BRAIN_MANAGED=1</code> to the task's environment.</li>
       <li>Ensure the audit key is in the keystore for the account the task runs as (§5), or the signing
         step fails closed (drafts stay staged, never committed unsigned — visible in
         <code>brain status</code>).</li>
     </ul>
-    A no-PEM-in-plist task template is the right long-term shape; until a
-    <code>register_tasks --managed</code> flag ships, do this edit at registration time.</div>
+    Verify with <code>brain status</code> on a provisioned endpoint: the audit source must read
+    <code>keychain:…</code> / <code>credential-manager:…</code>, never <code>env:…</code>.</div>
 
   <h2 id="s5">5 · Provision the audit key in the OS keystore <span style="font-size:.7em;color:var(--muted)">(memo 3.5/3.6)</span></h2>
   <p>Managed endpoints resolve the Ed25519 signing key <strong>only</strong> from the OS secret store.
     Use a non-exportable, ACL-bound entry (HSM/Secure-Enclave-backed where available).</p>
+  <div class="ok"><strong>Who generates the key? Default: each endpoint, for itself.</strong>
+    <code>brain audit-key</code> (run automatically by the task installer, and by
+    <code>brain init --full --apply</code>) creates a per-user Ed25519 key <em>create-if-absent</em>
+    directly in that machine's keystore — it never rotates an existing one, and no private key ever
+    transits your deployment pipeline. This works unchanged under <code>BRAIN_MANAGED=1</code>.
+    <br><br>
+    Use the reviewer-generated PEM below <em>only</em> if policy requires central issuance. Note the
+    trade-off: the chain's public key is derived from the private key rather than recorded in the
+    chain, so a chain can only be verified on a machine that still holds its key. Per-endpoint
+    self-generation keeps that blast radius to one laptop; central issuance means the issuing
+    pipeline handles private keys.</div>
 <pre><code># macOS — store the reviewer-generated PEM in the login keychain, ACL-bound
 security add-generic-password -s profile-a-brain-audit-key -a "$USER" -w "&lt;PEM&gt;" -T ""
 # ( -T "" grants NO other app access; the user approves brain on first use )

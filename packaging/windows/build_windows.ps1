@@ -1,5 +1,5 @@
 <#
-build_windows.ps1 — build the `brain` one-dir Windows bundle (PKG-01).
+build_windows.ps1 - build the `brain` one-dir Windows bundle (PKG-01).
 
 Run on a Windows build runner (GitHub Actions windows-latest, or a managed
 Windows VM). Produces an UNSIGNED one-dir under dist\brain\. Signing is a
@@ -7,7 +7,7 @@ SEPARATE step (sign_windows.ps1) gated on Azure Trusted Signing onboarding (PW-2
 
 Sequencing gate (HARDENED:codex / codex-verify-r1): do NOT proceed to
 sign_windows.ps1 until the S05 frozen-baseline eval is GREEN and S08 security is
-GREEN. This script only BUILDS — it never signs — so it is safe to run anytime.
+GREEN. This script only BUILDS - it never signs - so it is safe to run anytime.
 #>
 [CmdletBinding()]
 param(
@@ -22,7 +22,7 @@ python --version
 python -m pip install --quiet --upgrade pip
 
 if ($RebuildBootloader) {
-  # Decision #4 — custom-compiled bootloader. The stock PyInstaller bootloader
+  # Decision #4 - custom-compiled bootloader. The stock PyInstaller bootloader
   # ships in every malware corpus; rebuilding from source gives a unique byte
   # signature that does not match those samples. Needs a C toolchain + the
   # PyInstaller source tree (pip download --no-binary). See the runbook.
@@ -57,4 +57,4 @@ $exe = "$Repo\dist\brain\brain.exe"
 if (-not (Test-Path $exe)) { throw "build failed: $exe not produced" }
 Write-Host "Built (UNSIGNED): $exe" -ForegroundColor Green
 Get-FileHash $exe -Algorithm SHA256 | Format-List
-Write-Host "Next: sign_windows.ps1 (PENDING Azure Trusted Signing — PW-2), then intune\package_intunewin.ps1"
+Write-Host "Next: sign_windows.ps1 (PENDING Azure Trusted Signing - PW-2), then intune\package_intunewin.ps1"

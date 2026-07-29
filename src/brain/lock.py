@@ -16,6 +16,13 @@ single-threaded for write verbs (CLI-invoked, one command per process).
 
 Read paths and the VM leg NEVER call this -- they must create no lock file
 at all (AGENTS.md: the VM never writes the index).
+
+Windows has no ``flock``. The equivalent is ``msvcrt.locking``, which takes a
+MANDATORY byte-range lock rather than an advisory whole-file one -- so it must
+target a sentinel byte far past the holder JSON at offset 0, or the kernel
+would block ``current_holder`` from ever reading the metadata back. Same
+kernel-releases-on-crash property, so the no-stale-heuristic reasoning above
+holds on both platforms.
 """
 from __future__ import annotations
 
@@ -26,6 +33,11 @@ import random
 import time
 from pathlib import Path
 from typing import Any, Iterator
+
+# The byte msvcrt locks on Windows. Must sit beyond any holder-metadata write
+# (a ~100-byte JSON object at offset 0) because that lock is mandatory, not
+# advisory. Locking past EOF is legal and does not extend the file.
+_SENTINEL_OFFSET = 1 << 20
 
 
 class WriterLockBusy(RuntimeError):
@@ -67,6 +79,54 @@ def _read_holder(lock_path: Path) -> dict[str, Any]:
         return {}
 
 
+def _open_lock_fd(lock_path: Path) -> int:
+    """Open the lockfile read/write, never inheritable by a child process.
+
+    An inherited fd would keep the lock alive after the process that acquired
+    it exits -- the exact leaked-lock failure mode this module exists to avoid.
+    POSIX spells that ``O_CLOEXEC``; Windows spells it ``O_NOINHERIT`` and also
+    needs ``O_BINARY`` so the holder JSON is written without newline
+    translation.
+    """
+    flags = os.O_CREAT | os.O_RDWR
+    for name in ("O_CLOEXEC", "O_NOINHERIT", "O_BINARY"):
+        flags |= getattr(os, name, 0)
+    return os.open(str(lock_path), flags, 0o600)
+
+
+def _try_lock(fd: int) -> bool:
+    """Non-blocking exclusive lock. True on success, False if held elsewhere."""
+    if os.name == "nt":
+        import msvcrt
+
+        os.lseek(fd, _SENTINEL_OFFSET, os.SEEK_SET)
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError:
+            return False
+    import fcntl
+
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
+
+
+def _unlock(fd: int) -> None:
+    with contextlib.suppress(OSError):
+        if os.name == "nt":
+            import msvcrt
+
+            os.lseek(fd, _SENTINEL_OFFSET, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_UN)
+
+
 @contextlib.contextmanager
 def writer_lock(lock_path: Path, *, verb: str, timeout: float | None = None) -> Iterator[None]:
     """Acquire the single-writer lock for ``verb``, re-entrantly.
@@ -91,34 +151,29 @@ def writer_lock(lock_path: Path, *, verb: str, timeout: float | None = None) -> 
     )
     lock_path.parent.mkdir(parents=True, exist_ok=True)
 
-    import fcntl  # POSIX only (macOS/Linux host + Cowork Linux VM) -- see AGENTS.md host/VM split
-
-    # O_CLOEXEC: a child process (e.g. an embedding subprocess launchd ->
-    # brain -> embedder) must NEVER inherit this fd. flock binds to the open
-    # file description, so an inherited fd would keep the lock alive after
-    # the parent that acquired it exits -- reproducing the exact
-    # leaked-lock / silent-32-nights failure mode this session exists to fix.
-    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
+    fd = _open_lock_fd(lock_path)
     start = time.monotonic()
     acquired = False
     delay = 0.05
     try:
         while True:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if _try_lock(fd):
                 acquired = True
                 break
-            except OSError:
-                elapsed = time.monotonic() - start
-                if elapsed >= bound:
-                    holder = _read_holder(lock_path)
-                    raise WriterLockBusy(holder, verb)
-                time.sleep(min(delay, max(0.0, bound - elapsed)) * (0.5 + random.random()))
-                delay = min(delay * 2, 2.0)
+            elapsed = time.monotonic() - start
+            if elapsed >= bound:
+                holder = _read_holder(lock_path)
+                raise WriterLockBusy(holder, verb)
+            time.sleep(min(delay, max(0.0, bound - elapsed)) * (0.5 + random.random()))
+            delay = min(delay * 2, 2.0)
 
+        # Seek-then-write rather than os.pwrite (absent on Windows). Offset 0
+        # is deliberately OUTSIDE the Windows sentinel lock range so
+        # `current_holder` can still read this back while the lock is held.
         info = {"pid": os.getpid(), "verb": verb, "started": time.time()}
         os.ftruncate(fd, 0)
-        os.pwrite(fd, json.dumps(info).encode("utf-8"), 0)
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.write(fd, json.dumps(info).encode("utf-8"))
         _FD[key] = fd
         _DEPTH[key] = 1
         try:
@@ -128,10 +183,7 @@ def writer_lock(lock_path: Path, *, verb: str, timeout: float | None = None) -> 
             del _FD[key]
     finally:
         if acquired:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_UN)
-            except OSError:
-                pass
+            _unlock(fd)
         os.close(fd)
 
 

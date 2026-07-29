@@ -1,7 +1,7 @@
 """Embedder ADAPTER INTERFACE + the shipped ONNX embedders + an offline fallback.
 
 **Shipped default (`auto`): `intfloat/multilingual-e5-small`** run locally via
-direct ONNX Runtime (`OnnxEmbedder`, Xenova ONNX export, ~465 MB one-time
+direct ONNX Runtime (`OnnxEmbedder`, Xenova ONNX export, ~465 MiB (~487 MB) one-time
 download, 384-d) — NO PyTorch, NO fastembed in the core install. The original
 design-of-record (IDX-01) was Snowflake Arctic-embed-m-v2.0 (305M, 768-d,
 MRL-256 truncation) via fastembed; `ArcticEmbedder` remains available behind
@@ -900,9 +900,14 @@ def probe_auto_embedder() -> tuple[str, str]:
 
 
 # Approximate download size for the install/warmup UX hint ONLY (never a perf
-# or capability claim) — the plan's own "~300 MB" figure for the fp32 e5-small
-# ONNX export. Not read anywhere that affects behaviour.
-ONNX_MODEL_SIZE_HINT = "~300 MB"
+# or capability claim). MEASURED from a populated cache, not estimated: the
+# Xenova/multilingual-e5-small snapshot is 465 MiB on disk (a 448 MiB
+# onnx/model.onnx plus tokenizer/config files). Download UIs that count in
+# decimal MB show the same bytes as ~487 MB, which is why an installing user
+# saw three different numbers for one file. State both units so nobody has to
+# reconcile them. The stale "~300 MB" here came from a planning-doc estimate
+# for the fp32 export and was never checked against the real artifact.
+ONNX_MODEL_SIZE_HINT = "~465 MiB (~487 MB)"
 
 
 def model_cache_ready(embedder: "Embedder | None" = None) -> bool | None:

@@ -3,12 +3,12 @@
     Brainiac one-command installer (Windows / PowerShell).
 
 .DESCRIPTION
-    Windows counterpart to install.sh (macOS/Linux) — same contract, same
+    Windows counterpart to install.sh (macOS/Linux) - same contract, same
     post-cold-start behaviour (no blocking model download, no OCR install).
 
     PyPI-first by default (PYP-04): tries, in order, `uv tool install` ->
     `pipx install` -> `pip install --user`, first success wins, each attempt
-    visibly reported. Pass -Dev for the contributor/offline path — an
+    visibly reported. Pass -Dev for the contributor/offline path - an
     editable install from THIS checkout into a private venv under
     `%USERPROFILE%\.brainiac\venv` (or `$env:BRAINIAC_HOME\venv`), the
     pre-PyPI behavior. Every channel installs the `[mcp]` extra so
@@ -17,7 +17,7 @@
     Unlike install.sh's `--with-ocr` flag, this script never invokes a
     package manager on your behalf (winget/choco availability and elevation
     vary too much across Windows machines to assume one is safe to run
-    unattended) — it only prints the manual command. See the OCR section
+    unattended) - it only prints the manual command. See the OCR section
     below.
 
 .PARAMETER Dev
@@ -27,7 +27,7 @@
 .EXAMPLE
     .\install.ps1
     PyPI-first install. Run from anywhere (a bare downloaded install.ps1
-    works — no clone required).
+    works - no clone required).
 
 .EXAMPLE
     .\install.ps1 -Dev
@@ -39,7 +39,7 @@ param(
 )
 
 # Unknown/extra parameters are rejected automatically by PowerShell's own
-# parameter binder (there is nothing declared above to accept them) — this
+# parameter binder (there is nothing declared above to accept them) - this
 # is the .ps1 equivalent of install.sh's "unknown option" guard.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -99,7 +99,7 @@ if ($LASTEXITCODE -ne 0) {
 # 1a. venv module preflight (mirrors install.sh's CS-03 check), only
 #     load-bearing for -Dev (the editable venv). Most Windows Python
 #     distributions ship venv/ensurepip in the box, but a minimal or
-#     corrupted install can still be missing them — catching it here gives a
+#     corrupted install can still be missing them - catching it here gives a
 #     clear fix instead of a confusing failure deep inside step 2.
 # ---------------------------------------------------------------------------
 if ($Dev) {
@@ -110,7 +110,7 @@ if ($Dev) {
 }
 
 # ---------------------------------------------------------------------------
-# 1b. OCR toolchain — NEVER installed by this script (deviation from
+# 1b. OCR toolchain - NEVER installed by this script (deviation from
 #     install.sh's --with-ocr, which can shell out to brew/apt). `brain
 #     ingest` only needs ocrmypdf + tesseract for image-only PDFs; without
 #     them a scanned PDF just quarantines as `pdf_no_text_layer` instead of
@@ -122,10 +122,10 @@ Write-Host "    (or) choco install tesseract"
 Write-Host "    then: <venv>\Scripts\pip.exe install ocrmypdf"
 
 # ---------------------------------------------------------------------------
-# 2. Engine install — PyPI-first by default (PYP-04): uv tool install ->
+# 2. Engine install - PyPI-first by default (PYP-04): uv tool install ->
 #    pipx install -> pip install --user, first success wins, each attempt
 #    visibly reported. -Dev keeps the editable-checkout path (contributors /
-#    offline / no PyPI access) — private venv, `pip install -e .[mcp]`,
+#    offline / no PyPI access) - private venv, `pip install -e .[mcp]`,
 #    unchanged from the pre-PyPI behavior. Every channel carries the [mcp]
 #    extra so `brain-mcp` works out of the box (the console script is
 #    defined unconditionally, so without the extra it would exist but crash
@@ -160,7 +160,7 @@ if ($Dev) {
     if ($LASTEXITCODE -ne 0) { Fail "'pip install -e `"${RepoDir}[mcp]`"' failed. Check the error above." }
     $InstalledChannel = 'editable-checkout'
 
-    # PATH wiring — additive, idempotent (safe to re-run). Windows has no
+    # PATH wiring - additive, idempotent (safe to re-run). Windows has no
     # per-shell PATH like ~/.bashrc; the durable equivalent is the User
     # environment variable (registry-backed, picked up by new processes).
     #
@@ -194,36 +194,36 @@ if ($Dev) {
         $NewUserPath = if ($RawUserPath -and -not $RawUserPath.EndsWith(';')) { "$RawUserPath;$VenvScripts" } else { "$RawUserPath$VenvScripts" }
         $EnvKey.SetValue('Path', $NewUserPath, $ExistingPathKind)
         $PathWasAdded = $true
-        Say "Added $VenvScripts to your User PATH (registry) — new terminal windows will see it."
+        Say "Added $VenvScripts to your User PATH (registry) - new terminal windows will see it."
     } else {
         Say "$VenvScripts is already on your User PATH."
     }
     $EnvKey.Close()
 
-    # Also extend *this* process's PATH so the rest of this script — and any
-    # commands you paste from the "Try it" block below in the SAME window —
+    # Also extend *this* process's PATH so the rest of this script - and any
+    # commands you paste from the "Try it" block below in the SAME window -
     # can find `brain` right away, without waiting for a new session.
     if (($env:Path -split ';') -notcontains $VenvScripts) {
         $env:Path = "$env:Path;$VenvScripts"
     }
 } else {
-    Say "Installing brainiac-cli from PyPI — trying uv tool install, then pipx, then pip --user"
+    Say "Installing brainiac-cli from PyPI - trying uv tool install, then pipx, then pip --user"
 
     if (Get-Command uv -ErrorAction SilentlyContinue) {
         Say "Attempt 1/3: uv tool install 'brainiac-cli[mcp]'"
         & uv tool install 'brainiac-cli[mcp]'
-        if ($LASTEXITCODE -eq 0) { $InstalledChannel = 'uv tool' } else { Say "uv tool install failed — falling back to pipx" }
+        if ($LASTEXITCODE -eq 0) { $InstalledChannel = 'uv tool' } else { Say "uv tool install failed - falling back to pipx" }
     } else {
-        Say "Attempt 1/3: uv not found on PATH — skipping (install from https://docs.astral.sh/uv/ for the fastest channel)"
+        Say "Attempt 1/3: uv not found on PATH - skipping (install from https://docs.astral.sh/uv/ for the fastest channel)"
     }
 
     if (-not $InstalledChannel) {
         if (Get-Command pipx -ErrorAction SilentlyContinue) {
             Say "Attempt 2/3: pipx install 'brainiac-cli[mcp]'"
             & pipx install 'brainiac-cli[mcp]'
-            if ($LASTEXITCODE -eq 0) { $InstalledChannel = 'pipx' } else { Say "pipx install failed — falling back to pip --user" }
+            if ($LASTEXITCODE -eq 0) { $InstalledChannel = 'pipx' } else { Say "pipx install failed - falling back to pip --user" }
         } else {
-            Say "Attempt 2/3: pipx not found on PATH — skipping (https://pipx.pypa.io/)"
+            Say "Attempt 2/3: pipx not found on PATH - skipping (https://pipx.pypa.io/)"
         }
     }
 
@@ -244,16 +244,26 @@ if ($Dev) {
     Say "Installed via: $InstalledChannel"
 
     if ($InstalledChannel -eq 'pip --user' -and -not (Get-Command brain -ErrorAction SilentlyContinue)) {
-        $UserBase = (Invoke-Py -PyArgs @('-m', 'site', '--user-base')) | Select-Object -First 1
+        # Ask Python where it ACTUALLY puts user scripts. '<user-base>\Scripts'
+        # is wrong on Windows: the real path carries a version segment
+        # (...\Python\Python313\Scripts), so the hand-built hint sent users to
+        # a directory that does not exist.
+        $ScriptsDir = (Invoke-Py -PyArgs @(
+            '-c', 'import sysconfig; print(sysconfig.get_path("scripts", "nt_user"))'
+        )) | Select-Object -First 1
+        if (-not $ScriptsDir) {
+            $UserBase = (Invoke-Py -PyArgs @('-m', 'site', '--user-base')) | Select-Object -First 1
+            $ScriptsDir = Join-Path $UserBase 'Scripts'
+        }
         Say "NOTE: 'brain' isn't on PATH yet. Add this to your User PATH (or open a new terminal after a User install):"
-        Write-Host "    $UserBase\Scripts"
+        Write-Host "    $ScriptsDir"
     }
 }
 
 # ---------------------------------------------------------------------------
 # 3. Verify + next steps. The first-index-build against the checkout's own
 #    sample vault only makes sense in -Dev mode (that's the only mode with a
-#    local checkout to build from) — lexical-only, no network.
+#    local checkout to build from) - lexical-only, no network.
 #    BRAIN_EMBEDDER=hash forces the offline deterministic embedder so
 #    grep/bases-query/FTS work immediately; `brain search`'s dense leg
 #    self-detects this placeholder and degrades to FTS-only with a notice
@@ -262,7 +272,7 @@ if ($Dev) {
 if ($Dev) {
     $BrainExe = Join-Path $VenvScripts 'brain.exe'
     if (-not (Test-Path $BrainExe)) {
-        Fail "brain.exe not found at $BrainExe after install — the pip install above may have failed silently."
+        Fail "brain.exe not found at $BrainExe after install - the pip install above may have failed silently."
     }
 
     Say "Building a lexical-only index for the sample vault (no model download)"

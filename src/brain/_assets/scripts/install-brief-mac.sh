@@ -54,9 +54,21 @@ LOGDIR="${BRAIN_LOG_DIR:-$HOME/.brain/logs}"
 # plist is chmod 600 below either way.
 KEYCHAIN_SERVICE="${BRAIN_AUDIT_KEYCHAIN_SERVICE:-profile-a-brain-audit-key}"
 AUDIT_KEY="${BRAIN_AUDIT_KEY_PEM:-}"
+
+# Managed endpoints (BRAIN_MANAGED=1) resolve the key ONLY from the OS keystore
+# — audit.py ignores env custody entirely there. Baking the PEM into the plist
+# would leave a private key sitting in a plaintext file that nothing will ever
+# read: strictly worse than not writing it. Drop it and let the runtime
+# keychain lookup do its job.
+if [ -n "${BRAIN_MANAGED:-}" ] && [ "${BRAIN_MANAGED}" != "0" ] && [ -n "$AUDIT_KEY" ]; then
+    echo "NOTE: managed mode — not baking BRAIN_AUDIT_KEY_PEM into the plist" >&2
+    echo "      (managed endpoints resolve the key only from the OS keystore)." >&2
+    AUDIT_KEY=""
+fi
+
 if [ -z "$AUDIT_KEY" ]; then
     if ! security find-generic-password -s "$KEYCHAIN_SERVICE" -a "$USER" >/dev/null 2>&1; then
-        echo "WARNING: No BRAIN_AUDIT_KEY_PEM and no Keychain entry for '$KEYCHAIN_SERVICE'." >&2
+        echo "WARNING: No Keychain entry for '$KEYCHAIN_SERVICE'." >&2
         echo "         Captures will not be signed (drain fails closed). Run 'brain audit-key'" >&2
         echo "         (create-if-absent, never rotates) — no reinstall needed after." >&2
     fi

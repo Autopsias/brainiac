@@ -7,6 +7,122 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.19.18] — 2026-07-29
+### Added
+- **`tools/publish_public.py` — guarded one-command public release pipeline**
+  (runbook §7.10, owner decision 2026-07-30, amending the "publishing is never
+  scripted" rule). It orchestrates §7.6→§8 — tag cross-check, throwaway
+  worktree at the tag, full suite, clean-room export, contamination gate with
+  a mandatory scanner self-test (a planted canary must be caught before any
+  all-clear counts), sdist built from the export and re-scanned, Windows CI
+  signal as a hard gate, TestPyPI→PyPI→npm→public-git with clean-environment
+  verification after each — while every irreversible act stops at an
+  interactive gate requiring the operator to type the exact version.
+  Structural guarantees: nothing reads the dev working tree (the v0.19.17
+  near-miss class), no credential is ever read or probed, the public push
+  happens from a fresh temp clone and the `disabled-public-DO-NOT-PUSH`
+  remote is never touched (asserted by tests against the pipeline source).
+  Each phase appends to `_evidence/releases/publish-<version>.md`, so an
+  aborted run leaves a truthful partial transcript; `--from <phase>` resumes
+  without re-running completed uploads.
+- **`/publish-release` project skill + harness consent for the pipeline.**
+  The skill sequences the whole release (bump → scoped commit → tag →
+  dry-run → one owner decision card → gated execution → report). To make
+  in-session consent work without a terminal, `publish_public.py` gains
+  `--confirm <act>` (repeatable, one flag per approved act — deliberately
+  no confirm-everything) requiring `--consent-note`, recorded per gate in
+  the evidence transcript; a headless run reaching an unconfirmed gate
+  refuses instead of prompting into the void.
+
+### Fixed
+- Release dry-run suite: the three `restage_workspaces` tests no longer depend
+  on the gitignored `dist/cowork-skills` build output — they failed only in a
+  clean worktree at the tag (exactly where the pipeline runs them), passing in
+  a dev checkout by luck of the local build state.
+- **Native Windows install never completed, and failed silently.** Reported by
+  an enterprise pilot user on 2026-07-29 against 0.19.11. Three independent I/O
+  portability bugs combined into the worst possible shape: `brain init`
+  reported success, the index was never written, and `brain search` returned
+  zero results with no error anywhere.
+  - `install.ps1` carried 20 em-dashes with no BOM. Windows PowerShell 5.1
+    reads a BOM-less file as ANSI, turning each one into three characters
+    ending in a closing curly quote — which terminates a string mid-file and
+    makes the script fail to parse before a single line runs. Every shipped
+    `.ps1` is now pure ASCII, including the `packaging/windows/intune/`
+    scripts a managed rollout depends on, and a test enforces it. GitHub's
+    Windows runners use `pwsh` 7 and read UTF-8 correctly, so CI could never
+    have caught this class.
+  - `lock.py` imported `fcntl` with no platform guard and used `os.O_CLOEXEC`
+    / `os.pwrite`, none of which exist on Windows, so `brain rebuild` died
+    with `ModuleNotFoundError` before doing any work. Windows now locks a
+    sentinel byte via `msvcrt` at a high offset — deliberately NOT byte 0,
+    because Windows byte-range locks are mandatory rather than advisory and
+    locking the holder JSON would make `current_holder` read back empty.
+  - `_finalize_rebuild` fsynced a fd opened `O_RDONLY` (Windows requires a
+    writable handle) and opened a directory as a fd (impossible on Windows),
+    failing with `[Errno 9]` *after* every note had been indexed. The staging
+    DB fd is now opened `O_RDWR`; the directory fsync is POSIX-only, and
+    `os.replace` remains atomic on NTFS without it.
+- **`brain init --full --apply` reported a successful install with a broken
+  index.** A failed index build was treated as a soft degradation and left the
+  `ok` verdict true, so the CLI exited 0. An attempted-and-failed build is now
+  a hard failure — `--apply` promises the seeded notes are searchable.
+- **An ordinary PyPI install was misdetected as a staged Cowork VM copy.**
+  `looks_like_vm_stage` tested for the ABSENCE of `tools/` and
+  `pyproject.toml`, which is equally true of any wheel in site-packages, so
+  `brain doctor` ran the VM leg on every pip/uv/pipx install — telling a
+  Windows laptop user to "run `brain doctor` on the host Mac" and diagnosing a
+  Cowork workspace that did not exist. Detection is now the positive `.brain/`
+  path signal, with site-packages explicitly treated as a host install.
+- **The overlay was indexed as knowledge.** `vault/overlay/` holds the owner's
+  personalization layer (voice/brand/keywords/people and COS settings files),
+  which carries `overlay_type:` and never `classification:` — so every one of
+  those files was indexed AND ranked MNPI. A fresh `brain init` indexed 8
+  notes of which 4 were config. `scan_vault` now skips the overlay entirely,
+  same posture as `.brain/`.
+- **The Windows scheduled task was never registered.** `register_tasks.py`
+  only ever printed a command for the Windows leg — one carrying a
+  Mac-authored excuse ("Windows leg cannot be driven from this Mac host") and
+  a repo-relative script path that a PyPI install does not have. `--apply` now
+  registers the task via the wheel-shipped script, symmetric with the macOS
+  leg, using `-ExecutionPolicy Bypass` scoped to that process only.
+- **The installer's PATH hint pointed at a directory that does not exist.**
+  It hand-built `<user-base>\Scripts`; the real Windows path carries a version
+  segment (`...\Python313\Scripts`). It now asks Python via
+  `sysconfig.get_path("scripts", "nt_user")`.
+- **The embedding model had three different published sizes.** The guide said
+  ~465 MB, `brain status` said ~300 MB, and the download bar said 487 MB.
+  Measured from a populated cache: 465 MiB on disk, which decimal-MB UIs
+  report as ~487 MB. The ~300 MB figure was an unchecked planning estimate.
+  All surfaces now state `~465 MiB (~487 MB)`.
+- **Managed mode could bake a dead private key into the launchd plist.** Under
+  `BRAIN_MANAGED=1` the engine ignores `BRAIN_AUDIT_KEY_PEM` entirely, so
+  writing it into the `.plist` left a private key in a plaintext file that
+  nothing would ever read. `install-brief-mac.sh` now refuses to bake it in
+  managed mode. The Windows task never carried key material.
+
+### Added
+- `tests/test_windows_portability.py` — guards for every class above. These
+  FAULT-INJECT Windows semantics (`os.name` forced to `nt`, a stand-in
+  `msvcrt`, `os.open`/`os.fsync` raising exactly what Windows raises) rather
+  than grepping for the fixed spelling; each one fails against the pre-fix
+  code. They run in the ordinary `pytest -q` release gate.
+- Documented, in `docs/release-runbook.md` §7.8, why the Windows acceptance
+  checklist is not optional: the `distribution-matrix` workflow DID catch the
+  `fcntl` bug on 2026-07-23, on dependabot branches where the failures were
+  read as noise, six days before a pilot user hit it. The runbook now names
+  the search-returns-results step as the decisive check and requires reading
+  that workflow's latest run before publishing.
+- `docs/managed-deployment-runbook.html` now states the per-user audit-key
+  answer up front: each endpoint self-provisions a create-if-absent Ed25519
+  key into its own OS keystore (verified working under `BRAIN_MANAGED=1`), so
+  no private key transits the deployment pipeline. Central issuance stays
+  available for policy, with its trade-off stated. The obsolete "hand-edit the
+  generated task until `register_tasks --managed` ships" instruction is gone.
+- The install guide's Windows section now covers the default `Restricted`
+  ExecutionPolicy, and no longer tells users to run a repo script they were
+  never asked to clone.
+
 ## [0.19.17] — 2026-07-29
 ### Fixed
 - **Release exports no longer embed an owner-private legacy path mapping.**

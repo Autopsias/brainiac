@@ -142,6 +142,38 @@ class BrainCore:
             query, k=k, rerank=rerank, rerank_top=rerank_top, rrf_k=rrf_k,
         )
 
+    def hybrid_search_with_trace(
+        self, query: str, k: int = 10, *, rerank: bool = False,
+        rerank_top: int = 15, rrf_k: int = 60,
+    ):
+        """Production hybrid search plus opt-in, pre-egress S03 attribution.
+
+        Callers must still route hits through the CLI's egress gate before
+        serialising either a full explanation or the compact capture digest.
+        """
+        return self.index.hybrid_search_with_trace(
+            query, k=k, rerank=rerank, rerank_top=rerank_top, rrf_k=rrf_k,
+        )
+
+    def diagnose_target(
+        self, query: str, target_id: str, *, max_tier: str, trace: Any,
+        final_rank: int | None,
+    ) -> dict[str, Any]:
+        """Run the S03 target probe after an unchanged production search."""
+        return self.index.diagnose_target(
+            query, target_id, max_tier=max_tier, trace=trace, final_rank=final_rank,
+        )
+
+    def annotate_create_safety(
+        self, query: str, surfaced: list[dict[str, Any]], max_tier: str
+    ) -> set[str]:
+        """Finalize ADR-0008 create safety after the CLI egress decision.
+
+        The engine can identify a full alias/title owner, but only the egress
+        boundary knows whether every owner is visible at the caller's cap.
+        """
+        return self.index.annotate_create_safety(query, surfaced, max_tier)
+
     def hybrid_search_graph(
         self, query: str, k: int = 10, *, rerank: bool = False, rerank_top: int = 15,
         rrf_k: int = 60, depth: int = 2, graph_weight: float = 0.5,
@@ -851,6 +883,18 @@ class BrainCore:
         out["version"]["snapshot_schema_version"] = snap_schema
         out["version"]["snapshot_newer_than_binary"] = snapshot_newer
         out["pending_drafts"] = self._count_pending_drafts()
+        # ADR-0008 S04: the host-only raw-query ledger has its own containment
+        # and owner-only permissions.  The VM branch in querylog.status()
+        # returns before resolving or reading that host path, so status remains
+        # a safe VM read surface while still telling the host whether capture is
+        # alive, stale, or failing.
+        try:
+            from . import querylog
+
+            out["query_capture"] = querylog.status(self.vault, role=self.role)
+        except Exception as exc:  # noqa: BLE001 — status must never crash on observability
+            out["query_capture"] = {"enabled": False, "state": "error",
+                                    "reason": f"{type(exc).__name__}"}
         # ADR-0003 Ruling 5/d + HARDENED:premortem — surface `brain maintain`'s
         # own heartbeat (a stale `daily` branch or a repeatedly-failing branch)
         # so a broken nightly is visible here too, not only via the
@@ -3200,6 +3244,26 @@ class BrainCore:
                             blocked.append(maint.blocked_item(
                                 f"duplicate-retention fold failed: {exc}",
                                 "filesystem/manifest read", "next maintain run"))
+
+                        # ADR-0008 S04: query capture logs contain raw host
+                        # questions, so their retention is a separate,
+                        # containment-aware fold.  It unlinks only whole
+                        # expired YYYY-MM files — never compacts/truncates the
+                        # live month while appenders may hold it open.
+                        try:
+                            from . import querylog
+
+                            qret = querylog.prune_expired_months(
+                                self.vault, role=self.role, today=d)
+                            results["query_capture_retention"] = qret
+                            if qret.get("pruned"):
+                                auto_fixed.append(maint.auto_fixed_item(
+                                    "query-log-retention", "host query ledger",
+                                    f"pruned {len(qret['pruned'])} expired whole month file(s)"))
+                        except Exception as exc:
+                            blocked.append(maint.blocked_item(
+                                f"query-log retention fold failed: {exc}",
+                                "host query ledger", "next maintain run"))
 
                     # CUT-02: monthly quarantine triage summary — NEVER
                     # deletes; queues a hot.md summary at most once per ISO

@@ -9,8 +9,10 @@ FINAL stage before stdout. A harness self-discovers the whole contract from
                                             # per-user overlay/{voice,brand,
                                             # keywords,people}/ layer (minimal
                                             # slice; full init lands later)
-    brain search <query> [--json] [-k N] [--rerank] [--max-tier TIER]
-    brain hybrid-search <query> ...        # alias of search (fused RRF BM25+dense)
+    brain search <query> [--json] [-k N] [--rerank] [--explain] [--max-tier TIER]
+    brain hybrid-search <query> ...        # alias of search (RRF BM25+dense+exact)
+    brain diagnose <query> --target ID     # gated target-miss tracer
+    brain eval replay --against FILE.jsonl # host-only private query-log replay
     brain grep <pattern> [--regex] [-k N]  # lexical-first, NO embedding
     brain bases-query --where k=v [-k N]   # structured frontmatter view, NO embedding
     brain bases-query --latest-only        # TMP-02: exclude superseded notes
@@ -63,6 +65,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from typing import Any
 
 from . import __version__, classification as cls
@@ -79,6 +82,47 @@ agentic tool surface (RET-04 — compose these; lexical-first, embed lazily):
   grep / bases-query never embed (cheap first probe); hybrid-search embeds the
   query only on semantic escalation; graph-expand is DISCOVERY-ONLY (its derived
   wikilink graph is never authoritative — confirm candidates with get/read).
+
+ADR-0008 exact identity:
+  search/hybrid-search use fused RRF(k=60): BM25 + dense + a bounded exact
+  alias/title leg. The exact leg never trusts FTS token-OR membership for phrase
+  claims: aliases/titles are normalized identity projections, title phrases are
+  verified as contiguous title-token spans, and keyword_exact uses a literal
+  boundary verifier. Emergency retrieval rollback is immediate:
+    BRAIN_EXACT_LEG_ENABLED=0 <restart the invoking process>
+  No rebuild is needed. With the switch off, exact ranking injection/pinning/
+  collision slot normalization are disabled, while already-surfaced organic
+  hits can still carry truthful evidence/create_safety labels.
+
+evidence/create_safety:
+  every surfaced search hit carries one evidence label: alias_hit,
+  exact_title_match, title_phrase_match, keyword_exact, high_vector_match, or
+  weak_semantic. create_safety is exists/probable/unknown. `exists` is reserved
+  for one visible unique full alias/title owner; alias/title collisions, retired
+  owners, or any full owner withheld by egress degrade the public answer without
+  exposing hidden ids, owner counts, ranks, titles, or a collision label.
+
+explain / diagnose:
+  `search --explain` emits gated per-hit attribution (lexical/dense/exact
+  contributions, raw RRF, zone/staleness, rerank, pin, near-dup) plus a bounded
+  candidate digest whose ids are also egress-surfaced. `diagnose` runs the same
+  production ranking and then reports a target's stage presence/rank/cutoff;
+  if the target is above the egress cap, the target prints only as `withheld`.
+  `--rerank` is skippable and bounded to the top 10-20; unique full identities
+  are pinned outside the reranker, collision groups keep live-before-retired
+  order only inside the slots the reranker selected, and reranker scores remain
+  separate from RRF scores.
+
+host query log / replay:
+  host query capture is post-egress, best-effort, and HOST ONLY. It writes raw
+  queries under the resolved host app-data index directory at `query-log/`,
+  deliberately outside vault/ and vault/.brain/, with owner-only directories
+  and files; unsafe symlink/env overrides into the vault are refused. Retention
+  removes whole month JSONL files. VM role cannot read, write, resolve, or
+  replay the host ledger. `brain eval replay --against FILE --json` never
+  recaptures; it reports top1/Jaccard/rank/latency telemetry split into
+  vault_same and drift_or_mixed. Thresholds apply only to vault_same because the
+  log has no target qrels.
 
 temporal-intent routing (TMP-03): when a question is really about TIME —
 "latest", "current version", "as of <date>", "previous version" — probe the
@@ -113,7 +157,9 @@ examples:
   brain bases-query --where type=note --where classification=Internal --json
   brain bases-query --latest-only --where type=note --json
   brain bases-query --as-of 2026-03-01 --json
-  brain search "arctic embed" --rerank --json
+  brain search "arctic embed" --rerank --explain --json
+  brain diagnose "Café Aurora" --target cafe-aurora --json
+  brain eval replay --against ~/.local/share/brainiac/<vault-id>/query-log/2026-07.jsonl --json
   brain graph-expand brain-engine --depth 2 --json
   brain get arctic-embed-choice --json
   brain recent -n 5 --max-tier Confidential
@@ -232,6 +278,88 @@ def _egress_footer(report: dict) -> str:
     return line
 
 
+def _render_explain_hit(hit: dict) -> list[str]:
+    """Readable ADR-0008 attribution for one already-gated search result."""
+    explain = hit.get("explain") or {}
+    lines = [
+        f"[{hit.get('source', '?')}] {hit.get('id', '?')}  "
+        f"final-rank={explain.get('final_rank')}  "
+        f"pre-rerank={explain.get('pre_rerank_score')}"
+    ]
+    for name in ("lexical", "dense", "exact"):
+        leg = explain.get(name)
+        if leg is None:
+            lines.append(f"  {name}: not available")
+            continue
+        details = " ".join(f"{key}={value}" for key, value in leg.items())
+        lines.append(f"  {name}: {details}")
+    zone = explain.get("zone", {})
+    stale = explain.get("staleness", {})
+    duplicate = explain.get("near_duplicate", {})
+    pin = explain.get("pin", {})
+    lines.append(
+        "  raw_rrf={raw} zone={zone} (applied={applied}, scope={scope}) "
+        "staleness={staleness}".format(
+            raw=explain.get("raw_rrf_score"), zone=zone.get("factor"),
+            applied=zone.get("applied"), scope=zone.get("scope"),
+            staleness=stale.get("factor"),
+        )
+    )
+    lines.append(
+        "  duplicate: exempt={exempt} suppressed={suppressed}; "
+        "pin: eligible={eligible} applied={applied}".format(
+            exempt=duplicate.get("exempt"), suppressed=duplicate.get("suppressed"),
+            eligible=pin.get("eligible"), applied=pin.get("applied"),
+        )
+    )
+    if explain.get("rerank_score") is None:
+        lines.append("  rerank: not scored (no numeric score is combined with RRF)")
+    else:
+        lines.append(
+            f"  rerank: score={explain['rerank_score']} rank={explain['rerank_rank']} "
+            "(separate cross-encoder scale)"
+        )
+    lines.append(f"    {hit.get('snippet', '')}")
+    return lines
+
+
+def _render_diagnose(diag: dict, report: dict) -> str:
+    """Readable target-miss result without exposing a withheld target."""
+    if diag.get("verdict") == "withheld":
+        return _egress_footer(report) + "\nVERDICT: withheld by egress gate"
+    trace = diag.get("trace", {})
+    lines = [f"target: {diag.get('target')}"]
+    for name, stage in trace.get("stages", {}).items():
+        lines.append(
+            f"  {name}: candidate={stage.get('candidate')} rank={stage.get('rank')} "
+            f"matched={stage.get('matched')} cutoff={stage.get('cutoff')}"
+        )
+    if trace.get("first_missed_cutoff"):
+        cutoff = trace["first_missed_cutoff"]
+        lines.append(f"  first missed cutoff: {cutoff['stage']} (limit={cutoff['cutoff']})")
+    attribution = trace.get("attribution")
+    if attribution:
+        lines.extend(_render_explain_hit({"id": diag.get("target"), "explain": attribution}))
+    verdict = diag.get("verdict", "candidate-miss")
+    lines.append(_egress_footer(report))
+    lines.append(f"VERDICT: {verdict}")
+    return "\n".join(lines)
+
+
+def _capture_rerank_metadata(core: Any, trace: Any | None, args: Any) -> dict[str, Any]:
+    """Small, safe record of the rerank mode used for a captured query."""
+    requested = bool(getattr(args, "rerank", False))
+    applied = bool(getattr(trace, "rerank_applied", False))
+    model = None
+    if applied:
+        cache = getattr(getattr(core, "index", None), "_reranker_cache", None)
+        if isinstance(cache, tuple) and len(cache) == 2:
+            model = getattr(cache[1], "model_id", None) or cache[0]
+    top_n = int(getattr(args, "rerank_top", 0) or 0) if applied else 0
+    return {"requested": requested, "applied": applied,
+            "model": str(model) if model else None, "top_n": top_n}
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="brain",
@@ -269,7 +397,44 @@ def build_parser() -> argparse.ArgumentParser:
                         help="rerank window, clamped to 10-20 (default: 15)")
         sp.add_argument("--rrf-k", type=int, default=60,
                         help="Reciprocal Rank Fusion constant (default: 60)")
+        sp.add_argument("--explain", action="store_true",
+                        help="show per-stage RRF/zone/staleness attribution for each "
+                             "egress-surfaced result (ADR-0008)")
         add_common(sp)
+
+    sp = sub.add_parser(
+        "eval",
+        help="host-only retrieval evaluation utilities (real-query replay never writes the ledger)",
+        description=(
+            "Host-only retrieval evaluation. Real-query replay reads a private "
+            "query-log export and never appends capture records. It has no "
+            "target qrels: matching live-index fingerprints are reported as "
+            "vault_same ranking/configuration signals; changed fingerprints are "
+            "drift_or_mixed and remain report-only."
+        ),
+    )
+    eval_sub = sp.add_subparsers(dest="eval_cmd", required=True)
+    replay = eval_sub.add_parser(
+        "replay",
+        help="replay a host query-log export: stability, overlap, rank movement, and latency",
+        description=(
+            "Replay a private host query-log JSONL export without writing any "
+            "new capture records. Reports Jaccard@k, top-1 stability, rank "
+            "movement, candidate-digest presence, and latency delta, separated "
+            "into vault_same and drift_or_mixed fingerprint groups. The log has "
+            "no target qrels. Thresholds are optional and are evaluated only "
+            "over vault_same records; an empty comparable subset exits successfully."
+        ),
+    )
+    replay.add_argument("--against", required=True,
+                        help="host query-log JSONL month file to replay")
+    replay.add_argument("--fail-under-top1", type=float, default=None,
+                        help="fail only if vault_same top-1 stability is below [0,1]; "
+                             "drift_or_mixed rows are report-only")
+    replay.add_argument("--fail-under-jaccard", type=float, default=None,
+                        help="fail only if vault_same Jaccard@k is below [0,1]; "
+                             "the log has no target qrels")
+    replay.add_argument("--json", action="store_true")
 
     # -- setup (PER-02 / INS-02) — `brain init` ---------------------------
     # Filesystem + subprocess only: never opens the index, never constructs
@@ -398,10 +563,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     # `search` and `hybrid-search` are the SAME fused RRF retrieval (RET-01);
     # the second name is the explicit agentic-tool spelling (RET-04).
-    add_search("search", "fused RRF(60) BM25 + dense retrieval — hits carry "
-                         "type/date/is_latest_version; response carries a "
-                         "freshness block (react to it: see --help discipline)")
-    add_search("hybrid-search", "alias of `search`: fused RRF(60) BM25 + dense (RET-01)")
+    add_search("search", "fused RRF(60) BM25 + dense + exact alias/title retrieval — "
+                         "hits carry type/date/is_latest_version/evidence/"
+                         "create_safety; --explain emits gated attribution")
+    add_search("hybrid-search", "alias of `search`: fused RRF(60) BM25 + dense "
+                                "+ exact alias/title leg (ADR-0008)")
+
+    sp = sub.add_parser(
+        "diagnose",
+        help="ADR-0008 target miss tracer: run production search unchanged, then "
+             "report the target's gated per-stage presence/cutoff; withheld "
+             "targets print only the `withheld` sentinel",
+    )
+    sp.add_argument("query")
+    sp.add_argument("--target", required=True, help="note id to trace (egress-gated)")
+    sp.add_argument("-k", type=int, default=10, help="production max results (default: 10)")
+    sp.add_argument("--rerank", action="store_true",
+                    help="diagnose the same optional cross-encoder rerank path")
+    sp.add_argument("--rerank-top", type=int, default=15,
+                    help="production rerank window, clamped to 10-20 (default: 15)")
+    sp.add_argument("--rrf-k", type=int, default=60,
+                    help="production Reciprocal Rank Fusion constant (default: 60)")
+    add_common(sp)
 
     sp = sub.add_parser(
         "dossier",
@@ -1112,7 +1295,7 @@ VM_ALLOWED = frozenset({
     "init",  # filesystem-only overlay validation; safe on either role
     "doctor",  # read-only version/health inspection; no index/key touched
     "mcp-config",  # prints a config string; no index/key/vault read
-    "search", "hybrid-search", "dossier", "grep", "bases-query", "graph-expand",
+    "search", "hybrid-search", "diagnose", "dossier", "grep", "bases-query", "graph-expand",
     "get", "read", "recent", "status", "draft-capture",
     "capture", "brief", "digest",
     # CUT-01E: the ONE COS ingress a VM holds — an UNSIGNED drop into a dir
@@ -1295,7 +1478,7 @@ def _main(argv: list[str] | None = None) -> int:
             if getattr(args, "check_registry", False):
                 def registry_fetch():  # noqa: E306 - single cached HTTPS read, opt-in only
                     return {"pypi_version": brain_doctor.fetch_pypi_latest_version()}
-            report = brain_doctor.run_doctor(registry_fetch=registry_fetch)
+            report = brain_doctor.run_doctor(registry_fetch=registry_fetch, vault=args.vault)
         _emit(report if args.json else None, args.json,
               None if args.json else brain_doctor.render_human(report))
         return 0 if report["ok"] else 1
@@ -1377,36 +1560,128 @@ def _main(argv: list[str] | None = None) -> int:
               else f"init failed: {exc}", getattr(args, "json", False))
         return 3
 
+    if cmd == "eval":
+        # `eval` is absent from VM_ALLOWED, so this host-only replay branch is
+        # reached only after the pre-core trust gate above.  It invokes the
+        # engine directly rather than the CLI search path, therefore it can
+        # never append a new real-traffic capture record while replaying.
+        from . import querylog
+
+        if args.eval_cmd == "replay":
+            try:
+                report, thresholds_failed = querylog.replay(
+                    core, args.against,
+                    fail_under_top1=args.fail_under_top1,
+                    fail_under_jaccard=args.fail_under_jaccard,
+                )
+            except (querylog.ReplayDataError, ValueError) as exc:
+                payload = {"error": "replay_data", "detail": str(exc)}
+                _emit(payload if args.json else f"replay error: {exc}", args.json)
+                return 2
+            _emit(report if args.json else None, args.json,
+                  None if args.json else json.dumps(report, ensure_ascii=False, indent=2))
+            return 1 if thresholds_failed else 0
+
     if cmd in ("search", "hybrid-search"):
         # S02/CS-01: check BEFORE the search call — a cold-start index built
         # with the offline hash placeholder degrades to FTS-only inside
         # BrainIndex._dense_ranked (see its docstring); surface that here so
         # the agent/user sees WHY results look lexical-only rather than
         # concluding the vault is thin.
+        from . import querylog
+
         embedder_pending = core.embedder_pending()
-        hits = [h.to_dict() for h in core.hybrid_search(
-            args.query, k=args.k, rerank=args.rerank,
-            rerank_top=args.rerank_top, rrf_k=args.rrf_k)]
+        # The host capture default needs the bounded S03 trace/digest.  On the
+        # VM (or with the host kill switch off), normal searches retain the
+        # lightweight trace-free path unless the user explicitly asks for
+        # --explain.  `capture_requested` is a pure role/env check — it never
+        # touches a host ledger before the response has passed egress.
+        capture_enabled = querylog.capture_requested(role)
+        capture_started = time.perf_counter() if capture_enabled else None
+        trace = None
+        if args.explain or capture_enabled:
+            trace_hits, trace = core.hybrid_search_with_trace(
+                args.query, k=args.k, rerank=args.rerank,
+                rerank_top=args.rerank_top, rrf_k=args.rrf_k,
+            )
+            hits = [hit.to_dict() for hit in trace_hits]
+        else:
+            hits = [h.to_dict() for h in core.hybrid_search(
+                args.query, k=args.k, rerank=args.rerank,
+                rerank_top=args.rerank_top, rrf_k=args.rrf_k)]
         surfaced, report = _filter_dicts(hits, args.max_tier)
+        # ADR-0008: identity ownership is computed before egress, but its
+        # create/no-create conclusion must be finalized after the gate so a
+        # withheld collision can only yield the conservative ``unknown`` enum.
+        identity_redacted_ids = core.annotate_create_safety(
+            args.query, surfaced, args.max_tier,
+        )
         freshness = _freshness_block(core, surfaced, args.max_tier)
         notice = (
             "embedder pending — dense/semantic ranking is skipped (FTS-only "
             "results) until the real model is applied to this index; run "
             "`brain warmup` then `brain sync`." if embedder_pending else None
         )
-        if args.json:
+        if args.explain and trace is not None:
+            for final_rank, hit in enumerate(surfaced, start=1):
+                explain = trace.explain_for_id(
+                    hit["id"], final_rank,
+                    redact_identity=hit["id"] in identity_redacted_ids,
+                )
+                hit["explain"] = explain
+        if args.explain and trace is not None:
+            payload = {
+                "query": args.query,
+                "ranking": {
+                    "rrf_k": trace.rrf_k,
+                    "exact_leg_enabled": trace.exact_leg_enabled,
+                    "rerank_requested": trace.rerank_requested,
+                    "rerank_applied": trace.rerank_applied,
+                },
+                "results": surfaced,
+                # This bounded projection is built only from IDs that survived
+                # the output gate; S04 can reuse the same safe object for host
+                # query capture without ever seeing a withheld candidate.
+                "candidate_digest": trace.compact_digest({hit["id"] for hit in surfaced}),
+                "egress": report,
+            }
+        else:
             payload = {"query": args.query, "rerank": args.rerank,
                        "results": surfaced, "egress": report}
+        # Shared post-egress serialization seam (ADR-0008 S04): only the
+        # already-gated rows plus S03's safe digest reach the host ledger.
+        # querylog swallows any containment/permission/append failure and
+        # increments its local counter, so a healthy search never fails merely
+        # because observability is unavailable.
+        if capture_enabled and capture_started is not None:
+            capture_top, capture_digest = querylog.projection_from_gated(
+                surfaced, trace=trace, redacted_ids=identity_redacted_ids,
+            )
+            querylog.capture_post_egress(
+                vault=core.vault, role=role, index=core.index, query=args.query,
+                mode=cmd, k=args.k, rrf_k=args.rrf_k,
+                exact_leg_enabled=bool(getattr(trace, "exact_leg_enabled", False)),
+                rerank=_capture_rerank_metadata(core, trace, args),
+                latency_ms=(time.perf_counter() - capture_started) * 1000,
+                top=capture_top, candidate_digest=capture_digest,
+                max_tier=args.max_tier,
+            )
+        if args.json:
             if freshness:
                 payload["freshness"] = freshness
             if notice:
                 payload["embedder_notice"] = notice
             _emit(payload, True)
         else:
-            lines = [f"[{h['source']}] {h['id']}  <{h.get('type') or '?'}>"
-                     f"  ({h['classification'] or 'UNLABELLED'})"
-                     f"  {h.get('date') or 'undated'}  {h['score']}\n    {h['snippet']}"
-                     for h in surfaced]
+            if args.explain:
+                lines = [line for hit in surfaced for line in _render_explain_hit(hit)]
+            else:
+                lines = [f"[{h['source']}] {h['id']}  <{h.get('type') or '?'}>"
+                         f"  ({h['classification'] or 'UNLABELLED'})"
+                         f"  {h.get('date') or 'undated'}  "
+                         f"{h['score'] if h.get('score') is not None else 'redacted'}"
+                         f"\n    {h['snippet']}"
+                         for h in surfaced]
             footer = _egress_footer(report)
             if notice:
                 footer += f"\n-- {notice}"
@@ -1415,10 +1690,45 @@ def _main(argv: list[str] | None = None) -> int:
             _emit(None, False, "\n".join(lines + [footer]) if lines else footer)
         return 0
 
+    if cmd == "diagnose":
+        # The trace-returning call executes the same production candidate cut,
+        # scoring, suppression and reranking as search.  Only after that work
+        # is complete do we inspect the requested target out of band.
+        trace_hits, trace = core.hybrid_search_with_trace(
+            args.query, k=args.k, rerank=args.rerank,
+            rerank_top=args.rerank_top, rrf_k=args.rrf_k,
+        )
+        hits = [hit.to_dict() for hit in trace_hits]
+        surfaced, report = _filter_dicts(hits, args.max_tier)
+        core.annotate_create_safety(args.query, surfaced, args.max_tier)
+        final_ranks = {hit["id"]: rank for rank, hit in enumerate(surfaced, start=1)}
+        diagnosis = core.diagnose_target(
+            args.query, args.target, max_tier=args.max_tier, trace=trace,
+            final_rank=final_ranks.get(args.target),
+        )
+        if args.json:
+            payload = {**diagnosis, "egress": report}
+            # The strict withheld response intentionally omits query/target
+            # metadata beyond the public sentinel and aggregate gate count.
+            if diagnosis.get("verdict") != "withheld":
+                payload = {"query": args.query, **payload}
+            _emit(payload, True)
+        else:
+            _emit(None, False, _render_diagnose(diagnosis, report))
+        return 0
+
     if cmd == "dossier":
+        from . import querylog
+
+        capture_enabled = querylog.capture_requested(role)
+        capture_started = time.perf_counter() if capture_enabled else None
         res = core.dossier(args.query, k=args.k)
         decisions, drep = _filter_dicts(res["decisions"], args.max_tier)
         sources, srep = _filter_dicts(res["sources"], args.max_tier)
+        # The targeted decision-layer probe can add a hit outside hybrid's
+        # normal pool. Finalize the same post-egress identity conclusion over
+        # both dossier layers so a withheld identity owner stays unknown.
+        core.annotate_create_safety(args.query, decisions + sources, args.max_tier)
         report = {
             "total": drep["total"] + srep["total"],
             "surfaced": drep["surfaced"] + srep["surfaced"],
@@ -1440,6 +1750,24 @@ def _main(argv: list[str] | None = None) -> int:
                    "egress": report}
         if freshness:
             payload["freshness"] = freshness
+        if capture_enabled and capture_started is not None:
+            # A dossier composes hybrid candidates with a targeted decision
+            # probe, so it has no one production trace to expose.  The shared
+            # serializer still produces the bounded S03-compatible final-list
+            # digest from its gated decision/source response.
+            capture_top, capture_digest = querylog.projection_from_gated(
+                decisions + sources,
+            )
+            querylog.capture_post_egress(
+                vault=core.vault, role=role, index=core.index, query=args.query,
+                mode="dossier", k=args.k, rrf_k=60,
+                exact_leg_enabled=os.environ.get("BRAIN_EXACT_LEG_ENABLED", "1").strip().lower()
+                not in {"0", "false", "no", "off"},
+                rerank={"requested": False, "applied": False, "model": None, "top_n": 0},
+                latency_ms=(time.perf_counter() - capture_started) * 1000,
+                top=capture_top, candidate_digest=capture_digest,
+                max_tier=args.max_tier,
+            )
         if args.json:
             _emit(payload, True)
         else:

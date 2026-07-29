@@ -13,9 +13,9 @@ in scope (see §7 + `corpus-migration.md`).
 ## 1 · Principles
 
 1. **Markdown + YAML is the single source of truth.** Files on disk are
-   authoritative. The sqlite index (`.brain/index.sqlite`) is a *derived cache*
-   — deletable, rebuildable from `vault/` at any time. No database is ever the
-   truth.
+   authoritative. The sqlite index (resolved host app-data, or
+   `$BRAIN_INDEX_DIR`) is a *derived cache* — deletable, rebuildable from
+   `vault/` at any time. No database is ever the truth.
 2. **Two zones.** `raw/` is an **immutable** inbox of captured sources;
    `brain/` is **agent-owned** atomic, densely-linked notes plus `index.md` and
    a generated `backlinks.md`.
@@ -43,12 +43,15 @@ vault/
 │   ├── areas/               PARA — ongoing responsibilities
 │   ├── resources/           PARA — reference / topics
 │   └── archive/             PARA — inactive
-└── .brain/              RUNTIME (gitignored): brain binary, index.sqlite,
-                         model.onnx, WAL, snapshots/, drafts/
+└── .brain/              RUNTIME (gitignored): published snapshot, capture
+                         inbox, graph output, memory, staged VM assets
 ```
 
 - Within any PARA folder, notes are **flat** (`kebab-slug.md`).
 - `raw/` ↔ `brain/` are linked by frontmatter (`source:`) and `[[raw/...]]`.
+- The live host index and host query ledger are resolved outside `vault/` and
+  `vault/.brain/` under host app-data. `.brain/snapshot/` is the VM-readable
+  published copy, not the canonical writable index.
 
 ## 3 · The engine (`brain`)
 
@@ -58,7 +61,16 @@ vault/
   (never copied to `/tmp`). Bundle the model for Cowork — the VM egress
   allowlist excludes HuggingFace.
 - **Four agent verbs:** `search`, `get`, `recent`, `draft_capture` (see §5 +
-  AGENTS.md §5). `write_note` is host-broker-only.
+  AGENTS.md §5). `write_note` is host-broker-only. The CLI also exposes
+  agent-facing read helpers (`hybrid-search`, `grep`, `bases-query`,
+  `graph-expand`, `read`, `dossier`, `diagnose`) and host-broker maintenance
+  verbs; `brain --help` is the current surface.
+- **Retrieval ranking:** production hybrid search is RRF at `k=60`: FTS5 BM25,
+  dense best-chunk vectors, and the ADR-0008 bounded exact alias/title leg. The
+  exact leg is disabled immediately with `BRAIN_EXACT_LEG_ENABLED=0` plus
+  process restart; no rebuild is required. `--rerank` is optional and skippable,
+  bounded to 10-20 candidates, and keeps cross-encoder scores separate from RRF
+  scores.
 - **Build matrix:** host macOS + host Windows (Code-tab / terminal) **and**
   Linux aarch64 + x86_64 (Cowork VM). One codebase, four targets.
 
@@ -110,13 +122,53 @@ brief (s09), which doubles as the guaranteed daily drain floor.
 cannot open the index in WAL/write mode, and cannot resolve a signing key — hard
 tests in `tests/test_integration.py`.
 
-## 5 · Egress gate (classification-driven)
+## 5 · Egress gate and read-surface observability
 
 `search`/`get`/`recent` filter results by `classification` against the caller's
 allowed tier. **Default-deny:** a note whose `classification` is missing or not
 in the recognised set is treated as **MNPI** and withheld. Full scheme,
 ordering, and tier semantics: `classification-scheme.md`. The gate is the
 mechanism S08 builds on.
+
+Every surfaced `search`/`hybrid-search` hit carries both retrieval source
+(`lexical`, `semantic`, `both`, or exact-only `exact`) and ADR-0008 identity
+evidence:
+
+- `alias_hit`
+- `exact_title_match`
+- `title_phrase_match`
+- `keyword_exact`
+- `high_vector_match`
+- `weak_semantic`
+
+`create_safety` is derived from that evidence and the complete pre-egress
+alias/title owner set. It is one of `exists`, `probable`, or `unknown`.
+`exists` is reserved for exactly one visible full alias/title owner. Shared
+aliases, title/alias collisions, retired-version collisions, and any full owner
+withheld by the egress gate never expose owner counts or hidden ids; the public
+answer degrades to `probable` or `unknown`.
+
+`search --explain` and `diagnose` are read-only observability surfaces over the
+same production ranking. `--explain` emits gated per-hit attribution and a
+bounded candidate digest containing only ids already allowed through egress.
+`diagnose` runs the production path unchanged and then reports the requested
+target's stage presence/rank/cutoff. If the target is above the egress cap, the
+only target identity printed is the sentinel `withheld`.
+
+Host query capture is deliberately outside the vault. On the trusted host, the
+post-egress capture lane appends raw query records under the resolved host
+app-data index directory at `query-log/`, with owner-only directory and file
+permissions. It refuses symlink or environment overrides that resolve below
+`vault/` or `vault/.brain/`, records query-free health counters separately, and
+retains only whole month JSONL files. VM role cannot read, write, replay, or
+resolve the host ledger path.
+
+`brain eval replay --against <month.jsonl>` is host-only and never appends new
+capture rows. Replay reports top-1 stability, Jaccard@k, rank movement,
+candidate-digest presence, and latency delta. Because the log contains no
+target qrels, thresholds are honest only over `vault_same` rows whose live
+index fingerprint still matches the capture; changed fingerprints are reported
+as `drift_or_mixed` and remain non-gating.
 
 ## 6 · At-rest posture (v5-corrected)
 
@@ -155,6 +207,24 @@ cutover** — say so plainly.
 `classification` values, default-deny reporting, immutability markers on `raw/`,
 no Johnny-Decimal filenames, presence of `index.md`, and (optionally)
 `--backlinks` regeneration and `--okf` lint. A clean run (exit 0) is the gate.
+
+### 8.1 · Bitemporal frontmatter (ADR-0003 ruling 2)
+
+### 8.0 · Aliases (ADR-0008)
+
+`aliases:` is an optional brain-zone-only frontmatter list for owner-curated
+identity strings, distinct from `tags:`. Each alias is stored as authored and
+indexed through a normalized identity projection (NFC, casefold, whitespace
+collapse) beside normalized titles. A note may carry 0-128 aliases, each
+non-empty and at most 256 Unicode scalar values. Duplicate aliases within one
+note are validation errors after normalization; aliases shared across notes are
+warnings, because historical and supersession collisions are legitimate.
+
+Retrieval computes alias/title ownership over the complete pre-egress index.
+That means a hidden owner can never make a visible collision look uniquely safe:
+`create_safety: exists` is emitted only for one visible unique full owner, while
+shared or withheld owners degrade to `probable` or `unknown` without leaking
+hidden ids, titles, counts, ranks, or a collision label.
 
 ### 8.1 · Bitemporal frontmatter (ADR-0003 ruling 2)
 

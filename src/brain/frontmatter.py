@@ -5,7 +5,41 @@ validator never disagree on note shape. Runs on a bare system python3.
 """
 from __future__ import annotations
 
+import re
+import unicodedata
 from typing import Any
+
+
+# Identity comparison is deliberately narrower than general search
+# normalization: it keeps punctuation and accents, normalizes Unicode to NFC,
+# casefolds, and collapses whitespace. Title-phrase eligibility uses a
+# separate tokenization so it never changes the identity contract.
+_PHRASE_TOKEN = re.compile(r"[\w]+(?:[-/][\w]+)*", re.UNICODE)
+
+
+def normalize_identity(value: object) -> str:
+    """Return the ADR-0008 normalized identity form for a string.
+
+    Non-string inputs deliberately normalize to ``\"\"``. Frontmatter
+    validation rejects those inputs before indexing; this defensive behavior
+    keeps malformed foreign Markdown from manufacturing an identity lookup.
+    """
+    if not isinstance(value, str):
+        return ""
+    text = unicodedata.normalize("NFC", value).casefold()
+    return " ".join(text.split())
+
+
+def phrase_tokens(value: object) -> list[str]:
+    """Tokenize normalized text only for title-phrase eligibility."""
+    return _PHRASE_TOKEN.findall(normalize_identity(value))
+
+
+def identifier_shaped(token: str) -> bool:
+    """Whether a one-token literal query is specific enough for evidence."""
+    alnum = "".join(ch for ch in token if ch.isalnum())
+    return (len(alnum) >= 8 or any(ch.isdigit() for ch in token)
+            or any(ch in token for ch in "-_/"))
 
 
 def split(text: str) -> tuple[str, str] | None:
@@ -18,8 +52,57 @@ def split(text: str) -> tuple[str, str] | None:
     return parts[1], parts[2]
 
 
+def _unquote(value: str) -> str:
+    value = _strip_inline_comment(value).strip()
+    if len(value) >= 2 and value[:1] in "'\"" and value[-1:] == value[:1]:
+        return value[1:-1]
+    return value.strip("'\"")
+
+
+def _inline_list(inner: str) -> list[str]:
+    """Parse the small YAML inline-list subset accepted by the fallback.
+
+    The fallback intentionally remains a tiny parser, but aliases are allowed
+    to contain commas inside quoted display names, so splitting blindly on
+    every comma would make valid inline YAML silently disappear.
+    """
+    items: list[str] = []
+    current: list[str] = []
+    quote = ""
+    escaped = False
+    for char in inner:
+        if quote:
+            current.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = ""
+            continue
+        if char in "'\"":
+            quote = char
+            current.append(char)
+        elif char == ",":
+            item = "".join(current).strip()
+            if item:
+                items.append(_unquote(item))
+            current = []
+        else:
+            current.append(char)
+    item = "".join(current).strip()
+    if item:
+        items.append(_unquote(item))
+    return items
+
+
 def parse(block: str) -> dict[str, Any]:
-    """Parse a frontmatter block. PyYAML if importable, else a flat mini-parser."""
+    """Parse a frontmatter block. PyYAML if importable, else a flat mini-parser.
+
+    In addition to scalar fields and inline lists, the fallback intentionally
+    supports the standard block-list form for ``aliases``.  This keeps a
+    no-PyYAML install aligned with the validator and the ADR-0008 schema.
+    """
     try:
         import yaml  # type: ignore
 
@@ -28,18 +111,27 @@ def parse(block: str) -> dict[str, Any]:
     except Exception:
         pass
     data: dict[str, Any] = {}
+    block_aliases = False
     for line in block.splitlines():
         if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        stripped = line.strip()
+        if block_aliases and line[0] in " \t" and stripped.startswith("-"):
+            data.setdefault("aliases", []).append(_unquote(stripped[1:].strip()))
             continue
         if ":" not in line or line[0] in " \t-":
             continue
         key, _, val = line.partition(":")
         key, val = key.strip(), val.strip()
+        block_aliases = False
         if val.startswith("[") and val.endswith("]"):
             inner = val[1:-1].strip()
-            data[key] = [x.strip().strip("'\"") for x in inner.split(",") if x.strip()]
+            data[key] = _inline_list(inner)
+        elif key == "aliases" and not val:
+            data[key] = []
+            block_aliases = True
         else:
-            data[key] = _strip_inline_comment(val).strip("'\"")
+            data[key] = _unquote(val)
     return data
 
 

@@ -15,6 +15,7 @@ glue requiring ``pip install 'brainiac-cli[mcp]'``.
 from __future__ import annotations
 
 import os
+import time
 from typing import Any
 
 from . import classification as cls
@@ -78,8 +79,29 @@ def dispatch(tool: str, args: dict[str, Any], *, core: BrainCore | None = None,
     core = core or BrainCore(vault=vault)  # host or vm; reads only either way
     max_tier = _clamp_max_tier(str(args.get("max_tier", cls.DEFAULT_MAX_TIER)))
     if tool in ("search", "hybrid-search"):
-        hits = [h.to_dict() for h in core.hybrid_search(str(args["query"]), k=int(args.get("k", 10)))]
+        # Same host-only post-egress capture seam as the CLI.  The MCP server
+        # can run on a host, but its conservative egress ceiling still applies
+        # before any ledger projection is assembled.
+        from . import querylog
+
+        role = getattr(core, "role", "host")
+        capture_enabled = querylog.capture_requested(role)
+        started = time.perf_counter() if capture_enabled else None
+        trace = None
+        if capture_enabled:
+            trace_hits, trace = core.hybrid_search_with_trace(
+                str(args["query"]), k=int(args.get("k", 10)),
+            )
+            hits = [h.to_dict() for h in trace_hits]
+        else:
+            hits = [h.to_dict() for h in core.hybrid_search(
+                str(args["query"]), k=int(args.get("k", 10)))]
         surfaced, report = _filtered(hits, max_tier)
+        # Match the CLI's post-egress safety finalization. A visible identity
+        # owner must never look unique merely because a collision peer is above
+        # this MCP caller's tier cap.
+        identity_redacted_ids = core.annotate_create_safety(
+            str(args["query"]), surfaced, max_tier)
         out: dict[str, Any] = {"results": surfaced, "egress": report}
         # RET-09 freshness signal — same contract as the CLI (see
         # cli._freshness_block): tells the agent when the vault continues
@@ -100,6 +122,19 @@ def dispatch(tool: str, args: dict[str, Any], *, core: BrainCore | None = None,
                     f"or a narrower search) before treating this as current.")
             if fresh:
                 out["freshness"] = fresh
+        if capture_enabled and started is not None:
+            capture_top, capture_digest = querylog.projection_from_gated(
+                surfaced, trace=trace, redacted_ids=identity_redacted_ids,
+            )
+            querylog.capture_post_egress(
+                vault=core.vault, role=role, index=core.index,
+                query=str(args["query"]), mode=tool,
+                k=int(args.get("k", 10)), rrf_k=60,
+                exact_leg_enabled=bool(getattr(trace, "exact_leg_enabled", False)),
+                rerank={"requested": False, "applied": False, "model": None, "top_n": 0},
+                latency_ms=(time.perf_counter() - started) * 1000,
+                top=capture_top, candidate_digest=capture_digest, max_tier=max_tier,
+            )
         return out
     if tool in ("get", "read"):
         note = core.get(str(args["id"]))
@@ -109,9 +144,15 @@ def dispatch(tool: str, args: dict[str, Any], *, core: BrainCore | None = None,
         surfaced, report = _filtered(core.recent(limit=int(args.get("n", 10))), max_tier)
         return {"results": surfaced, "egress": report}
     if tool == "dossier":
+        from . import querylog
+
+        role = getattr(core, "role", "host")
+        capture_enabled = querylog.capture_requested(role)
+        started = time.perf_counter() if capture_enabled else None
         res = core.dossier(str(args["query"]), k=int(args.get("k", 12)))
         decisions, drep = _filtered(res["decisions"], max_tier)
         sources, srep = _filtered(res["sources"], max_tier)
+        core.annotate_create_safety(str(args["query"]), decisions + sources, max_tier)
         # Merge the two egress reports by NAMED keys — a naive comprehension
         # KeyErrors on conditional keys (casing_mismatch_warnings appears
         # only when a wrong-case tier exists in that half).
@@ -125,9 +166,22 @@ def dispatch(tool: str, args: dict[str, Any], *, core: BrainCore | None = None,
                         | set(srep.get("casing_mismatch_warnings", [])))
         if casing:
             report["casing_mismatch_warnings"] = casing
-        return {"query": res["query"], "decisions": decisions,
-                "sources": sources,
-                "retired_excluded": res["retired_excluded"], "egress": report}
+        out = {"query": res["query"], "decisions": decisions,
+               "sources": sources,
+               "retired_excluded": res["retired_excluded"], "egress": report}
+        if capture_enabled and started is not None:
+            capture_top, capture_digest = querylog.projection_from_gated(decisions + sources)
+            querylog.capture_post_egress(
+                vault=core.vault, role=role, index=core.index,
+                query=str(args["query"]), mode="dossier", k=int(args.get("k", 12)),
+                rrf_k=60,
+                exact_leg_enabled=os.environ.get("BRAIN_EXACT_LEG_ENABLED", "1").strip().lower()
+                not in {"0", "false", "no", "off"},
+                rerank={"requested": False, "applied": False, "model": None, "top_n": 0},
+                latency_ms=(time.perf_counter() - started) * 1000,
+                top=capture_top, candidate_digest=capture_digest, max_tier=max_tier,
+            )
+        return out
     if tool in ("bases-query", "bases_query"):
         filters = dict(args.get("where") or {})
         items = core.bases_query(

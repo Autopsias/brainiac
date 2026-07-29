@@ -17,6 +17,32 @@ README.md, AGENTS.md, and docs/install/*.
   (`search`/`get`/`recent`/...) runs just before printing results: it drops
   anything above the caller's allowed classification tier so the model only
   ever sees what it's cleared to see.
+- **alias** — an optional, owner-curated identity string in brain-note
+  frontmatter. Aliases are normalized with NFC + casefold + whitespace collapse
+  for retrieval, but displayed exactly as authored. Shared aliases are
+  collision warnings, not validation errors.
+- **exact leg** — ADR-0008's bounded third RRF candidate list for exact aliases,
+  exact titles, and verified contiguous title phrases. It is calibrated only at
+  `rrf_k=60` and can be rolled back immediately with
+  `BRAIN_EXACT_LEG_ENABLED=0` plus process restart.
+- **evidence label** — the per-hit match explanation emitted by
+  `search`/`hybrid-search`: `alias_hit`, `exact_title_match`,
+  `title_phrase_match`, `keyword_exact`, `high_vector_match`, or
+  `weak_semantic`.
+- **create_safety** — the conservative per-hit create/no-create signal:
+  `exists`, `probable`, or `unknown`. `exists` is only for one visible unique
+  alias/title owner; collisions or withheld identity owners degrade the public
+  answer without exposing hidden-owner details.
+- **query log** — host-only real-query capture under the resolved app-data
+  index directory's `query-log/`, outside `vault/` and outside `vault/.brain/`.
+  It stores post-egress raw query telemetry for replay, with owner-only
+  permissions and whole-month retention.
+- **vault_same** — a replay class for query-log records whose captured vault
+  fingerprint matches the current live index, making ranking/configuration
+  thresholds meaningful.
+- **drift_or_mixed** — a replay class for records whose fingerprint no longer
+  matches the current live index. These rows are reported for context but are
+  not threshold-gated because the log has no target qrels.
 - **Cowork** — Claude Desktop's Linux VM sandbox execution mode; one of the
   three ways to run `brain`, restricted to `vm` role (read + draft only).
 - **host-broker** — the trusted side of the host/VM split (your Mac/Windows

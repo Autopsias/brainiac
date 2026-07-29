@@ -31,6 +31,7 @@ from . import classification as cls
 CONTENT_RETURNING_SUBCOMMANDS: tuple[str, ...] = (
     "search",          # fused RRF BM25+dense
     "hybrid-search",   # alias of search
+    "diagnose",        # per-target rank trace; target fields are gated separately
     "grep",            # lexical scan
     "bases-query",     # structured frontmatter view
     "graph-expand",    # wikilink-BFS + PPR discovery candidates

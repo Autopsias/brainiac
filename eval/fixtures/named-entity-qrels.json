@@ -1,0 +1,57 @@
+{
+  "ne_alias_01": {
+    "brain/projects/contoso-lantern-program.md": 3
+  },
+  "ne_alias_02": {
+    "brain/projects/northwind-message-fabric.md": 3
+  },
+  "ne_alias_03": {
+    "brain/projects/fabrikam-aurora-cafe.md": 3
+  },
+  "ne_collision_01": {
+    "brain/projects/contoso-orbit-current.md": 3,
+    "brain/archive/contoso-orbit-retired.md": 1
+  },
+  "ne_collision_02": {
+    "brain/projects/northwind-atlas-current.md": 3,
+    "brain/archive/northwind-atlas-retired.md": 1
+  },
+  "ne_collision_03": {
+    "brain/projects/fabrikam-harbor-title.md": 3,
+    "brain/projects/contoso-harbor-alias.md": 2
+  },
+  "ne_title_01": {
+    "brain/projects/fabrikam-mesh-gateway.md": 3
+  },
+  "ne_title_02": {
+    "brain/projects/contoso-aurora-ledger.md": 3
+  },
+  "ne_title_03": {
+    "brain/projects/northwind-platform-catalogue.md": 3
+  },
+  "ne_title_partial_bound_01": {
+    "brain/resources/organic-rank-one-both.md": 3,
+    "brain/projects/northwind-relay-gateway.md": 2
+  },
+  "ne_named_01": {
+    "brain/projects/northwind-port-allocation.md": 3,
+    "brain/resources/generic-port-allocation-guide.md": 1
+  },
+  "ne_named_02": {
+    "brain/projects/contoso-orion-ledger.md": 3,
+    "brain/resources/generic-orion-guide.md": 1
+  },
+  "ne_named_03": {
+    "brain/projects/fabrikam-signal-registry.md": 3,
+    "brain/resources/generic-signal-registry-guide.md": 1
+  },
+  "ne_chunk_01": {
+    "brain/projects/contoso-telemetry-handbook.md": 3
+  },
+  "ne_chunk_02": {
+    "brain/projects/northwind-lattice-policy.md": 3
+  },
+  "ne_chunk_03": {
+    "brain/projects/fabrikam-slate-transfer.md": 3
+  }
+}

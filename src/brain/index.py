@@ -21,18 +21,21 @@ from __future__ import annotations
 import datetime as _dt
 import hashlib
 import json
+import math
 import os
 import re
 import sqlite3
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from . import config, frontmatter
 from . import classification as cls_mod
 from .chunk import chunk_text
 from .dbretry import with_write_retry
 from .embed import Embedder, get_embedder
+from .frontmatter import identifier_shaped, normalize_identity, phrase_tokens
 from .notes import Note, scan_vault
 from .progress import ProgressReporter
 from .vectors import SqliteVecBackend, VectorBackend, get_backend
@@ -125,10 +128,12 @@ def _recency_factor(date_str: str, today: _dt.date, weight: float,
     An undated note (or ``weight<=0``) is neutral at ``1.0`` — undated notes are
     never penalised.
 
-    A *penalty* (≤1), not a boost (>1), so the fused score never exceeds the RRF
-    ceiling ``2/(rrf_k+1)`` — the fusion-scale invariant the zone-authority prior
-    also respects. Relative order between any two DATED notes is identical to a
-    symmetric boost, so the newer of two topically-similar hits still wins."""
+    With ``rrf_k = 60`` and ``w_exact_max = 2.25``, raw RRF never exceeds
+    ``(2 + w_exact_max) / (rrf_k + 1) = 4.25 / 61``. This factor is a penalty
+    in ``(0, 1]``; the separately configured zone-authority multiplier is
+    applied after raw RRF and may intentionally exceed 1. Relative order
+    between any two dated notes is identical to a symmetric boost, so the newer
+    of two topically-similar hits still wins."""
     if weight <= 0 or not date_str:
         return 1.0
     try:
@@ -157,7 +162,7 @@ def _grep_bounded_search(compiled, text: str):
     return compiled.search(text)
 
 
-SCHEMA_VERSION = 3  # TMP-02: bitemporal columns added (notes gain 6 new cols).
+SCHEMA_VERSION = 4  # ADR-0008: normalized title projection + aliases table.
 INDEX_FORMAT_VERSION = 1  # RB-02: bumped whenever resume-compatibility breaks.
                     # Migration-safe by construction: sync()'s _schema_ready()
                     # check already forces a rebuild() on any version mismatch —
@@ -172,7 +177,7 @@ class Hit:
     zone: str
     path: str
     score: float
-    source: str  # "lexical" | "semantic" | "both"
+    source: str  # "lexical" | "semantic" | "both" | "exact"
     snippet: str = ""
     is_latest_version: str = ""  # TMP-02: "true"|"false"|"" — post-egress field,
                                   # never consulted by the classification gate.
@@ -183,6 +188,8 @@ class Hit:
                     # material under consideration (2026-07-11: an agent
                     # promoted a draft memo's scenario into a "decision"
                     # because the ranked list didn't show which was which).
+    evidence: str = "weak_semantic"  # ADR-0008 strongest visible match reason.
+    create_safety: str = "unknown"   # conservative create/no-create signal.
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -197,6 +204,213 @@ class Hit:
             "is_latest_version": self.is_latest_version,
             "date": self.date,
             "type": self.type,
+            "evidence": self.evidence,
+            "create_safety": self.create_safety,
+        }
+
+
+@dataclass
+class _ExactLeg:
+    """Pre-egress exact-leg state for one normalized query (ADR-0008)."""
+
+    ranked: list[int]
+    tiers: dict[int, str]
+    full_rowids: set[int]
+    partial_rowids: set[int]
+    alias_rowids: set[int]
+    title_rowids: set[int]
+    owner_rowids: set[int]
+    unique_full_rowid: int | None
+    collision_order: list[int]
+    # Evidence is not capped with the ranked partial list: a title that passes
+    # the phrase verifier remains accurately attributable even when the
+    # bounded exact leg did not inject it.
+    partial_evidence_rowids: set[int] = field(default_factory=set)
+
+
+RRF_K_EXACT = 60
+EXACT_WEIGHT_UNIQUE_FULL = 2.25
+EXACT_WEIGHT_COLLIDING_FULL = 1.0
+EXACT_WEIGHT_PARTIAL_TITLE = 0.25
+EXACT_FULL_CAP = 16
+EXACT_PARTIAL_CAP = 16
+
+
+@dataclass
+class _SearchTrace:
+    """Opt-in per-query attribution for ADR-0008 observability.
+
+    The normal retrieval path never constructs this object.  It deliberately
+    keeps the native RRF and reranker scales separate: ``pre_rerank_score`` is
+    the final comparable RRF/zone/staleness score, while ``rerank_score`` only
+    records the cross-encoder's ordering signal.
+    """
+
+    rrf_k: int
+    exact_leg_enabled: bool
+    rerank_requested: bool
+    candidate_limit: int
+    result_limit: int
+    lexical_order: list[int] = field(default_factory=list)
+    dense_order: list[int] = field(default_factory=list)
+    exact_order: list[int] = field(default_factory=list)
+    pre_rerank_order: list[int] = field(default_factory=list)
+    final_pre_egress_order: list[int] = field(default_factory=list)
+    rerank_applied: bool = False
+    _records: dict[int, dict[str, Any]] = field(default_factory=dict)
+    _id_by_rowid: dict[int, str] = field(default_factory=dict)
+
+    def record(self, rowid: int) -> dict[str, Any]:
+        """Return this candidate's trace record, allocating only in trace mode."""
+        return self._records.setdefault(
+            rowid,
+            {
+                "lexical": None,
+                "dense": None,
+                "exact": None,
+                "raw_rrf_score": 0.0,
+                "zone": {"scope": "semantic_only", "factor": 1.0, "applied": False},
+                "staleness": {"factor": 1.0},
+                "near_duplicate": {"exempt": False, "suppressed": False},
+                "pin": {"eligible": False, "applied": False},
+                "pre_rerank_score": 0.0,
+                "pre_rerank_rank": None,
+                "rerank_score": None,
+                "rerank_rank": None,
+                "_pre_egress_final_rank": None,
+            },
+        )
+
+    @staticmethod
+    def _number(value: Any) -> float:
+        """Normalise numpy-like values before JSON-facing trace construction."""
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @classmethod
+    def _round(cls, value: Any) -> float:
+        # Explain is arithmetic, not the compact display score exposed by
+        # ``Hit.to_dict``.  Keep enough precision for a caller to reproduce a
+        # three-leg sum without a one-micro-point rounding discrepancy.
+        return round(cls._number(value), 12)
+
+    def explain_for(
+        self, rowid: int, final_rank: int | None, *, redact_identity: bool = False,
+    ) -> dict[str, Any] | None:
+        """Return a detached, JSON-ready record for one egress-approved hit.
+
+        ``final_rank`` is supplied by the caller *after* its egress decision;
+        this prevents a pre-gate rank from being mistaken for an output rank.
+        """
+        record = self._records.get(rowid)
+        if record is None:
+            return None
+
+        def leg(value: dict[str, Any] | None) -> dict[str, Any] | None:
+            if value is None:
+                return None
+            return {
+                key: (self._round(item) if item is not None and key in {"contribution", "similarity", "weight"}
+                      else item)
+                for key, item in value.items()
+            }
+
+        result = {
+            "lexical": leg(record["lexical"]),
+            "dense": leg(record["dense"]),
+            "exact": leg(record["exact"]),
+            "raw_rrf_score": self._round(record["raw_rrf_score"]),
+            "zone": {
+                "scope": record["zone"]["scope"],
+                "factor": self._round(record["zone"]["factor"]),
+                "applied": bool(record["zone"]["applied"]),
+            },
+            "staleness": {"factor": self._round(record["staleness"]["factor"])},
+            "near_duplicate": {
+                "exempt": bool(record["near_duplicate"]["exempt"]),
+                "suppressed": bool(record["near_duplicate"]["suppressed"]),
+            },
+            "pre_rerank_score": self._round(record["pre_rerank_score"]),
+            "pre_rerank_rank": record["pre_rerank_rank"],
+            "pin": {
+                "eligible": bool(record["pin"]["eligible"]),
+                "applied": bool(record["pin"]["applied"]),
+            },
+            # Reranker relevance is deliberately emitted as a separate scale.
+            # It is never arithmetically combined with the RRF score above.
+            "rerank_score": (
+                None if record["rerank_score"] is None else self._round(record["rerank_score"])
+            ),
+            "rerank_rank": record["rerank_rank"],
+            "final_rank": final_rank,
+        }
+        if redact_identity:
+            # A full owner withheld by the classification gate changes the
+            # exact-leg weight, pin eligibility, and therefore the aggregate
+            # RRF arithmetic.  Emitting any of those values for the visible
+            # owner would prove a private collision.  Keep the local organic
+            # evidence/factors, but remove the identity-derived explanation
+            # rather than fabricate a visible-only exact calculation.
+            result.update({
+                "exact": None,
+                "raw_rrf_score": None,
+                "pre_rerank_score": None,
+                "pre_rerank_rank": None,
+                "near_duplicate": {"exempt": None, "suppressed": None},
+                "pin": {"eligible": None, "applied": None},
+                "rerank_rank": None,
+            })
+        return result
+
+    def explain_for_id(
+        self, note_id: str, final_rank: int | None, *, redact_identity: bool = False,
+    ) -> dict[str, Any] | None:
+        """Look up a trace record by an already-egress-approved public ID."""
+        for rowid, known_id in self._id_by_rowid.items():
+            if known_id == note_id:
+                return self.explain_for(rowid, final_rank, redact_identity=redact_identity)
+        return None
+
+    def compact_digest(self, surfaced_ids: set[str], *, per_leg_limit: int = 20) -> dict[str, Any]:
+        """Return the bounded, egress-safe capture projection.
+
+        IDs are filtered to already-surfaced results before any rank is
+        materialised, then ranks are renumbered in that gated projection.  This
+        avoids rank gaps becoming a side-channel for withheld candidates while
+        retaining a useful stage-presence digest for host-only capture in S04.
+        """
+        per_leg_limit = max(1, int(per_leg_limit))
+
+        def project(order: list[int]) -> tuple[list[dict[str, Any]], bool]:
+            visible = [
+                rowid for rowid in order
+                if self._id_by_rowid.get(rowid) in surfaced_ids
+            ]
+            return (
+                [
+                    {"id": self._id_by_rowid[rowid], "rank": rank}
+                    for rank, rowid in enumerate(visible[:per_leg_limit], start=1)
+                ],
+                len(visible) > per_leg_limit,
+            )
+
+        lexical, lexical_truncated = project(self.lexical_order)
+        dense, dense_truncated = project(self.dense_order)
+        exact, exact_truncated = project(self.exact_order)
+        pre_rerank, pre_rerank_truncated = project(self.pre_rerank_order)
+        final, final_truncated = project(self.final_pre_egress_order)
+        return {
+            "version": 1,
+            "per_leg_limit": per_leg_limit,
+            "truncated": any((
+                lexical_truncated, dense_truncated, exact_truncated,
+                pre_rerank_truncated, final_truncated,
+            )),
+            "legs": {"lexical": lexical, "dense": dense, "exact": exact},
+            "pre_rerank": pre_rerank,
+            "final": final,
         }
 
 
@@ -260,6 +474,33 @@ class BrainIndex:
         # them once per index lifetime (not per query). None until first use.
         self._link_graph: Any | None = None
         self._entity_lex: Any | None = None
+        # ADR-0008's title-phrase tier verifies candidate titles itself instead
+        # of trusting FTS token-OR semantics. Cache both the small immutable
+        # projection and a token -> title-record prefilter per index generation:
+        # the prefilter only narrows candidates; the contiguous phrase check is
+        # still the authority. Rebuild/sync invalidate it before any mutation.
+        self._title_phrase_records_cache: tuple[
+            list[dict[str, Any]], dict[str, list[dict[str, Any]]]
+        ] | None = None
+        # Identity and title-phrase *membership* are immutable for one index
+        # generation.  Cache them separately from exact-leg ordering: the
+        # latter deliberately remains live to zone/env configuration and the
+        # source-zone mtime checks in ``_exact_tiebreak``.  This keeps repeated
+        # searches cheap without making a configuration change appear stale.
+        self._identity_owner_cache: dict[
+            str, tuple[frozenset[int], frozenset[int], frozenset[int]]
+        ] = {}
+        self._title_phrase_match_cache: dict[str, dict[int, dict[str, Any]]] = {}
+        # Keyword-exact evidence needs literal checks against title and body.
+        # Notes are immutable for an index generation, so cache their normalized
+        # search text by rowid and clear it before rebuild/sync mutations.
+        self._literal_text_cache: dict[int, tuple[str, str]] = {}
+        # ``date.today()`` is a syscall on the supported macOS runtime.  The
+        # recency prior needs day-level, not sub-minute, precision, so retain a
+        # bounded cache for ordinary wall-clock searches.  ``BRAIN_NOW`` stays
+        # uncached to preserve deterministic tests and explicit operator
+        # overrides immediately.
+        self._search_today_cache: tuple[float, _dt.date] | None = None
         # read_only is the VM-leg posture (S06): the connection is opened
         # ``mode=ro`` so the engine CANNOT open WAL or mutate the index. Any
         # write raises ``sqlite3.OperationalError`` (attempt to write a readonly
@@ -354,6 +595,7 @@ class BrainIndex:
     # -- schema -----------------------------------------------------------
     def _create_schema(self) -> None:
         c = self.conn
+        c.execute("DROP TABLE IF EXISTS aliases")
         c.execute("DROP TABLE IF EXISTS notes")
         c.execute("DROP TABLE IF EXISTS notes_fts")
         c.execute("DROP TABLE IF EXISTS chunks")
@@ -365,9 +607,20 @@ class BrainIndex:
                 classification TEXT, zone TEXT, path TEXT UNIQUE,
                 created TEXT, updated TEXT, sha256 TEXT, content_hash TEXT, body TEXT,
                 document_date TEXT, effective_date TEXT, superseded_date TEXT,
-                is_latest_version TEXT, superseded_by TEXT, previous_version TEXT
+                is_latest_version TEXT, superseded_by TEXT, previous_version TEXT,
+                title_norm TEXT NOT NULL
             )"""
         )
+        c.execute(
+            """CREATE TABLE aliases (
+                alias_norm TEXT NOT NULL,
+                note_rowid INTEGER NOT NULL,
+                PRIMARY KEY (alias_norm, note_rowid),
+                FOREIGN KEY (note_rowid) REFERENCES notes(rowid)
+            )"""
+        )
+        c.execute("CREATE INDEX idx_aliases_lookup ON aliases(alias_norm)")
+        c.execute("CREATE INDEX idx_notes_title_norm ON notes(title_norm)")
         # Plain (non-contentless) fts5 so incremental DELETE WHERE rowid works.
         c.execute("CREATE VIRTUAL TABLE notes_fts USING fts5(id, title, body)")
         c.execute(
@@ -423,6 +676,17 @@ class BrainIndex:
         instead of ~one tiny embed per note. ``sync`` keeps the per-note path
         (``_insert_note``), where only a handful of notes re-embed."""
         row = note.to_row()
+        # ADR-0008: aliases are owner-curated identity metadata on brain notes
+        # only. Validation rejects malformed values; indexing stays defensive so
+        # a malformed foreign note cannot crash a rebuild or manufacture a raw
+        # source identity.
+        raw_aliases = note.meta.get("aliases") if note.zone == "brain" else []
+        row["aliases"] = [
+            alias for alias in raw_aliases
+            if isinstance(raw_aliases, list) and isinstance(alias, str)
+            and alias.strip() and normalize_identity(alias)
+        ] if isinstance(raw_aliases, list) else []
+        row["title_norm"] = normalize_identity(row["title"])
         # Real-corpus robustness: a foreign vault has many frontmatter-bearing
         # notes whose id falls back to a non-unique stem (e.g. dozens of
         # SKILL.md / _index.md). notes.id is UNIQUE, so disambiguate a colliding
@@ -470,7 +734,7 @@ class BrainIndex:
             "INSERT INTO notes(rowid, id, title, type, classification, zone, path,"
             " created, updated, sha256, content_hash, body, document_date,"
             " effective_date, superseded_date, is_latest_version, superseded_by,"
-            " previous_version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " previous_version, title_norm) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 plan.note_rowid, row["id"], row["title"], row["type"], row["classification"],
                 row["zone"], row["path"], row["created"], row["updated"],
@@ -478,8 +742,18 @@ class BrainIndex:
                 row.get("document_date", ""), row.get("effective_date", ""),
                 row.get("superseded_date", ""), row.get("is_latest_version", ""),
                 row.get("superseded_by", ""), row.get("previous_version", ""),
+                row.get("title_norm", ""),
             ),
         )
+        # Projection rows are written in the same transaction as the note,
+        # title, chunks, and vectors. Duplicate aliases within one note are a
+        # validator error, but INSERT OR IGNORE keeps a foreign malformed note
+        # from taking down an otherwise recoverable rebuild.
+        for alias in row.get("aliases", []):
+            c.execute(
+                "INSERT OR IGNORE INTO aliases(alias_norm, note_rowid) VALUES (?,?)",
+                (normalize_identity(alias), plan.note_rowid),
+            )
         c.execute(
             "INSERT INTO notes_fts(rowid, id, title, body) VALUES (?,?,?,?)",
             (plan.note_rowid, row["id"], row["title"], row["body"]),
@@ -512,6 +786,9 @@ class BrainIndex:
             self.backend.delete(c, int(crid))
         c.execute("DELETE FROM chunks WHERE note_rowid=?", (note_rowid,))
         c.execute("DELETE FROM notes_fts WHERE rowid=?", (note_rowid,))
+        # Explicit lifecycle deletion is intentional: FK cascades may be off on
+        # a caller's SQLite connection, and stale identity owners are unsafe.
+        c.execute("DELETE FROM aliases WHERE note_rowid=?", (note_rowid,))
         c.execute("DELETE FROM notes WHERE rowid=?", (note_rowid,))
 
     # -- build (full) -----------------------------------------------------
@@ -535,7 +812,23 @@ class BrainIndex:
         to a changed vault could skip notes that changed, or miss deletes).
         Built from (path, content_hash) pairs, which ``_plan_note`` already
         computed for every note as part of planning -- no extra scan."""
-        parts = sorted(f"{p.row['path']}\x00{p.row['content_hash']}" for p in plans)
+        return BrainIndex._vault_fingerprint_projection(
+            (p.row["path"], p.row["content_hash"]) for p in plans
+        )
+
+    @staticmethod
+    def _vault_fingerprint_projection(
+        pairs: "Iterable[tuple[str, str]]",
+    ) -> str:
+        """Hash the final sorted ``(path, content_hash)`` index projection.
+
+        Rebuild already derives its resumability fingerprint from this exact
+        projection.  Incremental sync uses the same helper *inside its write
+        transaction*, so query replay can distinguish a genuinely unchanged
+        vault from a ranking/configuration change without mistaking a VM
+        snapshot generation or wall-clock timestamp for content identity.
+        """
+        parts = sorted(f"{path}\x00{content_hash or ''}" for path, content_hash in pairs)
         return hashlib.sha256("\x00".join(parts).encode("utf-8")).hexdigest()
 
     def rebuild(self, vault: Path, *, json_mode: bool = False) -> dict[str, Any]:
@@ -559,6 +852,10 @@ class BrainIndex:
 
         In-memory DBs (``:memory:``, test-only) build in place — there is
         nothing to swap, and therefore nothing to resume."""
+        self._title_phrase_records_cache = None
+        self._identity_owner_cache.clear()
+        self._title_phrase_match_cache.clear()
+        self._literal_text_cache.clear()
         if self.db_path == Path(":memory:"):
             return self._rebuild_impl(vault, json_mode=json_mode)
 
@@ -900,6 +1197,7 @@ class BrainIndex:
             "backend": self.backend.name,
             "embed_model": self.embedder.model_id,
             "embed_dim": self.embedder.dim,
+            "vault_fingerprint": self.get_meta("vault_fingerprint"),
             "db": str(self.db_path),
         }
 
@@ -910,6 +1208,13 @@ class BrainIndex:
         Only changed/new notes are re-indexed; notes whose file vanished are
         deleted (delete-propagation). A schema or embed-model mismatch forces a
         clean rebuild (mixing model vectors would corrupt retrieval)."""
+        # Any successful (or retried) mutation may change a title.  Clear this
+        # cache before the write pass so an intervening search never reasons
+        # from a stale phrase projection.
+        self._title_phrase_records_cache = None
+        self._identity_owner_cache.clear()
+        self._title_phrase_match_cache.clear()
+        self._literal_text_cache.clear()
         if not self._schema_ready():
             res = self.rebuild(vault, json_mode=json_mode)
             res["mode"] = "rebuild(no-schema)"
@@ -1007,6 +1312,20 @@ class BrainIndex:
                     unchanged += 1
                 reporter.update(i)
 
+            # ADR-0008 S04: replay attribution depends on a CURRENT live-index
+            # content fingerprint, not the VM snapshot's generation.  Compute
+            # from the *final database projection* after add/update/delete/
+            # rebase effects, then commit it in this SAME transaction.  A no-op
+            # sync naturally writes the identical value; every content-state
+            # change (including a path rebase) changes this path+hash digest.
+            fingerprint = self._vault_fingerprint_projection(
+                (str(path), str(content_hash or ""))
+                for path, content_hash in c.execute(
+                    "SELECT path, content_hash FROM notes"
+                ).fetchall()
+            )
+            self._set_meta("vault_fingerprint", fingerprint)
+
             c.commit()
             return {
                 "added": added, "updated": updated, "unchanged": unchanged,
@@ -1033,6 +1352,7 @@ class BrainIndex:
             "backend": self.backend.name,
             "embed_model": self.embedder.model_id,
             "embed_dim": self.embedder.dim,
+            "vault_fingerprint": self.get_meta("vault_fingerprint"),
             "db": str(self.db_path),
         }
 
@@ -1084,11 +1404,23 @@ class BrainIndex:
             raw = _os.environ.get("BRAIN_ZONE_WEIGHTS")
             if raw:
                 try:
-                    weights.update({str(k): float(v) for k, v in _json.loads(raw).items()})
+                    configured = _json.loads(raw)
+                    if isinstance(configured, dict):
+                        for key, value in configured.items():
+                            try:
+                                factor = float(value)
+                            except (TypeError, ValueError):
+                                continue
+                            if math.isfinite(factor) and factor > 0:
+                                weights[str(key)] = factor
                 except Exception:
                     pass
             self._zone_weights = weights
-        return float(weights.get(zone, 1.0))
+        try:
+            factor = float(weights.get(zone, 1.0))
+        except (TypeError, ValueError):
+            return 1.0
+        return factor if math.isfinite(factor) and factor > 0 else 1.0
 
     def _resolve_zone(self, zone_col: str, path: str) -> str:
         """Anti-burial authority KEY for a note (PT-02, s05).
@@ -1153,6 +1485,434 @@ class BrainIndex:
         cache[key] = source_zone
         return source_zone or zone_col
 
+    def _today_for_search(self) -> _dt.date:
+        """Return the recency-prior date without a syscall per query.
+
+        The cache is rechecked at most once a minute, bounding a midnight
+        rollover delay while avoiding a measurable ``date.today`` cost in the
+        hot retrieval loop.  A supplied ``BRAIN_NOW`` intentionally bypasses
+        it: callers and tests that change the override expect that change to
+        apply to the very next search.
+        """
+        if os.environ.get("BRAIN_NOW", "").strip():
+            return _today()
+        monotonic_now = time.monotonic()
+        cached = self._search_today_cache
+        if cached is None or monotonic_now - cached[0] >= 60.0:
+            cached = (monotonic_now, _dt.date.today())
+            self._search_today_cache = cached
+        return cached[1]
+
+    # -- ADR-0008 identity / exact leg -----------------------------------
+    @staticmethod
+    def _exact_leg_enabled(rrf_k: int) -> bool:
+        """Whether the calibrated third RRF leg may participate.
+
+        ADR-0008 pins the exact weights to RRF(k=60).  Experiments at another
+        RRF value retain legacy two-leg behavior unless a later ADR calibrates
+        a new exact weight set; this makes the kill switch a real rollback.
+        """
+        raw = os.environ.get("BRAIN_EXACT_LEG_ENABLED", "1").strip().lower()
+        return rrf_k == RRF_K_EXACT and raw not in {"0", "false", "no", "off"}
+
+    @staticmethod
+    def _valid_time_sort_value(date_text: object) -> int:
+        """Sortable valid-time value; malformed/absent dates sort oldest."""
+        if not isinstance(date_text, str):
+            return 0
+        try:
+            return _dt.date.fromisoformat(date_text[:10]).toordinal()
+        except ValueError:
+            return 0
+
+    def _identity_owner_rowids(self, query_norm: str) -> tuple[set[int], set[int], set[int]]:
+        """Return the complete pre-egress alias/title owner union for ``query``.
+
+        The owner set is calculated against the full index, never only the
+        candidate list or egress-surfaced results.  That is what prevents a
+        hidden collision owner from turning a visible note into false ``exists``.
+        """
+        if not query_norm:
+            return set(), set(), set()
+        cached = self._identity_owner_cache.get(query_norm)
+        if cached is not None:
+            # Return fresh sets: callers deliberately treat this as their own
+            # pre-egress working set, and a cache must never become mutable
+            # shared state by accident.
+            owner, aliases, title = cached
+            return set(owner), set(aliases), set(title)
+        try:
+            # One round-trip preserves the two independent projections while
+            # keeping the inexpensive no-owner case cheap on ordinary queries.
+            rows = self.conn.execute(
+                "SELECT rowid, 0 FROM notes WHERE title_norm=? "
+                "UNION ALL "
+                "SELECT note_rowid, 1 FROM aliases WHERE alias_norm=?",
+                (query_norm, query_norm),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            # A caller who searches a pre-schema-bump database will be prompted
+            # to rebuild by sync; retrieval itself must remain fail-safe rather
+            # than turning a read into a crash.
+            return set(), set(), set()
+        title = {int(rowid) for rowid, is_alias in rows if not is_alias}
+        aliases = {int(rowid) for rowid, is_alias in rows if is_alias}
+        owner = title | aliases
+        self._identity_owner_cache[query_norm] = (
+            frozenset(owner), frozenset(aliases), frozenset(title)
+        )
+        return owner, aliases, title
+
+    def _identity_records(self, rowids: set[int]) -> dict[int, dict[str, Any]]:
+        """Fetch only the metadata needed for deterministic exact ordering."""
+        if not rowids:
+            return {}
+        qmarks = ",".join("?" * len(rowids))
+        date_expr = ("COALESCE(NULLIF(effective_date,''), "
+                     "NULLIF(document_date,''), created)")
+        rows = self.conn.execute(
+            f"SELECT rowid,id,title,classification,zone,path,is_latest_version,{date_expr} "  # nosec B608 -- bound placeholders only
+            f"FROM notes WHERE rowid IN ({qmarks})",
+            tuple(sorted(rowids)),
+        ).fetchall()
+        return {
+            int(row[0]): {
+                "rowid": int(row[0]), "id": str(row[1] or ""),
+                "title": str(row[2] or ""), "classification": str(row[3] or ""),
+                "zone": str(row[4] or ""), "path": str(row[5] or ""),
+                "is_latest_version": str(row[6] or ""), "date": str(row[7] or ""),
+            }
+            for row in rows
+        }
+
+    def _title_phrase_records(self) -> list[dict[str, Any]]:
+        """Return the cached title projection used to verify phrase matches.
+
+        FTS is intentionally not trusted to prove this tier: its token query
+        semantics can admit non-contiguous title terms.  The projection is
+        therefore loaded once and checked with ``_title_phrase_eligible`` for
+        each query.  It contains metadata only -- never note bodies.
+        """
+        if self._title_phrase_records_cache is not None:
+            return self._title_phrase_records_cache[0]
+        try:
+            rows = self.conn.execute(
+                "SELECT rowid,id,title,zone,path,is_latest_version,"
+                "COALESCE(NULLIF(effective_date,''), NULLIF(document_date,''), created) "
+                "FROM notes"
+            ).fetchall()
+        except sqlite3.OperationalError:
+            rows = []
+        records = [
+            {
+                "rowid": int(row[0]), "id": str(row[1] or ""),
+                "title": str(row[2] or ""), "zone": str(row[3] or ""),
+                "path": str(row[4] or ""), "is_latest_version": str(row[5] or ""),
+                "date": str(row[6] or ""),
+            }
+            for row in rows
+        ]
+        by_token: dict[str, list[dict[str, Any]]] = {}
+        for record in records:
+            # A title with a repeated word belongs once in that bucket. The
+            # index is a performance prefilter only; exact phrase verification
+            # below keeps the ADR's contiguous-token contract intact.
+            for token in set(phrase_tokens(record["title"])):
+                by_token.setdefault(token, []).append(record)
+        self._title_phrase_records_cache = (records, by_token)
+        return records
+
+    def _title_phrase_candidates(self, qtokens: list[str]) -> list[dict[str, Any]]:
+        """Return the titles that can possibly contain ``qtokens`` contiguously.
+
+        Every valid phrase must begin with its first query token, so this avoids
+        re-tokenizing the whole vault on each query while never accepting a
+        match from the prefilter alone.
+        """
+        self._title_phrase_records()
+        if not qtokens or self._title_phrase_records_cache is None:
+            return []
+        return self._title_phrase_records_cache[1].get(qtokens[0], [])
+
+    def _exact_tiebreak(self, record: dict[str, Any]) -> tuple[int, float, int, str]:
+        """Stable full-identity collision ordering from ADR-0008."""
+        resolved_zone = self._resolve_zone(record["zone"], record["path"])
+        zone_weight = self._zone_weight(resolved_zone)
+        live_rank = 0 if record.get("is_latest_version") != "false" else 1
+        return (
+            live_rank,
+            -zone_weight,
+            -self._valid_time_sort_value(record.get("date")),
+            record.get("id", ""),
+        )
+
+    @staticmethod
+    def _title_phrase_eligible(query: str, title: str) -> bool:
+        return BrainIndex._title_phrase_tokens_eligible(phrase_tokens(query), title)
+
+    @staticmethod
+    def _title_phrase_tokens_eligible(qtokens: list[str], title: str) -> bool:
+        """Contiguous title-phrase check using already-tokenized query text."""
+        ttokens = phrase_tokens(title)
+        if len(qtokens) < 2 or len(qtokens) >= len(ttokens):
+            return False
+        if len(qtokens) / len(ttokens) < 0.60:
+            return False
+        width = len(qtokens)
+        return any(ttokens[i : i + width] == qtokens for i in range(len(ttokens) - width + 1))
+
+    @staticmethod
+    def _literal_keyword_pattern(query: str):
+        """Compile the one-query literal verifier, or return ``None``.
+
+        This is deliberately separate from FTS membership: keyword evidence is
+        a literal boundary claim, not a token-OR inference.
+        """
+        query_norm = normalize_identity(query)
+        tokens = phrase_tokens(query_norm)
+        if not tokens:
+            return None
+        if len(tokens) == 1 and not identifier_shaped(tokens[0]):
+            return None
+        return (
+            query_norm,
+            re.compile(r"(?<!\w)" + re.escape(query_norm) + r"(?!\w)", re.UNICODE),
+        )
+
+    @staticmethod
+    def _literal_keyword_match_pattern(verifier: Any, title: str, body: str) -> bool:
+        """Apply an already-compiled literal verifier to one note."""
+        needle, pattern = verifier
+        title_norm = normalize_identity(title)
+        body_norm = normalize_identity(body)
+        return bool(
+            (needle in title_norm and pattern.search(title_norm))
+            or (needle in body_norm and pattern.search(body_norm))
+        )
+
+    def _literal_keyword_match_cached(
+        self, verifier: Any, rowid: int, title: str, body: str
+    ) -> bool:
+        """Apply the literal verifier using a generation-local text cache.
+
+        Matching semantics stay exactly the same: title and body use NFC,
+        casefold, and whitespace normalization before the boundary verifier.
+        The cache only avoids repeating that pure projection for a note that is
+        returned by several searches against an unchanged index.
+        """
+        text = self._literal_text_cache.get(rowid)
+        if text is None:
+            text = (normalize_identity(title), normalize_identity(body))
+            self._literal_text_cache[rowid] = text
+        needle, pattern = verifier
+        return bool(
+            (needle in text[0] and pattern.search(text[0]))
+            or (needle in text[1] and pattern.search(text[1]))
+        )
+
+    @classmethod
+    def _literal_keyword_match(cls, query: str, title: str, body: str) -> bool:
+        """Independently verify literal phrase evidence (never infer from FTS)."""
+        pattern = cls._literal_keyword_pattern(query)
+        return bool(pattern and cls._literal_keyword_match_pattern(pattern, title, body))
+
+    def _exact_leg(self, query: str, rrf_k: int) -> _ExactLeg:
+        """Build the bounded alias/title/phrase third RRF list.
+
+        Full identity owners are indexed projections; partial title phrases are
+        deliberately verified against title token sequences rather than FTS's
+        token-OR candidate behavior.
+        """
+        empty = _ExactLeg([], {}, set(), set(), set(), set(), set(), None, [])
+        query_norm = normalize_identity(query)
+        if not query_norm:
+            return empty
+
+        owner_rowids, alias_rowids, title_rowids = self._identity_owner_rowids(query_norm)
+        if not self._exact_leg_enabled(rrf_k):
+            # The emergency switch turns off *ranking* behavior only. Retain
+            # full-identity ownership so additive evidence/create-safety fields
+            # can still truthfully describe an organically retrieved result;
+            # ranked/full sets stay empty, so there is no injection, zone
+            # exemption, dedup exemption, collision normalization, or pin.
+            return _ExactLeg(
+                [], {}, set(), set(), alias_rowids, title_rowids, owner_rowids,
+                None, [],
+            )
+        owner_records = self._identity_records(owner_rowids)
+        full_sorted = sorted(owner_records, key=lambda rid: self._exact_tiebreak(owner_records[rid]))
+        full_ranked = full_sorted[:EXACT_FULL_CAP]
+
+        tiers: dict[int, str] = {}
+        for rid in full_ranked:
+            # Alias evidence wins over a same-note title match by contract.
+            tiers[rid] = "full_alias" if rid in alias_rowids else "full_title"
+
+        partial_records = self._title_phrase_match_cache.get(query_norm)
+        if partial_records is None:
+            partial_records = {}
+            qtokens = phrase_tokens(query_norm)
+            if len(qtokens) >= 2:
+                for record in self._title_phrase_candidates(qtokens):
+                    rid = int(record["rowid"])
+                    if (rid in owner_rowids
+                            or not self._title_phrase_tokens_eligible(qtokens, record["title"])):
+                        continue
+                    partial_records[rid] = record
+            self._title_phrase_match_cache[query_norm] = partial_records
+        partial_ranked = sorted(
+            partial_records, key=lambda rid: self._exact_tiebreak(partial_records[rid])
+        )[:EXACT_PARTIAL_CAP]
+        for rid in partial_ranked:
+            tiers[rid] = "partial_title"
+
+        return _ExactLeg(
+            ranked=full_ranked + partial_ranked,
+            tiers=tiers,
+            full_rowids=set(full_ranked),
+            partial_rowids=set(partial_ranked),
+            alias_rowids=alias_rowids,
+            title_rowids=title_rowids,
+            owner_rowids=owner_rowids,
+            unique_full_rowid=full_ranked[0] if len(owner_rowids) == 1 and full_ranked else None,
+            # The injection cap bounds exact-RRF work only.  Slot
+            # normalization must retain every surfaced collision owner in this
+            # stable order, including a retired owner beyond that cap.
+            collision_order=full_sorted if len(owner_rowids) > 1 else [],
+            partial_evidence_rowids=set(partial_records),
+        )
+
+    @staticmethod
+    def _exact_weight(tier: str, owner_count: int) -> float:
+        if tier == "partial_title":
+            return EXACT_WEIGHT_PARTIAL_TITLE
+        return EXACT_WEIGHT_UNIQUE_FULL if owner_count == 1 else EXACT_WEIGHT_COLLIDING_FULL
+
+    def _evidence_from_exact(self, exact: _ExactLeg, rid: int) -> str | None:
+        """Return literal identity evidence independently of exact-leg ranking.
+
+        Exact-leg caps and the runtime kill switch constrain candidate injection
+        and rank changes. They must not make a surfaced organic result falsely
+        look like a weak semantic match when its alias, full title, or eligible
+        title phrase really did match the query.
+        """
+        if rid in exact.alias_rowids:
+            return "alias_hit"
+        if rid in exact.title_rowids:
+            return "exact_title_match"
+        if rid in exact.partial_evidence_rowids:
+            return "title_phrase_match"
+        return None
+
+    @staticmethod
+    def _create_safety_from_evidence(evidence: str, owner_count: int) -> str:
+        if evidence in {"alias_hit", "exact_title_match"}:
+            return "exists" if owner_count == 1 else "probable"
+        if evidence in {"title_phrase_match", "keyword_exact", "high_vector_match"}:
+            return "probable"
+        return "unknown"
+
+    def identity_egress_redacted_ids(self, query: str, max_tier: str) -> set[str]:
+        """Return visible full-identity owners whose detail must be redacted.
+
+        Exact identity ownership is intentionally calculated before egress.  If
+        one full owner is withheld, exposing the other owner's exact rank,
+        contribution, pin state, or combined score would disclose the hidden
+        collision.  This helper keeps that fact internal and returns only the
+        already-allowable owner IDs for post-gate serialisation decisions.
+        """
+        query_norm = normalize_identity(query)
+        if not query_norm:
+            return set()
+        owner_rowids, _alias_rows, _title_rows = self._identity_owner_rowids(query_norm)
+        if not owner_rowids:
+            return set()
+        records = self._identity_records(owner_rowids)
+        allowed = cls_mod.ClassificationFilter(max_tier=max_tier)
+        hidden_owner = any(
+            not allowed.allows(record.get("classification", ""))
+            for record in records.values()
+        )
+        if not hidden_owner:
+            return set()
+        return {
+            str(record["id"])
+            for record in records.values()
+            if allowed.allows(record.get("classification", ""))
+        }
+
+    def annotate_create_safety(
+        self, query: str, surfaced: list[dict[str, Any]], max_tier: str
+    ) -> set[str]:
+        """Apply the post-egress half of ADR-0008 create safety in place.
+
+        This receives only already-gated hit dictionaries. It consults the
+        complete pre-egress identity owner set internally, then emits only the
+        conservative enum — never an owner count, visibility flag, or hidden id.
+        """
+        if not surfaced:
+            return set()
+        owner_rowids, _alias_rows, _title_rows = self._identity_owner_rowids(
+            normalize_identity(query)
+        )
+        if not owner_rowids:
+            return set()
+        records = self._identity_records(owner_rowids)
+        allowed = cls_mod.ClassificationFilter(max_tier=max_tier)
+        owner_by_id = {record["id"]: record for record in records.values()}
+        hidden_owner = any(
+            not allowed.allows(record.get("classification", ""))
+            for record in records.values()
+        )
+        owner_count = len(records)
+        redacted_ids = (
+            {
+                str(record["id"])
+                for record in records.values()
+                if allowed.allows(record.get("classification", ""))
+            }
+            if hidden_owner else set()
+        )
+        for hit in surfaced:
+            # Any withheld full owner makes the complete create/no-create
+            # conclusion unknowable; do not leak why or how many are hidden.
+            # A visible owner's score includes the collision-sensitive exact
+            # contribution, so it must be withheld as well.  Ranking has
+            # already completed; this only changes the egress projection.
+            if hidden_owner:
+                hit["create_safety"] = "unknown"
+                if hit.get("id") in redacted_ids:
+                    hit["score"] = None
+                continue
+            evidence = hit.get("evidence", "weak_semantic")
+            if evidence in {"alias_hit", "exact_title_match"} and hit.get("id") in owner_by_id:
+                hit["create_safety"] = "exists" if owner_count == 1 else "probable"
+        return redacted_ids
+
+    def _normalize_collision_slots(self, hits: list[Hit], collision_order: list[int]) -> list[Hit]:
+        """Keep collision owners live-before-retired without globally pinning them.
+
+        The reranker may move a collision group against unrelated candidates.
+        This method preserves exactly the slots it selected for that group and
+        refills only those slots in the deterministic identity order.
+        """
+        if len(collision_order) < 2 or not hits:
+            return hits
+        records = self._identity_records(set(collision_order))
+        rank_by_id = {
+            records[rid]["id"]: rank
+            for rank, rid in enumerate(collision_order)
+            if rid in records
+        }
+        slots = [idx for idx, hit in enumerate(hits) if hit.id in rank_by_id]
+        if len(slots) < 2:
+            return hits
+        owners = sorted((hits[idx] for idx in slots), key=lambda hit: rank_by_id[hit.id])
+        out = list(hits)
+        for slot, owner in zip(slots, owners):
+            out[slot] = owner
+        return out
+
     # Near-duplicate transcript suppression (PT-02, s05 — diagnosis cause #3).
     # OFF BY DEFAULT (`_DEFAULT_DEDUP_THRESHOLD = None`). The s05 CV sweep
     # (`eval/pt_dedup_sweep.py`, train+dev, H34) found the lever adds EXACTLY
@@ -1200,6 +1960,9 @@ class BrainIndex:
         zmap: dict[int, str],
         col_zone: dict[int, str],
         in_lex: set[int],
+        in_full_exact: set[int] | None = None,
+        *,
+        suppressed: set[int] | None = None,
     ) -> list[int]:
         """Retrieval-time near-duplicate SUPPRESSION (H11/H23 — never an
         index-time deletion; suppressed notes are DEMOTED to the tail, so they
@@ -1220,13 +1983,15 @@ class BrainIndex:
           * the FIRST (highest-ranked) member of any near-dup cluster always
             survives, so a relevant transcript still surfaces (mono-PT uses
             transcript golds — diagnosis E3b);
-          * lexical ("both"/exact) hits are never suppressed;
+          * lexical ("both"/exact) hits and full literal identities are never
+            suppressed; partial title phrases retain ordinary behavior;
           * a candidate with no dense best-chunk vector (lexical-only) is never
             suppressed and is not usable as a suppressor reference.
         """
         thr, scope = self._dedup_params()
         if thr is None or not (0.0 < thr < 1.0) or len(ordered) <= 1:
             return ordered
+        in_full_exact = in_full_exact or set()
         from .vectors import cosine
 
         want = [
@@ -1252,10 +2017,13 @@ class BrainIndex:
             eligible = (
                 v is not None
                 and rid not in in_lex
+                and rid not in in_full_exact
                 and (scope == "all" or _is_transcript(rid))
             )
             if eligible and any(cosine(v, kv) >= thr for kv in kept_vecs):
                 deferred.append(rid)
+                if suppressed is not None:
+                    suppressed.add(rid)
                 continue
             kept.append(rid)
             if v is not None:
@@ -1304,6 +2072,11 @@ class BrainIndex:
             return []
         date_expr = ("COALESCE(NULLIF(effective_date,''), "
                      "NULLIF(document_date,''), created)")
+        # Dossier's targeted decision probe is still a retrieval surface. It
+        # must carry the same additive identity explanation as hybrid hits,
+        # even when it was added outside the broad hybrid pool.
+        exact = self._exact_leg(query, RRF_K_EXACT)
+        owner_count = len(exact.owner_rowids)
         hits: list[Hit] = []
         for rid in rowids:
             row = self._note_row(rid)
@@ -1318,12 +2091,21 @@ class BrainIndex:
                 snippet=self._snippet(row["body"]),
                 is_latest_version=row.get("is_latest_version", ""),
                 date=str(d or ""), type=row.get("type", ""),
+                evidence=(
+                    self._evidence_from_exact(exact, rid)
+                    or ("keyword_exact" if self._literal_keyword_match(
+                        query, row["title"], row["body"]
+                    ) else "weak_semantic")
+                ),
             ))
+            hits[-1].create_safety = self._create_safety_from_evidence(
+                hits[-1].evidence, owner_count
+            )
         return hits
 
     def _dense_ranked(
         self, query: str, n: int
-    ) -> tuple[list[int], dict[int, str], dict[int, int]]:
+    ) -> tuple[list[int], dict[int, str], dict[int, int], dict[int, float]]:
         """Dense (vector) ranked note rowids best-first + best chunk text per note
         + best chunk ROWID per note (the last enables retrieval-time near-dup
         suppression to fetch each note's representative vector without
@@ -1345,7 +2127,7 @@ class BrainIndex:
         matching model (``brain warmup`` then `brain sync`, which self-heals
         via the SAME model-mismatch check `sync()` already applies)."""
         if not self.model_matches():
-            return [], {}, {}
+            return [], {}, {}, {}
         c = self.conn
         qvec = self.embedder.embed(query, is_query=True)
         chunk_hits = self.backend.search(c, qvec, n * 4)
@@ -1366,7 +2148,7 @@ class BrainIndex:
                 best_chunk_rowid[nrid] = int(chunk_rowid)
         # Re-rank notes by their best chunk score (chunk_hits is chunk-order).
         order = sorted(best, key=lambda r: best[r], reverse=True)[:n]
-        return order, best_chunk_text, best_chunk_rowid
+        return order, best_chunk_text, best_chunk_rowid, best
 
     def search(self, query: str, k: int = 10) -> list[Hit]:
         """Back-compat alias for :meth:`hybrid_search` (reranking off)."""
@@ -1383,16 +2165,66 @@ class BrainIndex:
         reranker: Any | None = None,
         rerank_top: int = 15,
     ) -> list[Hit]:
+        """Normal fused retrieval path, deliberately free of trace records."""
+        return self._hybrid_search_impl(
+            query, k=k, rrf_k=rrf_k, candidate_factor=candidate_factor,
+            rerank=rerank, reranker=reranker, rerank_top=rerank_top, trace=None,
+        )
+
+    def hybrid_search_with_trace(
+        self,
+        query: str,
+        k: int = 10,
+        *,
+        rrf_k: int = 60,
+        candidate_factor: int = 8,
+        rerank: bool = False,
+        reranker: Any | None = None,
+        rerank_top: int = 15,
+    ) -> tuple[list[Hit], _SearchTrace]:
+        """Run the production ranking with opt-in, pre-egress attribution.
+
+        This has the same candidates, scoring, suppression and reranking as
+        :meth:`hybrid_search`; it merely records those stages for the caller to
+        gate before serialisation.
+        """
+        n = max(k * candidate_factor, k) if k > 0 else 0
+        trace = _SearchTrace(
+            rrf_k=rrf_k,
+            exact_leg_enabled=self._exact_leg_enabled(rrf_k),
+            rerank_requested=rerank,
+            candidate_limit=n,
+            result_limit=max(0, k),
+        )
+        hits = self._hybrid_search_impl(
+            query, k=k, rrf_k=rrf_k, candidate_factor=candidate_factor,
+            rerank=rerank, reranker=reranker, rerank_top=rerank_top, trace=trace,
+        )
+        return hits, trace
+
+    def _hybrid_search_impl(
+        self,
+        query: str,
+        k: int = 10,
+        *,
+        rrf_k: int = 60,
+        candidate_factor: int = 8,
+        rerank: bool = False,
+        reranker: Any | None = None,
+        rerank_top: int = 15,
+        trace: _SearchTrace | None,
+    ) -> list[Hit]:
         """Fuse FTS5 BM25 (lexical, note-level) + dense vectors (semantic,
         chunk-level → folded to note) into ONE ranking via Reciprocal Rank
         Fusion, RRF(k=60). UNFILTERED — classification filtering is the
         integration surface's job (CLI).
 
         RRF score for a note = Σ over each list it appears in of
-        ``1 / (rrf_k + rank)`` (rank 1-based). RRF needs only the *rank* of each
-        item in each list, so the two retrievers' incomparable score scales
-        (BM25 vs cosine) never have to be reconciled — the property that makes
-        the fusion at-least-as-good-as-either across languages.
+        ``weight / (rrf_k + rank)`` (rank 1-based). The lexical and dense legs
+        use weight 1; ADR-0008 adds a bounded calibrated exact leg at RRF(k=60).
+        With ``w_exact_max = 2.25``, raw RRF is bounded by
+        ``(2 + w_exact_max) / (rrf_k + 1) = 4.25 / 61`` before the separately
+        configured zone multiplier and the staleness penalty are applied.
 
         Adapter seam (HARDENED:codex): the dense list comes through the
         ``VectorBackend`` adapter, NOT a hard-wired sqlite-vec call, so a pre-v1
@@ -1400,17 +2232,62 @@ class BrainIndex:
         identically. The reranker (RET-02) is strictly optional and bounded to
         the top ``rerank_top`` (10-20) candidates.
         """
+        if k <= 0:
+            return []
         n = max(k * candidate_factor, k)
         lex = self._lexical_ranked(query, n)
-        dense, best_chunk_text, best_chunk_rowid = self._dense_ranked(query, n)
+        # Keep the long-standing monkeypatch seam compatible with callers that
+        # provide the pre-ADR-0008 three-value dense result.  The fourth map is
+        # additive evidence metadata, not a reason to make an otherwise useful
+        # lexical/zone test unable to exercise fusion.
+        dense_result = self._dense_ranked(query, n)
+        if len(dense_result) == 3:
+            dense, best_chunk_text, best_chunk_rowid = dense_result
+            best_dense_score: dict[int, float] = {}
+        else:
+            dense, best_chunk_text, best_chunk_rowid, best_dense_score = dense_result
+        exact = self._exact_leg(query, rrf_k)
+        keyword_pattern = self._literal_keyword_pattern(query)
 
         in_lex = set(lex)
         in_dense = set(dense)
+        in_exact = set(exact.ranked)
+        if trace is not None:
+            trace.lexical_order = list(lex)
+            trace.dense_order = list(dense)
+            trace.exact_order = list(exact.ranked)
         scores: dict[int, float] = {}
         for rank, rid in enumerate(lex, start=1):
-            scores[rid] = scores.get(rid, 0.0) + 1.0 / (rrf_k + rank)
+            contribution = 1.0 / (rrf_k + rank)
+            scores[rid] = scores.get(rid, 0.0) + contribution
+            if trace is not None:
+                record = trace.record(rid)
+                record["lexical"] = {"rank": rank, "contribution": contribution}
+                record["raw_rrf_score"] += contribution
         for rank, rid in enumerate(dense, start=1):
-            scores[rid] = scores.get(rid, 0.0) + 1.0 / (rrf_k + rank)
+            contribution = 1.0 / (rrf_k + rank)
+            scores[rid] = scores.get(rid, 0.0) + contribution
+            if trace is not None:
+                record = trace.record(rid)
+                record["dense"] = {
+                    "rank": rank,
+                    "best_chunk_rowid": best_chunk_rowid.get(rid),
+                    "similarity": best_dense_score.get(rid),
+                    "contribution": contribution,
+                }
+                record["raw_rrf_score"] += contribution
+        owner_count = len(exact.owner_rowids)
+        for rank, rid in enumerate(exact.ranked, start=1):
+            weight = self._exact_weight(exact.tiers[rid], owner_count)
+            contribution = weight / (rrf_k + rank)
+            scores[rid] = scores.get(rid, 0.0) + contribution
+            if trace is not None:
+                record = trace.record(rid)
+                record["exact"] = {
+                    "tier": exact.tiers[rid], "rank": rank,
+                    "weight": weight, "contribution": contribution,
+                }
+                record["raw_rrf_score"] += contribution
 
         # Zone-authority prior (RET-01 anti-burial). Curated/typed notes
         # (Concepts/Decisions/Projects/People/Companies) are authoritative
@@ -1464,15 +2341,24 @@ class BrainIndex:
                 rdate[rid] = d or ""
             scope = os.environ.get("BRAIN_ZONE_SCOPE", "semantic_only").strip().lower()
             for rid in scores:
-                if scope == "semantic_only" and rid in in_lex:
-                    continue  # exact-match hit — authority prior does not apply
-                scores[rid] *= self._zone_weight(zmap.get(rid, ""))
+                if scope == "semantic_only" and (rid in in_lex or rid in in_exact):
+                    if trace is not None:
+                        trace.record(rid)["zone"] = {
+                            "scope": scope, "factor": 1.0, "applied": False,
+                        }
+                    continue  # lexical or literal exact hit — zone-neutral by contract
+                factor = self._zone_weight(zmap.get(rid, ""))
+                scores[rid] *= factor
+                if trace is not None:
+                    trace.record(rid)["zone"] = {
+                        "scope": scope, "factor": factor, "applied": True,
+                    }
 
             # Recency prior (RET-07). The RRF fusion above is time-blind: a stale
             # version of a document outranks its current successor purely on text
             # similarity, so a "latest developments" query grounds on months-old
             # material. A gentle, multiplicative staleness penalty (≤1.0, so the
-            # fused score stays under the RRF ceiling like the zone prior) makes
+            # raw-RRF score remains bounded by its three-leg ceiling) makes
             # the more recent of two topically-similar hits win — without
             # reconciling score scales (same reason RRF uses ranks). Neutral
             # (×1.0) for undated notes, so nothing is penalised for lacking a date.
@@ -1485,29 +2371,65 @@ class BrainIndex:
             # set, override BOTH modes absolutely (unchanged contract).
             temporal = bool(_TEMPORAL_INTENT_RE.search(query))
             rweight = _env_float("BRAIN_RECENCY_WEIGHT", 0.5 if temporal else 0.25)
+            if not math.isfinite(rweight):
+                rweight = 0.0
+            rweight = min(1.0, max(0.0, rweight))
             if rweight > 0:
                 rhalf = _env_float("BRAIN_RECENCY_HALFLIFE_DAYS",
                                    90.0 if temporal else 180.0)
-                today = _today()
+                if not math.isfinite(rhalf) or rhalf <= 0:
+                    rhalf = 90.0 if temporal else 180.0
+                today = self._today_for_search()
                 for rid in scores:
-                    scores[rid] *= _recency_factor(
-                        rdate.get(rid, ""), today, rweight, rhalf)
+                    factor = _recency_factor(rdate.get(rid, ""), today, rweight, rhalf)
+                    scores[rid] *= factor
+                    if trace is not None:
+                        trace.record(rid)["staleness"] = {"factor": factor}
+
+            if trace is not None:
+                for rid, score in scores.items():
+                    trace.record(rid)["pre_rerank_score"] = score
 
         def _source(rid: int) -> str:
             if rid in in_lex and rid in in_dense:
                 return "both"
-            return "lexical" if rid in in_lex else "semantic"
+            if rid in in_lex:
+                return "lexical"
+            if rid in in_dense:
+                return "semantic"
+            return "exact"
 
         ordered = sorted(scores, key=lambda r: (-scores[r], r))
+        suppressed: set[int] | None = set() if trace is not None else None
         ordered = self._suppress_near_dups(
-            ordered, best_chunk_rowid, zmap, col_zone, in_lex)
+            ordered, best_chunk_rowid, zmap, col_zone, in_lex, exact.full_rowids,
+            suppressed=suppressed,
+        )
+        if trace is not None:
+            trace.pre_rerank_order = list(ordered)
+            for rank, rid in enumerate(ordered, start=1):
+                record = trace.record(rid)
+                record["pre_rerank_rank"] = rank
+                record["near_duplicate"] = {
+                    "exempt": rid in exact.full_rowids,
+                    "suppressed": rid in suppressed,
+                }
 
+        # Evidence belongs to *surfaced* hits.  Keep retrieval/rerank objects
+        # lightweight here, then run the potentially body-scanning literal
+        # verifier only after final ordering and the result cap.  This preserves
+        # every returned label while avoiding work on the 70-ish candidates
+        # deliberately gathered only to make RRF and reranking robust.
         hits: list[Hit] = []
+        row_by_id: dict[str, tuple[int, dict[str, Any]]] = {}
         for rid in ordered:
             row = self._note_row(rid)
             if not row:
                 continue
             snippet_src = best_chunk_text.get(rid, row["body"])
+            row_by_id[row["id"]] = (rid, row)
+            if trace is not None:
+                trace._id_by_rowid[rid] = row["id"]
             hits.append(
                 Hit(
                     id=row["id"], title=row["title"],
@@ -1520,9 +2442,262 @@ class BrainIndex:
                 )
             )
 
+        # A UNIQUE full identity is pinned outside the reranker. Collisions are
+        # intentionally not globally pinned; only their internal live-before-
+        # retired order is restored in the slots the reranker selected.
+        pinned: Hit | None = None
+        if exact.unique_full_rowid is not None:
+            pinned_id = (self._identity_records({exact.unique_full_rowid})
+                         .get(exact.unique_full_rowid, {}).get("id"))
+            if pinned_id:
+                if trace is not None:
+                    trace.record(exact.unique_full_rowid)["pin"]["eligible"] = True
+                for pos, hit in enumerate(hits):
+                    if hit.id == pinned_id:
+                        pinned = hits.pop(pos)
+                        if trace is not None:
+                            trace.record(exact.unique_full_rowid)["pin"]["applied"] = True
+                        break
         if rerank and hits:
-            hits = self._apply_rerank(query, hits, reranker, rerank_top)
-        return hits[:k]
+            if trace is None:
+                hits = self._apply_rerank(query, hits, reranker, rerank_top)
+            else:
+                hits, rerank_scores, rerank_applied = self._apply_rerank_with_scores(
+                    query, hits, reranker, rerank_top)
+                trace.rerank_applied = rerank_applied
+                for note_id, (score, rank) in rerank_scores.items():
+                    rid, _row = row_by_id[note_id]
+                    record = trace.record(rid)
+                    record["rerank_score"] = score
+                    record["rerank_rank"] = rank
+        hits = self._normalize_collision_slots(hits, exact.collision_order)
+        final = ([pinned] if pinned is not None else []) + hits[:max(0, k - (1 if pinned else 0))]
+        if trace is not None:
+            trace.final_pre_egress_order = [row_by_id[hit.id][0] for hit in final]
+            for rank, hit in enumerate(final, start=1):
+                trace.record(row_by_id[hit.id][0])["_pre_egress_final_rank"] = rank
+
+        dense_rank = {rid: rank for rank, rid in enumerate(dense, start=1)}
+        for hit in final:
+            rid, row = row_by_id[hit.id]
+            evidence = self._evidence_from_exact(exact, rid)
+            if (evidence is None and keyword_pattern is not None
+                    and self._literal_keyword_match_cached(
+                        keyword_pattern, rid, row["title"], row["body"]
+                    )):
+                evidence = "keyword_exact"
+            if evidence is None:
+                similarity = best_dense_score.get(rid, float("-inf"))
+                if dense_rank.get(rid, 999) <= 3 and similarity >= 0.80:
+                    evidence = "high_vector_match"
+            evidence = evidence or "weak_semantic"
+            hit.evidence = evidence
+            hit.create_safety = self._create_safety_from_evidence(evidence, owner_count)
+        return final
+
+    def _diagnose_lexical_rank(self, query: str, rowid: int) -> int | None:
+        """Return a target's full FTS rank in an out-of-band diagnostic scan."""
+        total = int(self.conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0] or 0)
+        ranked = self._lexical_ranked(query, total)
+        try:
+            return ranked.index(rowid) + 1
+        except ValueError:
+            return None
+
+    def _diagnose_dense_rank(self, query: str, rowid: int) -> int | None:
+        """Return a target's full pooled dense rank without changing production.
+
+        ``_dense_ranked`` is called with the total chunk count only after the
+        normal query has returned.  Its backend request is therefore a
+        diagnostic-only full scan; it neither widens nor feeds the production
+        candidate list being explained.
+        """
+        if not self.model_matches():
+            return None
+        total_chunks = int(self.conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0] or 0)
+        if total_chunks <= 0:
+            return None
+        dense_result = self._dense_ranked(query, total_chunks)
+        ranked = dense_result[0]
+        try:
+            return ranked.index(rowid) + 1
+        except ValueError:
+            return None
+
+    def _diagnose_exact_rank(
+        self, query: str, rowid: int, rrf_k: int,
+    ) -> tuple[int | None, int, bool]:
+        """Return exact-leg rank/cutoff/membership for a target-only probe."""
+        query_norm = normalize_identity(query)
+        if not query_norm:
+            return None, 0, False
+        owners, _aliases, _titles = self._identity_owner_rowids(query_norm)
+        enabled = self._exact_leg_enabled(rrf_k)
+        if rowid in owners:
+            records = self._identity_records(owners)
+            ordered = sorted(records, key=lambda rid: self._exact_tiebreak(records[rid]))
+            return ordered.index(rowid) + 1, EXACT_FULL_CAP if enabled else 0, True
+
+        qtokens = phrase_tokens(query_norm)
+        if len(qtokens) < 2:
+            return None, 0, False
+        partial_records: dict[int, dict[str, Any]] = {}
+        for record in self._title_phrase_candidates(qtokens):
+            rid = int(record["rowid"])
+            if rid in owners or not self._title_phrase_tokens_eligible(qtokens, record["title"]):
+                continue
+            partial_records[rid] = record
+        if rowid not in partial_records:
+            return None, 0, False
+        ordered = sorted(partial_records, key=lambda rid: self._exact_tiebreak(partial_records[rid]))
+        # Exact lists concatenate the capped full tier before their capped
+        # partial tier, so a partial candidate's global exact rank starts after
+        # the injected full-owner slots.
+        full_slots = min(len(owners), EXACT_FULL_CAP) if enabled else 0
+        return (
+            ordered.index(rowid) + 1 + full_slots,
+            full_slots + EXACT_PARTIAL_CAP if enabled else 0,
+            True,
+        )
+
+    def diagnose_target(
+        self,
+        query: str,
+        target_id: str,
+        *,
+        max_tier: str,
+        trace: _SearchTrace,
+        final_rank: int | None,
+    ) -> dict[str, Any]:
+        """Safely explain a requested target after production search completed.
+
+        A target is looked up after the ordinary trace has been produced.  The
+        probe is read-only and never adds a note to any leg or extends a
+        candidate cutoff.  A withheld target exits before any metadata or
+        attribution is exposed, preserving the ADR's strict withheld shape.
+        """
+        row = self.conn.execute(
+            "SELECT rowid, classification FROM notes WHERE id=?", (target_id,)
+        ).fetchone()
+        if not row:
+            return {
+                "target": target_id,
+                "verdict": "candidate-miss",
+                "trace": {
+                    "candidate_limit": trace.candidate_limit,
+                    "result_limit": trace.result_limit,
+                    "stages": {
+                        "lexical": {"rank": None, "candidate": False,
+                                    "matched": False, "cutoff": trace.candidate_limit},
+                        "dense": {"rank": None, "candidate": False,
+                                  "matched": False, "cutoff": trace.candidate_limit},
+                        "exact": {"rank": None, "candidate": False,
+                                  "matched": False, "cutoff": 0},
+                    },
+                    "first_missed_cutoff": None,
+                    "attribution": None,
+                },
+            }
+
+        rowid, classification = int(row[0]), str(row[1] or "")
+        allowed = cls_mod.ClassificationFilter(max_tier=max_tier).allows(classification)
+        if not allowed:
+            # This is intentionally the whole target payload: no ID, title,
+            # classification, leg membership, rank, or rationale escapes.
+            return {"target": "withheld", "verdict": "withheld"}
+        identity_redacted = target_id in self.identity_egress_redacted_ids(
+            query, max_tier,
+        )
+
+        def stage(
+            order: list[int], *, rank: int | None, cutoff: int, matched: bool,
+        ) -> dict[str, Any]:
+            try:
+                production_rank = order.index(rowid) + 1
+            except ValueError:
+                production_rank = None
+            return {
+                "rank": rank,
+                "candidate": production_rank is not None,
+                "matched": matched,
+                "cutoff": cutoff,
+            }
+
+        lexical_rank = self._diagnose_lexical_rank(query, rowid)
+        lexical = stage(
+            trace.lexical_order,
+            cutoff=trace.candidate_limit,
+            rank=lexical_rank,
+            matched=lexical_rank is not None,
+        )
+        # Dense scoring is defined for every stored chunk when the active model
+        # matches the index.  This is a membership/cutoff observation, not a
+        # second wider ANN retrieval and therefore cannot affect production.
+        dense_rank = self._diagnose_dense_rank(query, rowid)
+        dense = stage(
+            trace.dense_order,
+            cutoff=trace.candidate_limit,
+            rank=dense_rank,
+            matched=dense_rank is not None,
+        )
+        if identity_redacted:
+            # Do not reveal a hidden full owner through this visible target's
+            # exact identity rank, membership, cutoff, or collision state.
+            exact_stage = {
+                "rank": None, "candidate": None, "matched": None, "cutoff": None,
+            }
+        else:
+            exact_rank, exact_cutoff, exact_matched = self._diagnose_exact_rank(
+                query, rowid, trace.rrf_k,
+            )
+            exact_stage = stage(
+                trace.exact_order, rank=exact_rank, cutoff=exact_cutoff,
+                matched=exact_matched,
+            )
+
+        record = trace._records.get(rowid)
+        if record is None:
+            verdict = "candidate-miss"
+        elif identity_redacted:
+            # ADR-0008 deliberately offers no egress-limited verdict enum.
+            # ``organic-candidate`` is the approved least-specific verdict
+            # that neither invents a hidden collision nor falsely calls a
+            # surfaced target a miss.
+            verdict = "organic-candidate"
+        elif record["pin"]["applied"]:
+            verdict = "exact-identity-pinned"
+        elif record["exact"] and record["exact"]["tier"] == "partial_title":
+            verdict = "partial-title-bounded"
+        elif record["exact"]:
+            verdict = "exact-identity-collision"
+        else:
+            verdict = "organic-candidate"
+
+        first_missed_cutoff: dict[str, Any] | None = None
+        if record is None:
+            stages = (("lexical", lexical), ("dense", dense))
+            if not identity_redacted:
+                stages += (("exact", exact_stage),)
+            for name, details in stages:
+                if details["matched"] and not details["candidate"]:
+                    first_missed_cutoff = {"stage": name, "cutoff": details["cutoff"]}
+                    break
+        elif final_rank is None:
+            first_missed_cutoff = {"stage": "final_result", "cutoff": trace.result_limit}
+
+        return {
+            "target": target_id,
+            "verdict": verdict,
+            "trace": {
+                "candidate_limit": trace.candidate_limit,
+                "result_limit": trace.result_limit,
+                "stages": {"lexical": lexical, "dense": dense, "exact": exact_stage},
+                "first_missed_cutoff": first_missed_cutoff,
+                "attribution": trace.explain_for(
+                    rowid, final_rank, redact_identity=identity_redacted,
+                ),
+            },
+        }
 
     def freshness(self, newest_hit_date: str, max_tier: str) -> dict[str, Any]:
         """RET-09: how much NEWER material the vault holds past
@@ -1664,6 +2839,20 @@ class BrainIndex:
     def _apply_rerank(
         self, query: str, hits: list[Hit], reranker: Any | None, rerank_top: int
     ) -> list[Hit]:
+        """Compatibility wrapper for the normal, trace-free rerank path."""
+        return self._rerank_impl(query, hits, reranker, rerank_top, collect_scores=False)
+
+    def _apply_rerank_with_scores(
+        self, query: str, hits: list[Hit], reranker: Any | None, rerank_top: int
+    ) -> tuple[list[Hit], dict[str, tuple[float, int]], bool]:
+        result = self._rerank_impl(query, hits, reranker, rerank_top, collect_scores=True)
+        reordered, scores, applied = result
+        return reordered, scores or {}, applied
+
+    def _rerank_impl(
+        self, query: str, hits: list[Hit], reranker: Any | None, rerank_top: int,
+        *, collect_scores: bool,
+    ) -> list[Hit] | tuple[list[Hit], dict[str, tuple[float, int]], bool]:
         """Re-order ONLY the top ``rerank_top`` hits with a cross-encoder; the
         tail is left untouched and appended after. The window is clamped to
         [10, ceiling] where ceiling is 20 by default but raisable via
@@ -1699,6 +2888,11 @@ class BrainIndex:
             for h in head
         ]
         passages = [p[:2000] for p in passages]
+        # NoopReranker preserves order with positional synthetic values.  It
+        # remains useful for the normal skippable fallback, but those values
+        # are not model relevance and must never be reported as a real
+        # cross-encoder rerank in S03 attribution.
+        applied = not isinstance(rr, NoopReranker)
         try:
             rel = rr.rerank(query, passages)
         except Exception:
@@ -1706,8 +2900,22 @@ class BrainIndex:
             # unavailable (offline, not bundled), degrade to identity — never let
             # an absent precision-booster break retrieval.
             rel = NoopReranker().rerank(query, passages)
-        reordered = [h for _, h in sorted(zip(rel, head), key=lambda t: t[0], reverse=True)]
-        return reordered + tail
+            applied = False
+        # Keep exactly the old stable ordering semantics, while retaining the
+        # model-specific score/rank for trace mode.  These values are never
+        # combined with RRF: they only explain why the reranker chose an order.
+        ranked_pairs = sorted(zip(rel, head), key=lambda t: t[0], reverse=True)
+        reordered = [h for _, h in ranked_pairs]
+        if not collect_scores:
+            return reordered + tail
+        score_by_id = (
+            {
+                hit.id: (float(score), rank)
+                for rank, (score, hit) in enumerate(ranked_pairs, start=1)
+            }
+            if applied else {}
+        )
+        return reordered + tail, score_by_id, applied
 
     def _rowid_of(self, note_id: str) -> int:
         r = self.conn.execute("SELECT rowid FROM notes WHERE id=?", (note_id,)).fetchone()
@@ -2065,5 +3273,6 @@ class BrainIndex:
             "vector_backend": self.get_meta("vector_backend"),
             "embed_model": self.get_meta("embed_model"),
             "embed_dim": self.get_meta("embed_dim"),
+            "vault_fingerprint": self.get_meta("vault_fingerprint"),
             "db": str(self.db_path),
         }

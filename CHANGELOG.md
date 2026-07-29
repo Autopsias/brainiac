@@ -7,6 +7,23 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.19.17] — 2026-07-29
+### Fixed
+- **Release exports no longer embed an owner-private legacy path mapping.**
+  The established-path evaluation accepts that optional mapping from an
+  external JSON file, keeping the public release deterministic and clean.
+
+## [0.19.16] — 2026-07-29
+### Added
+- **ADR-0008 retrieval identity and observability release.** Hybrid search now
+  documents and ships the exact alias/title RRF leg, collision-aware
+  `evidence`/`create_safety`, egress-safe `search --explain` and `diagnose`,
+  host-only query capture/replay under app-data `query-log/`, honest
+  `vault_same` vs `drift_or_mixed` replay classes, and the immediate
+  `BRAIN_EXACT_LEG_ENABLED=0` rollback switch. `AGENTS.md`,
+  `docs/substrate-spec.md`, `docs/glossary.md`, and CLI help now describe the
+  contract where agents and operators actually read it.
+
 ## [0.19.15] — 2026-07-27
 ### Fixed
 - **The version-chain fold raised owner alerts that had no owner action behind

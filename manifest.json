@@ -81,6 +81,7 @@
     "docs/adr/0005-update-versioning-ux.md",
     "docs/adr/0006-distribution-naming.md",
     "docs/adr/0007-resumable-rebuild-staging-artifact.md",
+    "docs/adr/0008-retrieval-upgrades.md",
     "docs/architecture-overview.html",
     "docs/benchmark-results.md",
     "docs/classification-scheme.md",
@@ -120,10 +121,17 @@
     "eval/FOLLOWUPS.md",
     "eval/PORTABLE-CONTRACT.md",
     "eval/capture_run.py",
+    "eval/fixtures/README.md",
+    "eval/fixtures/named-entity-golden.json",
+    "eval/fixtures/named-entity-qrels.json",
     "eval/gate.py",
     "eval/harness.py",
     "eval/harness_direct.py",
+    "eval/ne_upgrade_gate.py",
     "eval/path_normalize.py",
+    "eval/runs/ne-family-freeze.json",
+    "eval/s02_established_path_map.py",
+    "eval/s02_paired_capture.py",
     "eval/stats.py",
     "install.ps1",
     "install.sh",
@@ -293,6 +301,7 @@
     "src/brain/overlay.py",
     "src/brain/progress.py",
     "src/brain/projection.py",
+    "src/brain/querylog.py",
     "src/brain/rerank.py",
     "src/brain/retro.py",
     "src/brain/snapshot.py",
@@ -343,5 +352,5 @@
     "vault/raw/2026-06-27-arctic-vs-e5-benchmark.md",
     "vault/raw/README.md"
   ],
-  "count": 342
+  "count": 351
 }

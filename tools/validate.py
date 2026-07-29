@@ -19,6 +19,7 @@ from __future__ import annotations
 import datetime
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 CLASSIFICATIONS = ["Public", "Internal", "Confidential", "Restricted", "MNPI"]
@@ -44,7 +45,7 @@ ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 COUNTER_ARGUMENTS_HEADING = re.compile(r"^#{1,6}\s*counter[- ]?argument", re.I | re.M)
 # Frontmatter keys recognised by the optional OKF-aligned lint profile.
 OKF_ALLOWED_KEYS = REQUIRED_BRAIN | REQUIRED_RAW | BITEMPORAL_KEYS | {
-    "source", "tags", "sha256", "status", "provenance", "related",
+    "source", "tags", "sha256", "status", "provenance", "related", "aliases",
 }
 JD_FILENAME = re.compile(r"^\d\d[. ]")          # Johnny-Decimal, e.g. "60.03 x"
 # Alias matched non-greedily, right-anchored to the FINAL ]] so an alias with
@@ -109,8 +110,55 @@ def split_frontmatter(text: str) -> tuple[str, str] | None:
     return parts[1], parts[2]
 
 
+def _strip_inline_comment(val: str) -> str:
+    val = val.strip()
+    if val[:1] in "'\"":
+        return val
+    idx = val.find(" #")
+    return val[:idx].rstrip() if idx != -1 else val
+
+
+def _unquote(val: str) -> str:
+    val = _strip_inline_comment(val).strip()
+    if len(val) >= 2 and val[:1] in "'\"" and val[-1:] == val[:1]:
+        return val[1:-1]
+    return val.strip("'\"")
+
+
+def _inline_list(inner: str) -> list[str]:
+    """Parse the limited quoted inline-list form the fallback promises."""
+    out: list[str] = []
+    current: list[str] = []
+    quote = ""
+    escaped = False
+    for char in inner:
+        if quote:
+            current.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = ""
+            continue
+        if char in "'\"":
+            quote = char
+            current.append(char)
+        elif char == ",":
+            item = "".join(current).strip()
+            if item:
+                out.append(_unquote(item))
+            current = []
+        else:
+            current.append(char)
+    item = "".join(current).strip()
+    if item:
+        out.append(_unquote(item))
+    return out
+
+
 def parse_frontmatter(block: str) -> dict:
-    """Try PyYAML; fall back to a minimal flat key:value + inline-list parser."""
+    """Try PyYAML; fall back to scalar, inline-list, and alias block-list YAML."""
     try:
         import yaml  # type: ignore
         data = yaml.safe_load(block)
@@ -118,19 +166,64 @@ def parse_frontmatter(block: str) -> dict:
     except Exception:
         pass
     data: dict = {}
+    block_aliases = False
     for line in block.splitlines():
         if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        stripped = line.strip()
+        if block_aliases and line[0] in " \t" and stripped.startswith("-"):
+            data.setdefault("aliases", []).append(_unquote(stripped[1:].strip()))
             continue
         if ":" not in line or line[0] in " \t-":
             continue
         key, _, val = line.partition(":")
         key, val = key.strip(), val.strip()
+        block_aliases = False
         if val.startswith("[") and val.endswith("]"):
             inner = val[1:-1].strip()
-            data[key] = [x.strip().strip("'\"") for x in inner.split(",") if x.strip()]
+            data[key] = _inline_list(inner)
+        elif key == "aliases" and not val:
+            data[key] = []
+            block_aliases = True
         else:
-            data[key] = val.strip().strip("'\"")
+            data[key] = _unquote(val)
     return data
+
+
+def normalize_identity(value: str) -> str:
+    """ADR-0008 identity normalization, duplicated for stdlib-only validation."""
+    return " ".join(unicodedata.normalize("NFC", value).casefold().split())
+
+
+def check_aliases(rel: str, zone: str, meta: dict) -> None:
+    """Validate optional owner-curated aliases (ADR-0008, local errors only)."""
+    if "aliases" not in meta:
+        return
+    if zone != "brain":
+        err(f"{rel}: aliases are allowed only on brain notes")
+        return
+    aliases = meta.get("aliases")
+    if not isinstance(aliases, list):
+        err(f"{rel}: aliases must be a list of strings")
+        return
+    if len(aliases) > 128:
+        err(f"{rel}: aliases may contain at most 128 entries")
+    seen: dict[str, int] = {}
+    for idx, alias in enumerate(aliases, start=1):
+        if not isinstance(alias, str):
+            err(f"{rel}: aliases[{idx}] must be a scalar string")
+            continue
+        if not alias.strip():
+            err(f"{rel}: aliases[{idx}] must contain non-whitespace text")
+            continue
+        if len(alias) > 256:
+            err(f"{rel}: aliases[{idx}] exceeds 256 Unicode scalar values")
+            continue
+        norm = normalize_identity(alias)
+        if norm in seen:
+            err(f"{rel}: aliases[{idx}] duplicates aliases[{seen[norm]}] after identity normalization")
+        else:
+            seen[norm] = idx
 
 
 def iter_md(root: Path, vault: Path):
@@ -326,6 +419,29 @@ def check_type_lint(notes: list[dict]) -> None:
                      f"(no source: key and no wikilink to a raw/ note)")
 
 
+def check_alias_collisions(notes: list[dict]) -> None:
+    """Warn when distinct brain notes claim the same normalized alias.
+
+    Collisions are a legitimate state for history and supersession, so this is
+    deliberately a quality nudge rather than a validation error.
+    """
+    owners: dict[str, list[tuple[str, str]]] = {}
+    for note in notes:
+        if note["zone"] != "brain":
+            continue
+        note_id = str(note["meta"].get("id") or note["rel"])
+        aliases = note["meta"].get("aliases")
+        if not isinstance(aliases, list):
+            continue
+        for alias in aliases:
+            if isinstance(alias, str) and alias.strip() and len(alias) <= 256:
+                owners.setdefault(normalize_identity(alias), []).append((note_id, alias))
+    for norm, claimed in sorted(owners.items()):
+        ids = sorted({note_id for note_id, _alias in claimed})
+        if len(ids) > 1:
+            warn(f"aliases collision {norm!r} claimed by notes {ids}")
+
+
 def check_section_staleness(notes: list[dict], today: object = None) -> None:
     """HYG-03 — state-MOC freshness-stamp lint (warn-only). Any heading whose
     next non-blank line is ``Updated: YYYY-MM-DD`` is a freshness-stamped
@@ -408,6 +524,7 @@ def check_note(path: Path, zone: str, okf: bool) -> dict | None:
         if not meta.get("sha256"):
             err(f"{rel}: raw source must carry sha256")
 
+    check_aliases(rel, zone, meta)
     check_bitemporal_note(rel, meta)
 
     ntype = meta.get("type")
@@ -463,6 +580,7 @@ def main() -> int:
             notes.append(n)
 
     check_bitemporal_global(notes)
+    check_alias_collisions(notes)
     check_type_lint(notes)
     check_section_staleness(notes)
 

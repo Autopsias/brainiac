@@ -110,6 +110,8 @@ created: 2026-06-27
 updated: 2026-06-27
 source: "[[raw/2026-06-27-arctic-benchmark]]"   # provenance link if derived; omit if original
 tags: []                         # OPTIONAL, emergent only — NOT a taxonomy
+aliases:                          # OPTIONAL brain-zone identity names (not a tag taxonomy)
+  - "Hall of Light"
 # --- bitemporal (ALL OPTIONAL — ADR-0003 ruling 2; omit entirely on ordinary notes) ---
 document_date: 2026-06-27        # when the underlying document was produced
 effective_date: 2026-06-27       # when the content takes effect (valid time)
@@ -128,6 +130,17 @@ self-supersession, no cycles, no forks (two successors claiming one
 predecessor), at most one `is_latest_version: true` per chain, and an
 **explicit `classification` on both sides of every supersession link**. See
 `docs/substrate-spec.md` §8.1 for the full validator contract.
+
+**Aliases are optional and brain-zone-only.** An alias is an owner-curated
+identity claim, not an automatically derived tag: it is a list of 0–128
+non-empty strings (each at most 256 Unicode scalar values), unique after NFC +
+casefold + whitespace-collapse normalization within one note. Different notes
+may share an alias; the validator warns rather than rejecting historical or
+supersession collisions. Automatic alias derivation is a future maintenance
+fold, not current behavior. The retrieval index projects aliases into a
+normalized identity table beside normalized titles. Alias/title ownership is
+computed over the complete pre-egress index, so a hidden owner can never make a
+visible collision look uniquely safe.
 
 **Edit vs. supersede** — the identity test: if the claim is the same and you
 are only improving how it is stated, **edit** (same `id`, bump `updated:`). If
@@ -281,7 +294,8 @@ links for multi-hop questions, read full notes on demand.
 
 | Tool | What it does | Embeds the query? |
 |---|---|---|
-| **search** / **hybrid-search** | fused **RRF(k=60)** BM25 + dense in one ranking; `--rerank` adds the skippable cross-encoder over the top 10-20 | yes (lazy — only here) |
+| **search** / **hybrid-search** | fused **RRF(k=60)** BM25 + dense + bounded exact alias/title leg in one ranking; `--rerank` adds the skippable cross-encoder over the top 10-20; `--explain` emits gated per-stage attribution | yes (lazy — only here) |
+| **diagnose** | runs the production hybrid ranking unchanged, then reports only the gated target's stage presence/rank/cutoff; a withheld target is the opaque `withheld` sentinel | yes (same production search) |
 | **grep** | exact / `--regex` scan over note bodies | **no** (cheap first probe) |
 | **bases-query** | structured frontmatter view (`--where type=note --where classification=Internal`) | **no** |
 | **graph-expand** | wikilink-BFS + Personalized PageRank from seed id(s) | no |
@@ -295,6 +309,49 @@ graph surface). **`graph-expand` is DISCOVERY-ONLY:** its derived wikilink graph
 is never authoritative (`authoritative: false`); use it to nominate candidate ids,
 then confirm each on the cited note via `read`/`get` — curated notes and the
 hybrid ranking win on any conflict.
+
+**Exact identity and create safety (ADR-0008).** `search` and
+`hybrid-search` now add a bounded third RRF leg only at the calibrated
+`rrf_k=60`: exact aliases, exact titles, and separately verified contiguous
+title phrases. It is not inferred from FTS token-OR membership. The emergency
+rollback is immediate: set `BRAIN_EXACT_LEG_ENABLED=0` and restart the
+invoking process; no rebuild is required. With the switch off, exact-match
+ranking injection, pinning, collision slot normalization, and dedup exemption
+are disabled, while already-surfaced organic hits can still carry truthful
+`evidence`/`create_safety` labels. Every surfaced search hit carries one
+evidence label (`alias_hit`, `exact_title_match`, `title_phrase_match`,
+`keyword_exact`, `high_vector_match`, or `weak_semantic`) plus
+`create_safety` (`exists`, `probable`, or `unknown`). `exists` is reserved for
+one visible, unique full alias/title owner. Any full-identity collision, or any
+full owner withheld by egress, degrades the public answer to `probable` or
+`unknown` without exposing owner counts, hidden ids, ranks, titles, or a
+collision label.
+
+**Rerank-safe exact matching.** `--rerank` is optional and bounded to the top
+10-20 candidates. A unique full alias/title owner is pinned outside the
+reranker; multi-owner collisions are not globally pinned, but their internal
+live-before-retired order is restored inside the slots the reranker selected.
+Reranker scores stay separate from RRF scores in `--explain`; they are never
+combined into one fake scale.
+
+**Explain, diagnose, and private replay (ADR-0008).** `search --explain`
+serializes only already-egress-approved attribution: lexical/dense/exact
+contributions, raw RRF, zone and staleness factors, rerank status, pin and
+near-duplicate flags, and a bounded candidate digest whose ids are also
+egress-approved. `brain diagnose <query> --target <id>` runs the same
+production ranking, then reports the target's presence, rank, and cutoffs in
+each stage; when the target is above the egress cap, the only target value
+printed is `withheld`. Host-side query capture writes raw query traffic only
+after egress and only on the trusted host. The ledger deliberately lives
+outside `vault/` and outside `vault/.brain/`, under the resolved host app-data
+index directory (`config.index_dir(...)/query-log`) with owner-only
+directories/files; symlinks or overrides resolving into the vault are refused,
+VM role cannot read or write it, and retention unlinks whole expired month
+files. `brain eval replay --against <month.jsonl>` is host-only and never
+recaptures; it reports stability telemetry (`vault_same`) separately from
+`drift_or_mixed` rows where the content fingerprint changed. Thresholds apply
+only to `vault_same`; the log has no target qrels, so replay cannot honestly
+classify relevance after content drift.
 
 **Temporal-intent routing (TMP-03).** When a question is really ABOUT TIME —
 "latest", "current version", "as of <date>", "previous version" — probe the
@@ -486,7 +543,7 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
 
 | Context | May do | May NOT do |
 |---|---|---|
-| **Cowork Linux VM** (sandbox, EDR-blind) | `search`, `get`, `recent`, `draft_capture` (full VM_ALLOWED list: `init, search, hybrid-search, grep, bases-query, graph-expand, get, read, recent, status, draft-capture, capture, brief, digest, cos-propose` — `cos-propose` is an UNSIGNED drop into a proposal-drop dir `sync` never reads; only the host broker's owner-inbox gate can move it toward signing) | sign, index-commit, WAL write, snapshot, `write_note`, `ingest`, `ingest-transcript`, `supersede`, `graphify`, every other `cos-*` verb (broker/correct/evidence/priority-map/hold) |
+| **Cowork Linux VM** (sandbox, EDR-blind) | `search`, `get`, `recent`, `draft_capture` (full VM_ALLOWED list: `init, search, hybrid-search, diagnose, grep, bases-query, graph-expand, get, read, recent, status, draft-capture, capture, brief, digest, cos-propose` — `diagnose` is read-only and applies the same egress gate; `cos-propose` is an UNSIGNED drop into a proposal-drop dir `sync` never reads; only the host broker's owner-inbox gate can move it toward signing) | sign, index-commit, WAL write, snapshot, `write_note`, `ingest`, `ingest-transcript`, `supersede`, `graphify`, every other `cos-*` verb (broker/correct/evidence/priority-map/hold) |
 | **HOST broker** (macOS/Windows, EDR-visible, holds the audit key) | everything: `write_note`, audit signing, WAL writes, snapshot generation, index commit, plus the ADR-0003 host-only verbs `ingest`/`ingest-transcript` (drop-zone → signed `raw/`, originals archived immutably), `supersede` (both sides of a version chain), `graphify` (bounded monthly link-discovery build) | — |
 
 **Why:** the Cowork VM is ephemeral, EDR-blind, and not audit-logged — it must

@@ -1119,6 +1119,52 @@ def check_vm_maintain_heartbeat(vault: Path) -> dict:
     return _row(surface, CURRENT, f"{len(state)} branch(es) tracked, none stale/repeatedly-failing")
 
 
+def check_query_capture(vault: Path) -> dict:
+    """Host-only ADR-0008 S04 ledger liveness without reading query content.
+
+    ``querylog.status`` uses file metadata and bounded line counts only.  It
+    returns before resolving the host location on a VM, but this check is
+    intentionally wired only into the host doctor surface: a VM must neither
+    read nor claim to verify the raw-query ledger.
+    """
+    from . import querylog
+
+    surface = "Host query capture ledger"
+    info = querylog.status(vault, role="host")
+    state = info.get("state")
+    ledger = info.get("ledger") if isinstance(info.get("ledger"), dict) else {}
+    failures = int(info.get("failures", 0) or 0)
+    consecutive = int(info.get("consecutive_failures", 0) or 0)
+    if state == "disabled":
+        return _row(surface, UNMANAGED,
+                    "capture disabled by BRAIN_QUERY_CAPTURE_ENABLED=0",
+                    raw={"capture": info})
+    if state in {"error", "stale"} or consecutive:
+        reason = info.get("reason") or info.get("last_failure_code") or state
+        return _row(
+            surface, STALE,
+            f"state={state}; files={ledger.get('files', 0)}; bytes={ledger.get('bytes', 0)}; "
+            f"records={ledger.get('records', 0)}; "
+            f"age_seconds={ledger.get('age_seconds')}; failures={failures}; reason={reason}",
+            remediation=("fix host query-log containment/owner-only permissions, then run "
+                         "three host retrieval queries; the VM never owns this ledger"),
+            raw={"capture": info},
+        )
+    if state == "idle":
+        return _row(surface, NOT_DETECTABLE,
+                    "no host query has been captured yet (no traffic to assess)",
+                    raw={"capture": info})
+    if state == "active":
+        return _row(
+            surface, CURRENT,
+            f"files={ledger.get('files', 0)}; bytes={ledger.get('bytes', 0)}; "
+            f"records={ledger.get('records', 0)}; age_seconds={ledger.get('age_seconds')}; "
+            f"historical_failures={failures}",
+            raw={"capture": info},
+        )
+    return _row(surface, UNKNOWN, f"unrecognised capture state: {state!r}", raw={"capture": info})
+
+
 # Host-only surfaces the VM leg structurally cannot check (never gate, never
 # claimed as checked — ADR-0005 Ruling 2/4: a NOT_DETECTABLE row here, not a
 # fake-green or a crash).
@@ -1129,6 +1175,7 @@ _HOST_ONLY_SURFACES = (
     "Marketplace cache freshness (~/.claude/plugins/marketplaces)",
     "Desktop/Cowork plugin-skill store",
     "Workspace registry (tools/workspace_registry.py)",
+    "Host query capture ledger",
 )
 
 
@@ -1193,6 +1240,7 @@ def run_doctor(
     marketplace_dir: Optional[Path] = None,
     marketplace_name: str = "brainiac",
     registry_fetch: Optional[Callable[[], Optional[dict]]] = None,
+    vault: Optional[str | os.PathLike[str]] = None,
 ) -> dict[str, Any]:
     """Run every ADR-0005 Ruling 2 surface check and return a report dict.
 
@@ -1337,6 +1385,33 @@ def run_doctor(
         if vp:
             rows.append(check_vm_maintain_heartbeat(Path(vp)))
     rows.append(check_marketplace_cache(marketplace_dir))
+    # ADR-0008 S04: only the host may inspect raw-query ledger health. Prefer
+    # the explicitly requested CLI vault; otherwise surface every registered
+    # host vault that has a usable path. A missing/non-vault path remains a
+    # NOT_DETECTABLE omission instead of turning generic `brain doctor` into a
+    # false failure on a machine with no current vault selected.
+    from . import config
+
+    capture_vaults: list[Path] = []
+    raw_vaults: list[Any] = [vault] if vault is not None else [
+        entry.get("vault_path") for entry in registry_entries
+        if entry.get("target") == "host" and entry.get("vault_path")
+    ]
+    # A local developer may have a perfectly valid CWD/BRAIN_VAULT without a
+    # registry entry yet. Probe that conventional default as well; vault_root
+    # fails closed and the exception below preserves the no-vault omission.
+    if vault is None:
+        raw_vaults.append(None)
+    for raw_vault in raw_vaults:
+        try:
+            resolved = config.vault_root(raw_vault)
+        except Exception:
+            continue
+        if resolved not in capture_vaults:
+            capture_vaults.append(resolved)
+    for capture_vault in capture_vaults:
+        rows.append(check_query_capture(capture_vault))
+
     if registry_fetch is not None:
         rows.append(check_pypi_registry_drift(repo_root, ssot, fetch=registry_fetch))
     rows.append(check_mcpb_desktop_collision(app_support_dir))

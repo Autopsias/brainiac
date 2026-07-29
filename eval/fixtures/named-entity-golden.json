@@ -1,0 +1,438 @@
+{
+  "schema_version": "ne-family.v1",
+  "created": "2026-07-28",
+  "session": "s01",
+  "fixture_scope": "Clean-room synthetic named-entity fixture. It is intentionally separate from the ignored owner-vault eval/golden_set.json.",
+  "canonical_key": "synthetic named_entity_vault-relative path",
+  "grading_scale": {
+    "3": "definitive target",
+    "2": "related target or supported collision peer",
+    "1": "generic/distractor context",
+    "0": "not relevant"
+  },
+  "coverage": {
+    "strata": {
+      "named_entity": {
+        "n": 16,
+        "min_n": 20,
+        "power": "smoke"
+      }
+    },
+    "languages": {
+      "EN": {
+        "n": 16,
+        "min_n": 20,
+        "power": "smoke"
+      }
+    }
+  },
+  "families": {
+    "alias_synonym": {
+      "description": "Unique aliases, including a macOS-NFD normalization probe.",
+      "query_ids": [
+        "ne_alias_01",
+        "ne_alias_02",
+        "ne_alias_03"
+      ]
+    },
+    "alias_collision": {
+      "description": "Duplicate aliases, duplicate normalized titles, and a cross-namespace alias/title collision.",
+      "query_ids": [
+        "ne_collision_01",
+        "ne_collision_02",
+        "ne_collision_03"
+      ]
+    },
+    "title_exact": {
+      "description": "Unique normalized titles plus the bounded contiguous-phrase case.",
+      "query_ids": [
+        "ne_title_01",
+        "ne_title_02",
+        "ne_title_03",
+        "ne_title_partial_bound_01"
+      ]
+    },
+    "generic_vs_named": {
+      "description": "A named canonical note must not be buried by a generic note with similar body text.",
+      "query_ids": [
+        "ne_named_01",
+        "ne_named_02",
+        "ne_named_03"
+      ]
+    },
+    "chunk_dilution": {
+      "description": "The relevant fact sits in one section of a longer note and must survive best-chunk pooling.",
+      "query_ids": [
+        "ne_chunk_01",
+        "ne_chunk_02",
+        "ne_chunk_03"
+      ]
+    }
+  },
+  "queries": [
+    {
+      "id": "ne_alias_01",
+      "family": "alias_synonym",
+      "lang": "EN",
+      "stratum": "named_entity",
+      "held_out": true,
+      "provenance": "synthetic-contract",
+      "text": "Hall of Lanterns",
+      "qrels": [
+        {
+          "path": "brain/projects/contoso-lantern-program.md",
+          "grade": 3
+        }
+      ],
+      "assertions": {
+        "evidence": "alias_hit",
+        "create_safety": "exists",
+        "unique_full_identity": true,
+        "final_pin": true
+      }
+    },
+    {
+      "id": "ne_alias_02",
+      "family": "alias_synonym",
+      "lang": "EN",
+      "stratum": "named_entity",
+      "held_out": true,
+      "provenance": "synthetic-contract",
+      "text": "Aster Relay",
+      "qrels": [
+        {
+          "path": "brain/projects/northwind-message-fabric.md",
+          "grade": 3
+        }
+      ],
+      "assertions": {
+        "evidence": "alias_hit",
+        "create_safety": "exists",
+        "unique_full_identity": true,
+        "final_pin": true
+      }
+    },
+    {
+      "id": "ne_alias_03",
+      "family": "alias_synonym",
+      "lang": "EN",
+      "stratum": "named_entity",
+      "held_out": true,
+      "provenance": "synthetic-contract",
+      "text": "Cafe\u0301 Aurora",
+      "qrels": [
+        {
+          "path": "brain/projects/fabrikam-aurora-cafe.md",
+          "grade": 3
+        }
+      ],
+      "assertions": {
+        "evidence": "alias_hit",
+        "create_safety": "exists",
+        "normalization": "NFC + casefold + whitespace collapse",
+        "unique_full_identity": true,
+        "final_pin": true
+      }
+    },
+    {
+      "id": "ne_collision_01",
+      "family": "alias_collision",
+      "lang": "EN",
+      "stratum": "named_entity",
+      "held_out": true,
+      "provenance": "synthetic-contract",
+      "text": "Orbit",
+      "qrels": [
+        {
+          "path": "brain/projects/contoso-orbit-current.md",
+          "grade": 3
+        },
+        {
+          "path": "brain/archive/contoso-orbit-retired.md",
+          "grade": 1
+        }
+      ],
+      "assertions": {
+        "evidence": "alias_hit",
+        "create_safety": "probable",
+        "identity_owner_count": 2,
+        "final_pin": false,
+        "collision_live_before_retired": true
+      }
+    },
+    {
+      "id": "ne_collision_02",
+      "family": "alias_collision",
+      "lang": "EN",
+      "stratum": "named_entity",
+      "held_out": true,
+      "provenance": "synthetic-contract",
+      "text": "Northwind Atlas",
+      "qrels": [
+        {
+          "path": "brain/projects/northwind-atlas-current.md",
+          "grade": 3
+        },
+        {
+          "path": "brain/archive/northwind-atlas-retired.md",
+          "grade": 1
+        }
+      ],
+      "assertions": {
+        "evidence": "exact_title_match",
+        "create_safety": "probable",
+        "identity_owner_count": 2,
+        "final_pin": false,
+        "collision_live_before_retired": true
+      }
+    },
+    {
+      "id": "ne_collision_03",
+      "family": "alias_collision",
+      "lang": "EN",
+      "stratum": "named_entity",
+      "held_out": true,
+      "provenance": "synthetic-contract",
+      "text": "Harbor Signal",
+      "qrels": [
+        {
+          "path": "brain/projects/fabrikam-harbor-title.md",
+          "grade": 3
+        },
+        {
+          "path": "brain/projects/contoso-harbor-alias.md",
+          "grade": 2
+        }
+      ],
+      "assertions": {
+        "cross_namespace_collision": true,
+        "create_safety": "probable",
+        "identity_owner_count": 2,
+        "final_pin": false
+      }
+    },
+    {
+      "id": "ne_title_01",
+      "family": "title_exact",
+      "lang": "EN",
+      "stratum": "named_entity",
+      "held_out": true,
+      "provenance": "synthetic-contract",
+      "text": "Fabrikam Mesh Gateway",
+      "qrels": [
+        {
+          "path": "brain/projects/fabrikam-mesh-gateway.md",
+          "grade": 3
+        }
+      ],
+      "assertions": {
+        "evidence": "exact_title_match",
+        "create_safety": "exists",
+        "unique_full_identity": true,
+        "final_pin": true
+      }
+    },
+    {
+      "id": "ne_title_02",
+      "family": "title_exact",
+      "lang": "EN",
+      "stratum": "named_entity",
+      "held_out": true,
+      "provenance": "synthetic-contract",
+      "text": "contoso aurora cafe\u0301 ledger",
+      "qrels": [
+        {
+          "path": "brain/projects/contoso-aurora-ledger.md",
+          "grade": 3
+        }
+      ],
+      "assertions": {
+        "evidence": "exact_title_match",
+        "create_safety": "exists",
+        "normalization": "NFC + casefold + whitespace collapse",
+        "unique_full_identity": true,
+        "final_pin": true
+      }
+    },
+    {
+      "id": "ne_title_03",
+      "family": "title_exact",
+      "lang": "EN",
+      "stratum": "named_entity",
+      "held_out": true,
+      "provenance": "synthetic-contract",
+      "text": "Northwind Platform Catalogue",
+      "qrels": [
+        {
+          "path": "brain/projects/northwind-platform-catalogue.md",
+          "grade": 3
+        }
+      ],
+      "assertions": {
+        "evidence": "exact_title_match",
+        "create_safety": "exists",
+        "unique_full_identity": true,
+        "final_pin": true
+      }
+    },
+    {
+      "id": "ne_title_partial_bound_01",
+      "family": "title_exact",
+      "lang": "EN",
+      "stratum": "named_entity",
+      "held_out": true,
+      "provenance": "synthetic-contract",
+      "text": "Northwind Relay",
+      "qrels": [
+        {
+          "path": "brain/resources/organic-rank-one-both.md",
+          "grade": 3
+        },
+        {
+          "path": "brain/projects/northwind-relay-gateway.md",
+          "grade": 2
+        }
+      ],
+      "assertions": {
+        "evidence_for_partial_target": "title_phrase_match",
+        "phrase_title_token_ratio": 0.666667,
+        "phrase_floor": 0.6,
+        "pre_rerank_rank_one_both_id": "organic-rank-one-both",
+        "partial_phrase_must_not_displace_rank_one_both": true,
+        "final_pin": false
+      }
+    },
+    {
+      "id": "ne_named_01",
+      "family": "generic_vs_named",
+      "lang": "EN",
+      "stratum": "named_entity",
+      "held_out": true,
+      "provenance": "synthetic-contract",
+      "text": "Northwind Port Allocation",
+      "qrels": [
+        {
+          "path": "brain/projects/northwind-port-allocation.md",
+          "grade": 3
+        },
+        {
+          "path": "brain/resources/generic-port-allocation-guide.md",
+          "grade": 1
+        }
+      ],
+      "assertions": {
+        "named_target_id": "northwind-port-allocation",
+        "generic_peer_id": "generic-port-allocation-guide",
+        "named_target_before_generic_peer": true
+      }
+    },
+    {
+      "id": "ne_named_02",
+      "family": "generic_vs_named",
+      "lang": "EN",
+      "stratum": "named_entity",
+      "held_out": true,
+      "provenance": "synthetic-contract",
+      "text": "Contoso Orion Ledger",
+      "qrels": [
+        {
+          "path": "brain/projects/contoso-orion-ledger.md",
+          "grade": 3
+        },
+        {
+          "path": "brain/resources/generic-orion-guide.md",
+          "grade": 1
+        }
+      ],
+      "assertions": {
+        "named_target_id": "contoso-orion-ledger",
+        "generic_peer_id": "generic-orion-guide",
+        "named_target_before_generic_peer": true
+      }
+    },
+    {
+      "id": "ne_named_03",
+      "family": "generic_vs_named",
+      "lang": "EN",
+      "stratum": "named_entity",
+      "held_out": true,
+      "provenance": "synthetic-contract",
+      "text": "Fabrikam Signal Registry",
+      "qrels": [
+        {
+          "path": "brain/projects/fabrikam-signal-registry.md",
+          "grade": 3
+        },
+        {
+          "path": "brain/resources/generic-signal-registry-guide.md",
+          "grade": 1
+        }
+      ],
+      "assertions": {
+        "named_target_id": "fabrikam-signal-registry",
+        "generic_peer_id": "generic-signal-registry-guide",
+        "named_target_before_generic_peer": true
+      }
+    },
+    {
+      "id": "ne_chunk_01",
+      "family": "chunk_dilution",
+      "lang": "EN",
+      "stratum": "named_entity",
+      "held_out": true,
+      "provenance": "synthetic-contract",
+      "text": "who approves crimson telemetry exceptions",
+      "qrels": [
+        {
+          "path": "brain/projects/contoso-telemetry-handbook.md",
+          "grade": 3
+        }
+      ],
+      "assertions": {
+        "target_id": "contoso-telemetry-handbook",
+        "relevant_section": "Exception approvals",
+        "requires_best_chunk_pooling": true
+      }
+    },
+    {
+      "id": "ne_chunk_02",
+      "family": "chunk_dilution",
+      "lang": "EN",
+      "stratum": "named_entity",
+      "held_out": true,
+      "provenance": "synthetic-contract",
+      "text": "where is lattice escalation recorded",
+      "qrels": [
+        {
+          "path": "brain/projects/northwind-lattice-policy.md",
+          "grade": 3
+        }
+      ],
+      "assertions": {
+        "target_id": "northwind-lattice-policy",
+        "relevant_section": "Escalation record",
+        "requires_best_chunk_pooling": true
+      }
+    },
+    {
+      "id": "ne_chunk_03",
+      "family": "chunk_dilution",
+      "lang": "EN",
+      "stratum": "named_entity",
+      "held_out": true,
+      "provenance": "synthetic-contract",
+      "text": "slate transfer rollback owner",
+      "qrels": [
+        {
+          "path": "brain/projects/fabrikam-slate-transfer.md",
+          "grade": 3
+        }
+      ],
+      "assertions": {
+        "target_id": "fabrikam-slate-transfer",
+        "relevant_section": "Rollback ownership",
+        "requires_best_chunk_pooling": true
+      }
+    }
+  ]
+}

@@ -248,15 +248,33 @@ if ($Dev) {
         # is wrong on Windows: the real path carries a version segment
         # (...\Python\Python313\Scripts), so the hand-built hint sent users to
         # a directory that does not exist.
-        $ScriptsDir = (Invoke-Py -PyArgs @(
-            '-c', 'import sysconfig; print(sysconfig.get_path("scripts", "nt_user"))'
-        )) | Select-Object -First 1
-        if (-not $ScriptsDir) {
+        #
+        # EVERY -c snippet here must stay free of double quotes. Windows
+        # PowerShell 5.1 re-quotes arguments when calling a native exe and does
+        # not escape embedded double quotes, so the CRT drops them: an earlier
+        # 'sysconfig.get_path("scripts", "nt_user")' reached Python as bare
+        # names and died with NameError, silently falling through to the wrong
+        # hand-built path above. pwsh 7.3+ passes it correctly, which is why CI
+        # (pwsh only) could not see this - the same blind spot as the 0.19.18
+        # BOM bug. site --user-site needs no quotes and gives the versioned
+        # directory: its parent + \Scripts is the scripts dir for this scheme.
+        $ScriptsDir = $null
+        $UserSite = (Invoke-Py -PyArgs @('-m', 'site', '--user-site')) | Select-Object -First 1
+        if ($UserSite) { $ScriptsDir = Join-Path (Split-Path $UserSite -Parent) 'Scripts' }
+        if (-not $ScriptsDir -or -not (Test-Path $ScriptsDir)) {
             $UserBase = (Invoke-Py -PyArgs @('-m', 'site', '--user-base')) | Select-Object -First 1
-            $ScriptsDir = Join-Path $UserBase 'Scripts'
+            $PyTag = (Invoke-Py -PyArgs @(
+                '-c', 'import sys; print(str(sys.version_info[0]) + str(sys.version_info[1]))'
+            )) | Select-Object -First 1
+            if ($UserBase -and $PyTag) {
+                $ScriptsDir = Join-Path (Join-Path $UserBase "Python$PyTag") 'Scripts'
+            }
         }
         Say "NOTE: 'brain' isn't on PATH yet. Add this to your User PATH (or open a new terminal after a User install):"
         Write-Host "    $ScriptsDir"
+        if ($ScriptsDir -and -not (Test-Path (Join-Path $ScriptsDir 'brain.exe'))) {
+            Write-Host "    (warning: brain.exe is not in that directory - report this, the path probe may be wrong)"
+        }
     }
 }
 

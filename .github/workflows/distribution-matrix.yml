@@ -21,7 +21,14 @@ name: distribution-matrix
 
 on:
   push:
-    branches: [master]
+    # BOTH names, deliberately: this repo's default branch is `master`, but the
+    # clean-room export repo -- the ONLY place a Windows runner ever executes
+    # this -- uses `main`. With `master` alone, no release push ever triggered a
+    # run: the newest real signal was 2026-07-10, and every run since came from a
+    # dependabot branch, which is exactly why a genuine Windows failure was read
+    # as dependabot noise for six days. This workflow also has no schedule, so
+    # the push trigger is the only thing that can refresh it.
+    branches: [master, main]
   pull_request:
   workflow_dispatch:
 
@@ -108,6 +115,44 @@ jobs:
           print(f"wrote {len(lines)} entries to {manifest_path}")
           PY
           cat dist/brain/SHA256SUMS
+
+      # The blind spot that shipped two separate release bugs: every Windows
+      # step above uses `pwsh` (PowerShell 7), while a real Windows user runs
+      # install.ps1 under the built-in Windows PowerShell 5.1. The two differ in
+      # ways that break scripts silently -- 5.1 reads a BOM-less file as ANSI
+      # (0.19.18: em-dashes made install.ps1 unparseable) and mangles double
+      # quotes inside native-command arguments (0.19.19: the PATH probe died with
+      # NameError and printed a directory that does not exist). `shell: powershell`
+      # is 5.1 specifically, so this step sees what the user sees.
+      - name: install.ps1 parses + runs under Windows PowerShell 5.1
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Parse-only first: a 5.1-unparseable script fails here before running.
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path .\install.ps1), [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) { $errors | ForEach-Object { Write-Host $_ }; throw "install.ps1 does not parse under PS 5.1" }
+          Write-Host "install.ps1 parses under PS 5.1"
+          # Then run it for real and require the CLI to work afterwards.
+          .\install.ps1
+          if ($LASTEXITCODE -ne 0) { throw "install.ps1 exited $LASTEXITCODE" }
+          # Find the installed entry point rather than guessing a path: the
+          # installer picks among uv tool / pipx / pip --user, and each lands
+          # brain.exe somewhere different.
+          $found = Get-Command brain -ErrorAction SilentlyContinue
+          if (-not $found) {
+              $roots = @("$env:APPDATA\Python", "$env:USERPROFILE\.local\bin",
+                         "$env:LOCALAPPDATA\Programs") | Where-Object { Test-Path $_ }
+              $exe = $roots | ForEach-Object {
+                  Get-ChildItem -Path $_ -Filter brain.exe -Recurse -ErrorAction SilentlyContinue
+              } | Select-Object -First 1
+              if (-not $exe) { throw "install.ps1 reported success but no brain.exe exists anywhere" }
+              $env:PATH = "$($exe.DirectoryName);$env:PATH"
+          }
+          brain --version
+          if ($LASTEXITCODE -ne 0) { throw "brain --version failed after install.ps1" }
 
       # Only publish build artifacts for trusted events (push to master,
       # workflow_dispatch) — never for pull_request, where the workflow may

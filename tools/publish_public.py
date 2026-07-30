@@ -46,12 +46,16 @@ import argparse
 import datetime as _dt
 import hashlib
 import json
+import os
+import pty
 import re
+import select
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -79,6 +83,61 @@ def _run(cmd: list[str], *, cwd: Path | None = None, interactive: bool = False,
     if interactive:
         return subprocess.run(cmd, cwd=cwd, timeout=timeout)
     return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+
+
+AUTH_URL_RE = re.compile(r"https://\S*(?:npmjs\.com|npmjs\.org)/(?:auth|login)\S*")
+
+
+def _run_pty(cmd: list[str], *, cwd: Path | None = None,
+             timeout: int = 900) -> subprocess.CompletedProcess:
+    """Run a command attached to a pseudo-terminal, streaming its output.
+
+    npm's one-time-password step has two modes and it picks by asking whether
+    stdout is a terminal. On a TTY it prints a click-to-authorize URL and waits
+    for the browser round-trip; with no TTY it refuses outright (`EOTP`, "requires
+    a one-time password"), which is a dead end for any non-interactive caller —
+    a relayed authenticator code expires before a run reaches the publish step.
+    A pty gets the URL flow, and the operator authorizes by clicking.
+
+    Output is echoed as it arrives (so the URL is visible in a log being
+    tailed, not just at exit) and returned in `stdout` for the caller to scan.
+    A `Press ENTER`-style prompt is answered automatically — the browser round
+    trip, not the keypress, is the actual human gate.
+    """
+    master, slave = pty.openpty()
+    proc = subprocess.Popen(cmd, cwd=cwd, stdin=slave, stdout=slave, stderr=slave,
+                            close_fds=True)
+    os.close(slave)
+    chunks: list[str] = []
+    pending = ""
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            if time.monotonic() > deadline:
+                proc.kill()
+                raise PublishError(
+                    f"{cmd[0]} timed out after {timeout}s waiting for browser authorization")
+            if not select.select([master], [], [], 1.0)[0]:
+                if proc.poll() is not None:
+                    break
+                continue
+            try:
+                data = os.read(master, 4096)
+            except OSError:      # EIO — the child closed the pty
+                break
+            if not data:
+                break
+            text = data.decode("utf-8", "replace")
+            chunks.append(text)
+            sys.stdout.write(text)
+            sys.stdout.flush()
+            pending = (pending + text)[-400:]
+            if re.search(r"press\s+(?:enter|any key)", pending, re.I):
+                os.write(master, b"\n")
+                pending = ""
+    finally:
+        os.close(master)
+    return subprocess.CompletedProcess(cmd, proc.wait(), "".join(chunks), "")
 
 
 def _need(proc: subprocess.CompletedProcess, what: str) -> subprocess.CompletedProcess:
@@ -159,9 +218,16 @@ def gate(version: str, act: str, why: str, verified: list[str], *,
 # phases
 # --------------------------------------------------------------------------
 
-def phase_preflight(tag: str) -> str:
+def phase_preflight(tag: str, *, expect_published: bool = False) -> str:
     """Tag exists; tag name matches the pyproject version AT THE TAG; that
-    version is not already on PyPI and is not below PyPI's latest."""
+    version is not already on PyPI and is not below PyPI's latest.
+
+    `expect_published` INVERTS the PyPI check for a resume past the pypi phase
+    (`--from npm` / `public-git` / `post-verify`): there the version being on
+    PyPI already is the expected state, and its ABSENCE is the anomaly worth
+    stopping on. Without this, every post-upload resume dead-ends on the
+    already-published guard — the one thing that guard must not block.
+    """
     if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
         raise PublishError(f"tag must look like vX.Y.Z, got {tag!r}")
     version = tag[1:]
@@ -183,6 +249,12 @@ def phase_preflight(tag: str) -> str:
         data = json.loads(proc.stdout)
         released = set(data.get("releases", {}))
         latest = data["info"]["version"]
+        if expect_published:
+            if version not in released:
+                raise PublishError(
+                    f"resuming past the pypi phase, but PyPI does not serve {version} — "
+                    f"do not skip an upload that never happened")
+            return f"tag/version consistent; PyPI already serves {version} (resume past upload)"
         if version in released:
             raise PublishError(
                 f"{version} is already on PyPI — uploads are permanent per "
@@ -209,12 +281,27 @@ def phase_worktree(tag: str, scratch: Path) -> Path:
     return wt
 
 
+def pytest_failure_summary(stdout: str, *, max_names: int = 40) -> str:
+    """Every FAILED name plus the count line. The old version printed the last 3
+    lines, which on a 4-failure run named only 2 of them -- the hidden pair sent
+    the operator diagnosing the wrong test. Names first, count last."""
+    lines = stdout.strip().splitlines()
+    failed = [ln for ln in lines if ln.startswith("FAILED ")]
+    counts = [ln for ln in lines if re.search(r"\d+ (failed|passed|error)", ln)]
+    out = failed[:max_names]
+    if len(failed) > max_names:
+        out.append(f"... and {len(failed) - max_names} more FAILED lines")
+    if counts:
+        out.append(counts[-1])
+    return "\n".join(out) or "\n".join(lines[-3:])
+
+
 def phase_tests(worktree: Path) -> str:
     proc = _run([sys.executable, "-m", "pytest", "-q"], cwd=worktree, timeout=3600)
-    tail = "\n".join(proc.stdout.strip().splitlines()[-3:])
+    summary = pytest_failure_summary(proc.stdout)
     if proc.returncode != 0:
-        raise PublishError(f"test suite failed in the tag worktree:\n{tail}")
-    return tail.splitlines()[-1] if tail else "passed"
+        raise PublishError(f"test suite failed in the tag worktree:\n{summary}")
+    return summary.splitlines()[-1] if summary else "passed"
 
 
 def _load_denylist_terms(denylist: Path) -> list[str]:
@@ -404,6 +491,12 @@ def phase_npm(export_dir: Path, version: str, scratch: Path,
               gate_fn) -> str:
     """Pack + smoke-test the npx bootstrap from the EXPORT tree, gate, publish,
     verify the registry serves the new version."""
+    # Resume safety: a publish that succeeded but whose verification lagged (or
+    # whose later phase failed) must not be attempted twice — npm versions are
+    # permanent, and a second publish is a hard error, not a no-op.
+    already = _run(["npm", "view", f"brainiac-install@{version}", "version"])
+    if already.returncode == 0 and version in already.stdout:
+        return f"npm already serves brainiac-install@{version} (nothing re-published)"
     pkg = export_dir / "packaging" / "npm" / "brainiac-install"
     pack_dir = scratch / "npm-pack"
     pack_dir.mkdir(exist_ok=True)
@@ -422,12 +515,30 @@ def phase_npm(export_dir: Path, version: str, scratch: Path,
             "at a PyPI version that exists (it does — the pypi phase passed)",
             [f"tarball packed at {version} and smoke-tested (--dry-run exit 0)",
              "PyPI publish verified in the previous phase"])
-    _need(_run(["npm", "publish", "--access", "public"], cwd=pkg, interactive=True),
-          "npm publish")
-    view = _need(_run(["npm", "view", f"brainiac-install@{version}", "version"]),
-                 "npm view of the published version")
-    if version not in view.stdout:
-        raise PublishError(f"npm registry does not serve {version} yet: {view.stdout!r}")
+    print("\nnpm publish: if 2FA is on, npm prints an authorization URL below — open it and\n"
+          "approve; the publish continues by itself (waiting up to 15 minutes).\n", flush=True)
+    published = _run_pty(["npm", "publish", "--access", "public", "--auth-type", "web"],
+                         cwd=pkg, timeout=900)
+    if published.returncode != 0:
+        url = AUTH_URL_RE.search(published.stdout)
+        hint = f"\nAuthorization URL npm offered: {url.group(0)}" if url else ""
+        raise PublishError(f"npm publish failed (exit {published.returncode})\n"
+                           f"{published.stdout}{hint}")
+    # The registry's read path lags its write path by seconds (CDN). A single
+    # immediate `npm view` 404s on a publish that DID succeed — which then reads
+    # as a failed release and invites a re-publish of a version already taken.
+    # Poll instead, and only call it a failure once it stays missing.
+    deadline = time.monotonic() + 180
+    while True:
+        view = _run(["npm", "view", f"brainiac-install@{version}", "version"])
+        if view.returncode == 0 and version in view.stdout:
+            break
+        if time.monotonic() > deadline:
+            raise PublishError(
+                f"npm still does not serve {version} 3 minutes after publish — "
+                f"check https://www.npmjs.com/package/brainiac-install before retrying, "
+                f"the publish itself may have succeeded\n{view.stdout}{view.stderr}")
+        time.sleep(10)
     return f"npm serves brainiac-install@{version}"
 
 
@@ -564,7 +675,7 @@ def main() -> int:
     try:
         print(f"publish_public: {tag} — scratch at {scratch}")
 
-        summary = phase_preflight(tag)
+        summary = phase_preflight(tag, expect_published=not do("pypi"))
         ev.record("preflight", "OK", summary); verified.append(summary)
         print(f"[1/{len(PHASES)}] preflight: {summary}")
 

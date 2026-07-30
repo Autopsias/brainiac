@@ -134,14 +134,56 @@ fi
 # onnxruntime/tokenizers, silently falls back to the HASH embedder, and bakes
 # non-semantic vectors into the published snapshot — VM semantic search would
 # then be garbage regardless of what's installed in the sandbox.
-HOST_PY="python3"
-if [ -x "$HOME/.brainiac/venv/bin/python3" ]; then
-  HOST_PY="$HOME/.brainiac/venv/bin/python3"
-else
-  echo "[install] WARNING: ~/.brainiac/venv not found — using system python3." >&2
-  echo "          If it lacks onnxruntime, the snapshot is built with HASH (non-semantic)" >&2
-  echo "          vectors. Run ./install.sh first, then re-run this script." >&2
+# Resolve a SEMANTIC-CAPABLE interpreter, or stop. The old version hardcoded
+# `python3` with a warning-and-continue fallback, which on Windows picked nothing
+# at all: a python.org install provides `python`/`py`, never `python3`, and a
+# `pip --user` install has no ~/.brainiac/venv either. Continuing past that bakes
+# HASH (non-semantic) vectors into the published snapshot, so VM search quality
+# silently becomes random -- a failure nobody notices until retrieval is useless.
+# Each candidate reports its own sys.executable so a two-word launcher (`py -3`)
+# still resolves to a single path. Override with $BRAIN_HOST_PY.
+# `|| true` on both is load-bearing: this script runs under `set -euo pipefail`,
+# so a missing candidate would make the pipeline (and then the assignment below)
+# fail and abort the whole run silently, before any diagnostic could print.
+_probe_py() {  # $1 = candidate command line; prints its sys.executable
+  # shellcheck disable=SC2086
+  { $1 -c 'import sys; print(sys.executable)' 2>/dev/null || true; } | head -1
+}
+_can_embed() { "$1" -c 'import onnxruntime, tokenizers' >/dev/null 2>&1; }
+
+HOST_PY=""
+HOST_PY_FALLBACK=""
+for _cand in "${BRAIN_HOST_PY:-}" "$HOME/.brainiac/venv/bin/python3" \
+             "$HOME/.brainiac/venv/Scripts/python.exe" python3 python "py -3"; do
+  [ -n "$_cand" ] || continue
+  _resolved="$(_probe_py "$_cand" || true)"
+  [ -n "$_resolved" ] && [ -x "$_resolved" ] || continue
+  [ -n "$HOST_PY_FALLBACK" ] || HOST_PY_FALLBACK="$_resolved"
+  if _can_embed "$_resolved"; then HOST_PY="$_resolved"; break; fi
+done
+
+if [ -z "$HOST_PY" ]; then
+  if [ -z "$HOST_PY_FALLBACK" ]; then
+    echo "[install] FATAL: no usable Python found (tried \$BRAIN_HOST_PY," >&2
+    echo "          ~/.brainiac/venv, python3, python, 'py -3')." >&2
+    echo "          Install Python 3.9+ and re-run, or set \$BRAIN_HOST_PY." >&2
+    exit 1
+  fi
+  if [ "${BRAIN_ALLOW_HASH_SNAPSHOT:-0}" != "1" ]; then
+    echo "[install] FATAL: $HOST_PY_FALLBACK cannot import onnxruntime/tokenizers, so the" >&2
+    echo "          published snapshot would carry HASH (non-semantic) vectors and VM" >&2
+    echo "          search quality would be effectively random -- silently." >&2
+    echo "          Fix: install the engine's semantic extras into that interpreter" >&2
+    echo "          (pip install 'brainiac-cli[corporate]'), or point \$BRAIN_HOST_PY at" >&2
+    echo "          an interpreter that has them. To proceed anyway with a lexical-only" >&2
+    echo "          snapshot, set BRAIN_ALLOW_HASH_SNAPSHOT=1 deliberately." >&2
+    exit 1
+  fi
+  HOST_PY="$HOST_PY_FALLBACK"
+  echo "[install] WARNING: BRAIN_ALLOW_HASH_SNAPSHOT=1 -- building a NON-SEMANTIC" >&2
+  echo "          snapshot with $HOST_PY. VM search will be lexical-only." >&2
 fi
+echo "[install] host interpreter: $HOST_PY"
 # (c3) VENDOR the offline semantic deps + refresh the shim via the shared helper
 # (DV-04) — the SAME code path `brain update` re-stages with, so the two can't
 # drift. Advisory: a networkless host just leaves the arch lexical-only.
@@ -201,7 +243,7 @@ fi
 # over from the last install. package_clients.py is idempotent/fast (stdlib
 # zipfile, no network), so this costs nothing on a re-run.
 echo "[install] skills -> $BRAIN_DIR/skills/ (rebuilding current-version .skill bundles)"
-PYTHONPATH="$REPO/src" python3 "$REPO/tools/package_clients.py" >/dev/null
+PYTHONPATH="$REPO/src" "$HOST_PY" "$REPO/tools/package_clients.py" >/dev/null
 COWORK_SKILLS="$REPO/dist/cowork-skills"
 if ! ls "$COWORK_SKILLS"/*.skill >/dev/null 2>&1; then
   echo "[install] ERROR: tools/package_clients.py ran but produced no .skill zips in $COWORK_SKILLS" >&2
@@ -221,7 +263,7 @@ echo "[install] shipped $skills_shipped skill bundle(s)"
 # disagree, which should stop the install rather than ship a split version.
 SKILL_SAMPLE="$BRAIN_DIR/skills/$(basename "$(ls "$BRAIN_DIR/skills"/*.skill | head -1)")"
 SKILL_SAMPLE_NAME="$(basename "$SKILL_SAMPLE" .skill)"
-STAGED_SKILL_VERSION="$(python3 -c "
+STAGED_SKILL_VERSION="$("$HOST_PY" -c "
 import zipfile, sys
 with zipfile.ZipFile(sys.argv[1]) as zf:
     print(zf.read(sys.argv[2] + '/VERSION').decode().strip())

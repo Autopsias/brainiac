@@ -56,6 +56,7 @@
     ".codex/hooks/pre-compact.sh",
     ".codex/hooks/session-start.sh",
     ".gemini/settings.json",
+    ".gitattributes",
     ".github/dependabot.yml",
     ".github/workflows/codeql.yml",
     ".github/workflows/dependency-review.yml",
@@ -354,5 +355,5 @@
     "vault/raw/2026-06-27-arctic-vs-e5-benchmark.md",
     "vault/raw/README.md"
   ],
-  "count": 353
+  "count": 354
 }

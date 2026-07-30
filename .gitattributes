@@ -1,0 +1,15 @@
+# Check every text file out with LF endings on every platform.
+#
+# Git's Windows default (core.autocrlf=true) otherwise rewrites the working tree
+# to CRLF on clone, which broke a real Windows install two ways at once:
+#
+#   - tools/package_clients.py anchors frontmatter on `^---\n`, so every
+#     SKILL.md read as "no frontmatter" and Cowork staging aborted mid-script.
+#   - Shell scripts under Git Bash choke on the trailing \r and fail with
+#     syntax errors that point nowhere near the real cause.
+#
+# `text=auto` still detects binary content by itself, so this cannot corrupt a
+# binary file added later; `eol=lf` only applies to what Git decides is text.
+# This file must stay in the public export (tools/export_cleanroom.py ships
+# every tracked path), or Windows clones of the release repo regress.
+* text=auto eol=lf

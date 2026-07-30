@@ -8,7 +8,7 @@ name: supply-chain
 
 on:
   push:
-    branches: [master]
+    branches: [master, main]
   pull_request:
   schedule:
     - cron: "0 6 * * 1"   # Mondays 06:00 UTC — catch newly-disclosed CVEs

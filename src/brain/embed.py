@@ -943,9 +943,17 @@ def model_cache_ready(embedder: "Embedder | None" = None) -> bool | None:
         return None
     pat = [onnx_file, onnx_file + "_data", "tokenizer*", "*.json"]
     try:
+        # The revision MUST match the one the download pinned. Without it,
+        # huggingface_hub resolves the default "main", which needs a `refs/main`
+        # file the cache only has when something downloaded BY BRANCH NAME.
+        # Pinning to a commit SHA writes `snapshots/<sha>` and no ref, so an
+        # unpinned probe raised LocalEntryNotFoundError on a fully populated
+        # cache — every fresh install reported `embedder: pending` forever, and
+        # the remedy it printed (`warmup` then `sync`) could never clear it.
+        # Only a legacy cache carrying a stale `refs/main` masked this.
         snapshot_download(
             e._hf_repo, cache_dir=local_dir, allow_patterns=pat,
-            local_files_only=True,
+            revision=e._revision, local_files_only=True,
         )
         return True
     except Exception:

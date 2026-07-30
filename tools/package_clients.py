@@ -100,7 +100,12 @@ COWORK_DIST_DIR = REPO_ROOT / "dist" / "cowork-skills"
 DIST_DIR = REPO_ROOT / "dist"
 PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
 
-FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)
+# Accept CRLF as well as LF. `.gitattributes` now normalizes the checkout to LF,
+# but a file can still reach this parser with CRLF -- an older clone, an archive,
+# or an edit saved in a Windows editor -- and the LF-only anchor turned that into
+# a bare "no YAML frontmatter block found" on a file whose frontmatter is right
+# there. Belt to .gitattributes' braces; one character each way.
+FRONTMATTER_RE = re.compile(r"^---\r?\n(.*?)\r?\n---\r?\n", re.DOTALL)
 
 
 class ValidationError(Exception):

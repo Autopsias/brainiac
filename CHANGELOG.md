@@ -7,6 +7,85 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.19.19] — 2026-07-30
+### Fixed
+- **Windows install, second pass: four bugs found by an enterprise pilot install
+  of 0.19.18 on a real Windows machine.** The install worked; these are what it
+  hit along the way. Ranked by how quietly each one hurts.
+  - **Cowork staging silently produced a non-semantic snapshot.**
+    `tools/cowork_workspace_install.sh` hardcoded `HOST_PY="python3"` and, when
+    that or `~/.brainiac/venv` was missing, printed a warning and CARRIED ON. On
+    Windows both are absent — a python.org install provides `python`/`py`, never
+    `python3`, and a `pip --user` install has no venv — so the snapshot was built
+    with HASH (non-semantic) vectors and VM search quality became effectively
+    random, with nothing surfacing it. The interpreter is now resolved across
+    `$BRAIN_HOST_PY`, the venv (POSIX + Windows layouts), `python3`, `python` and
+    `py -3`, each asked for its own `sys.executable` so a two-word launcher still
+    resolves to one path, and the run **fails closed** unless the chosen
+    interpreter can import onnxruntime + tokenizers.
+    `BRAIN_ALLOW_HASH_SNAPSHOT=1` is the deliberate, loudly-labelled opt-out.
+  - **No `.gitattributes`, so Windows clones came out CRLF.** Git's default
+    `core.autocrlf=true` rewrote the working tree, and `package_clients.py`
+    anchors frontmatter on `^---\n` — so every `SKILL.md` read as "no
+    frontmatter" and Cowork staging aborted mid-script. Fixed at the checkout
+    (`* text=auto eol=lf`, which the clean-room export ships) rather than
+    per-parser; the frontmatter regex also accepts CRLF now as a second line of
+    defence.
+  - **`install.ps1` printed a PATH that does not exist.** Windows PowerShell 5.1
+    re-quotes native-command arguments without escaping embedded double quotes,
+    so `sysconfig.get_path("scripts", "nt_user")` reached Python as bare names
+    and died with `NameError`; the code fell through to a hand-built
+    `<user-base>\Scripts`, which on Windows is missing the version segment. The
+    probe is now quote-free (`site --user-site`, whose parent + `\Scripts` is the
+    real directory), and it warns if `brain.exe` is not actually there.
+  - **`brain status` reported `embedder: pending` forever — on every fresh
+    install, every OS.** `model_cache_ready()` probed the cache without the
+    pinned revision, so huggingface_hub resolved the default `main` and needed a
+    `refs/main` file that only exists when something downloaded by branch name;
+    pinning to a commit SHA writes `snapshots/<sha>` and no ref. A fully
+    populated 465 MiB cache therefore read as absent, and the remedy the line
+    printed (`warmup` then `sync`) could never clear it. Only a legacy cache
+    carrying a stale `refs/main` masked this, which is why no existing machine
+    showed it. Retrieval was never affected — `brain doctor` runs a real embed
+    and was truthful throughout.
+- **`publish_public.py` named only some of the failing tests.** Its failure text
+  was the last 3 lines of pytest output, so a 4-failure run reported 2 names and
+  the diagnosis started on the wrong test. It now lists every `FAILED` line with
+  the count line last.
+- **The Windows CI signal could never refresh itself.** `distribution-matrix.yml`
+  (plus `codeql.yml` and `supply-chain.yml`) filtered pushes to `branches:
+  [master]`, but the clean-room export repo — the only place a Windows runner
+  ever executes them — uses `main`. So no release push has triggered the matrix
+  since 2026-07-10, every run visible since came from a dependabot branch, and
+  that is the real reason a genuine Windows failure read as dependabot noise for
+  six days. All three now list `[master, main]` (as `skill-mirror-sync.yml`
+  already did), and a test fails on any push-triggered workflow that lists only
+  one of them.
+- **CI could not see either PowerShell bug.** Every Windows step in
+  `distribution-matrix.yml` runs `pwsh` (PowerShell 7), which parses BOM-less
+  UTF-8 and passes quoted arguments intact — so both the 0.19.18 em-dash bug and
+  the PATH-probe bug above were structurally invisible to it. A new job step runs
+  `install.ps1` under `shell: powershell` (5.1 specifically): parse-check first,
+  then a real install, then `brain --version` against the entry point it actually
+  produced.
+- **`publish_public.py` could not finish a 2FA npm publish, and could not resume
+  past an upload it had already done.** Both found by running the pipeline for
+  real on 0.19.18.
+  - npm decides how to do two-factor by asking whether stdout is a terminal: on
+    a TTY it prints a click-to-authorize URL, and with no TTY it refuses
+    outright (`EOTP`). A harness-driven run is never a TTY, so the publish was
+    unreachable — and a relayed authenticator code is useless because it expires
+    before a run reaches the publish step. `npm publish` now runs on a
+    pseudo-terminal (`_run_pty`) with `--auth-type web`, streaming output as it
+    arrives so the URL is visible in a tailed log, answering the "Press ENTER"
+    prompt itself (the browser round-trip is the human gate, not the keypress),
+    and failing with the URL quoted if it still cannot authorize.
+  - `--from npm` (or any phase past the upload) re-ran the preflight, which
+    refuses a version already on PyPI — so every post-upload resume dead-ended
+    on the one guard that must not block it. Preflight now takes
+    `expect_published`, set from the resume point: past the pypi phase, the
+    version being on PyPI is required, and its ABSENCE is the error.
+
 ## [0.19.18] — 2026-07-29
 ### Added
 - **`tools/publish_public.py` — guarded one-command public release pipeline**

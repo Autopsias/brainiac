@@ -117,6 +117,23 @@ If a phase fails midway (e.g. npm auth missing): report the tool's own
 error, let the owner fix auth outside the session, then resume with
 `--from <phase>` plus the still-pending `--confirm` flags — consent from
 step 4 carries over within the same session; a NEW session asks again.
+Preflight is resume-aware (`expect_published`), so `--from npm` does NOT
+trip the already-on-PyPI guard.
+
+**Auth surfaces the pipeline cannot solve for the owner** — each is the
+owner's to hold, and the tool's own error is the report:
+
+- **twine (PyPI/TestPyPI)** needs a credential it can find non-interactively
+  (`~/.pypirc` section, or keyring). No terminal ⇒ no password prompt; it
+  raises `EOFError`. TestPyPI tokens are separate from PyPI's.
+- **npm 2FA** is handled: the publish runs on a pseudo-terminal and prints a
+  click-to-authorize URL. **Watch the run's output for that URL and relay it
+  to the owner immediately** — the publish blocks up to 15 minutes waiting for
+  the browser round-trip, so a URL surfaced late is a timeout. Never ask for a
+  typed one-time code: it expires before the run reaches the publish step.
+- Run the pipeline where the `build`/`twine` modules actually are (e.g.
+  `uv run --no-project --with twine --with keyring python tools/…`) — a
+  missing module reads as an auth failure otherwise.
 
 ### 6 · Report
 

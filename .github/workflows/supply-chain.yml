@@ -22,10 +22,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
@@ -45,15 +45,29 @@ jobs:
         # pip-compile) only preserves existing pins when the output file already
         # exists. Compiling into an empty /tmp path re-resolves everything to
         # LATEST, so the gate would fail on any upstream release — mcp 1.28.1 ->
-        # 2.0.0 and eight others, none of them pyproject drift. Comment lines are
-        # excluded from the diff because uv writes the -o path into the header.
+        # 2.0.0 and eight others, none of them pyproject drift.
+        #
+        # The comparison is the PIN SET, not uv's output verbatim: every comment
+        # line is stripped from both sides. uv writes the -o path into the header,
+        # and its `# via` provenance lists depend on the resolving interpreter
+        # (under 3.12 typing-extensions gains anyio/referencing/starlette as
+        # parents; under 3.13+ it does not), so a verbatim diff fails on whichever
+        # Python happened to run `make lock` — measured on the first green run of
+        # this gate, 2026-07-30. A pin that appears, vanishes or changes version
+        # still fails it (verified against a lock with numpy deleted).
+        #
+        # ponytail: comment-only drift is deliberately invisible here. The deeper
+        # fix is pinning `--python-version` in BOTH `make lock` and this step, but
+        # that re-resolves the lock (3.10 pulls in coloredlogs, exceptiongroup,
+        # humanfriendly and a different numpy) — a change to the audited
+        # dependency set that belongs in its own reviewed commit, not in a CI fix.
         run: |
           python -m pip install uv
           cp requirements.lock /tmp/requirements.check.lock
           uv pip compile pyproject.toml --extra mcp --extra ingest --extra embed \
             --generate-hashes -o /tmp/requirements.check.lock
-          if ! diff <(grep -v '^#' requirements.lock) \
-                    <(grep -v '^#' /tmp/requirements.check.lock) >/dev/null; then
+          if ! diff <(grep -vE '^\s*#' requirements.lock) \
+                    <(grep -vE '^\s*#' /tmp/requirements.check.lock) >/dev/null; then
             echo "::error::requirements.lock is stale — re-run: make lock"
             diff requirements.lock /tmp/requirements.check.lock || true
             exit 1
@@ -70,7 +84,7 @@ jobs:
 
       - name: Upload SBOM
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sbom-cyclonedx
           path: sbom.cyclonedx.json

@@ -1,0 +1,18 @@
+# gitleaks false-positive pins.
+#
+# Format: <path>:<rule-id>:<line>
+#
+# These are reviewed, non-secret findings. gitleaks runs here in two places and
+# both honour this file: the commit hook, and the plan-execute egress guard that
+# decides whether this tree may be sent to Codex (a third-party provider).
+# A pin therefore means "reviewed, safe to send" — do not add one you have not read.
+#
+# Note: do NOT quote the flagged text in these comments. The generic-api-key rule
+# fires on entropy, so pasting the offending string here makes this file itself a
+# finding. (Learned the hard way, 2026-07-28.)
+
+# src/brain/embed.py:143 — a class docstring describing the hash-embedding
+# fallback. Prose, not a credential; the rule fires on its entropy (3.81).
+# Verified by reading the line on 2026-07-28: the file has no auth, no network
+# I/O and no env reads.
+src/brain/embed.py:generic-api-key:143

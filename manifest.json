@@ -64,6 +64,7 @@
     ".github/workflows/skill-mirror-sync.yml",
     ".github/workflows/supply-chain.yml",
     ".gitignore",
+    ".gitleaksignore",
     ".pre-commit-config.yaml",
     "AGENTS.md",
     "CHANGELOG.md",
@@ -248,6 +249,7 @@
     "src/brain/_assets/templates/person.md",
     "src/brain/_assets/templates/project.md",
     "src/brain/_assets/templates/state-moc.md",
+    "src/brain/_assets/tools/cos_browser_scan.mjs",
     "src/brain/_assets/tools/cos_retro.py",
     "src/brain/_version.py",
     "src/brain/anchor.py",
@@ -321,6 +323,7 @@
     "tools/brain_daily.py",
     "tools/build_brain_binary.sh",
     "tools/code_origin_audit.py",
+    "tools/cos_browser_scan.mjs",
     "tools/cos_canary_install.sh",
     "tools/cos_contract.py",
     "tools/cos_publish_pin.py",
@@ -355,5 +358,5 @@
     "vault/raw/2026-06-27-arctic-vs-e5-benchmark.md",
     "vault/raw/README.md"
   ],
-  "count": 354
+  "count": 357
 }

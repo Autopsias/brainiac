@@ -388,6 +388,7 @@ ENGINE_ASSET_FILES = [
     # launchd runs the INSTALLED `_assets/scripts/brain-synthesis.sh`, and a
     # registered workspace has no `tools/` dir of its own.
     "tools/cos_retro.py",
+    "tools/cos_browser_scan.mjs",
     # `brain graph-report` HTML shell — the payload <script type="application/
     # json"> block is spliced in at render time by src/brain/graphreport.py;
     # everything else here is static (CSS/JS/WebGL viewer).

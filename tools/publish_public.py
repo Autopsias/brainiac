@@ -56,6 +56,7 @@ import sys
 import tarfile
 import tempfile
 import time
+import zipfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -218,15 +219,27 @@ def gate(version: str, act: str, why: str, verified: list[str], *,
 # phases
 # --------------------------------------------------------------------------
 
-def phase_preflight(tag: str, *, expect_published: bool = False) -> str:
-    """Tag exists; tag name matches the pyproject version AT THE TAG; that
-    version is not already on PyPI and is not below PyPI's latest.
+def phase_preflight(tag: str, *, expect_published: bool | None = False) -> str:
+    """Tag exists; tag name matches the pyproject version AT THE TAG; and the
+    PyPI state matches what the run's starting phase implies.
 
-    `expect_published` INVERTS the PyPI check for a resume past the pypi phase
-    (`--from npm` / `public-git` / `post-verify`): there the version being on
-    PyPI already is the expected state, and its ABSENCE is the anomaly worth
-    stopping on. Without this, every post-upload resume dead-ends on the
-    already-published guard — the one thing that guard must not block.
+    `expect_published` is deliberately tri-state, because "is this version
+    supposed to be on PyPI already?" has three honest answers:
+
+    * ``False`` — a fresh run. Publishing a version PyPI already serves would
+      mean the tag's contents and the published artifact can differ silently.
+    * ``None`` — a resume INTO the upload phases (`--from testpypi` / `pypi`).
+      The upload may or may not have gone through before the run died; twine
+      runs with ``--skip-existing``, so either state is fine and neither is
+      evidence of a problem.
+    * ``True`` — a resume PAST the upload (`--from npm` / `public-git` /
+      `post-verify`). Here the version being absent is the anomaly: skipping an
+      upload that never happened would ship an npm bootstrap pointing at
+      nothing.
+
+    A single boolean got this wrong in both directions: it dead-ended every
+    post-upload resume on the already-published guard, and then dead-ended
+    `--from pypi` for the opposite reason.
     """
     if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
         raise PublishError(f"tag must look like vX.Y.Z, got {tag!r}")
@@ -249,6 +262,10 @@ def phase_preflight(tag: str, *, expect_published: bool = False) -> str:
         data = json.loads(proc.stdout)
         released = set(data.get("releases", {}))
         latest = data["info"]["version"]
+        if expect_published is None:
+            state = "already serves" if version in released else "does not yet serve"
+            return (f"tag/version consistent; PyPI {state} {version} "
+                    f"(resume into the upload phases — either state is fine)")
         if expect_published:
             if version not in released:
                 raise PublishError(
@@ -441,15 +458,50 @@ def phase_windows_ci(accept_reason: str | None) -> str:
     return line
 
 
+def _poll(run_once, *, what: str, ok=None, seconds: int = 300,
+          every: int = 15) -> subprocess.CompletedProcess:
+    """Retry a post-upload check until it passes or the window closes.
+
+    Every package index and registry serves reads from a cache that trails its
+    own write path, so the first check after a successful upload can legitimately
+    404. Failing there reports a COMPLETED upload as a failed release, and the
+    obvious next move -- re-publish -- is impossible for a permanent version.
+    """
+    ok = ok or (lambda p: p.returncode == 0)
+    deadline = time.monotonic() + seconds
+    while True:
+        proc = run_once()
+        if ok(proc):
+            return proc
+        if time.monotonic() > deadline:
+            raise PublishError(
+                f"{what} still failing {seconds}s after upload — the upload itself "
+                f"may well have succeeded, so check the index/registry before "
+                f"retrying anything\n{proc.stdout}{proc.stderr}")
+        time.sleep(every)
+
+
+def _throwaway_venv(scratch: Path, label: str) -> Path:
+    """A fresh venv, returned as its bin dir. Its pip is the ONLY pip this
+    pipeline uses: the launching interpreter may legitimately have none (running
+    under `uv run`, for instance), and `sys.executable -m pip` then fails with
+    "No module named pip" -- which looks like a broken release rather than a
+    broken invocation. `venv` seeds pip via ensurepip, so this always has one."""
+    venv = scratch / f"venv-{label}"
+    if not venv.exists():
+        _need(_run([sys.executable, "-m", "venv", str(venv)]), "venv create")
+    return venv / ("Scripts" if os.name == "nt" else "bin")
+
+
 def _clean_venv_check(version: str, index_args: list[str], scratch: Path, label: str) -> str:
     """Install brainiac-cli==version into a throwaway venv and require
     `brain --version` to print exactly the version. Never this repo's venv."""
-    venv = scratch / f"venv-{label}"
-    _need(_run([sys.executable, "-m", "venv", str(venv)]), "venv create")
-    pip = venv / "bin" / "pip"
-    brain = venv / "bin" / "brain"
-    _need(_run([str(pip), "install", "--quiet", *index_args, f"brainiac-cli=={version}"],
-               timeout=1200), f"pip install from {label}")
+    bin_dir = _throwaway_venv(scratch, label)
+    pip = bin_dir / "pip"
+    brain = bin_dir / "brain"
+    _poll(lambda: _run([str(pip), "install", "--quiet", *index_args,
+                        f"brainiac-cli=={version}"], timeout=1200),
+          what=f"pip install from {label}")
     out = _need(_run([str(brain), "--version"]), "brain --version").stdout.strip()
     if version not in out:
         raise PublishError(f"{label} artifact prints {out!r}, expected {version}")
@@ -458,8 +510,12 @@ def _clean_venv_check(version: str, index_args: list[str], scratch: Path, label:
 
 def phase_testpypi(artifacts: list[Path], version: str, scratch: Path) -> str:
     """Upload to TestPyPI (operator's own twine auth), verify from a clean venv."""
-    proc = _run([sys.executable, "-m", "twine", "upload", "--repository", "testpypi",
-                 *[str(p) for p in artifacts]], interactive=True)
+    # --skip-existing makes a resume safe: an upload that succeeded but whose
+    # verification lagged must not turn into a hard "file already exists" on the
+    # retry (an index version is permanent; re-uploading is not an option).
+    proc = _run([sys.executable, "-m", "twine", "upload", "--skip-existing",
+                 "--repository", "testpypi", *[str(p) for p in artifacts]],
+                interactive=True)
     _need(proc, "twine upload to testpypi")
     return _clean_venv_check(
         version,
@@ -471,20 +527,69 @@ def phase_testpypi(artifacts: list[Path], version: str, scratch: Path) -> str:
 def phase_pypi(artifacts: list[Path], version: str, scratch: Path) -> str:
     """Upload to production PyPI, then verify the served artifact is
     byte-identical to what was built (sha256 over pip download)."""
-    proc = _run([sys.executable, "-m", "twine", "upload", *[str(p) for p in artifacts]],
-                interactive=True)
+    proc = _run([sys.executable, "-m", "twine", "upload", "--skip-existing",
+                 *[str(p) for p in artifacts]], interactive=True)
     _need(proc, "twine upload to pypi")
     dl = scratch / "pypi-download"
     dl.mkdir(exist_ok=True)
-    _need(_run([sys.executable, "-m", "pip", "download", "--no-deps", "-d", str(dl),
-                f"brainiac-cli=={version}"], timeout=600), "pip download from pypi")
-    local = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in artifacts}
-    served = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in dl.glob("brainiac_cli-*")}
-    for name, digest in served.items():
-        if name in local and local[name] != digest:
-            raise PublishError(f"PyPI serves a DIFFERENT {name} than was built — investigate immediately")
-    checked = ", ".join(sorted(served)) or "(none downloadable yet)"
-    return f"sha256 verified against built artifacts: {checked}"
+    pip = _throwaway_venv(scratch, "pypi-verify") / "pip"
+    _poll(lambda: _run([str(pip), "download", "--no-deps", "-d", str(dl),
+                        f"brainiac-cli=={version}"], timeout=600),
+          what="pip download from pypi")
+    local = {p.name: p for p in artifacts}
+    served_names = []
+    for p in sorted(dl.glob("brainiac_cli-*")):
+        mine = local.get(p.name)
+        if mine is None:
+            continue
+        served_names.append(p.name)
+        if hashlib.sha256(p.read_bytes()).hexdigest() == \
+           hashlib.sha256(mine.read_bytes()).hexdigest():
+            continue
+        # Container bytes differing is EXPECTED across runs: neither wheels nor
+        # sdists are reproducible by default (zip/tar entries carry mtimes and an
+        # ordering), so a resumed run that rebuilt its artifacts always sees a
+        # different archive hash than the one uploaded earlier. Comparing archive
+        # bytes therefore cried tampering on a healthy 0.19.19 release. What
+        # actually matters is whether the CODE differs, so compare member by
+        # member -- which still catches a genuinely altered artifact.
+        diff = _archive_content_diff(mine, p)
+        if diff:
+            raise PublishError(
+                f"PyPI serves a {p.name} whose CONTENTS differ from what was built "
+                f"-- investigate immediately before publishing anything else.\n"
+                f"differing members: {', '.join(diff[:20])}")
+    checked = ", ".join(served_names) or "(none downloadable yet)"
+    return f"contents verified member-by-member against built artifacts: {checked}"
+
+
+def _archive_members(path: Path) -> dict[str, str]:
+    """{member name: sha256 of its bytes} for a wheel/zip or an sdist tarball.
+    Names are compared without their leading top-level directory so a rebuild's
+    identical payload matches regardless of archive-level packaging noise."""
+    out: dict[str, str] = {}
+    if path.suffix == ".whl" or path.suffix == ".zip":
+        with zipfile.ZipFile(path) as z:
+            for info in z.infolist():
+                if not info.is_dir():
+                    out[info.filename] = hashlib.sha256(z.read(info.filename)).hexdigest()
+        return out
+    with tarfile.open(path) as tar:
+        for member in tar.getmembers():
+            if not member.isfile():
+                continue
+            fh = tar.extractfile(member)
+            if fh is None:
+                continue
+            rel = member.name.split("/", 1)[-1]
+            out[rel] = hashlib.sha256(fh.read()).hexdigest()
+    return out
+
+
+def _archive_content_diff(built: Path, served: Path) -> list[str]:
+    """Member names whose CONTENTS differ (or exist on only one side)."""
+    a, b = _archive_members(built), _archive_members(served)
+    return sorted(set(a) ^ set(b)) + sorted(k for k in set(a) & set(b) if a[k] != b[k])
 
 
 def phase_npm(export_dir: Path, version: str, scratch: Path,
@@ -524,21 +629,10 @@ def phase_npm(export_dir: Path, version: str, scratch: Path,
         hint = f"\nAuthorization URL npm offered: {url.group(0)}" if url else ""
         raise PublishError(f"npm publish failed (exit {published.returncode})\n"
                            f"{published.stdout}{hint}")
-    # The registry's read path lags its write path by seconds (CDN). A single
-    # immediate `npm view` 404s on a publish that DID succeed — which then reads
-    # as a failed release and invites a re-publish of a version already taken.
-    # Poll instead, and only call it a failure once it stays missing.
-    deadline = time.monotonic() + 180
-    while True:
-        view = _run(["npm", "view", f"brainiac-install@{version}", "version"])
-        if view.returncode == 0 and version in view.stdout:
-            break
-        if time.monotonic() > deadline:
-            raise PublishError(
-                f"npm still does not serve {version} 3 minutes after publish — "
-                f"check https://www.npmjs.com/package/brainiac-install before retrying, "
-                f"the publish itself may have succeeded\n{view.stdout}{view.stderr}")
-        time.sleep(10)
+    _poll(lambda: _run(["npm", "view", f"brainiac-install@{version}", "version"]),
+          what=f"npm view brainiac-install@{version}",
+          ok=lambda p: p.returncode == 0 and version in p.stdout,
+          seconds=180, every=10)
     return f"npm serves brainiac-install@{version}"
 
 
@@ -607,11 +701,19 @@ def phase_public_git(export_dir: Path, version: str, scratch: Path,
     return f"pushed {head[:9]} to {default_branch} + tag v{version}"
 
 
-def phase_post_verify(version: str, scratch: Path) -> str:
+def phase_post_verify(version: str, scratch: Path, *, npm_published: bool = True) -> str:
     """The consumption paths a new user actually takes, from clean environments."""
     lines = [_clean_venv_check(version, [], scratch, "pypi-final")]
     proc = _run(["gh", "api", f"repos/Autopsias/brainiac/git/refs/tags/v{version}"])
     lines.append(f"public tag v{version}: {'visible' if proc.returncode == 0 else 'NOT VISIBLE YET'}")
+    if not npm_published:
+        # Verifying a channel the operator deliberately skipped would fail the
+        # whole run over an act nobody performed -- and a red final phase on a
+        # release whose PyPI and git legs both landed reads as "the release
+        # broke". Report the gap instead; the caller already knows why.
+        lines.append(f"npx brainiac-install@{version}: SKIPPED (npm not published "
+                     f"in this run — that channel is still on its previous version)")
+        return "\n".join(lines)
     npx = _run(["npx", "--yes", f"brainiac-install@{version}", "--dry-run"], timeout=600)
     lines.append(f"npx brainiac-install@{version} --dry-run: exit {npx.returncode}")
     if npx.returncode != 0:
@@ -675,7 +777,14 @@ def main() -> int:
     try:
         print(f"publish_public: {tag} — scratch at {scratch}")
 
-        summary = phase_preflight(tag, expect_published=not do("pypi"))
+        # See phase_preflight for why this is tri-state, not a boolean.
+        if not do("pypi"):
+            pypi_expectation: bool | None = True    # resuming past the upload
+        elif args.from_phase in ("testpypi", "pypi"):
+            pypi_expectation = None                 # resuming INTO the uploads
+        else:
+            pypi_expectation = False                # fresh run
+        summary = phase_preflight(tag, expect_published=pypi_expectation)
         ev.record("preflight", "OK", summary); verified.append(summary)
         print(f"[1/{len(PHASES)}] preflight: {summary}")
 
@@ -742,7 +851,9 @@ def main() -> int:
         else:
             print(f"[10/{len(PHASES)}] public git: skipped (--from {args.from_phase})")
 
-        summary = phase_post_verify(version, scratch)
+        # A resume that started past the npm phase never published it, so the
+        # npx path cannot exist for this version yet.
+        summary = phase_post_verify(version, scratch, npm_published=do("npm"))
         ev.record("post-verify", "OK", summary)
         print(f"[11/{len(PHASES)}] post-verify:\n{summary}")
 

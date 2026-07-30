@@ -7,6 +7,99 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.19.20] — 2026-07-30
+### Changed
+- **chief-of-staff kernel v5.29 → v5.35 — the nightly run now proves its own
+  zero-send.** Six increments, each validated on live Outlook and then left
+  uncommitted by the sessions that produced them: count-unit + proof fix
+  (v5.30), bounded Sent proof behind a PRE gate (v5.31), PRE-acquisition repair
+  (v5.32), safety-freeze outcome repair (v5.33), a deterministic OWA scanner
+  shared by both browser harnesses — DOM item-count transcription, independent
+  Focused/Other scans, viewport-clamped real-container scrolling, terminal-proof
+  stagnation check, replacing accessibility-snapshot reads and a hard-coded
+  scroll coordinate (v5.34) — and a native Sent item-ID scanner keyed on the
+  role-option DOM id rather than `data-convid`, newest-first verified, bounded
+  to a 24-hour prefix and fail-closed on incomplete proof (v5.35). The shared
+  scanner ships as `tools/cos_browser_scan.mjs`, registered in
+  ENGINE_ASSET_FILES so the wheel mirror stays in lockstep. No classification,
+  assignment, or mutation-authority change in any of the six.
+
+### Fixed
+- **`brain search` on Windows crashed printing its own results (the open exit-3
+  root cause, now found).** `_emit` writes JSON with `ensure_ascii=False`, and a
+  Windows console/pipe hands Python a cp1252 encoder — so any note carrying a
+  character outside Latin-1 (`∈` in the fixture vault's `classification-gate`
+  note) raised `UnicodeEncodeError` *while writing stdout*, which main()'s
+  top-level guard converted into a bare exit 3. `main()` now reconfigures
+  stdout/stderr to UTF-8 before doing anything else. This is NOT
+  bundle-specific, contrary to the note below: the frozen bundle only exposed it
+  first because the CI step pipes stdout, and the 0.19.18 pilot install survived
+  by running under PowerShell 7 (UTF-8 by default) against ASCII hits. A real
+  user on `cmd.exe` or PowerShell 5.1 hits it on any `--json` read of a vault
+  with a non-Latin-1 character. Reproduced locally by giving stdout a cp1252
+  encoder — `tests/test_windows_portability.py::test_json_output_survives_a_cp1252_stdout`
+  fails with `assert 3 == 0` against the pre-fix code.
+- **The `supply-chain` gate had never run — not once.** `python -m pip install
+  --require-hashes=false …` passes a value to a boolean flag, so pip exited 2 on
+  every invocation since the workflow was written, taking the CVE audit, the
+  lock-drift check and the SBOM down with it (the SBOM step's `if: always()`
+  then reported the more visible `cyclonedx-py: command not found`). Flag
+  dropped. Its lock-drift check was also wrong in a way that would have failed
+  the moment it started running: `uv pip compile` only preserves existing pins
+  when the output file already exists, so compiling into a bare `/tmp` path
+  re-resolved everything to LATEST and flagged nine upstream releases (mcp
+  1.28.1 → 2.0.0 among them) as "stale lock". The check file is now seeded from
+  `requirements.lock` and the diff ignores uv's `-o`-path header, so it detects
+  real pyproject drift only. Verified locally: seeded compile is byte-identical
+  to the committed lock, and `pip-audit -r requirements.lock --no-deps` reports
+  no known vulnerabilities.
+- **The restored Windows CI signal caught a real defect on its first run, and
+  the step reported it uselessly.** 0.19.19's trigger fix produced the first
+  `main` run since 2026-07-10 (run 30505223063): `brain rebuild` succeeded on a
+  real Windows runner — the 0.19.18 `fcntl`/fsync fixes proving themselves — and
+  then `brain search --json` exited 3 from the FROZEN one-dir bundle. The step
+  captured the CLI's own error into an unprinted `$out` and died under `set -e`,
+  so the signal said "exit code 3" and nothing else. It now prints whatever came
+  back before failing. Scope: the frozen PyInstaller bundle only; the `pip
+  install` path is verified working on real Windows (the 0.19.18 pilot install
+  returned classified search hits). Root cause found — see the cp1252 entry
+  above; the "bundle only" scope was wrong.
+- **A red bundle step hid the installer check.** The new PowerShell 5.1
+  `install.ps1` job step never ran, because the bundle smoke failed first and
+  nothing marked the step independent. It is now `if: always()` — it exercises
+  the PyPI install path and has no dependency on the frozen build.
+- **`publish_public.py`: four more faults, all found by publishing 0.19.19 with
+  it.** Each reported a COMPLETED act as a failure — the dangerous direction,
+  because the obvious next move is to re-publish a permanent version.
+  - **The artifact-integrity check cried tampering on a healthy release.** It
+    compared archive bytes, but neither wheels nor sdists are reproducible by
+    default (entries carry mtimes and an ordering), so a resumed run that rebuilt
+    its artifacts always saw a different hash than the upload it was verifying.
+    Checked by hand on 0.19.19: all 96 wheel members were byte-identical to a
+    rebuild from the tag. It now compares member by member, and still fails
+    loudly on genuinely altered contents (tested against a modified member and an
+    added one).
+  - **Index read-after-write lag read as a failed release.** Every index and
+    registry serves reads from a cache that trails its own upload, so the first
+    check after a successful upload can 404. One `_poll` helper now backs the
+    TestPyPI install, the PyPI download and the npm view; twine uploads carry
+    `--skip-existing` so a resume cannot die on "file already exists".
+  - **`sys.executable -m pip` is not always available.** Under `uv run` the
+    launcher has no pip, so verification failed with "No module named pip" AFTER
+    a successful PyPI upload — and the new retry loop dutifully repeated it for
+    five minutes. Every pip call now comes from a throwaway venv, which ensurepip
+    always populates.
+  - **The final phase failed over a channel the operator had skipped.** With npm
+    deliberately deferred, post-verify still probed `npx brainiac-install@<ver>`,
+    which cannot resolve — so a release whose PyPI and public-git legs both landed
+    ended on a red phase. It now reports the gap and says which channel is still
+    on its previous version.
+  - **The resume guard was boolean where the question has three answers.**
+    `--from pypi` resumes INTO the upload phases, where the version may or may not
+    already be published and neither state is evidence of a problem; `--from npm`
+    resumes PAST them, where absence is the anomaly. One flag got both directions
+    wrong in turn.
+
 ## [0.19.19] — 2026-07-30
 ### Fixed
 - **Windows install, second pass: four bugs found by an enterprise pilot install

@@ -47,6 +47,39 @@ because a long rebuild holds it. It is **not a failure**: it exits 0, refreshes
 let one 90-minute rebuild manufacture an hour of "failures" and fire a spurious
 escalation.
 
+## Retrieval ranking
+
+**Fusion leg** — one ranked candidate list contributing `w / (rrf_k + rank)` into the RRF
+sum. There are two organic legs (lexical/BM25 and dense/vector); ADR 0008 adds a third,
+`exact`, for alias and title matches. A leg contributes in **rank space** — it never reasons
+about score magnitude, which is the whole point of RRF.
+
+**Prior** vs **boost** — a *prior* is a post-fusion multiplicative factor **≤1.0** (the
+zone-authority prior, the staleness penalty). It can only ever damp. The fusion-scale
+invariant is that the fused score never exceeds the RRF ceiling, so a **boost** (>1.0) is
+not a smaller version of a prior — it is a different mechanism that breaks the invariant.
+Wanting a note to rank *higher* is therefore an argument for a new fusion leg, never for a
+post-fusion multiplier. (This distinction is exactly the design error `/plan-harden` caught
+in the 2026-07-28 retrieval plan, which specified a "bounded post-RRF multiplier".)
+
+**Alias** — an *alternate label*: a string that denotes the same entity as the note's title
+with 100% equivalence (an acronym, a spelling variant, a former name). It is NOT a synonym;
+context-dependent near-meanings do not earn exact-match treatment. An alias may be owned by
+more than one note (a `supersede` leaves the retired note holding its aliases), so
+"the note for this alias" is a **tiebreak**, not a lookup.
+
+**evidence** — why a hit matched (which layer fired). **create_safety** — how far an agent
+may trust that the note already exists: `exists` requires an *unambiguous* match (uniquely
+owned alias, exact title, exact lexical); an ambiguous match is at most `probable`. The
+distinction matters because `create_safety` is the field a capture agent reads to decide
+*not* to write a duplicate note.
+
+**Gate** vs **signal** — the golden set + `eval/gate.py` non-inferiority test is the **gate**:
+it blocks a ranking change. Real-traffic replay is a **signal**: it runs against a corpus
+that has moved since capture, so it can report risk but must not block. A stability number
+over a mutated vault cannot separate ranking drift from vault drift without a per-query
+vault fingerprint.
+
 ## Failure surfacing
 
 **Pull surface** — a surface the operator has to go and look at: `brain doctor`,

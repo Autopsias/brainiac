@@ -29,6 +29,7 @@ and the gate never cries wolf. Unknown row shapes are ignored, not guessed.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from collections import defaultdict
@@ -147,15 +148,63 @@ def shortfalls(report: dict) -> list[tuple[str, str, int, int]]:
     ]
 
 
+def append_metric(ops_dir: Path, row: dict) -> str:
+    """Append once by (date, run); refuse a different row for the same key."""
+    if not isinstance(row, dict) or not row.get("date") or row.get("run") is None:
+        raise ValueError("metrics row requires non-empty `date` and `run`")
+    row = {**row, "run": str(row["run"])}
+    path = ops_dir / "_cos_metrics.jsonl"
+    for existing in _rows(path) if path.exists() else []:
+        if (existing.get("date"), str(existing.get("run"))) != (
+                row["date"], row["run"]):
+            continue
+        if {**existing, "run": str(existing["run"])} == row:
+            return "unchanged"
+        raise ValueError(
+            f"conflicting metrics row for {(row['date'], row['run'])!r}")
+
+    prior = path.read_text(encoding="utf-8") if path.exists() else ""
+    tmp = path.with_suffix(".jsonl.tmp")
+    tmp.write_text(
+        prior.rstrip("\n") + ("\n" if prior else "")
+        + json.dumps(row, separators=(",", ":"), ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(tmp, path)
+    return "appended"
+
+
 def main(argv: list[str]) -> int:
-    args = [a for a in argv[1:] if not a.startswith("--")]
+    append_path = None
+    if "--append" in argv:
+        i = argv.index("--append")
+        if i + 1 >= len(argv):
+            print("usage: cos_reconcile_metrics.py --append <row.json> <cos-ops dir>",
+                  file=sys.stderr)
+            return 2
+        append_path = Path(argv[i + 1]).expanduser().resolve()
+    args = [
+        a for i, a in enumerate(argv[1:], 1)
+        if not a.startswith("--")
+        and not (append_path is not None and i == argv.index("--append") + 1)
+    ]
     if not args:
-        print("usage: cos_reconcile_metrics.py [--json] <cos-ops dir>", file=sys.stderr)
+        print("usage: cos_reconcile_metrics.py [--json] [--append <row.json>] "
+              "<cos-ops dir>", file=sys.stderr)
         return 2
     ops = Path(args[0]).expanduser().resolve()
     if not ops.is_dir():
         print(f"FAIL: no cos-ops dir at {ops}", file=sys.stderr)
         return 2
+    if append_path is not None:
+        try:
+            row = json.loads(append_path.read_text(encoding="utf-8"))
+            result = append_metric(ops, row)
+        except (FileNotFoundError, json.JSONDecodeError, ValueError) as exc:
+            print(f"FAIL: {exc}", file=sys.stderr)
+            return 1
+        print(f"{result}: metrics row {(row['date'], str(row['run']))!r}")
+        return 0
     report = reconcile(ops)
     if "--json" in argv:
         print(json.dumps(report, indent=2))

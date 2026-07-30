@@ -87,8 +87,21 @@ jobs:
           echo "== rebuild index over fixture vault (offline HashEmbedder) =="
           "$BIN" rebuild
           echo "== search + assert sourced JSON =="
-          out=$("$BIN" search "arctic embed retrieval benchmark" --json -k 5)
+          # Capture without `set -e` killing the step first, and ALWAYS print what
+          # came back. The previous form (`out=$(...)` under set -e) aborted on a
+          # non-zero search and printed nothing at all, so the 2026-07-30 Windows
+          # failure surfaced as a bare "exit code 3" with the CLI's own error
+          # message swallowed inside the unprinted capture -- a signal that says
+          # something broke but not what.
+          set +e
+          out=$("$BIN" search "arctic embed retrieval benchmark" --json -k 5 2>&1)
+          rc=$?
+          set -e
           printf '%s\n' "$out"
+          if [ "$rc" -ne 0 ]; then
+            echo "search exited $rc (output above is the CLI's own error)" >&2
+            exit "$rc"
+          fi
           printf '%s' "$out" | python -c "import sys,json; \
             d=json.load(sys.stdin); \
             assert 'results' in d and 'egress' in d, d; \
@@ -124,8 +137,12 @@ jobs:
       # quotes inside native-command arguments (0.19.19: the PATH probe died with
       # NameError and printed a directory that does not exist). `shell: powershell`
       # is 5.1 specifically, so this step sees what the user sees.
+      # `always()`: this checks the PyPI install path, which is independent of the
+      # frozen-bundle steps above. Without it, the 2026-07-30 bundle-smoke failure
+      # skipped this step entirely -- so the installer signal this release exists
+      # to restore would have stayed dark behind an unrelated red step.
       - name: install.ps1 parses + runs under Windows PowerShell 5.1
-        if: runner.os == 'Windows'
+        if: always() && runner.os == 'Windows'
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'

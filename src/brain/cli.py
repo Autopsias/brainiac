@@ -1306,8 +1306,30 @@ VM_ALLOWED = frozenset({
 })
 
 
+def _utf8_stdio() -> None:
+    """Emit UTF-8 regardless of the platform's locale encoding.
+
+    A Windows console/pipe defaults to cp1252, and `_emit` writes JSON with
+    ``ensure_ascii=False`` deliberately (readable non-ASCII). Any note carrying
+    a character outside Latin-1 therefore raised UnicodeEncodeError *while
+    printing* -- caught by main()'s guard below and returned as a bare exit 3.
+    That is the 2026-07-30 distribution-matrix Windows failure, and the same
+    crash for a real Windows user searching an em-dash-free-but-∈-carrying
+    vault. The payload is fine; the stream is what has to change.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:  # StringIO and other non-TextIOWrapper stand-ins
+            continue
+        try:
+            reconfigure(encoding="utf-8")
+        except (ValueError, OSError):  # detached/closed stream — nothing to do
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
     global _SUPPRESS_ELEVATION_HINT
+    _utf8_stdio()
     try:
         return _main(argv)
     except Exception as exc:  # H-4: top-level guard -- never a raw traceback

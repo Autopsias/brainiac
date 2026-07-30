@@ -1,5 +1,8 @@
 # Runtime artifacts — derived cache, rebuildable from vault/ at any time.
 vault/.brain/
+# Per-vault runtime dirs created by a test run against a fixture vault
+# (writer.lock and friends) — never fixture content, never committed.
+tests/fixtures/**/.brain/
 # ADR-0003 Ruling 1: the ingestion drop zone (visible, unlike .brain/) —
 # originals + extracted sources belong in raw/ once promoted; the inbox
 # itself (and its _processing/_quarantine/_duplicate scratch dirs) is never

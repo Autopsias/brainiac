@@ -28,10 +28,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 
 PROJECTION_NAME = "calibration-pin.json"
+SKILL_PATH = (
+    Path(__file__).resolve().parents[1]
+    / ".claude" / "skills" / "chief-of-staff" / "SKILL.md"
+)
 
 
 def canonical_path(vault: Path) -> Path:
@@ -40,6 +45,18 @@ def canonical_path(vault: Path) -> Path:
 
 def projection_path(vault: Path) -> Path:
     return vault / ".brain" / "cos" / "shared" / PROJECTION_NAME
+
+
+def skill_version(path: Path | None = None) -> str:
+    path = path or SKILL_PATH
+    match = re.search(
+        r'^\s*kernel_version:\s*["\']([^"\']+)["\']\s*$',
+        path.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    if not match:
+        raise ValueError(f"no metadata.kernel_version in {path}")
+    return match.group(1)
 
 
 def build(vault: Path) -> dict:
@@ -73,7 +90,19 @@ def main(argv: list[str]) -> int:
         print(f"FAIL: no calibration record at {src}", file=sys.stderr)
         return 1
 
-    want = build(vault)
+    try:
+        want = build(vault)
+        active_version = skill_version()
+    except (KeyError, json.JSONDecodeError, ValueError) as exc:
+        print(f"FAIL: malformed calibration/skill version: {exc}", file=sys.stderr)
+        return 1
+    if want["bundle_version"] != active_version:
+        print(
+            f"STALE: canonical calibration is {want['bundle_version']!r}, "
+            f"active skill is {active_version!r} — re-stamp canonical first",
+            file=sys.stderr,
+        )
+        return 1
     dst = projection_path(vault)
 
     if check:
@@ -85,7 +114,10 @@ def main(argv: list[str]) -> int:
             print(f"STALE: projection is {have.get('bundle_version')!r}, "
                   f"canonical is {want['bundle_version']!r} — re-run without --check")
             return 1
-        print(f"OK: projection matches canonical ({want['bundle_version']})")
+        print(
+            f"OK: projection, canonical, and active skill match "
+            f"({want['bundle_version']})"
+        )
         return 0
 
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -105,15 +137,17 @@ def _selfcheck() -> None:
         v = Path(td)
         c = canonical_path(v)
         c.parent.mkdir(parents=True)
-        c.write_text(json.dumps({"classifier": {"bundle_version": "chief-of-staff v1.0"}}))
+        version = skill_version()
+        c.write_text(json.dumps({"classifier": {"bundle_version": version}}))
         assert main(["x", str(v)]) == 0
         assert main(["x", "--check", str(v)]) == 0
         # re-stamp the canonical WITHOUT republishing -> must be detected
-        c.write_text(json.dumps({"classifier": {"bundle_version": "chief-of-staff v2.0"}}))
+        c.write_text(json.dumps({"classifier": {"bundle_version": version + "-stale"}}))
         assert main(["x", "--check", str(v)]) == 1, "stale projection went undetected"
+        c.write_text(json.dumps({"classifier": {"bundle_version": version}}))
         assert main(["x", str(v)]) == 0
         assert main(["x", "--check", str(v)]) == 0
-        assert json.loads(projection_path(v).read_text())["bundle_version"] == "chief-of-staff v2.0"
+        assert json.loads(projection_path(v).read_text())["bundle_version"] == version
     print("selfcheck OK")
 
 

@@ -30,17 +30,30 @@ jobs:
           python-version: "3.12"
 
       - name: Install pip-audit + cyclonedx
-        run: python -m pip install --require-hashes=false pip-audit cyclonedx-bom
+        # `--require-hashes` is a boolean flag; `--require-hashes=false` made pip
+        # exit 2 ("option does not take a value") on EVERY run of this workflow,
+        # so the whole gate — CVE audit, lock-drift check, SBOM — never once
+        # executed on the export repo (first noticed 2026-07-30).
+        run: python -m pip install pip-audit cyclonedx-bom
 
       - name: Fail if the lock is stale vs pyproject
         # Regenerate the lock and diff — a drifted lock (a dep added to
         # pyproject but not re-locked) fails the gate so the pinned set can
         # never silently lag the declared deps.
+        #
+        # SEEDING the check file with the current lock is load-bearing: uv (like
+        # pip-compile) only preserves existing pins when the output file already
+        # exists. Compiling into an empty /tmp path re-resolves everything to
+        # LATEST, so the gate would fail on any upstream release — mcp 1.28.1 ->
+        # 2.0.0 and eight others, none of them pyproject drift. Comment lines are
+        # excluded from the diff because uv writes the -o path into the header.
         run: |
           python -m pip install uv
+          cp requirements.lock /tmp/requirements.check.lock
           uv pip compile pyproject.toml --extra mcp --extra ingest --extra embed \
             --generate-hashes -o /tmp/requirements.check.lock
-          if ! diff -q requirements.lock /tmp/requirements.check.lock >/dev/null; then
+          if ! diff <(grep -v '^#' requirements.lock) \
+                    <(grep -v '^#' /tmp/requirements.check.lock) >/dev/null; then
             echo "::error::requirements.lock is stale — re-run: make lock"
             diff requirements.lock /tmp/requirements.check.lock || true
             exit 1

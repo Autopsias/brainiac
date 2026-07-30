@@ -486,7 +486,8 @@ metadata:
   # `tools/cos_contract.py` renders the verdict from the enumeration record, THIS
   # RUN's ledgers (`--run-id`, or yesterday's ledgers satisfy today's guard) and
   # a FRESH post-run re-enumeration; it distrusts all three (bucket sum,
-  # residency, transcribed OWA folder count, unknown convids) because the run
+  # residency, independently transcribed OWA message-item count, unknown
+  # convids) because the run
   # being judged authored them. The metrics row records what the checker
   # returned and never a hand-composed verdict; new fields `run_profile` +
   # `outcome_contract`; new self-eval E28 (N/28); known-positive fixtures in
@@ -501,7 +502,37 @@ metadata:
   # ZERO new mutation primitive, ZERO new sender class, ZERO new E-check and
   # ZERO new scheduled task — so, same as v4.6/v4.7/v5.0, the calibration
   # record must be RE-STAMPED to this version rather than re-measured.
-  kernel_version: "chief-of-staff v5.29"
+  # v5.32 is a PRE-ACQUISITION reliability repair (OC-05), measured on run 48.
+  # The run elected authenticated IAB even though it could not transcribe the
+  # required OWA Inbox message-item count, failed to fall through to Chrome,
+  # and then treated owner-driven unread/Drafts badge movement before PRE was
+  # frozen as a fatal concurrency conflict. The repair makes the folder-item
+  # count part of IAB qualification, explicitly rejects a global mailbox-idle
+  # gate, gives only internally inconsistent Inbox enumeration one bounded
+  # retry, and requires durable preflight-abort evidence if both IAB and Chrome
+  # remain insufficient. Classification and assignment rules are UNCHANGED;
+  # ZERO new mutation primitive, sender class, E-check, or scheduled task.
+  # Re-stamp the calibration record; never re-measure for this bump.
+  # v5.34 is an IAB-enumeration reliability repair (OC-07), measured on run
+  # 50. OWA exposed `Inbox - 203 items (1 unread)` in live DOM attributes while
+  # the accessibility snapshot exposed only `Inbox 1 unread`; a hard-coded
+  # scroll coordinate plus zero render delay also truncated the virtual list.
+  # The reusable DOM scanner now reads the actual attributes, scans Focused and
+  # Other separately from top to terminal, derives the scroll point from the
+  # real container, and waits for virtualization. Classification and assignment
+  # rules are UNCHANGED; ZERO new mutation primitive, sender class, E-check, or
+  # scheduled task. Re-stamp the calibration record; never re-measure.
+  # v5.35 closes the Sent-proof capability gap measured on run 54. The shared
+  # browser scanner now reads each Sent row's native role-option DOM `id`
+  # (distinct from `data-convid`, stable across a full live-page reload) plus
+  # its full timestamp title, verifies newest-first order, and stops at the
+  # existing 24-hour boundary or list end. This supplies the immutable per-item
+  # PRE/POST set the v5.31 checker already requires on both IAB and Chrome,
+  # without REST, tokens, devtools, or a weaker count proof. Classification and
+  # assignment rules are UNCHANGED; ZERO new mutation primitive, sender class,
+  # E-check, or scheduled task. Re-stamp the calibration record; never
+  # re-measure.
+  kernel_version: "chief-of-staff v5.35"
   type: scheduled-task
   cron: "0 19 * * *"  # default evening ~19:00-21:00 local (v5.3 — moved from 05:00: Mac reliably awake, Chrome + Outlook signed in at this hour, matching when the task has actually been firing; brief is still ready for the next morning). Actual launchd/Cowork reschedule is a deploy step, not a change to this file — owner-configurable
   cadence: daily
@@ -967,6 +998,50 @@ order and record the elected one as `mutation_toolset`:
    fall through either way. Electing `iab` also requires the site to be
    allowed in Settings > Browser, or an unattended run stalls on a permission
    prompt — treat a permission prompt as unavailable and fall through.
+   For a `full` run, authentication is necessary but not sufficient. Before
+   election, run a ZERO-MUTATION capability qualification: the lane must
+   enumerate stable unique IDs and advance the virtualized **Inbox** list to
+   its terminal condition AND transcribe the independently observed OWA Inbox
+   message-item count from the accessible folder-tree `title` or `aria-label`
+   (for example `Inbox - 90 items (2 unread)`). The visible unread badge is
+   never the item count. When Inbox exposes a declared conversation-set size
+   (for example `aria-setsize`), the unique conversation-ID count MUST equal
+   that size; three stagnant scans over a truncated window are not terminal
+   proof. A missing or unparseable independently transcribed OWA message-item
+   count makes the lane insufficient just as surely as an incomplete ID scan.
+   Sent uses the bounded recent-prefix proof below because its OWA folder count
+   is message-item history, not the number of rendered conversation rows.
+   Drafts is joined by conversation ID only for drafts this run created. A live
+   session whose Inbox cannot advance, expose stable IDs, reconcile its
+   conversation size, or transcribe the required item count is recorded as
+   `iab-live-but-insufficient` and MUST
+   **FALL THROUGH to 2**; it is not an authentication failure. No mailbox
+   mutation begins until the full-profile Inbox enumeration and Sent item-ID
+   baseline are complete.
+   **IAB IS THE DEFAULT ON EVERY FULL RUN (v5.31).** A prior qualification is
+   capability evidence, never a cached PRE/POST snapshot and never permission
+   to skip `iab` tonight. Drive one reusable, zero-mutation folder scanner
+   against IAB first; it emits the fresh stable-ID set, declared size, three
+   terminal stagnant scans, and final scroll state. Only an IAB scan that is
+   live-but-insufficient may select the Chrome fallback. Never construct a
+   contract snapshot from the visible viewport or browser-memory summary.
+   **USE THE SHIPPED SCANNER (v5.34).** Codex Browser and Chrome runs import
+   `tools/cos_browser_scan.mjs`; do not reimplement its mechanics in the run.
+   It reads the folder count from live DOM `title`/`aria-label` attributes, not
+   the accessibility snapshot; scans Focused and Other independently from the
+   top; and reconciles the union against the sum of the per-view declared
+   sizes. Every scroll targets the actual scroll container at a
+   viewport-clamped coordinate, then must wait for OWA virtualization to settle
+   before deciding whether the row set is stagnant. Terminal proof remains
+   actual scroll end plus three terminal stagnant scans. Chrome uses this same
+   scanner after a valid IAB fall-through; the fallback is a lane change, not a
+   different enumeration algorithm. **For Sent (v5.35), call the scanner's
+   `scanOutlookSent` export.** Its `item_id` is the native
+   `[role="option"][data-convid]` element's non-empty DOM `id` — never
+   `data-convid` — and its timestamp is the parseable full-date `span[title]`
+   on that same row. Missing either field, duplicate ids, non-newest-first
+   order, or failure to reach the 24-hour boundary/list end makes the proof
+   incomplete and stops the run before mutation.
 2. **Chrome Plugin — fallback. DRIVE YOUR OWN TAB (v5.20).** The owner's real,
    already-signed-in Chrome. **Never adopt an existing Outlook tab: OPEN A NEW
    ONE, work in it, and CLOSE it at the end of the run.** Cookies are
@@ -1045,6 +1120,94 @@ request/response contract is written to the companion + skill memory, never
 assumed from memory. The legacy `/api/v2.0` endpoints named in this file
 remain documented as **fallback probes only**; a legacy call that fails is
 not a retry loop, it is evidence to fall back to the DOM primitives.
+
+**ZERO-SEND BASELINE (v5.31).** Before Phase 1, enumerate the newest-first Sent
+prefix as `item ID + timestamp` rows, starting at a fixed `window_start` of
+`run_start - 24h`, and serialize that bounded set to
+`cos-ops/_cos_sent_baseline_<date>-run<N>.json`; a count is not proof because
+one send plus one unrelated removal has zero count delta. At reconcile,
+re-enumerate Sent with the SAME identity field and compute
+`set(post_sent_ids) - set(pre_sent_ids)`. Any new item ID is a run FAILURE.
+The bounded scan is complete when the list is sorted newest-first and reaches
+either the first row strictly older than `window_start` or the actual list end.
+Record that boundary and its timestamp; every retained item must fall between
+`window_start` and `captured_at`. **Never compare this set with the full Sent
+folder count or `aria-setsize`**: OWA can report message-item history while
+rendering conversation rows, which made 749 declared items permanently
+disagree with 738 stable rows on run 43. Cap each browser call at 20 seconds
+and checkpoint the collected rows after every ≤20 scrolls; a timeout or
+browser-runtime loss is a FAILED proof, never evidence of zero send. Keep
+baseline/post sets serialized before doing the diff, and close the run-owned
+Outlook tab in a `finally`-equivalent cleanup even when enumeration or
+reconciliation fails. For every draft created this run, also join the
+Drafts-folder item by conversation id and assert its ledger row carries
+`send_attempted: false`; the draft must still be present at run end.
+
+**OUTCOME PRE SNAPSHOT (v5.32).** Create THIS RUN's empty, run-scoped archive,
+chip, hold, and drafts ledgers before browser qualification — the per-run
+ledgers are created before browser qualification so even a preflight stop has
+an auditable zero-mutation surface. Then enumerate Inbox conversation IDs across every
+active tab/view, record `enumerated_at`, `pre_run_holds`,
+`inbox_conversation_count_before`, and the independently transcribed
+`owa_folder_item_count_before`, then serialize the PRE JSON immediately.
+This is step 0, before any category/archive/draft mutation. Browser memory is
+not the record. The elected scanner is the ONLY snapshot producer. For the
+new count schema both PRE and POST carry the same-run provenance:
+
+```json
+{
+  "browser_election": {"attempted": ["iab", "chrome-plugin"], "elected": "chrome-plugin"},
+  "scan_provenance": {"run_id": "<N>", "toolset": "chrome-plugin", "folder": "Inbox", "identity_field": "conversation_id"}
+}
+```
+
+`attempted[0]` is always `iab`; `chrome-plugin` appears only after that
+qualification fails. The POST record repeats `scan_provenance` with the same
+run id and elected toolset. `tools/cos_contract.py` refuses a new-schema
+snapshot without this proof, a stale run id, a lane mismatch, or a Chrome-only
+election.
+
+**NO GLOBAL MAILBOX-IDLE GATE (v5.32, run-48 repair).** Unread-count and
+Drafts-count changes are NOT PRE fields and never terminate or restart PRE
+acquisition. A new Inbox conversation first observed after `enumerated_at` is
+`arrived_during_run`, exactly as clause (b) specifies. A new Sent item present
+before the PRE Sent capture belongs to the baseline; only an item in
+`post_sent_ids - pre_sent_ids` can fail zero-send. Do not turn unrelated badge
+movement into a concurrency guard.
+
+**BOUNDED PRE ACQUISITION (v5.32).** Retry only evidence that is internally
+incomplete while it is being collected:
+
+1. If the Inbox scan ends with `unique_ids != list_declared_size`, fewer than
+   three terminal stagnant scans, or `scroll_at_end: false`, discard the whole
+   candidate scan and repeat it ONCE from the top on the same lane. Never merge
+   IDs or counts across attempts.
+2. A required OWA item-count attribute that remains missing or unparseable
+   after one fresh folder-tree re-render is structural insufficiency, not
+   mailbox drift. A second incomplete IAB scan falls through to Chrome in a
+   fresh run-owned tab. The Chrome lane applies the same one-retry bound.
+3. A second incomplete Chrome scan stops before mutation and writes
+   `cos-ops/_cos_preflight-abort_<date>-run<N>.json`. The record contains the
+   observed conversation IDs, declared-size probes, OWA-count probes, Sent
+   checkpoints, browser attempts, exact failure phase, and
+   `mutation_attempted: false`. It is abort evidence, never a fabricated PRE
+   record and never permission to hand-compose an outcome verdict.
+4. Once one lane produces complete evidence, freeze it: set `enumerated_at`,
+   serialize PRE, and run the deterministic preflight below. Later mailbox
+   movement is handled by the PRE/POST set formulas, not by restarting the
+   run.
+
+Immediately after serializing PRE and before any mailbox mutation, run:
+
+```
+python3 tools/cos_contract.py --pre <pre.json> --run-id <id> \
+  --profile full --preflight
+```
+
+Any non-zero exit stops the mutation lane. This is the enforcement point that
+prevents a 91-row browser scan from being serialized as a 12-row contract
+record. Sent uses the bounded recent-prefix scanner above; Drafts is a targeted
+conversation-ID join for drafts this run created.
 
 1. **dry-run** — window = read-and-in-Inbox since the last run's `window_end` (default 36 h; cap 40 substantive candidates/night). Mandatory body-reads (Pass A direct-asks → B priority senders per `overlay/people/` / ambiguous → C formal counterparties). Capture Action-context blocks (typed fields + Outlook permalinks). This nightly run IS the judgment session.
 2. **apply-marks (v4.6 — PRIORITY CHIPS replace the flat Action mark)** — executed under the **verified-batch mutation protocol** below.
@@ -2661,7 +2824,7 @@ egress action of any kind.
 **Engine health link (`brain health-report`, additive, generic — no owner content).** If `<vault>/.brain/brief/health-latest.html` exists, include one `System health: <VERDICT>` line + a `file://` link to it in the brief header — read VERDICT from the report's own leading `<!-- verdict: HEALTHY|DEGRADED|BROKEN -->` HTML comment (the contract documented in `src/brain/healthreport.py`'s module docstring), never re-derive it. If VERDICT is not `HEALTHY`, ALSO add one line at the very top of REQUIRED ACTIONS (component 5), before any other row, saying the engine's own health needs attention and pointing at the same link.
 
 Components in order:
-1. **Banner** (when degraded/late-run, AND on every PASS-WITH-ACCEPTANCE run): what was skipped/late and why, retry instruction; under an owner risk-acceptance, the one-line standing notice naming the accepted capability (Phase 0.5 step 5b) — never omitted, never softened. **(v4.6) Inbox-zero rollout status — a STANDING one-liner on every run until steady state** (operator-paced waits are push-visible, never silent): "inbox-zero rollout: awaiting name confirmation" (chip gate closed) / "first chipped night pending validation" / "chips live (night N)". **(v5.1/LAN-01) Any-sender shadow-lane counter — a further STANDING one-liner, present whenever `any_sender_lane` reads `shadow` or `live` (silent/omitted when the key is absent or OFF — nothing to report):** "inbox-zero rollout: `<kernel_version>` shadow night N/5" while the promotion bar (Phase 1.5b) is unmet, or "inbox-zero rollout: `<kernel_version>` shadow evidence complete (M mature, 0 contradicted) — promotion question pending" once it is met — `<kernel_version>` is read verbatim from this file's own frontmatter, never a hand-typed literal, so the line never goes stale across a future bump. Also here: the mutation-lease banner (holder named, or stale-lease report) and the top-of-brief OUTAGE banner when the liveness preflight failed (Phase 1). **(v5.28, OC-01) OUTCOME CONTRACT — a STANDING line on EVERY run, degraded or clean:** `OUTCOME CONTRACT: PASS|FAILED — profile <full|label-only> · enumerated N · archive:hold:drafted A:H:D · inbox X → Y · arrived M`, copied from the `outcome_contract` block Disposition step 4⅝ computed. On **FAILED** the line is followed by the failing clause ids and every unaccounted convid, and the same FAILED verdict leads REQUIRED ACTIONS (component 5) — a run whose contract failed never presents as a clean night, whatever the E-check tally says.
+1. **Banner** (when degraded/late-run, AND on every PASS-WITH-ACCEPTANCE run): what was skipped/late and why, retry instruction; under an owner risk-acceptance, the one-line standing notice naming the accepted capability (Phase 0.5 step 5b) — never omitted, never softened. **(v4.6) Inbox-zero rollout status — a STANDING one-liner on every run until steady state** (operator-paced waits are push-visible, never silent): "inbox-zero rollout: awaiting name confirmation" (chip gate closed) / "first chipped night pending validation" / "chips live (night N)". **(v5.1/LAN-01) Any-sender shadow-lane counter — a further STANDING one-liner, present whenever `any_sender_lane` reads `shadow` or `live` (silent/omitted when the key is absent or OFF — nothing to report):** "inbox-zero rollout: `<kernel_version>` shadow night N/5" while the promotion bar (Phase 1.5b) is unmet, or "inbox-zero rollout: `<kernel_version>` shadow evidence complete (M mature, 0 contradicted) — promotion question pending" once it is met — `<kernel_version>` is read verbatim from this file's own frontmatter, never a hand-typed literal, so the line never goes stale across a future bump. Also here: the mutation-lease banner (holder named, or stale-lease report) and the top-of-brief OUTAGE banner when the liveness preflight failed (Phase 1). **(v5.31, OC-01/ZS-02) OUTCOME CONTRACT — a STANDING line on EVERY run, degraded or clean:** `OUTCOME CONTRACT: PASS|FAILED — profile <full|label-only> · enumerated N · archive:hold:drafted A:H:D · conversations X → Y · OWA items U → V · arrived M`, copied from the `outcome_contract` block Disposition step 4⅝ computed. On **FAILED** the line is followed by the failing clause ids, any new Sent item IDs, and every unaccounted convid, and the same FAILED verdict leads REQUIRED ACTIONS (component 5) — a run whose contract failed never presents as a clean night, whatever the E-check tally says.
 2. **TL;DR** — ≤ 3 bullets: the day's shape, the one decision that matters, the one thing not to forget.
 3. **TODAY timeline** — meetings strip; battlecard-worthy entries anchor to their cards.
 4. **DRAFTS READY** — one row per draft: recipient, RE: subject, one-line gist, language, `Open in Outlook ↗` permalink. The owner reviews and sends by hand.
@@ -2718,9 +2881,9 @@ strip always has at least tonight's numbers even with no 7-day history yet.
 3. **Three-block report** (✅ / ⚠ / 🚧, `(none)` when empty) at the end of the companion, followed by the MANDATORY **💵 Harness OpEx (this run)** line — `model <id-or-tier> · in <N> tok · out <N> tok · est $<X.XXXX> · latency <ms> ms[ · degraded]`, or `model (none) · not metered — <reason>`.
 4. **Propagation.** Anything the owner must see or decide is propagated by (a) the brief's REQUIRED ACTIONS panel, and (b) a `brain --role vm draft-capture` note (the host signs it on its next run). Write the one-line pointer `Morning brief ready: <date> — N drafts / N actions / N meetings → cos-ops/_briefing_morning_<date>.html` into the companion.
 4½. **Harness cost metering — final write-phase act.** Append **exactly one** OpEx record to `cos-ops/_harness_opex.jsonl`: `{date, run_ts, task, model, input_tokens, output_tokens, latency_ms, est_cost_usd, degraded, notes}`. One record per run; a same-state re-run does NOT duplicate it. A run that cannot produce token counts skips the append but MUST render the §3 💵 line as `not metered — <reason>` — silence is a FAIL. This is a LOCAL file write, allowed on the E-removed path.
-4⅝. **OUTCOME CONTRACT — RUN THE CHECKER, RECORD WHAT IT RETURNS (v5.28, OC-01/OC-02).** Before the metrics row: assemble the PRE-run enumeration record (the convid set + `enumerated_at` + the pre-run hold snapshot), THIS RUN's ledgers, and a FRESH post-run re-enumeration of the Inbox, then run `tools/cos_contract.py` and carry the `outcome_contract` block it returns — verdict, reasons, counts, `capability_liveness`, `verdict_source` — into the metrics row and the brief banner VERBATIM. **The verdict is COMPUTED, never composed:** a hand-written `verdict: "PASS"` is precisely the failure this step exists to close, and the metrics row records what the checker returned and never a hand-composed verdict. Full doctrine — the enumerated set, the two run profiles, the five buckets, both guards, the provenance checks and the CLI contract — is the **§ OUTCOME CONTRACT (v5.28)** section below.
+4⅝. **OUTCOME CONTRACT — RUN THE CHECKER, RECORD WHAT IT RETURNS (v5.31, OC-01/OC-02/ZS-02).** Before the metrics row: load the PRE-run enumeration record already serialized and preflighted before Phase 1 (the convid set + `enumerated_at` + the pre-run hold snapshot + both PRE count units + bounded Sent proof), THIS RUN's ledgers, and a FRESH post-run re-enumeration of the Inbox with both POST count units and the matching Sent proof, then run `tools/cos_contract.py` and carry the `outcome_contract` block it returns — verdict, reasons, counts, `capability_liveness`, `zero_send_proof`, `verdict_source` — into the metrics row and the brief banner VERBATIM. **The verdict is COMPUTED, never composed:** a hand-written `verdict: "PASS"` is precisely the failure this step exists to close, and the metrics row records what the checker returned and never a hand-composed verdict. Full doctrine — the enumerated set, the two run profiles, the five buckets, both guards, the provenance checks and the CLI contract — is the **§ OUTCOME CONTRACT (v5.31)** section below.
 
-4¾. **METRICS ROW — LEDGER-JOINED, PER-RUN (v5.27, final write-phase act, immediately after the outcome-contract step 4⅝).** Append **exactly one** row to `cos-ops/_cos_metrics.jsonl` for THIS RUN, in the Phase-0 schema, carrying `run`. Three rules, and they are the whole fix for the under-reporting defect measured on 2026-07-21 and 2026-07-25:
+4¾. **METRICS ROW — LEDGER-JOINED, PER-RUN (v5.27, final write-phase act, immediately after the outcome-contract step 4⅝).** Append **exactly one** row to `cos-ops/_cos_metrics.jsonl` for THIS RUN, in the Phase-0 schema, carrying `run`, via `python3 tools/cos_reconcile_metrics.py --append <row.json> <vault>/cos-ops`. The helper is idempotent for an identical same `(date, run)` key and refuses a conflicting row instead of overwriting history. Three rules, and they are the whole fix for the under-reporting defect measured on 2026-07-21 and 2026-07-25:
    - **(a) COUNT FROM THE LEDGERS, NEVER FROM MEMORY.** Every mutation counter is derived by reading back the files this run actually wrote, not from the run's recollection of what it did: **`drafts_created`** = rows in THIS RUN's `_cos_drafts_ledger_*` whose status is a VERIFIED creation (`draft-saved-verified` / `draft-created` with Drafts-folder verification). **A re-verification of an EARLIER run's draft is NOT a creation** — a `same-night-draft-verification` / `existing-draft-visible` row counts ZERO, and the run that CREATED the draft is the one that reports it. **`marked`** = verified chip-write rows (`verified-marked` / `category-set-verification: verified` / `response-confirmed`); **`archived`** = verified archive rows (`verified-archived` / `response-confirmed` / a verification receipt). Write-ahead, `pending`, `held` and `verified-failed` rows never count — the same verified-only rule E5 already applies.
    - **(b) EVERY RUN THAT MUTATES APPENDS ITS OWN ROW — a sibling run's row is not yours.** A degraded/no-op run appends a zero row; a mutating run appends its counts. **A run that mutated and appended nothing is the defect itself:** on 2026-07-25 run 34 wrote a verified reply draft and 4 verified chips and appended no row, so the date read `drafts_created: 0` across runs 35/36/37; on 2026-07-21 a 00:58 degraded row reading `archived: 0` stood for a day whose ledger holds 181 verified archives.
    - **(c) TARGET-DAY LEDGER JOIN, then REPAIR.** Before writing, sum `drafts_created`/`marked`/`archived` across every EXISTING metrics row for TARGET DAY, and count the verified rows across every TARGET-DAY ledger (`_cos_drafts_ledger_*`, `_cos_chip_ledger_*`, `_cos_archive_ledger_*` — the `<date>` and `<date>-run<N>` variants both). Ledger total > reported total ⇒ a prior run of today mutated without reporting: append ONE backfill row per unreported run carrying `reconciliation: true`, `reconciles_run: <N>`, that run's ledgered counts, and `run_ts` from its ledger — then name the shortfall in the brief and the companion. **A ledgered verified draft and a zero counter must never coexist silently.** The join covers TODAY only; historical rows are evidence and are never rewritten.
@@ -2744,7 +2907,7 @@ strip always has at least tonight's numbers even with no 7-day history yet.
    ever clear, which is pure cost and crowds out repairs that would have worked.
 6. **Memory append** — on any E-check fail, repair, owner correction, surprise, or unusually effective approach: 2–3 sentences to `cos-ops/_skill_memory/chief-of-staff.md` (newest first, ACTIVE, cap 20). Clean runs append nothing. Twice-bitten → graduate the rule into the brief-format defaults.
 
-## OUTCOME CONTRACT — the run is done when the inbox says so (v5.28, OC-01/OC-02)
+## OUTCOME CONTRACT — the run is done when the inbox says so (v5.31, OC-01/OC-02/ZS-02)
 
 **Measured motivation.** Six runs scored 27/27 E-checks while archiving nothing
 for seven days. **The E-checks verify the PARTS; this contract verifies the
@@ -2780,7 +2943,55 @@ Inputs are TWO snapshots plus the ledgers: a **PRE-run snapshot** (`enumerated`
 convids + `pre_run_holds`, a convid → hold-label map) and a **POST-run
 re-enumeration**. The post-run re-enumeration MUST record the **OWA folder
 count verbatim** alongside the convid list — the transcribed number, never one
-inferred from the list length.
+inferred from the list length. Both snapshots carry
+`enumeration_complete: true` only after the virtualized-list scan reaches
+three stagnant scans with no scroll advance AND the collected unique-ID count
+equals the list-declared set size. They also carry `enumeration_evidence:
+{unique_ids, list_declared_size, stagnant_scans, scroll_at_end}`; missing,
+false, or internally inconsistent proof makes the contract FAILED.
+
+**COUNT UNITS ARE SEPARATE (v5.30).** OWA's folder badge counts MESSAGE ITEMS;
+the stable `data-convid` enumeration counts CONVERSATIONS. They are independent
+observations and MUST NOT be compared to conversation residency. The PRE record
+therefore carries `inbox_conversation_count_before` (normally
+`len(enumerated)`) plus `owa_folder_item_count_before`; the POST record carries
+`inbox_conversation_count_after` plus `owa_folder_item_count_after`. The checker
+uses only the conversation counts for residency and reports the item counts as
+independent evidence. **Before Phase 1, serialize the PRE record immediately**
+to `cos-ops/`; never leave the enumerated convid set only in browser/REPL memory.
+At reconcile, serialize every enumerated convid's bucket and every candidate
+record before invoking the checker. Empty `enumerated` / `post_run` objects are
+a run failure when the browser observed rows, never an acceptable representation
+of a count-unit mismatch.
+
+**ZERO-SEND IS A BOUNDED SET PROOF (v5.31).** New-schema `full` snapshots each
+carry `sent_zero_send`: `identity_field: item_id`, one shared ISO-8601
+`window_start` (`run_start - 24h`), ISO-8601 `captured_at`, `sort:
+newest-first`, `complete`, the coverage boundary (`older-than-window` plus its
+timestamp, or `list-end` plus null), and `items: [{item_id, timestamp}]`.
+Every retained timestamp is within the captured window. The checker computes
+`post_ids - pre_ids`; any new ID is `ZS-new-sent-item`, incomplete coverage is
+`ZS-incomplete`, and differing windows are `ZS-window-mismatch`. The Sent
+folder's lifetime badge/`aria-setsize` is deliberately absent from this proof:
+only the newest-first prefix through the time boundary can contain a send from
+this run.
+
+The capability declarations are exact profile claims, not optional summaries.
+For `run_profile: full`, the POST record contains:
+
+```json
+{
+  "capabilities": {
+    "archives": {"in_scope": true},
+    "drafts": {"in_scope": true},
+    "chip_clears": {"in_scope": true}
+  }
+}
+```
+
+For `label-only`, `archives` and `drafts` are `false`, while `chip_clears`
+remains `true`. Candidate records, including rejected candidates with an
+`exclusion_reason`, remain mandatory exactly as specified below.
 
 Every enumerated convid lands in **exactly one of FIVE buckets**: `archived` |
 `held_non_drafted` | `held_drafted` | `chipped` | `unaccounted`. WHICH buckets
@@ -2800,11 +3011,17 @@ a capability that is IN SCOPE for the declared `run_profile`. Under
 the anti-degenerate guard nor drafting/archiving liveness may be evaluated —
 evaluating them fails every correct midday run by construction.
 
-**ANTI-DEGENERATE GUARD (`full` profile ONLY).** FAILED when
+**ANTI-DEGENERATE GUARD (`full` profile ONLY).** Let `newly_held` be every
+enumerated convid absent from `pre_run_holds` whose post bucket is
+`held_non_drafted|held_drafted`. FAILED when
 `(held_non_drafted + held_drafted) > len(pre_run_holds)` **AND** `archived == 0`
-**AND** `arrived_during_run == []`. Without it, "label everything Held" yields
-zero unaccounted, verdict PASS, and zero work done — and it is strictly cheaper
-for the run than deciding.
+**AND** `arrived_during_run == []` **AND** at least one `newly_held` convid has
+no `archives` CANDIDATE RECORD. A reported, ineligible archive decision with a
+non-empty safety exclusion (for example a classifier-calibration pin mismatch)
+is real triage work, not degeneracy; an eligible candidate with zero output is
+still caught by capability liveness. Without the per-conversation evidence
+test, "label everything Held" yields zero unaccounted, verdict PASS, and zero
+work done — and it is strictly cheaper for the run than deciding.
 
 **CAPABILITY-LIVENESS GUARD.** The block carries a `capability_liveness` map of
 output-count/input-count pairs, and the contract is FAILED when any capability
@@ -2842,15 +3059,25 @@ All three inputs are authored by the run being judged, so a fabricated or
 truncated re-enumeration would otherwise buy a clean PASS with a
 `verdict_source` sha on it. The checker FAILs on internal inconsistency:
 
+- `inbox_conversation_count_before` not exactly equal to `len(enumerated)`;
 - a **bucket sum** that does not equal `len(enumerated)`;
 - a **RESIDENCY mismatch** — the rows still in the Inbox at run end are
   `held_non_drafted + held_drafted + chipped + unaccounted +
-  len(arrived_during_run)` and THAT must equal `inbox_count_after` (archived
-  rows LEFT the inbox, so comparing `len(post_run)` against `inbox_count_after`
-  would fail every productive run);
-- a transcribed **OWA folder count** that disagrees with `inbox_count_after`;
+  len(arrived_during_run)` and THAT must equal
+  `inbox_conversation_count_after` (archived rows LEFT the inbox, so comparing
+  `len(post_run)` against `inbox_conversation_count_after` would fail every
+  productive run);
+- missing or malformed `owa_folder_item_count_before` /
+  `owa_folder_item_count_after` evidence; these values are transcribed and
+  reported, but never equated with the conversation counts;
 - a convid in `post_run` absent from `enumerated` AND from
-  `arrived_during_run`.
+  `arrived_during_run`;
+- a candidate `convid` absent from the PRE enumerated set, or a duplicate
+  `(convid, capability)` candidate record;
+- missing/false `enumeration_complete: true` or inconsistent
+  `enumeration_evidence` on either new-schema snapshot; the evidence certifies
+  the terminal condition of three stagnant scans with no scroll advance and
+  reconciles collected unique IDs to the list-declared set size.
 
 ### The checker — `tools/cos_contract.py`
 
@@ -2917,7 +3144,7 @@ is proven able to FAIL before it is trusted (known-positive fixtures:
 
 - **E27** · Mail-triage invocation tiering integrity (v5.6): **(a)** exactly ONE tier applied this run and the companion/banner names which (`delegated` | `standalone` | `degraded`) — a run with no tier record is a FAIL; **(b)** tier = `delegated` only when a triage skill was actually invoked (Skill tool call, or its installed SKILL.md read and followed) — a `delegated` record with no invocation evidence is a FAIL; **(c)** tier = `standalone` was entered ONLY when no triage skill was installed AND the ZERO-MUTATION LIVENESS PREFLIGHT succeeded THIS run — the probe result used for the tier decision IS the same probe Phase 1 already runs and logs before Phase 1.5/any mutation, never a second bespoke probe invented for this gate; a `standalone` record with no logged liveness-preflight PASS, or backed by any probe not already documented elsewhere in this run's artefacts, is a FAIL; **(d)** under `standalone`, this run's E1/E5/E8 state-file reconciliation resolved against COS's OWN ledgers (`cos-ops/_cos_archive_ledger_<date>.jsonl`, `cos-ops/_cos_chip_ledger_<date>.jsonl`, the Phase 1.5 verdict ledger) as the standalone state of record — a `standalone` run whose E1/E5/E8 pass cites an external triage-skill state file, or finds none at all, is a FAIL; **(e)** under `standalone`, every explicitly-restated safety rule held with ZERO weakening relative to the `delegated` tier — Inbox-only, never-unread, never-delete, never-send, the P0/P1/P2 taxonomy, capture-verify-before-archive, rule 11, rule 12, the mutation lease, the liveness preflight, the verified-batch protocol, the undo ledger's full field set, the seven v3.0 guard conditions, the chip gate, and every blast-radius floor — all evaluated by the SAME checks that already gate `delegated` runs (E1/E11/E12/E14/E15/E17/E19); a `standalone` run that skipped, loosened, or produced a materially different result on any of those checks than a `delegated` run would is a FAIL; **(f)** tier = `degraded` correctly made ZERO marks/archives — any mutation ledgered under a `degraded` tier is an automatic FAIL, not a repair-and-continue — `read` · **action_required**.
 
-- **E28** · Outcome-contract integrity (v5.28, OC-01/OC-02): the `outcome_contract` block EXISTS in THIS RUN's metrics row AND its recorded `verdict` EQUALS what `tools/cos_contract.py` computes from the SAME three inputs (the enumeration record, THIS RUN's ledgers, and the post-run re-enumeration) — **evaluation is not optional**: a run that skipped the checker, or wrote no block, FAILs this check even at 27/27 on every other one, and a recorded verdict the checker does not reproduce is a FAIL, never a formatting nit. The assertion is over the **ENUMERATED SET**, never a live inbox count, so it can never disagree with clause (a) the way a count-based check would. `run_profile` is present and is the profile the checker was actually run under — a mismatch is a FAIL. **A FAILED verdict is REPORTED, never repaired away:** it stands in the metrics row, the brief header and the ⚠ block; re-running the checker against a friendlier input set (a re-typed re-enumeration, a dropped candidate record, a widened `--run-id`) is itself a FAIL — `script` · **action_required**.
+- **E28** · Outcome-contract integrity (v5.31, OC-01/OC-02/ZS-02): the `outcome_contract` block EXISTS in THIS RUN's metrics row AND its recorded `verdict` EQUALS what `tools/cos_contract.py` computes from the SAME three inputs (the preflighted enumeration + bounded Sent baseline, THIS RUN's ledgers, and the post-run Inbox + bounded Sent proof) — **evaluation is not optional**: a run that skipped the PRE preflight or final checker, wrote no block, omitted `zero_send_proof`, or wrote a verdict the checker does not reproduce FAILs even at 27/27 on every other check. The assertion is over the **ENUMERATED SET**, never a live inbox count, and zero-send is over the shared recent Sent window, never the lifetime folder count. `run_profile` is present and is the profile the checker was actually run under — a mismatch is a FAIL. **A FAILED verdict is REPORTED, never repaired away:** it stands in the metrics row, the brief header and the ⚠ block; re-running the checker against a friendlier input set (a re-typed re-enumeration, a dropped candidate record, a widened `--run-id`) is itself a FAIL — `script` · **action_required**.
 
 🧪 block (after the three disposition blocks, in the companion) — `## 🧪 Run-integrity — E-checks (N/28 passed, R repair rounds)`, one line per check with PASS/FAIL→repaired evidence, `all passed, 0 repairs` when clean; N/A entries explicit and scoped.
 
@@ -3109,6 +3336,12 @@ time and stays suppressed **until occurrences at least DOUBLE**, so the
 
 - **v5.28 outcome contract (OC-01/OC-02, 2026-07-26):** § OUTCOME CONTRACT — a run-level contract bound to the ENUMERATED SET (never a live inbox count), scoped by two declared run profiles (`full` nightly / `label-only` midday), with five mutually-exclusive buckets, a profile-scoped anti-degenerate guard, a capability-liveness guard whose eligible inputs are COMPUTED from per-convid candidate records (rejected ones included), and provenance checks that FAIL a fabricated or truncated re-enumeration. Rendered by `tools/cos_contract.py` — the run supplies data, the script supplies the verdict (`--run-id` scopes the ledger scan; exit 0/1/2) — recorded verbatim in the metrics row (`run_profile`, `outcome_contract`) and the brief banner; Disposition step 4⅝; self-eval E28; known-positive fixtures in `tests/test_cos_contract.py`. Measured motivation: six runs at 27/27 E-checks while archiving nothing for seven days. No new mutation primitive, no new sender class — a verification layer only.
 
+- **v5.30 count-unit + proof fix (OC-03/ZS-01, 2026-07-27):** OWA folder badges count message items while the durable mailbox identity is a conversation id. The outcome contract now records `inbox_conversation_count_before/after` separately from `owa_folder_item_count_before/after`, uses only conversations for residency, serializes the PRE snapshot before browser work, pins exact capability `in_scope` declarations, and requires a bounded item-ID Sent-folder diff with cleanup on failure. Tests: `tests/test_cos_contract.py` + `tests/skills/test_chief_of_staff_fixtures.py`. No new mutation primitive or sender class.
+- **v5.31 bounded Sent proof + PRE gate (ZS-02/OC-04, 2026-07-28):** Sent zero-send proof now scans only the newest-first `run_start - 24h` prefix through an older-than-window/list-end boundary, because OWA's lifetime item count can disagree permanently with rendered conversation rows (run 43: 749 vs 738). `cos_contract.py --preflight` rejects a truncated serialized Inbox set before any mutation, the final checker computes the Sent item-ID diff itself, and ≤20-scroll checkpoints keep browser timeouts from erasing the only copy of the evidence. Tests: `tests/test_cos_contract.py`. No new mutation primitive or sender class.
+- **v5.32 PRE-acquisition repair (OC-05, 2026-07-28):** run 48 elected IAB without the required OWA item-count proof and treated Unread/Drafts badge drift as a fatal mailbox-concurrency signal. Qualification now includes the accessible folder-tree item count, missing evidence forces the mandatory Chrome fallback, only internally inconsistent Inbox enumeration gets one bounded retry, and a dual-lane failure leaves durable run-scoped abort evidence. No mutation or sender-class change.
+- **v5.33 safety-freeze outcome repair (OC-06, 2026-07-28):** the full-profile anti-degenerate guard now accepts a newly classified hold only when that same conversation carries an explicit archive-candidate decision; a safety-rejected candidate (such as a classifier-calibration pin mismatch) is legitimate triage, while an omitted decision remains `OC-degenerate` and an eligible-but-unproduced archive remains a liveness failure. This removes the false failure where correct archive freeze plus new Inbox rows made a clean full run impossible. No mutation or sender-class change.
+- **v5.34 deterministic OWA scanner (OC-07, 2026-07-28):** run 50 proved that IAB was authenticated and capable but the run read the accessibility snapshot instead of live folder DOM attributes, used a hard-coded scroll coordinate, and did not wait for OWA virtualization. The shipped `tools/cos_browser_scan.mjs` now supplies the one enumeration algorithm for IAB and Chrome: DOM item-count transcription, independent Focused/Other scans, real-container viewport-clamped scrolling, paced rendering, and actual-end plus three-stagnant-scan terminal proof. Live receipt: 203 Inbox items and 97 conversations (93 Focused + 4 Other). No classification, assignment, or mutation change.
+- **v5.35 native Sent item-ID scanner (ZS-03, 2026-07-29):** run 54 proved Inbox enumeration was complete on Chrome but the shared scanner had no Sent implementation, making full-profile zero-send proof impossible despite the live UI exposing a stable per-row DOM id and full timestamp. `tools/cos_browser_scan.mjs` now exports `scanOutlookSent`: native role-option `id` (never `data-convid`) + timestamp, newest-first verification, bounded 24-hour prefix, and fail-closed incomplete proof. Live receipt: 12/12 visible IDs survived a full page reload unchanged. No REST/token/devtools path and no contract weakening.
 - **v5.29 feedback loop (FL-01/FL-02/FL-03, 2026-07-27):** § FEEDBACK LOOP — verdict intake into `cos-ops/_cos_verdicts_<date>.jsonl` (the DURABLE STORE) delivered as DIALOGUE (the CHANNEL — never "go run a command", a standing owner correction), consumption into `cos-ops/_cos_verdict_consumption_<date>.jsonl` where every verdict yields EXACTLY ONE outcome across five classes under a deterministic first-match precedence order (t5 target-gone → t4 declined → t3 kernel-proposal → t1 calibration-edit → t2 queued), and `tools/cos_retro.py`, a pure-python miner invoked from the HOST WRAPPER of the weekly synthesis fold (`scripts/brain-synthesis.sh` — the fold's model session denies Bash) that turns three recurring patterns into ≤5 decidable owner-inbox questions, fail-soft over malformed input, `no-data` reported distinctly from `no-patterns`, idempotent across proposed/answered/declined with decline suppression until occurrences double. Tests: `tests/test_cos_retro.py`. Screen-semantics changes are NEVER applied autonomously — they leave as an engine-feedback prompt and land in the kernel repo with tests. No new mutation primitive, no new sender class, no new scheduled task — a feedback layer only.
 
 *Example deployment (documentation only): an owner at Contoso fills `overlay/brand/` with the Contoso title + accent color, `overlay/people/` with their leadership team, `overlay/keywords/` with internal codenames (e.g. a deal codename for the public counterparty Northwind), uploads their voice bundle, and schedules this task — zero edits to this file.*

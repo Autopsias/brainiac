@@ -7,6 +7,85 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.4] — 2026-08-07
+### Security
+- **Workflow files are now scanned at all.** The pre-commit semgrep hook ran
+  `p/python` + `p/secrets` only, so nothing ever looked at `.github/workflows/`.
+  Measured 2026-08-07: a probe workflow carrying `pull_request_target`, a shell
+  injection and a mutable action tag scored ZERO on the old config and three
+  findings with `p/github-actions` added. That pack is now in the hook and in a
+  new `.github/workflows/semgrep.yml` CI job.
+- **The biggest files no longer get the least coverage.** At semgrep's default
+  5s per-rule budget, 13 rules timed out on `core.py` (x3), `cli.py`,
+  `index.py`, `cos.py` and `publish_public.py` — silently, reported as clean.
+  The CI job re-runs the same packs at `--timeout 30`: 0 timeouts over 191
+  files, and it immediately surfaced one real (benign, reviewed) finding the
+  hook had never reported. See `docs/SECURITY_NOTES.md` §5, which also records
+  two `nosemgrep` placement traps.
+- **`tools/check_workflow_supply_chain.py` (new)** fails the build when a
+  workflow job holding a write permission installs an unpinned, network-fetched
+  package. `p/github-actions` does NOT cover this — verified: zero findings on
+  our own `npm-publish.yml`. Carries a `--self-test` that CI runs BEFORE
+  trusting its all-clear.
+- **npm-publish no longer fetches an unpinned npm inside the OIDC job.** The
+  job holds `id-token: write`, and `npm install -g npm@latest` would have run
+  install-time lifecycle code with that privilege. The fetch was also
+  unnecessary — `node-version: "24"` resolves to 24.19.0 with npm 11.17.0, and
+  only v24.0.x ever shipped below the required 11.5.1 — so it is replaced by a
+  version assertion that fails loudly instead.
+- **Audit drift dispositions moved OFF the VM-visible mount.** The file decides
+  whether post-signing content drift counts as EXPLAINED, and a match needs only
+  path + issue + observed hash — all known to whoever edited the note. On
+  `<vault>/.brain/` the untrusted Cowork leg could forge one and drive
+  `unexplained` to 0 while `verify-audit` still reported `ok`. It now resolves
+  through the same `proven_off_mount` helper as the COS approved queue (INT-01),
+  the attachment anchors (INT-04) and the writer lock (INT-05). An existing file
+  is carried forward once, stamped `migrated_from_mount`.
+- **Release verification no longer resolves dependencies across two indexes.**
+  `phase_testpypi` used `--index-url testpypi --extra-index-url pypi`; pip picks
+  candidates by version across every configured index, so a squatter on TestPyPI
+  could win for any unconstrained dependency and execute on the release host,
+  which holds publishing credentials. Dependencies now install from the locally
+  built wheel with PyPI as the only index, then the package is force-reinstalled
+  from TestPyPI with `--no-deps`. A guard refuses a non-PyPI index without a
+  local wheel, comparing the index HOST rather than a substring (`test.pypi.org`
+  contains `pypi.org`, which the first version of the guard accepted).
+- **COS metrics append no longer follows a symlink.** `_cos_metrics.jsonl.tmp`
+  was a predictable name and `write_text` followed a symlink planted there,
+  truncating the target before `os.replace` ran. Now `tempfile.mkstemp` —
+  random name, exclusive creation, same directory.
+- **`diagnose` no longer reveals whether a hidden note exists.** A missing id
+  answered `candidate-miss` and echoed the id back; a gated id answered
+  `withheld`. The two were distinguishable on a VM-allowed verb, so an untrusted
+  leg could probe guessed slugs for Restricted/MNPI notes. Under a cap both now
+  return identical `withheld` payloads; uncapped behaviour is unchanged.
+- **The release contamination gate now sees terms buried in identifiers.**
+  `rg -Foiw` treats `_` as a word character and a case transition as no boundary,
+  so a denylisted term joined by an underscore or inside a camelCase identifier
+  scored ZERO while present in the export. Every scan now runs a second time over
+  a copy with those boundaries rewritten. Direct and split-pass hits are counted
+  SEPARATELY — the first real run showed why: its only hit was an ordinary maths
+  word in the denylist matching a numpy keyword argument, which needs different
+  triage from a term present as written. Both still block the release.
+- **`brain doctor` no longer calls a plugin AHEAD of SSOT "current".** Only
+  `installed < ssot` counted as stale, though ADR-0004 Ruling 5 makes
+  reconciliation downgrades reachable, and the surface left stale is LLM-facing
+  skill instructions. Any skew now names a remediation.
+
+### Added
+- `BRAIN_NO_AUTO_UPDATE=1` switches off the hourly unattended engine upgrade.
+  Default off — setting nothing changes nothing. Added because the only previous
+  off-ramps were editing a shipped file the next update overwrites, or full
+  `BRAIN_MANAGED` lockdown. See `docs/adr/0005-update-versioning-ux.md`
+  "Risk acceptance", which records why unattended auto-apply is accepted, why
+  the three existing rails cannot cover a hostile update (all three run AFTER
+  the install code), and what would change the ruling.
+
+### Notes
+- Every fix above carries a test confirmed to FAIL when the fix is reverted;
+  24 new security assertions in total.
+
+
 ## [0.20.3] — 2026-08-07
 ### Added
 - **Breadth-intent routing (RTE-01)** — `AGENTS.md` §5 gains one entry-point

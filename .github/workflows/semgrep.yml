@@ -1,0 +1,85 @@
+name: semgrep
+
+# Static analysis gate (added 2026-08-07, from the Codex cloud security round).
+#
+# Semgrep already ran at commit time via .pre-commit-config.yaml, but that hook
+# had two blind spots this workflow exists to close:
+#
+#   1. WORKFLOW FILES WERE UNSCANNED. The hook ran `p/python` + `p/secrets`
+#      only, so nothing ever looked at `.github/workflows/`. Measured the same
+#      day: a probe workflow carrying `pull_request_target`, a shell injection
+#      and a mutable action tag scored ZERO on the old config.
+#   2. THE BIGGEST FILES GOT THE LEAST COVERAGE. At semgrep's default 5s
+#      per-rule timeout, 13 rules gave up on core.py (x3), cli.py, index.py,
+#      cos.py and publish_public.py -- silently, as a clean result. At
+#      --timeout 30 every one of them completes and one real (low-severity)
+#      finding appears that the hook had never reported.
+#
+# The commit hook stays at the default timeout so committing stays fast; this
+# job pays the ~3 minutes for complete coverage instead. Same packs both
+# places, so a CI finding is always reproducible locally.
+#
+# ponytail: findings are printed and fail the job, NOT uploaded as SARIF to the
+# Security tab. SARIF would need `security-events: write` on this workflow and
+# only pays off once triage volume justifies persistent dismissals. Upgrade
+# path if it does: add the permission and `--sarif -o` + upload-sarif.
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  schedule:
+    # Mondays 06:15 UTC, just after the supply-chain and CodeQL sweeps, so a
+    # newly-published rule is caught on a quiet branch too.
+    - cron: "15 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: semgrep-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install semgrep
+        # Pinned deliberately, and to the SAME version the pre-commit hook
+        # pins (.pre-commit-config.yaml `rev`), so CI and the commit hook can
+        # never disagree about what "clean" means. An unpinned install here
+        # would be the exact finding this gate exists to prevent.
+        run: python -m pip install semgrep==1.168.0 PyYAML==6.0.3
+
+      - name: Prove the checker can still fail
+        # A gate that returns "clean" because its input was empty is worse than
+        # no gate. This asserts the workflow check flags a known-bad workflow
+        # and passes a known-good one BEFORE its all-clear means anything.
+        run: python tools/check_workflow_supply_chain.py --self-test
+
+      - name: Privileged workflow jobs must not install unpinned packages
+        run: python tools/check_workflow_supply_chain.py --root .
+
+      - name: Semgrep (full tree, complete rule coverage)
+        run: |
+          set -euo pipefail
+          semgrep \
+            --config p/python \
+            --config p/secrets \
+            --config p/github-actions \
+            --timeout 30 \
+            --error \
+            --skip-unknown-extensions \
+            --exclude=.venv --exclude='.venv-*' --exclude=build --exclude=dist \
+            --exclude=node_modules --exclude=.fastembed_cache \
+            --exclude=_archive --exclude=_evidence \
+            src tools scripts .github packaging

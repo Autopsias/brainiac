@@ -3202,6 +3202,19 @@ class BrainCore:
         # `brain maintain`, an interactive session, and the test suite must NEVER
         # trigger an unattended pip upgrade / plugin reinstall of the machine —
         # so default OFF and require the explicit opt-in the scheduler provides.
+        # KILL SWITCH, checked first (2026-08-07). Unattended auto-apply is an
+        # ACCEPTED RISK, not an oversight -- see docs/adr/0005-update-versioning-ux.md
+        # "Risk acceptance" for what is being accepted and why. But an acceptance
+        # you cannot revoke is not an acceptance: `scripts/brain-brief.sh` sets
+        # BRAIN_AUTO_UPDATE=1 INLINE, so an inherited 0 cannot switch it off, and
+        # that runner is a shipped file the next update overwrites. This is the
+        # one way to turn auto-apply off without editing shipped files or
+        # enabling full BRAIN_MANAGED lockdown -- set it in the environment the
+        # scheduled task runs in (launchd plist / cron). Default off: setting
+        # nothing changes nothing.
+        if _os.environ.get("BRAIN_NO_AUTO_UPDATE", "").strip().lower() in (
+                "1", "true", "yes", "on"):
+            return {"auto_update": "disabled", "reason": "BRAIN_NO_AUTO_UPDATE set"}
         if _os.environ.get("BRAIN_AUTO_UPDATE") != "1":
             return {"auto_update": "disabled", "reason": "BRAIN_AUTO_UPDATE!=1 (scheduled-task only)"}
 

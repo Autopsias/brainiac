@@ -3,4 +3,29 @@ repos:
     rev: 'v1.168.0'
     hooks:
       - id: semgrep
-        args: ['--config', 'p/python', '--config', 'p/secrets', '--error', '--skip-unknown-extensions']
+        # p/github-actions added 2026-08-07: workflow files were previously
+        # unscanned by anything. Measured the same day -- a probe workflow with
+        # `pull_request_target` + shell injection + a mutable action tag scored
+        # ZERO on the old two-pack config and 3 findings with this pack added.
+        #
+        # This hook keeps semgrep's DEFAULT per-rule timeout (5s) so committing
+        # stays fast. That leaves partial coverage on the largest files
+        # (measured: 13 rules time out on core.py/cli.py/index.py/cos.py), which
+        # is why .github/workflows/semgrep.yml re-runs the same packs at
+        # --timeout 30 in CI. Fast here, complete there.
+        args: ['--config', 'p/python', '--config', 'p/secrets',
+               '--config', 'p/github-actions',
+               '--error', '--skip-unknown-extensions']
+
+  - repo: local
+    hooks:
+      # semgrep's p/github-actions pack does NOT cover the one workflow finding
+      # that actually landed on us (verified 2026-08-07: zero findings on our
+      # own npm-publish.yml). This local check covers that class specifically.
+      - id: workflow-supply-chain
+        name: privileged workflow jobs must not install unpinned packages
+        entry: python tools/check_workflow_supply_chain.py
+        language: python
+        additional_dependencies: ['PyYAML>=6']
+        pass_filenames: false
+        files: ^\.github/workflows/.*\.ya?ml$

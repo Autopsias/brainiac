@@ -601,10 +601,25 @@ def check_desktop_plugin_store(
         # slash-command skill); in a Cowork session /skill-creator is what
         # repackages + presents the skill for Save-and-Replace. /brainiac-update
         # is host-only (refuses --role vm) so it is NOT the Cowork fix.
-        if _compare(str(version), ssot) < 0:
+        #
+        # ANY mismatch needs action, not just `installed < ssot` (Codex cloud
+        # review, 2026-08-07). `installed > ssot` was reported as "looks current
+        # — no action needed", but ADR-0004 Ruling 5 / the CLI-plugin path
+        # explicitly handle RECONCILIATION DOWNGRADES, where an old installed
+        # plugin legitimately carries a numerically higher version than the
+        # current SSOT. The surface left stale by a false green here is the
+        # LLM-facing Cowork/Desktop skill instructions, so "newer" is not a
+        # reason to leave it alone after a security-relevant release.
+        skew = _compare(str(version), ssot)
+        if skew < 0:
             remediation = ("in a Cowork session use /skill-creator to repackage + "
                            "Save-and-Replace the stale skill(s); re-run brain doctor on "
                            "the host to confirm it took")
+        elif skew > 0:
+            remediation = (f"installed {version} is AHEAD of SSOT {ssot} — a "
+                           "reconciliation downgrade, not a current install; in a "
+                           "Cowork session use /skill-creator to repackage + "
+                           "Save-and-Replace so the shipped skill matches SSOT")
         else:
             remediation = "looks current — no action needed"
         rows.append(_row(surface, MANUAL_REQUIRED, detail, remediation=remediation,
@@ -1209,10 +1224,12 @@ def check_audit_content_drift(vault: Path) -> dict:
     files against hashes already in the log, so this row costs one vault read
     and never resolves the signing key (``verify-audit`` does that separately).
 
-    Only UNEXPLAINED drift gates. Drift a human triaged into
-    ``.brain/audit-drift-dispositions.json`` is reported in the detail and
-    subtracted from the verdict — pinned to the bytes it was ruled on, so the
-    same file changing again comes straight back as unexplained."""
+    Only UNEXPLAINED drift gates. Drift a human triaged into the disposition
+    file is reported in the detail and subtracted from the verdict — pinned to
+    the bytes it was ruled on, so the same file changing again comes straight
+    back as unexplained. That file lives in the HOST-PRIVATE app-data dir since
+    2026-08-07 (``config.audit_drift_dispositions_path``); on the old
+    ``.brain/`` path a Cowork VM could write it and zero out this very row."""
     from . import audit as _audit
     from . import config
 
@@ -1233,7 +1250,8 @@ def check_audit_content_drift(vault: Path) -> dict:
             f"{unexplained} signed note(s) changed after signing with no recorded "
             f"disposition ({explained} triaged, {total} total)",
             remediation="brain verify-audit --check-content --json  # then triage into "
-                        ".brain/audit-drift-dispositions.json or restore the note",
+                        "the host-private disposition file (brain doctor --json shows "
+                        "its path) or restore the note",
             raw={"total": total, "unexplained": unexplained})
     detail = ("no drift — every signed note matches its signed bytes" if not total
               else f"0 unexplained ({explained} triaged historical drift record(s))")

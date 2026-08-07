@@ -507,21 +507,92 @@ class AuditChain:
 # drifting AGAIN produces a different `actual_sha256`, no longer matches, and
 # comes back as unexplained. Absorbing a whole path forever is exactly the
 # failure mode this instrument exists to prevent.
+#
+# WHERE IT LIVES (changed 2026-08-07): the host-private app-data dir, NOT
+# `<vault>/.brain/`. This file decides whether tampering counts as explained,
+# and a match needs only path + issue + observed hash -- all of which whoever
+# edited the note already knows. On the old path, the Cowork VM could write it,
+# so the untrusted leg could silence the host's own tamper alarm. Pinning to
+# bytes is what stops a disposition absorbing a path forever; being off the
+# mount is what stops it being forged. Both are needed.
 DRIFT_DISPOSITIONS_FILENAME = "audit-drift-dispositions.json"
 
 
 def drift_dispositions_path(vault: Path) -> Path:
-    """Host-only triage file. Lives under ``.brain/`` (gitignored, never
-    indexed, never published to the VM snapshot)."""
+    """Host-private triage file, OFF the VM-visible mount (2026-08-07).
+
+    Raises ``config.HostPathUnsafe`` when it cannot resolve somewhere the
+    Cowork VM is unable to reach — see ``config.audit_drift_dispositions_path``
+    for why this file in particular must be out of reach."""
+    from . import config
+
+    return config.audit_drift_dispositions_path(vault)
+
+
+def legacy_drift_dispositions_path(vault: Path) -> Path:
+    """Where this file lived until 2026-08-07: on the shared mount. Read ONLY
+    by the one-time carry-forward below; nothing else may consult it again."""
     return Path(vault) / ".brain" / DRIFT_DISPOSITIONS_FILENAME
 
 
-def load_drift_dispositions(vault: Path) -> dict[str, dict]:
-    """``{path: record}`` from the triage file; ``{}`` when absent or
-    unreadable. Fails OPEN into "nothing is explained" — an unreadable
-    disposition file must never silently clear a drift count."""
+def migrate_drift_dispositions(vault: Path) -> str | None:
+    """Carry a pre-2026-08-07 triage file forward to the host-private location.
+
+    Copy, never move: the destination is the only thing read from now on, and
+    deleting the operator's historical record on their behalf is not this
+    function's call. Returns a one-line note when it acted, else ``None``.
+
+    The carried-forward records came from a VM-writable path, so the copy is
+    STAMPED (``migrated_from_mount``) rather than laundered into looking
+    host-authored. Without this, a vault with triaged historical drift would
+    report every previously-explained record as unexplained on first run after
+    the upgrade — a false tamper alarm, which is the fastest way to teach an
+    operator to ignore a real one."""
+    legacy = legacy_drift_dispositions_path(vault)
+    if not legacy.is_file():
+        return None
     try:
-        raw = json.loads(drift_dispositions_path(vault).read_text(encoding="utf-8"))
+        dest = drift_dispositions_path(vault)
+    except Exception:  # noqa: BLE001 — unsafe destination: stay fail-closed
+        return None
+    if dest.exists():
+        return None
+    try:
+        raw = json.loads(legacy.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    records = raw.get("dispositions") if isinstance(raw, dict) else raw
+    if not isinstance(records, list):
+        return None
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            dest.parent.chmod(0o700)
+        except OSError:
+            pass
+        dest.write_text(json.dumps(
+            {"dispositions": records,
+             "migrated_from_mount": legacy.as_posix()},
+            indent=2), encoding="utf-8")
+    except OSError:
+        return None
+    return (f"carried {len(records)} drift disposition(s) forward from the shared "
+            f"mount to {dest} — they were recorded where a Cowork VM could write, "
+            f"so re-check them if you have any reason to doubt that host")
+
+
+def load_drift_dispositions(vault: Path) -> dict[str, dict]:
+    """``{path: record}`` from the triage file; ``{}`` when absent, unreadable,
+    or resolvable only to a VM-visible path. Fails CLOSED into "nothing is
+    explained" — an unreadable or untrustworthy disposition file must never
+    silently clear a drift count."""
+    migrate_drift_dispositions(vault)
+    try:
+        path = drift_dispositions_path(vault)
+    except Exception:  # noqa: BLE001 — HostPathUnsafe and anything else
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
     records = raw.get("dispositions") if isinstance(raw, dict) else raw

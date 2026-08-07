@@ -94,7 +94,14 @@ def main() -> int:
         return 0
 
     body = build_body(date, seed_from_brief(vault) if a.brief else "")
+    # Reviewed false positive (docs/SECURITY_NOTES.md §5): the "taint" is
+    # `shutil.which("brain")` reading $PATH. No shell, argv list form, and
+    # anyone who can rewrite this process's $PATH can already run code as this
+    # user without going through here.
     r = subprocess.run(
+        # The rule anchors on the argv list (the taint source), so the
+        # suppression has to sit here, not above the `subprocess.run(` line.
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
         [brain_bin(), "--vault", vault, "capture", "--type", "daily",
          "--id", note_id, "--classification", a.classification],
         input=body, capture_output=True, text=True)

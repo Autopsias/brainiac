@@ -71,8 +71,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm install -g npm@latest
-          npm --version   # must be >= 11.5.1
+          # This step used to run `npm install -g npm@latest` (Codex cloud
+          # review, 2026-08-07). That is an unpinned, network-fetched package
+          # whose install-time lifecycle code would run in a job holding
+          # `id-token: write` — i.e. code that could mint an npm-trusted
+          # publishing token before the real publish ever happens.
+          #
+          # It also turned out to be unnecessary. `setup-node` with
+          # `node-version: "24"` resolves to the newest 24.x, which bundles
+          # npm 11.17.0 (checked 2026-08-07); only v24.0.x ever shipped an npm
+          # below the 11.5.1 that trusted publishing requires. So the fetch is
+          # replaced by an ASSERTION: no install, and a runner that ever does
+          # ship an old npm fails loudly here instead of silently publishing.
+          have="$(npm --version)"
+          need="11.5.1"
+          echo "npm ${have} (trusted publishing needs >= ${need})"
+          if [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | head -n1)" != "$need" ]; then
+            echo "npm ${have} is older than ${need}; bump node-version" >&2
+            exit 1
+          fi
 
       - name: Publish, but only if the tag and the package agree
         shell: bash

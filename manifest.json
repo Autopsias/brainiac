@@ -62,6 +62,7 @@
     ".github/workflows/dependency-review.yml",
     ".github/workflows/distribution-matrix.yml",
     ".github/workflows/npm-publish.yml",
+    ".github/workflows/semgrep.yml",
     ".github/workflows/skill-mirror-sync.yml",
     ".github/workflows/supply-chain.yml",
     ".gitignore",
@@ -360,6 +361,7 @@
     "templates/state-moc.md",
     "tools/brain_daily.py",
     "tools/build_brain_binary.sh",
+    "tools/check_workflow_supply_chain.py",
     "tools/code_origin_audit.py",
     "tools/cos_browser_scan.mjs",
     "tools/cos_canary_install.sh",
@@ -400,5 +402,5 @@
     "vault/raw/2026-06-27-arctic-vs-e5-benchmark.md",
     "vault/raw/README.md"
   ],
-  "count": 399
+  "count": 401
 }

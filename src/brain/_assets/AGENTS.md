@@ -751,10 +751,18 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
   (`--check-content` adds the per-note list), `brain doctor` carries the same
   count as a gating row, and any UNEXPLAINED drift makes the health verdict
   DEGRADED. A vault carrying historical drift (notes edited outside the audited
-  write path before this was visible) triages it once into
-  `<vault>/.brain/audit-drift-dispositions.json`; each disposition is **pinned
-  to the bytes it was ruled on**, so the same note changing again returns as
-  unexplained. Never re-sign or delete drifted notes to clear the count.
+  write path before this was visible) triages it once into a **host-private**
+  disposition file (`brain doctor --json` prints its path); each disposition is
+  **pinned to the bytes it was ruled on**, so the same note changing again
+  returns as unexplained. Never re-sign or delete drifted notes to clear the
+  count. That file moved OFF `<vault>/.brain/` on 2026-08-07: it decides
+  whether tampering counts as EXPLAINED, and a match needs only path + issue +
+  observed hash — every one of which is known to whoever edited the note — so
+  on the shared mount the untrusted VM leg could forge one and drive
+  `unexplained` to 0 while `verify-audit` still reported `ok`. Same treatment
+  and same reason as the approved queue (INT-01), the attachment anchors
+  (INT-04) and the writer lock (INT-05). An existing file is carried forward
+  once, stamped `migrated_from_mount`.
 
 ---
 

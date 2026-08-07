@@ -54,6 +54,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from collections import defaultdict
 from pathlib import Path
 
@@ -455,13 +456,29 @@ def append_metric(ops_dir: Path, row: dict) -> str:
             f"conflicting metrics row for {(row['date'], row['run'])!r}")
 
     prior = path.read_text(encoding="utf-8") if path.exists() else ""
-    tmp = path.with_suffix(".jsonl.tmp")
-    tmp.write_text(
-        prior.rstrip("\n") + ("\n" if prior else "")
-        + json.dumps(row, separators=(",", ":"), ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-    os.replace(tmp, path)
+    payload = (prior.rstrip("\n") + ("\n" if prior else "")
+               + json.dumps(row, separators=(",", ":"), ensure_ascii=False) + "\n")
+    # The temp file used to be the fixed name `_cos_metrics.jsonl.tmp`, written
+    # with `Path.write_text` (Codex cloud review, 2026-08-07). A symlink planted
+    # at that predictable path is FOLLOWED by the open, so the write truncates
+    # and overwrites whatever it points at -- outside the vault included -- and
+    # the later `os.replace` only swaps the link, long after the damage. A COS
+    # run writes here as a documented step, so nothing unusual has to happen.
+    #
+    # `mkstemp` is the stdlib answer to exactly this: a random name created
+    # with O_CREAT|O_EXCL|O_NOFOLLOW-equivalent semantics (it refuses to open an
+    # existing path at all), 0600, in the same directory so `os.replace` stays
+    # atomic on one filesystem.
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix="._cos_metrics-",
+                                    suffix=".jsonl.tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(payload)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     return "appended"
 
 

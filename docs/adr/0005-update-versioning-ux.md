@@ -592,6 +592,50 @@ per-finding confidences and the 6-month premortem:
 
 ---
 
+## Risk acceptance (2026-08-07) — unattended auto-apply is accepted, not overlooked
+
+The Codex cloud security review (2026-08-07) filed the auto-apply flow above as
+a HIGH: "Unattended nightly update enables supply-chain RCE". **The description
+is accurate and the owner accepts the risk.** This section exists so the next
+review — human or machine — finds a ruling instead of re-deriving the finding.
+
+**What is accepted.** The hourly `brain-nightly` task calls `run_update()`
+without a human in the loop. Installing a Python distribution executes code from
+that distribution (build/setup hooks, wheel side effects, `.pth` files), and the
+Claude plugin refresh runs marketplace code the same way. A compromised PyPI
+account, a compromised index, or a compromised marketplace therefore executes
+code as the invoking user, with reach into the vault (including the MNPI capture
+corpus), the user's files, and the environment the signing key is resolved from.
+
+**Why the existing rails do not cover it.** All three run AFTER installation:
+attempt-once-per-version, writer-lock deferral, and the post-update
+`doctor` + live-embed verify. They are designed to catch a BROKEN update and
+they do that well. None of them can catch a HOSTILE one, because the hostile
+code has already run by the time they execute. Do not cite them as mitigation.
+
+**Why it is accepted anyway.** The owner controls the package and the publishing
+account; npm publishing moved to OIDC trusted publishing (no long-lived token),
+and PyPI publishing is operator-interactive. The realistic path in is an account
+takeover, which is low-likelihood, and the alternative — a human-gated update —
+reintroduces exactly the staleness this amendment was written to remove (two
+engine lanes drifted three weeks apart before it existed). The owner weighed
+both and chose to keep automation.
+
+**How to revoke it.** Set `BRAIN_NO_AUTO_UPDATE=1` in the environment the
+scheduled task runs in (the launchd plist on macOS). Checked first in
+`BrainCore._maybe_auto_update`, before the `BRAIN_AUTO_UPDATE=1` opt-in, and
+default off — setting nothing changes nothing. This switch exists because the
+two pre-existing off-ramps were both unsatisfactory: `scripts/brain-brief.sh`
+hard-codes `BRAIN_AUTO_UPDATE=1` inline (so an inherited `0` cannot override it)
+and is itself a shipped file the next update overwrites, while `BRAIN_MANAGED=1`
+turns off auto-update only as part of full corporate lockdown, which also
+disables env/shell key custody.
+
+**What would change this ruling.** Publishing the engine from CI with trusted
+publishing (as npm now does), or a signed-artifact check the updater can verify
+BEFORE installation. Either makes the automation safe rather than accepted; a
+post-install verify never can.
+
 ## Amendment (2026-07-25, v0.19.12) — `brain update` v2: resolve-correctly, self-apply, verify
 
 A live `brain update --dry-run` on a wheel+checkout host (the common real shape)

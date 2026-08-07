@@ -56,6 +56,7 @@ import sys
 import tarfile
 import tempfile
 import time
+import urllib.parse
 import zipfile
 from pathlib import Path
 
@@ -496,13 +497,65 @@ def _throwaway_venv(scratch: Path, label: str) -> Path:
     return venv / ("Scripts" if os.name == "nt" else "bin")
 
 
-def _clean_venv_check(version: str, index_args: list[str], scratch: Path, label: str) -> str:
+#: Hosts pip may resolve DEPENDENCIES from. Production PyPI and its CDN only.
+_PYPI_HOSTS = frozenset({"pypi.org", "www.pypi.org", "files.pythonhosted.org"})
+
+
+def _non_pypi_index(arg: str) -> bool:
+    """True when ``arg`` is an index URL pointing somewhere other than PyPI.
+
+    Host equality, never a substring: ``test.pypi.org`` ends with ``pypi.org``
+    and contains ``pypi.org/simple``, so both of the obvious shortcuts accept
+    exactly the index this is meant to reject."""
+    if not arg.startswith(("http://", "https://")):
+        return False
+    return (urllib.parse.urlsplit(arg).hostname or "").lower() not in _PYPI_HOSTS
+
+
+def _clean_venv_check(version: str, index_args: list[str], scratch: Path, label: str,
+                      *, deps_from: Path | None = None) -> str:
     """Install brainiac-cli==version into a throwaway venv and require
-    `brain --version` to print exactly the version. Never this repo's venv."""
+    `brain --version` to print exactly the version. Never this repo's venv.
+
+    ``deps_from`` splits the install in two, and is REQUIRED whenever
+    ``index_args`` names an index other than PyPI (Codex cloud review,
+    2026-08-07). pip picks a candidate by VERSION across every configured
+    index, not by preferring PyPI for dependencies -- so a single
+    `--index-url testpypi --extra-index-url pypi` install lets anyone who
+    registers one of our unconstrained dependency names on TestPyPI, at a
+    higher version, win the resolution. The payload then executes here via a
+    build hook or a `.pth` the moment `brain --version` starts Python, on the
+    release host, which at that point holds PyPI, npm and git credentials.
+
+    The split removes the race without losing the round-trip test:
+
+      1. install the LOCALLY BUILT artifact with PyPI as the only index, which
+         resolves and installs every dependency from PyPI and nowhere else;
+      2. force-reinstall just our own package, `--no-deps`, from the index
+         under test -- so what `brain --version` runs is genuinely the bytes
+         that index served back.
+    """
+    # Refuse BEFORE any side effect -- no venv, no network. A guard that only
+    # fires after the expensive part is a guard you are tempted to skip.
+    #
+    # Compare the HOST, not a substring: `test.pypi.org` contains the literal
+    # text `pypi.org`, so a substring check silently accepts the one index this
+    # guard exists to reject. (Caught by its own test, 2026-08-07.)
+    if deps_from is None and any(_non_pypi_index(a) for a in index_args):
+        raise PublishError(
+            f"{label}: refusing to resolve dependencies against a non-PyPI "
+            "index; pass deps_from=<locally built wheel>")
     bin_dir = _throwaway_venv(scratch, label)
     pip = bin_dir / "pip"
     brain = bin_dir / "brain"
-    _poll(lambda: _run([str(pip), "install", "--quiet", *index_args,
+    install_args = list(index_args)
+    if deps_from is not None:
+        _poll(lambda: _run([str(pip), "install", "--quiet",
+                            "--index-url", "https://pypi.org/simple/",
+                            str(deps_from)], timeout=1200),
+              what=f"dependencies from PyPI only (for {label})")
+        install_args = ["--no-deps", "--force-reinstall", *index_args]
+    _poll(lambda: _run([str(pip), "install", "--quiet", *install_args,
                         f"brainiac-cli=={version}"], timeout=1200),
           what=f"pip install from {label}")
     out = _need(_run([str(brain), "--version"]), "brain --version").stdout.strip()
@@ -520,11 +573,14 @@ def phase_testpypi(artifacts: list[Path], version: str, scratch: Path) -> str:
                  "--repository", "testpypi", *[str(p) for p in artifacts]],
                 interactive=True)
     _need(proc, "twine upload to testpypi")
+    wheels = [p for p in artifacts if p.suffix == ".whl"]
+    if not wheels:
+        raise PublishError("testpypi verification needs the locally built wheel "
+                           "to install dependencies from PyPI only")
     return _clean_venv_check(
         version,
-        ["--index-url", "https://test.pypi.org/simple/",
-         "--extra-index-url", "https://pypi.org/simple/"],
-        scratch, "testpypi")
+        ["--index-url", "https://test.pypi.org/simple/"],
+        scratch, "testpypi", deps_from=wheels[0])
 
 
 def phase_pypi(artifacts: list[Path], version: str, scratch: Path) -> str:

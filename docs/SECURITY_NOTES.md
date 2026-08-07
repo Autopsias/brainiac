@@ -112,3 +112,42 @@ file-or-directory-only + traversal-check fallback for older interpreters. See
 (`test_restore_rejects_symlink_member_escaping_dest*`) for the fix and its
 test coverage. Listed here only so a reader of this document doesn't wonder
 why tar extraction *isn't* in the false-positive list above.
+
+## 5 · `subprocess.run([shutil.which(...)], ...)` — `tools/brain_daily.py`
+
+**Where:** `tools/brain_daily.py::main` (line ~98), invoking the `brain` CLI to
+capture the daily note.
+
+**Rule:** semgrep
+`python.lang.security.audit.dangerous-subprocess-use-tainted-env-args`.
+
+**Why it is a false positive:** the flagged "taint" is `brain_bin()`, which is
+`shutil.which("brain")` — i.e. resolving our own CLI on `$PATH`. The call uses
+the argv-list form with no `shell=True`, so nothing is word-split or
+interpreted. The only attack this describes is an attacker who can rewrite this
+process's `$PATH`, and such an attacker can already execute code as this user
+without going through this script. Resolving a sibling tool on `$PATH` is the
+intended behaviour, not an oversight; hard-coding an absolute path would break
+every install channel (uv tool / pipx / pip --user each land `brain` somewhere
+different).
+
+**Anchor:** `# nosemgrep: <rule-id>` on the line immediately above the ARGV
+LIST, inside the `subprocess.run(` call — not above `subprocess.run(` itself.
+Two placement traps cost a round each on 2026-08-07 and are worth knowing:
+
+1. A taint rule anchors on its **taint source** (here the argv list), not on
+   the sink, so the comment has to sit next to the list.
+2. The rule id semgrep reports **doubles its last segment**
+   (`...tainted-env-args.dangerous-subprocess-use-tainted-env-args`). The
+   single-segment form is silently ignored — the finding just keeps appearing.
+   Copy the id verbatim from `semgrep --json`.
+
+Verify a suppression took, and that it is site-scoped rather than rule-wide:
+re-scan the file (expect 0) **and** scan a throwaway file containing the same
+pattern (expect 1).
+
+**Note on why this appeared only in 2026-08-07:** the rule needs more than
+semgrep's default 5s per-rule budget on this file, so it silently timed out and
+was reported as clean for as long as the commit hook was the only place semgrep
+ran. It surfaced when `.github/workflows/semgrep.yml` began scanning at
+`--timeout 30`. That is the gate working, not a new defect.

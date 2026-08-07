@@ -888,6 +888,10 @@ percentage points — so any finding needs more labelled ES queries first.
 
 ## 12. BR-07 p95 tail: shape is stable, but the absolute interactive budget FAILS (S09, 2026-08-05)
 
+> **CLOSED by owner ruling 2026-08-07 — see item 14.** BR-07 is no longer a
+> standing GAP. The measurement below still stands and is the reason for the
+> ruling; only its "report it as a GAP" instruction is superseded.
+
 **Verdict: NOT resolved as a latency acceptance.** The previous 5.8-second
 worst-case report is obsolete, but the current post-S12 configuration does not
 meet the owner's accepted **~5–6 s p95** budget. Its tail is no longer a 14x
@@ -1096,3 +1100,52 @@ remains a standing GAP (#12) and the accelerated-provider path (option 3) stays
 open engineering work, not a scheduled commitment. The `lang:EN`
 non-inferiority check remains unproven at n=46 — it needs more English golden
 queries, not an engine change.
+
+## 14. BR-07 is CLOSED: the ~17 s p95 is accepted, permanently (owner ruling, 2026-08-07)
+
+**Ruling: accept the rerank tail as the shipped cost of the quality gain, and
+stop re-opening it every eval cycle.** Reranking stays ON by default (window 20,
+RK-02 gate on). No engine or config change follows. The accelerated-provider and
+faster-cross-encoder paths (#12's "upgrade path") stay available as engineering
+options, but they are no longer an open obligation and no eval session should
+report BR-07 as a GAP again.
+
+The latency criterion in `eval/gate.py` (`p95(new) <= p95(current)`) still FAILS
+against any pre-rerank baseline, and that is now EXPECTED, not a finding: a
+scorecard against `rebaseline-0.19.24-bare` is comparing a reranked engine to an
+unreranked one. Read the gate's quality criteria; the latency line against a
+pre-rerank baseline carries no decision.
+
+### The measurement this closes on (engine 0.20.3, 2026-08-07)
+
+Full 66-query golden capture on snapshot generation 687 (2,574 notes / 106,201
+chunks, `BAAI/bge-m3-int8`), window 20, RK-02 gate on, the 72-entry
+`ne-upgrade-established-path-map.json`, captured through the rank-correct
+`eval/rebaseline_rerank_capture.py` — two independent passes, the second warm.
+
+| run | p50 | p95 |
+|---|---:|---:|
+| pre-rerank baseline (0.19.24 bare, 2026-08-03) | 0.28 s | 0.50 s |
+| Q01 capture (2026-08-06) | 5.98 s | 11.72 s |
+| 0.20.3 pass 1 (2026-08-07) | 9.59 s | 16.56 s |
+| 0.20.3 pass 2, warm (2026-08-07) | 8.19 s | 17.59 s |
+
+Both 2026-08-07 passes reproduce S09's warm 16.0 s p95 (#12) within noise, so
+**Q01's 11.7 s is the low reading, not 2026-08-07 a regression**. Single-sample
+per-query capture spreads p95 by several seconds between runs on the same
+configuration; do not read a p95 delta of that size as a change.
+
+**Quality is bit-identical to 2026-08-06** on every segment across both passes
+(overall recall@10 0.5795, nDCG@10 0.5370, mrr@10 0.5660; `gate.py` PASS on
+every gating segment, Δ exactly 0.0000). Expected: nothing between 0.19.27 and
+0.20.3 touches ranking. Against the pre-rerank baseline the cumulative gain is
+recall@10 0.3725 → 0.5795 (+0.2071, CI lower +0.1010), `monolingual_pt`
+0.000 → 0.5417, `monolingual_es` 0.000 → 0.8333.
+
+`lang:EN` still fails its non-inferiority bound on the CI alone (mean +0.0362,
+CI lower −0.0580 at n=46). Unchanged from #13: a power limit, not a measured
+English regression, and it needs more English golden queries — not an engine
+change.
+
+Artifacts: `eval/runs/eval-0.20.3-2026-08-07-rerank20{,-warm}.json`, scorecards
+and gate output in `_evidence/eval-2026-08-07/`.

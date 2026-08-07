@@ -633,6 +633,37 @@ def writer_lock_path(vault: str | os.PathLike[str] | None = None) -> Path:
     return host_lock_dir(vault) / f"writer-{vault_slug8(vault)}.lock"
 
 
+def audit_drift_dispositions_dir(vault: str | os.PathLike[str] | None = None) -> Path:
+    """Directory holding the INT-02 drift-triage files. Resolution only — the
+    writing path creates it, same convention as ``host_lock_dir``."""
+    return proven_off_mount(host_private_base() / "audit-drift", vault,
+                            what="audit drift disposition store")
+
+
+def audit_drift_dispositions_path(vault: str | os.PathLike[str] | None = None) -> Path:
+    """The file that decides whether post-signing content drift is EXPLAINED.
+
+    OFF THE MOUNT (2026-08-07, Codex cloud security review). It used to be
+    ``<vault>/.brain/audit-drift-dispositions.json``, on the VirtioFS mount a
+    Cowork VM session can write. That made it a tamper-suppression authority
+    sitting in reach of the untrusted leg: a disposition matches on path, issue
+    and OBSERVED hash — every one of which is known to whoever just edited the
+    note — so adding one record drives ``drift_summary()['unexplained']`` to 0,
+    and ``verify_audit`` keeps reporting ``ok`` while a signed note's bytes have
+    changed. The signature check cannot catch it; the whole point of the content
+    pass was to catch what signatures cannot.
+
+    Same treatment, same reason, and now the same helper as the COS approved
+    queue (INT-01), the attachment acceptance anchors (INT-04) and the
+    single-writer lock (INT-05): being unreachable is the control, not a
+    permission bit on a mount that "may only partially honour POSIX bits".
+
+    Raises :class:`HostPathUnsafe` when the resolved location is VM-visible.
+    Callers must treat that as "nothing is explained" — never as a clean bill.
+    Keyed by vault identity so two vaults never share one triage file."""
+    return audit_drift_dispositions_dir(vault) / f"dispositions-{vault_slug8(vault)}.json"
+
+
 def graph_dir(vault: str | os.PathLike[str] | None = None) -> Path:
     """GRF-01 discovery-graph runtime artifacts (ADR-0003 Ruling 6/(a)) —
     gitignored, host-only, never published into the VM snapshot. Holds the

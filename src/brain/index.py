@@ -2868,7 +2868,23 @@ class BrainIndex:
         row = self.conn.execute(
             "SELECT rowid, classification FROM notes WHERE id=?", (target_id,)
         ).fetchone()
+        # EXISTENCE ORACLE (Codex cloud review, 2026-08-07). A missing id used
+        # to answer `candidate-miss` and echo the id back, while an id that
+        # exists above the caller's cap answered `withheld` — two distinguishable
+        # replies, on a verb the VM is allowed to call. That let an untrusted leg
+        # probe guessed slugs and learn WHICH Restricted/MNPI notes exist, which
+        # is precisely what the egress gate is there to prevent. Note ids are
+        # readable slugs, so guessing is cheap.
+        #
+        # Whenever a cap can hide something, both cases now return the identical
+        # `withheld` payload, so the two are indistinguishable. On an UNCAPPED
+        # caller (the host default is the full vault) nothing can be hidden, so
+        # there is no oracle to close and `candidate-miss` stays the useful
+        # answer for a typo'd id.
+        capped = max_tier != cls_mod.TIERS[-1]
         if not row:
+            if capped:
+                return {"target": "withheld", "verdict": "withheld"}
             return {
                 "target": target_id,
                 "verdict": "candidate-miss",

@@ -7,6 +7,24 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.5] — 2026-08-07
+### Security
+- **pypdf 6.14.2 -> 6.15.0** (`CVE-2026-71852`, `CVE-2026-71870`). Both are
+  memory-exhaustion defects in PDF text extraction: a crafted PDF with unusually
+  large font-width or `/ToUnicode` entries causes long runtimes and large memory
+  consumption. This matters more here than a transitive dependency bump usually
+  would — `pypdf` is a CORE dependency (ADR-0003 Ruling 1(g) puts document
+  ingestion in the default install, not an extra), and `brain/ingest/handlers/pdf.py`
+  parses PDF email attachments arriving through the COS ingest lane, which is
+  untrusted input by definition.
+
+  Both advisories were published on 2026-08-07, between the green `supply-chain`
+  run at 15:44 and the 0.20.4 run at 22:45 — the weekly/push CVE gate did exactly
+  what it exists for, on a lock that had been clean hours earlier. The re-lock
+  changes exactly one pinned line; a plain `make lock` reproduces it with no
+  drift, and all 58 pinned packages audit clean afterwards.
+
+
 ## [0.20.4] — 2026-08-07
 ### Security
 - **Workflow files are now scanned at all.** The pre-commit semgrep hook ran

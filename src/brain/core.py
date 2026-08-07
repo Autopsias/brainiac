@@ -2813,10 +2813,30 @@ class BrainCore:
         producer versions, the artifacts the run owes — is what later stamps
         that run's candidates. `claim_drops` fires hourly and the deployed
         bundle changes between runs, so reading the version at CLAIM time would
-        stamp a proposal with a bundle that did not produce it."""
+        stamp a proposal with a bundle that did not produce it.
+
+        An EXPLICIT ``run_id`` dated other than today is refused here, at the
+        operator entry point rather than in ``write_run_manifest`` (fixtures
+        and reconstruction legitimately build fixed-date manifests). A run
+        executes under the CALENDAR date, so a manifest dated otherwise splits
+        the run's identity: measured 2026-08-06/07, run 74 was begun a day
+        early, wrote its corpus under the manifest id and its ledgers under the
+        calendar id, and left 50 verified marks permanently unappendable
+        because ``host_stamps`` found no manifest at the id the ledgers used.
+        """
         from . import cos as cos_mod
 
         self._require_host("begin a COS run (write the run manifest)")
+        if run_id:
+            today = cos_mod.utcnow().strftime("%Y-%m-%d")
+            if str(run_id)[:10] != today:
+                raise ValueError(
+                    f"refusing to begin {run_id}: its date is not today "
+                    f"({today}). A run executes under the calendar date, so a "
+                    f"manifest dated otherwise splits the run's identity — the "
+                    f"corpus lands under the manifest id, the ledgers under the "
+                    f"calendar id, and the metrics row can then be appended for "
+                    f"neither. Begin the run on the day it runs.")
         return cos_mod.write_run_manifest(self.vault, run_id=run_id, lane=lane,
                                           skill_path=skill_path)
 

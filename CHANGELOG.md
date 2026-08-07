@@ -7,6 +7,26 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.2] — 2026-08-07
+### Security
+- **`cryptography` 49.0.0 → 50.0.0** (PYSEC-2026-3552: a Bleichenbacher oracle
+  through `pkcs7_decrypt_*`). **Not reachable here** — the engine imports
+  `cryptography` only for Ed25519 audit signing and has no PKCS#7 / S-MIME /
+  `EnvelopedData` path — but the `supply-chain` workflow had been red on EVERY
+  run because of it, including both of today's release commits, and nothing
+  noticed: the release pipeline's CI gate consults only `distribution-matrix`.
+  A permanently red gate is worse than no gate.
+
+### Added
+- **npm trusted publishing (OIDC)** — `.github/workflows/npm-publish.yml`
+  publishes `brainiac-install` from CI with `id-token: write` and no
+  long-lived token; provenance is attached automatically. GitHub removes direct
+  publish from 2FA-bypass tokens in January 2027, and the token path already
+  cost a partial release today. The trusted publisher is configured on npm
+  (`Autopsias/brainiac` · `npm-publish.yml` · `npm publish`). The pipeline's
+  local npm phase is deliberately left in place until the OIDC path has
+  published once — nothing is removed before its replacement is proven.
+
 ## [0.20.1] — 2026-08-07
 ### Fixed
 - **A search no longer downloads the reranker.** `0.20.0` made reranking

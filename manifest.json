@@ -61,6 +61,7 @@
     ".github/workflows/codeql.yml",
     ".github/workflows/dependency-review.yml",
     ".github/workflows/distribution-matrix.yml",
+    ".github/workflows/npm-publish.yml",
     ".github/workflows/skill-mirror-sync.yml",
     ".github/workflows/supply-chain.yml",
     ".gitignore",
@@ -398,5 +399,5 @@
     "vault/raw/2026-06-27-arctic-vs-e5-benchmark.md",
     "vault/raw/README.md"
   ],
-  "count": 397
+  "count": 398
 }

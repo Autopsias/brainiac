@@ -1,0 +1,105 @@
+name: npm-publish
+
+# Publishes `brainiac-install` to npm from CI via TRUSTED PUBLISHING (OIDC) —
+# no long-lived token anywhere, and provenance is attached automatically
+# because both this repo and the package are public.
+#
+# Why this exists (2026-08-07): npm publishing has been a local act using the
+# operator's own credentials, which broke a release the same day (an
+# unauthenticated npm surfaced as a misleading E404 on PUT, after PyPI had
+# already published). More pressingly, GitHub's 2026-07-31 change removes
+# direct publish from 2FA-bypass granular tokens in January 2027, so the
+# token-in-.npmrc path has a deadline. Trusted publishing is the replacement
+# GitHub steers to, and it takes credentials out of the release entirely.
+#
+# BEFORE THIS CAN WORK the package owner must add a trusted publisher on
+# npmjs.com (package settings -> Trusted publishers):
+#     organization/user: Autopsias
+#     repository:        brainiac
+#     workflow filename: npm-publish.yml
+#     allowed actions:   npm publish
+# That is an owner action in the npm web UI — configuring it now itself
+# requires an interactive 2FA challenge — and it CANNOT be done from here.
+# Until it is configured, this workflow fails at the publish step with an
+# auth error and the release pipeline's local npm phase remains the path.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish from (e.g. v0.20.1)"
+        required: true
+
+permissions:
+  contents: read
+  id-token: write   # mandatory: this is what mints the OIDC token
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest   # trusted publishing requires a GitHub-hosted runner
+    steps:
+      # Deliberately NOT `ref: ${{ inputs.tag }}`. A workflow_dispatch input in
+      # a checkout `ref:` is a ref-injection surface; it is validated below and
+      # only then checked out, so nothing unvalidated reaches the action.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Select and validate the tag
+        id: tag
+        shell: bash
+        env:
+          REF_NAME_RAW: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$REF_NAME_RAW" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "refusing a tag that is not vX.Y.Z: ${REF_NAME_RAW}" >&2
+            exit 1
+          fi
+          git checkout --quiet "refs/tags/${REF_NAME_RAW}"
+          echo "ref_name=${REF_NAME_RAW}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"          # trusted publishing needs >= 22.14.0
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      - name: Ensure an npm new enough for trusted publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install -g npm@latest
+          npm --version   # must be >= 11.5.1
+
+      - name: Publish, but only if the tag and the package agree
+        shell: bash
+        env:
+          # The validated value from the step above, never the raw input.
+          REF_NAME: ${{ steps.tag.outputs.ref_name }}
+        working-directory: packaging/npm/brainiac-install
+        run: |
+          set -euo pipefail
+          tag_version="${REF_NAME#v}"
+          pkg_version="$(node -p "require('./package.json').version")"
+          pkg_name="$(node -p "require('./package.json').name")"
+          echo "tag=${REF_NAME} tag_version=${tag_version} package=${pkg_name}@${pkg_version}"
+
+          # The 2026-07-29 post-mortem: a tag cut one commit early shipped a
+          # build without the fixes it was named for, and nothing cross-checked
+          # tag content against intent. Cheapest possible version of that check.
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "tag ${REF_NAME} does not match package.json ${pkg_version}" >&2
+            exit 1
+          fi
+
+          # Idempotent: a re-run after a partial release must not fail on
+          # "cannot publish over an existing version".
+          if npm view "${pkg_name}@${pkg_version}" version >/dev/null 2>&1; then
+            echo "${pkg_name}@${pkg_version} is already on the registry — nothing to do"
+            exit 0
+          fi
+
+          npm publish --access public

@@ -7,6 +7,35 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.3] — 2026-08-07
+### Added
+- **Breadth-intent routing (RTE-01)** — `AGENTS.md` §5 gains one entry-point
+  rule beside the existing temporal (TMP-03) and decision-state routes: a
+  BROAD question about vault knowledge ("state of play", "overview") enters
+  top-down through the map note (`brain get index --json`) and drills down via
+  wikilinks; narrow factual recall keeps the lexical-first entry
+  (`grep`/`search`). A heuristic adapted from NapMem's observed navigator
+  behavior (arXiv 2607.05794) — the paper never classifies query breadth
+  itself, so the rule is framed as local house style, not a transcribed
+  finding. Owner voice/preference questions are carved out explicitly:
+  `vault/overlay/` is excluded from retrieval indexing, so the vault map can
+  never hold those answers. Additive only — it overrides no existing route.
+- **Navigation-behavior counters** — `eval/navigation_stats.py` (stdlib-only)
+  turns the vault-eval cascade's tool-call trace into four numbers:
+  `avg_tool_calls`, `multi_level_rate` (tool-family diversity),
+  `evidence_hit_ratio` (per-call precision) and `gold_coverage` (the share of
+  gold-bearing questions where navigation found the evidence at all).
+  `gold_coverage` is the quality-correlated one — search effort and answer
+  quality are only weakly aligned (arXiv 2608.01913) — so `avg_tool_calls` is
+  permanently cost telemetry, reported and never gated. The `vault-eval` skill
+  now records the trace at call time (with per-tool returned-id normalization,
+  failed calls included, and `gold_ids` provenance rules) and reports the four
+  counters beside the quality scores. **Signal, never a gate** — the golden set
+  plus `eval/gate.py` remains the only gate. Expect `multi_level_rate` to rise
+  and `evidence_hit_ratio` to fall once the breadth rule above lands: map-note
+  reads never return gold notes, and that is the rule working, not a
+  regression.
+
 ## [0.20.2] — 2026-08-07
 ### Security
 - **`cryptography` 49.0.0 → 50.0.0** (PYSEC-2026-3552: a Bleichenbacher oracle

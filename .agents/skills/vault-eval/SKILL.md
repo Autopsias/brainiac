@@ -54,20 +54,97 @@ collapsed dimension (e.g. T=40% hidden behind S=100%/X=100%).
    brain --vault "$BRAIN_VAULT" graph-expand <seed-id> --depth 2 --json  # multi-hop, DISCOVERY-ONLY
    brain --vault "$BRAIN_VAULT" get <id> --json                     # confirm before asserting
    ```
-   Record which tools were actually invoked per question — that trace is
-   what makes a score auditable, not just a final answer.
+   **Record a runner-recorded trace, at call time, not from end-of-run
+   narration.** Immediately after each call returns, append one entry to
+   `_evidence/eval/navigation-trace-YYYY-MM-DD.json` (beside the dated
+   baseline below) — schema:
+   ```json
+   {
+     "run": "2026-08-07",
+     "queries": [
+       {"qid": "q01", "gold_ids": ["note-a"],
+        "calls": [
+          {"tool": "grep", "returned_ids": ["note-b"]},
+          {"tool": "search", "returned_ids": ["note-a", "note-c"]},
+          {"tool": "get", "returned_ids": ["note-a"]}
+        ]}
+     ]
+   }
+   ```
+   Three rules that keep the trace honest (there is no mechanical
+   producer — engine changes are out of scope — so this procedure is what
+   makes the trace trustworthy, and it must be labelled "runner-recorded"
+   in the baseline):
+   - **Returned-id normalization is per tool.** `search`/`hybrid-search`/
+     `grep`/`bases-query`/`graph-expand` return ids under the `--json`
+     output's `results[]`; `get`/`read` return ONE note object whose
+     top-level `id` IS the returned id. Do not apply a generic `results[]`
+     lookup to `get`/`read` — that would record every confirmation read as
+     zero returns and falsely depress `evidence_hit_ratio`/`gold_coverage`,
+     which is exactly the call type the breadth rule (see below) adds more
+     of.
+   - **Failed calls are recorded too.** A call that errors or returns
+     nothing is written with `returned_ids: []` and a `status` field (e.g.
+     `not_found`, `egress-withheld`) — unsuccessful navigation must not
+     look shorter and cleaner than it was.
+   - **`gold_ids` are note ids, written when the question is authored** —
+     for golden-set-backed questions, copy the question's existing
+     expected-note rows; for hand-written qualitative questions, the
+     author writes the expected note ids directly into the question entry.
+     A question whose expectation can't be stated as note ids (or whose
+     qrels only exist as file paths) carries `gold_ids: []` — that auto-
+     excludes it from the hit/coverage denominators (see step 3). Never
+     invent ids and never compare path-shaped qrels against CLI note ids —
+     that produces a false zero coverage reading.
 
-3. **Score** S/X/T/MH (where applicable)/CAL per question against the
+3. **Compute the navigation counters** from the trace once the run is
+   complete:
+   ```bash
+   python3 eval/navigation_stats.py --trace _evidence/eval/navigation-trace-YYYY-MM-DD.json
+   ```
+   This prints `avg_tool_calls`, `multi_level_rate`, `evidence_hit_ratio`,
+   and `gold_coverage` — see `eval/navigation_stats.py`'s docstring for the
+   exact formulas. **These four numbers are DESCRIPTIVE / non-confirmatory
+   signal, never a gate** — the golden set + `eval/gate.py` stays the only
+   *gate* (same rigor rule `eval/stats.py` applies: no bare point-estimate
+   read as gate evidence). `avg_tool_calls` is cost telemetry and stays
+   reported-only permanently (search effort and answer quality are only
+   weakly aligned — arXiv 2608.01913); any future gating question applies
+   to `gold_coverage` only, never to `avg_tool_calls`.
+   `multi_level_rate` measures tool-FAMILY diversity (retrieval
+   modalities: lexical/semantic/structured/graph/fetch), not NapMem's
+   abstraction levels — don't describe it as multi-granularity navigation.
+   The breadth rule (S01) is expected to raise both `multi_level_rate` and
+   the denominator of `evidence_hit_ratio` (more confirmation reads that
+   don't themselves carry gold) — a jump right after that rule ships is the
+   rule landing, not a regression.
+
+4. **Score** S/X/T/MH (where applicable)/CAL per question against the
    actual content in `vault/brain/` and `vault/raw/` — the ground truth is
    whatever the vault currently says, read directly if there's any doubt
    about what `search` returned.
 
-4. **Record** a dated baseline — `_evidence/eval/baseline-YYYY-MM-DD.md` (or
+5. **Record** a dated baseline — `_evidence/eval/baseline-YYYY-MM-DD.md` (or
    the deployment's equivalent eval-output location) with one row per
-   question, per-dimension pass rate, aggregate, and a regression note
-   against the last baseline.
+   question, per-dimension pass rate, aggregate, a regression note against
+   the last baseline, and the four navigation counters from step 3 (labelled
+   "runner-recorded", reported not gated). A baseline predating this change
+   carries "n/a" for the four counters — the comparison step then reads
+   "new — no comparison" for that baseline, never a delta or a regression.
 
-5. **Act.** Any dimension `<80%` is a retrieval-integrity flag — surface
+   **Trace file path and lifetime:** exactly
+   `_evidence/eval/navigation-trace-YYYY-MM-DD.json`, beside the dated
+   baseline. `_evidence/` is already gitignored and export-excluded — no
+   separate export-confirmation check is needed. If a same-day rerun would
+   overwrite an existing trace, do NOT overwrite it: write
+   `navigation-trace-YYYY-MM-DD-2.json` (then `-3`, …) and record in the
+   baseline row which file was used. Unlike most of `_evidence/`, a trace
+   is **not regenerable** — the eval conversation that produced it is gone
+   once the session ends — so it is deleted knowingly, or not at all; never
+   write it under `eval/runs/` (tracked in git and shipped by the public
+   export).
+
+6. **Act.** Any dimension `<80%` is a retrieval-integrity flag — surface
    immediately, don't wait for the next scheduled review.
 
 ### What changed from the Smart-Connections era
@@ -222,5 +299,6 @@ four dimensions and broken on the fifth still has a broken dimension.
 
 - `AGENTS.md` §5 (agentic tool surface, RET-04) — the composable-tools model this eval scores against
 - `eval/harness.py`, `eval/gate.py` — the quantitative Recall@k A/B harness
+- `eval/navigation_stats.py` — the navigation-behavior counters (descriptive signal, never a gate)
 - `eval/PORTABLE-CONTRACT.md` — run-file/qrels schemas, probe-class invariants, shared-corpus cross-engine rules
 - `brain --help` — full verb + flag reference

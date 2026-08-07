@@ -143,6 +143,7 @@
     "eval/gate.py",
     "eval/harness.py",
     "eval/harness_direct.py",
+    "eval/navigation_stats.py",
     "eval/ne_upgrade_gate.py",
     "eval/path_normalize.py",
     "eval/pt_capacity_probe.py",
@@ -399,5 +400,5 @@
     "vault/raw/2026-06-27-arctic-vs-e5-benchmark.md",
     "vault/raw/README.md"
   ],
-  "count": 398
+  "count": 399
 }

@@ -547,6 +547,33 @@ round-trip). Both temporal flags stay **VM_ALLOWED** — they are read-only
 filters over already-gated rows, no different in trust from any other
 `bases-query`.
 
+**Breadth-intent routing (RTE-01).** A heuristic adapted from NapMem's
+observed navigator behavior (arXiv 2607.05794) — the paper never classifies
+query breadth itself, but its top-down-vs-bottom-up entry choice transfers as
+a rule of thumb for frontier-model navigators over this vault. This governs
+*entry point* only, never a mandated step sequence: probing lexically first
+and escalating only when needed (§5's agentic tool surface) still applies
+once you're in. When a question is BROAD — "state of play", "overview", "how
+do we usually…" asked about VAULT knowledge — enter TOP-DOWN instead of
+grepping cold:
+
+```
+brain get index --json          # the map note (id: index) — start here
+```
+
+then drill down via wikilinks with `get`/`graph-expand`, confirming each
+candidate on its cited note (`graph-expand` stays DISCOVERY-ONLY — never
+treat its derived graph as authoritative). If no state-MOC or `index.md`
+entry fits, fall back to `search`. **Owner persona/voice/preference
+questions are NOT this route:** voice/brand/keywords/people live in
+`vault/overlay/`, which is excluded from retrieval indexing entirely, so the
+vault map can never contain those answers — keep the existing overlay-loading
+path for those. When a question is NARROW factual recall — a specific
+entity, exact term, date — keep the existing lexical-first entry
+(`grep`/`search`). This rule is additive only: decision-state questions still
+route to `brain dossier` and temporal questions still route to TMP-03 above,
+regardless of breadth.
+
 **`brain supersede <old-id> <new-id> [--reason R]`** retires `old-id` in favour
 of `new-id` — both sides of the version chain, written through the audited
 `write_note` path in one call. **HOST-broker only** (refused on `role=vm`

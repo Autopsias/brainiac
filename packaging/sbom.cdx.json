@@ -1293,7 +1293,7 @@
       "version": "2.7.0"
     },
     {
-      "bom-ref": "model:intfloat/multilingual-e5-small",
+      "bom-ref": "model:BAAI/bge-m3-int8",
       "licenses": [
         {
           "license": {
@@ -1301,7 +1301,7 @@
           }
         }
       ],
-      "name": "intfloat/multilingual-e5-small (ONNX)",
+      "name": "BAAI/bge-m3-int8 (ONNX)",
       "properties": [
         {
           "name": "brain:scope",
@@ -1313,7 +1313,7 @@
         }
       ],
       "type": "data",
-      "version": "Xenova/multilingual-e5-small snapshot"
+      "version": "Xenova/bge-m3 model_int8.onnx snapshot"
     },
     {
       "bom-ref": "model:Alibaba-NLP/gte-multilingual-reranker-base",

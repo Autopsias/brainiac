@@ -1,11 +1,9 @@
 """Embedder ADAPTER INTERFACE + the shipped ONNX embedders + an offline fallback.
 
-**Shipped default (`auto`): `intfloat/multilingual-e5-small`** run locally via
-direct ONNX Runtime (`OnnxEmbedder`, Xenova ONNX export, ~465 MiB (~487 MB) one-time
-download, 384-d) — NO PyTorch, NO fastembed in the core install. The original
-design-of-record (IDX-01) was Snowflake Arctic-embed-m-v2.0 (305M, 768-d,
-MRL-256 truncation) via fastembed; `ArcticEmbedder` remains available behind
-the `[embed]` extra, but e5-small is what `get_embedder("auto")` resolves.
+**Shipped default (`auto`): `BAAI/bge-m3-int8`** run locally via direct ONNX
+Runtime (`OnnxEmbedder`, Xenova ONNX export, ~563 MB staged, 1024-d) — NO
+PyTorch, NO fastembed in the core install. `intfloat/multilingual-e5-small`
+remains selectable through ``$BRAIN_EMBED_MODEL`` as the rollback model.
 
 Two implementations satisfy the ``Embedder`` protocol:
 
@@ -22,11 +20,11 @@ index stores ``embed_model`` + ``embed_dim`` and forces a **clean rebuild** when
 either changes (a HashEmbedder index must never be queried with Arctic vectors,
 and vice-versa). Swapping the embedder is a one-line change at the call site.
 
-Canonical task prefixes (IDX-02): Arctic-embed is asymmetric — queries are
-embedded with the literal prefix ``query: `` and passages with no prefix. These
-canonical prefixes are **never translated** (they are model tokens, not prose);
-the in-language *contextual* prefix is a separate, content-level concern handled
-in ``brain.chunk``.
+Pooling and task prefixes belong to the resolved model specification, never to
+``OnnxEmbedder`` itself: bge-m3 uses CLS pooling with no prefixes; e5-small uses
+mean pooling with literal ``query: `` / ``passage: `` prefixes. Prefix tokens
+are never translated. The in-language *contextual* prefix is a separate,
+content-level concern handled in ``brain.chunk``.
 """
 from __future__ import annotations
 
@@ -35,6 +33,7 @@ import math
 import os
 import re
 import sys
+from dataclasses import dataclass
 from typing import Protocol, Sequence, runtime_checkable
 
 _TOKEN = re.compile(r"[A-Za-z0-9]+")
@@ -81,7 +80,7 @@ def _ort_providers() -> list[str]:
 
 
 def _embed_length_sorted(
-    prepared: list[str], embed_fn
+    prepared: list[str], embed_fn, *, default_batch: int = 64,
 ) -> list[list[float]]:
     """Run a fastembed-style ``embed_fn(list_of_texts) -> generator of raw
     vectors`` over ``prepared`` in LENGTH-SORTED batches, returning the raw
@@ -95,12 +94,12 @@ def _embed_length_sorted(
     ~1.5x on the real vault (more on heavier-tailed corpora); the sort itself is
     negligible vs encoding. Applies to EVERY embedder, including the incumbent
     e5-small — a model-independent win. Batch size via ``$BRAIN_EMBED_BATCH``
-    (default 64; on CPU, bigger is not better — large batches thrash cache)."""
+    (the model spec supplies the default; on CPU, bigger is not always better)."""
     n = len(prepared)
     if n <= 1:
         return [list(v) for v in embed_fn(prepared)]
     order = sorted(range(n), key=lambda i: len(prepared[i]))
-    batch = int(os.environ.get("BRAIN_EMBED_BATCH", "64"))
+    batch = int(os.environ.get("BRAIN_EMBED_BATCH", str(default_batch)))
     out: list[list[float] | None] = [None] * n
     for i in range(0, n, batch):
         idxs = order[i : i + batch]
@@ -349,14 +348,11 @@ class CatalogEmbedder:
         return self._encode(list(texts), is_query)
 
 
-# --- Direct-ONNX embedder of record (DIST-01: eliminates fastembed) ---
-# intfloat/multilingual-e5-small (Apache-2.0) is the S10/S11-closed model of
-# record. The ONNX export at Xenova/multilingual-e5-small is a standard BERT-
-# style encoder: inputs (input_ids, attention_mask, token_type_ids), output
-# last_hidden_state [batch, seq, 384]. Embedding = MEAN-POOL over the attention
-# mask + L2-normalise. Loaded DIRECTLY via onnxruntime + tokenizers — NO
-# fastembed, NO PyTorch. This is the minimal-dep path the corporate build uses;
-# it mirrors OnnxReranker's approach.
+# --- Direct-ONNX models (DIST-01: eliminates fastembed) ---------------------
+# Each model owns its pooling, prefixes, dimension and exact file. Keeping the
+# contract here prevents a future model swap from inheriting another model's
+# silent assumptions. Loaded DIRECTLY via onnxruntime + tokenizers — NO
+# fastembed, NO PyTorch.
 E5_SMALL_ONNX_REPO = "Xenova/multilingual-e5-small"
 E5_SMALL_ONNX_FILE = "onnx/model.onnx"
 E5_SMALL_MODEL_ID = "intfloat/multilingual-e5-small"
@@ -380,16 +376,139 @@ E5_SMALL_ONNX_REVISION = "761b726dd34fb83930e26aab4e9ac3899aa1fa78"
 # ``$BRAIN_EMBED_QUANT=int8``) — the IMPLICIT default stays fp32 (KILL-SWITCH:
 # omit the flag, or set it to ``fp32``, to get the unchanged production path).
 E5_SMALL_INT8_ONNX_FILE = "onnx/model_int8.onnx"
+E5_SMALL_INT8_MODEL_ID = E5_SMALL_MODEL_ID + "-int8"
+
+BGE_M3_ONNX_REPO = "Xenova/bge-m3"
+BGE_M3_INT8_ONNX_FILE = "onnx/model_int8.onnx"
+BGE_M3_INT8_MODEL_ID = "BAAI/bge-m3-int8"
+BGE_M3_DIM = 1024
+# Exact snapshot used by the 2026-08-04/05 measured arm. Pinning is load-bearing:
+# ``model_int8.onnx`` and ``model_quantized.onnx`` in this repo are distinct
+# files with measurably different retrieval quality.
+BGE_M3_ONNX_REVISION = "4de13258303883538bd53b696b452bf8099f0858"
+
 _VALID_QUANTIZATIONS = ("fp32", "int8")
 
 
-class OnnxEmbedder:
-    """multilingual-e5-small loaded DIRECTLY via ONNX Runtime — no fastembed.
+@dataclass(frozen=True)
+class OnnxModelSpec:
+    """The complete retrieval contract for one direct-ONNX model artifact."""
 
-    This is the model-of-record embedder for the corporate, minimal-dependency
-    build (DIST-01). e5-small is an asymmetric encoder: queries carry the
-    ``query: `` prefix, passages carry ``passage: ``. Output is mean-pooled over
-    the attention mask and L2-normalised to a 384-d vector.
+    model_id: str
+    hf_repo: str
+    revision: str
+    onnx_file: str
+    dim: int
+    pooling: str
+    query_prefix: str
+    passage_prefix: str
+    quantization: str
+    batch_size: int
+
+
+_ONNX_MODEL_SPECS = {
+    BGE_M3_INT8_MODEL_ID: OnnxModelSpec(
+        model_id=BGE_M3_INT8_MODEL_ID,
+        hf_repo=BGE_M3_ONNX_REPO,
+        revision=BGE_M3_ONNX_REVISION,
+        onnx_file=BGE_M3_INT8_ONNX_FILE,
+        dim=BGE_M3_DIM,
+        pooling="cls",
+        query_prefix="",
+        passage_prefix="",
+        quantization="int8",
+        # Dynamic-int8 inference is materially batch-shape-sensitive for this
+        # export: the same 32 rows embedded at 32 match the adoption probe to
+        # 1e-7; at 64 their median cosine to those vectors is only 0.992 and PT
+        # loses one top-10 + one top-1. Correctness, not throughput tuning.
+        batch_size=32,
+    ),
+    E5_SMALL_MODEL_ID: OnnxModelSpec(
+        model_id=E5_SMALL_MODEL_ID,
+        hf_repo=E5_SMALL_ONNX_REPO,
+        revision=E5_SMALL_ONNX_REVISION,
+        onnx_file=E5_SMALL_ONNX_FILE,
+        dim=E5_SMALL_DIM,
+        pooling="mean",
+        query_prefix="query: ",
+        passage_prefix="passage: ",
+        quantization="fp32",
+        batch_size=64,
+    ),
+    E5_SMALL_INT8_MODEL_ID: OnnxModelSpec(
+        model_id=E5_SMALL_INT8_MODEL_ID,
+        hf_repo=E5_SMALL_ONNX_REPO,
+        revision=E5_SMALL_ONNX_REVISION,
+        onnx_file=E5_SMALL_INT8_ONNX_FILE,
+        dim=E5_SMALL_DIM,
+        pooling="mean",
+        query_prefix="query: ",
+        passage_prefix="passage: ",
+        quantization="int8",
+        batch_size=64,
+    ),
+}
+_ONNX_MODEL_ALIASES = {
+    "bge-m3-int8": BGE_M3_INT8_MODEL_ID,
+    "e5-small": E5_SMALL_MODEL_ID,
+    "e5-small-int8": E5_SMALL_INT8_MODEL_ID,
+}
+DEFAULT_ONNX_MODEL_ID = BGE_M3_INT8_MODEL_ID
+
+
+def _resolve_onnx_model_spec(
+    model_id: str | None = None,
+    quantization: str | None = None,
+) -> OnnxModelSpec:
+    requested = (
+        model_id
+        or os.environ.get("BRAIN_EMBED_MODEL")
+        or DEFAULT_ONNX_MODEL_ID
+    ).strip()
+    requested = _ONNX_MODEL_ALIASES.get(requested, requested)
+
+    quant = quantization or os.environ.get("BRAIN_EMBED_QUANT")
+    if quant is not None:
+        quant = quant.strip().lower()
+        if quant not in _VALID_QUANTIZATIONS:
+            raise ValueError(
+                f"OnnxEmbedder: quantization={quant!r} not in "
+                f"{_VALID_QUANTIZATIONS!r}"
+            )
+        if requested in (E5_SMALL_MODEL_ID, E5_SMALL_INT8_MODEL_ID):
+            requested = (
+                E5_SMALL_INT8_MODEL_ID if quant == "int8" else E5_SMALL_MODEL_ID
+            )
+        elif requested == BGE_M3_INT8_MODEL_ID and quant != "int8":
+            raise ValueError(
+                "BAAI/bge-m3-int8 has no fp32 artifact in the shipped model "
+                "spec; select BRAIN_EMBED_MODEL=intfloat/multilingual-e5-small "
+                "for the rollback"
+            )
+
+    try:
+        return _ONNX_MODEL_SPECS[requested]
+    except KeyError as exc:
+        known = ", ".join(sorted(_ONNX_MODEL_SPECS))
+        raise ValueError(
+            f"OnnxEmbedder: unknown direct-ONNX model {requested!r}; known: {known}"
+        ) from exc
+
+
+def is_direct_onnx_model(model_id: str | None) -> bool:
+    """Whether ``model_id`` names a model with a complete shipped ONNX spec."""
+    if not model_id:
+        return False
+    return _ONNX_MODEL_ALIASES.get(model_id, model_id) in _ONNX_MODEL_SPECS
+
+
+class OnnxEmbedder:
+    """A model-specified encoder loaded DIRECTLY via ONNX Runtime.
+
+    The shipped default is bge-m3-int8 (CLS pooling, no task prefixes, 1024-d).
+    Setting ``BRAIN_EMBED_MODEL=intfloat/multilingual-e5-small`` selects the
+    rollback model (mean pooling, query/passage prefixes, 384-d). The caller
+    always supplies raw text; this adapter applies the resolved model contract.
 
     Lazy: the ONNX session + tokenizer are created on first ``embed`` so
     constructing the embedder (to read ``model_id``/``dim`` for the index
@@ -399,16 +518,10 @@ class OnnxEmbedder:
     Offline-first: set ``$BRAIN_MODEL_CACHE`` (or pass ``local_dir``) to point
     at a bundled/snapshot model dir so NO HuggingFace download is attempted.
 
-    ``quantization`` (S09/PF-01): ``"fp32"`` (default — the shipped production
-    weights, UNCHANGED behaviour) or ``"int8"`` (opt-in — loads
-    ``onnx/model_int8.onnx`` from the same ``local_dir`` instead, and reports a
-    distinct ``model_id`` suffixed ``-int8`` so the index's model-change guard
-    forces a clean rebuild before an int8-embedded index is ever queried
-    against fp32 vectors, or vice versa — same contract as any other embedder
-    swap). Resolution order: explicit ``quantization=`` arg >
-    ``$BRAIN_EMBED_QUANT`` > ``"fp32"``. This is the non-destructive
-    kill-switch: production callers that never set the env var or pass the
-    arg get exactly the pre-S09 fp32 behaviour.
+    ``quantization`` remains as a compatibility selector for e5-small's fp32 /
+    int8 pair. The production rollback is the model env hook above; model ids
+    and dimensions remain distinct so the index mismatch guard forces a clean
+    rebuild across every swap.
     """
 
     def __init__(
@@ -422,28 +535,24 @@ class OnnxEmbedder:
         cache_dir: str | None = None,
         quantization: str | None = None,
     ) -> None:
-        self.quantization = (
-            quantization or os.environ.get("BRAIN_EMBED_QUANT") or "fp32"
-        ).strip().lower()
-        if self.quantization not in _VALID_QUANTIZATIONS:
-            raise ValueError(
-                f"OnnxEmbedder: quantization={self.quantization!r} not in "
-                f"{_VALID_QUANTIZATIONS!r}"
-            )
-        is_int8 = self.quantization == "int8"
-        default_onnx_file = E5_SMALL_INT8_ONNX_FILE if is_int8 else E5_SMALL_ONNX_FILE
-        default_model_id = (E5_SMALL_MODEL_ID + "-int8") if is_int8 else E5_SMALL_MODEL_ID
-        self.model_id = model_id or default_model_id
-        self.dim = int(dim if dim is not None else os.environ.get("BRAIN_EMBED_DIM", E5_SMALL_DIM))
-        self._hf_repo = hf_repo or E5_SMALL_ONNX_REPO
+        spec = _resolve_onnx_model_spec(model_id, quantization)
+        self._model_spec = spec
+        self.quantization = spec.quantization
+        self.model_id = spec.model_id
+        self.dim = int(dim if dim is not None else spec.dim)
+        self._pooling = spec.pooling
+        self._query_prefix = spec.query_prefix
+        self._passage_prefix = spec.passage_prefix
+        self._batch_size = spec.batch_size
+        self._hf_repo = hf_repo or spec.hf_repo
         # Pin the download to a reproducible revision for the known repo
         # (overridable via $BRAIN_EMBED_REVISION); a custom repo pins nothing
         # unless the caller sets the env var.
         self._revision = (
             os.environ.get("BRAIN_EMBED_REVISION")
-            or (E5_SMALL_ONNX_REVISION if self._hf_repo == E5_SMALL_ONNX_REPO else None)
+            or (spec.revision if self._hf_repo == spec.hf_repo else None)
         )
-        self._onnx_file = onnx_file or default_onnx_file
+        self._onnx_file = onnx_file or spec.onnx_file
         self._local_dir = (
             local_dir
             or cache_dir
@@ -491,8 +600,8 @@ class OnnxEmbedder:
                 )
                 self._in_names = [i.name for i in self._sess.get_inputs()]
                 self._tok = Tokenizer.from_file(os.path.join(base, "tokenizer.json"))
-                # Truncate to the model's context window BEFORE padding. e5-small
-                # is a BERT encoder with max_position_embeddings=512; feeding a
+                # Truncate to the engine's calibrated chunk window BEFORE padding.
+                # The e5 rollback has max_position_embeddings=512; feeding a
                 # longer sequence makes the position-embedding Add node fail to
                 # broadcast ("512 by 620") and crashes the whole rebuild. The
                 # char-based chunk ceiling (chunk.MAX_CHARS) does NOT guarantee
@@ -549,8 +658,8 @@ class OnnxEmbedder:
         1. ``local_dir`` is a SNAPSHOT dir containing ``onnx/model.onnx`` +
            ``tokenizer.json`` directly (the bundled / vendored layout, and the
            resolved-snapshot layout). Preferred — no HF dep at runtime.
-        2. ``local_dir`` is an HF-style cache ROOT (contains
-           ``models--Xenova--multilingual-e5-small/``): resolve the latest
+        2. ``local_dir`` is an HF-style cache ROOT (contains the resolved
+           ``models--<org>--<model>/``): resolve the pinned snapshot
            snapshot via ``huggingface_hub.snapshot_download(cache_dir=...)``.
         3. No ``local_dir``: download from HF (online) via ``snapshot_download``.
         """
@@ -602,7 +711,7 @@ class OnnxEmbedder:
         return os.path.join(base, self._onnx_file), base
 
     def _encode_raw(self, texts: list[str]) -> list[list[float]]:
-        """Mean-pool last_hidden_state over the attention mask + L2-normalise."""
+        """Apply the resolved model's pooling and L2-normalise."""
         import numpy as np
 
         self._ensure()
@@ -619,12 +728,15 @@ class OnnxEmbedder:
             elif "token_type" in low:
                 feed[nm] = np.zeros_like(ii)
         hidden = self._sess.run(None, feed)[0]  # [batch, seq, dim] float32
-        # Mean pool: sum(hidden * mask) / sum(mask), per item.
-        mask = am.astype(hidden.dtype)[:, :, None]  # [batch, seq, 1]
-        summed = (hidden * mask).sum(axis=1)  # [batch, dim]
-        counts = mask.sum(axis=1)
-        counts = np.maximum(counts, 1.0)  # avoid div-by-zero
-        pooled = summed / counts
+        if self._pooling == "cls":
+            pooled = hidden[:, 0, :]
+        else:
+            # Mean pool: sum(hidden * mask) / sum(mask), per item.
+            mask = am.astype(hidden.dtype)[:, :, None]  # [batch, seq, 1]
+            summed = (hidden * mask).sum(axis=1)  # [batch, dim]
+            counts = mask.sum(axis=1)
+            counts = np.maximum(counts, 1.0)  # avoid div-by-zero
+            pooled = summed / counts
         out: list[list[float]] = []
         for v in pooled:
             d = v[: self.dim] if v.shape[0] >= self.dim else v
@@ -632,10 +744,13 @@ class OnnxEmbedder:
         return out
 
     def _encode(self, texts: list[str], is_query: bool) -> list[list[float]]:
-        # e5-family asymmetry: query: / passage: prefixes (model control tokens;
-        # never translated). mean-pool + L2-norm happens in _encode_raw.
-        prepared = [("query: " if is_query else "passage: ") + t for t in texts]
-        return [v for v in _embed_length_sorted(prepared, self._encode_raw)]
+        prefix = self._query_prefix if is_query else self._passage_prefix
+        prepared = [prefix + t for t in texts]
+        return [
+            v for v in _embed_length_sorted(
+                prepared, self._encode_raw, default_batch=self._batch_size
+            )
+        ]
 
     def embed(self, text: str, *, is_query: bool = False) -> list[float]:
         return self._encode([text], is_query)[0]
@@ -757,7 +872,7 @@ class EmbedderUnavailable(RuntimeError):
 # implicit fallback is now LOUD, and fail-closable for production/clean-machine.
 _HASH_FALLBACK_MSG = (
     "brain: WARNING — no real semantic embedder is available "
-    "(onnxruntime/tokenizers not importable or the e5-small ONNX model is "
+    "(onnxruntime/tokenizers not importable or the bge-m3-int8 ONNX model is "
     "missing), so retrieval is FALLING BACK to the non-semantic HashEmbedder. "
     "Search/near-dup quality will be effectively random. Install the 'corporate' "
     "extras (onnxruntime + tokenizers) or the bundled model. Set "
@@ -812,25 +927,23 @@ def get_embedder(prefer: str = "auto") -> Embedder:
 
     ``hash`` forces the offline fallback (tests, CI) — EXPLICIT, no warning.
     ``onnx`` selects ``OnnxEmbedder`` — the direct-ONNX model-of-record
-    (e5-small, Apache-2.0); this is the MINIMAL-DEPENDENCY path the corporate
-    build uses (DIST-01: no fastembed, no PyTorch). ``onnx-int8`` (S09/PF-01)
-    selects the SAME ``OnnxEmbedder`` with ``quantization="int8"`` — an
-    explicit opt-in only; ``onnx``/``auto`` are UNCHANGED and stay fp32 unless
-    ``$BRAIN_EMBED_QUANT=int8`` is also set (the non-destructive kill-switch:
-    default behaviour never changes). ``arctic``/``catalog``/``qwen`` select
-    the legacy fastembed/qwen3-embed paths (kept for A/B only; NOT in the
-    corporate build). ``auto`` honours ``$BRAIN_EMBED_MODEL`` when it names a
-    Qwen model, else prefers the direct-ONNX ``OnnxEmbedder`` (e5-small,
-    fp32 unless ``$BRAIN_EMBED_QUANT=int8``), else degrades to HashEmbedder —
-    but that IMPLICIT degrade is never silent (S11): it warns to stderr, or
-    fails closed under ``$BRAIN_REQUIRE_REAL_EMBEDDER``.
+    (bge-m3-int8, Apache-2.0); this is the MINIMAL-DEPENDENCY path the
+    corporate build uses (DIST-01: no fastembed, no PyTorch). ``onnx-int8`` is
+    retained as a compatibility spelling for that same shipped int8 path.
+    ``arctic``/``catalog``/``qwen`` select the legacy fastembed/qwen3-embed
+    paths (kept for A/B only; NOT in the corporate build). ``auto`` honours
+    ``$BRAIN_EMBED_MODEL``: the known direct-ONNX specs include the shipped
+    bge model and the e5-small rollback. Otherwise it follows the optional
+    catalogue paths, then degrades to HashEmbedder — but that IMPLICIT degrade
+    is never silent (S11): it warns to stderr, or fails closed under
+    ``$BRAIN_REQUIRE_REAL_EMBEDDER``.
     """
     if prefer == "hash":
         return HashEmbedder()
     if prefer == "onnx":
         return OnnxEmbedder()
     if prefer == "onnx-int8":
-        return OnnxEmbedder(quantization="int8")
+        return OnnxEmbedder()
     if prefer == "arctic":
         return ArcticEmbedder()
     cat = os.environ.get("BRAIN_EMBED_MODEL")
@@ -843,13 +956,15 @@ def get_embedder(prefer: str = "auto") -> Embedder:
     if prefer == "qwen":
         cat = cat or "n24q02m/Qwen3-Embedding-0.6B-ONNX"
         return QwenEmbedder(cat)
-    # auto — the default real-semantic path is now direct-ONNX e5-small.
+    # auto — honour a selected model before resolving the shipped default.
     if cat and is_qwen_model(cat) and QwenEmbedder.available():
         return QwenEmbedder(cat)
-    if OnnxEmbedder.available():
-        return OnnxEmbedder()
+    if cat and is_direct_onnx_model(cat) and OnnxEmbedder.available():
+        return OnnxEmbedder(model_id=cat)
     if cat and CatalogEmbedder.available():
         return CatalogEmbedder(cat)
+    if OnnxEmbedder.available():
+        return OnnxEmbedder()
     if ArcticEmbedder.available():
         return ArcticEmbedder()
     return _implicit_hash_fallback()
@@ -899,15 +1014,11 @@ def probe_auto_embedder() -> tuple[str, str]:
     return ("implicit-hash", "no-real-embedder")
 
 
-# Approximate download size for the install/warmup UX hint ONLY (never a perf
-# or capability claim). MEASURED from a populated cache, not estimated: the
-# Xenova/multilingual-e5-small snapshot is 465 MiB on disk (a 448 MiB
-# onnx/model.onnx plus tokenizer/config files). Download UIs that count in
-# decimal MB show the same bytes as ~487 MB, which is why an installing user
-# saw three different numbers for one file. State both units so nobody has to
-# reconcile them. The stale "~300 MB" here came from a planning-doc estimate
-# for the fp32 export and was never checked against the real artifact.
-ONNX_MODEL_SIZE_HINT = "~465 MiB (~487 MB)"
+# Approximate download/staging size for the install/warmup UX hint ONLY (never a
+# performance claim). Measured from the exact pinned bge-m3-int8 snapshot used
+# in the adoption probe; the selected model file is ``model_int8.onnx`` (never
+# the distinct, worse ``model_quantized.onnx`` artifact).
+ONNX_MODEL_SIZE_HINT = "~563 MB"
 
 
 def model_cache_ready(embedder: "Embedder | None" = None) -> bool | None:

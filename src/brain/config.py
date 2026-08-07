@@ -134,6 +134,36 @@ def index_dir(vault: str | os.PathLike[str] | None = None) -> Path:
     one exists, else on the legacy absolute-path hash — so an existing install
     keeps pointing at its current dir until ``migrate_index_location`` mints an
     id and renames it. Any number of vaults coexist without sharing state.
+
+    NOT ENTIRELY DISPOSABLE (INT-01, INT-04, CAP-02). The index and audit chain
+    here are a derived cache, but this dir ALSO holds THREE things that are not:
+
+    * ``cos-approved/`` — owner-accepted COS content waiting for its signature,
+      which between the accept and the next drain is the ONLY copy;
+    * ``cos-attachment-anchors/`` — the host-signed acceptance anchors for
+      attachments already released into ``vault/inbox/``. The payload survives
+      losing one, but the anchor is what keeps it at its email-derived MNPI
+      floor and what proves the bytes are the accepted ones. Lose it and the
+      file is REFUSED at the next drain (it fails closed, never downgrading to
+      an unlabelled ``Internal`` drop) and has to be re-accepted.
+    * ``cos-corpus/`` — the capture corpus (CAP-02): the actual mail text each
+      run read, classified MNPI. Unlike the two above it is EVIDENCE rather
+      than pending work, so it is not a drain-first item — but it cannot be
+      rebuilt from anything. The nightly ages it out at
+      ``$BRAIN_COS_CORPUS_DAYS`` (default 30); deleting this dir or repointing
+      ``$BRAIN_INDEX_DIR`` destroys it early, and leaving it behind on an
+      uninstall leaves unfiltered mail bodies on disk with nothing left running
+      to age them out. Either way it is a
+      decision, not a side effect. ``brain status`` reports
+      ``cos.capture_corpus``.
+
+    All three are here precisely because the Cowork VM cannot reach here.
+    Drain first
+    (``brain sync``) before deleting this dir, repointing ``$BRAIN_INDEX_DIR``,
+    or uninstalling; ``brain status`` reports
+    ``cos.approved_awaiting_signature`` + ``cos.attachment_anchors_awaiting_drain``
+    and ``brain rebuild`` returns a ``warning`` in its result while either is
+    non-zero.
     """
     override = os.environ.get("BRAIN_INDEX_DIR")
     if override:
@@ -372,14 +402,235 @@ def maintain_lock_path(vault: str | os.PathLike[str] | None = None) -> Path:
     return brain_runtime_dir(vault) / "maintain.lock"
 
 
+class HostPathUnsafe(RuntimeError):
+    """A path that must be host-private resolves somewhere a Cowork VM can see.
+
+    Fail closed rather than use it — the same posture ``querylog`` takes when
+    ``$BRAIN_INDEX_DIR`` is pointed into the vault. ``cos.ApprovedQueueUnsafe``
+    subclasses this so the one rule has one exception type."""
+
+
+#: Host-side declaration of the mount root(s), highest precedence. ``os.pathsep``
+#: -separated, like every other multi-path env in this engine.
+WORKSPACE_ROOT_ENV = "BRAIN_WORKSPACE_ROOT"
+
+#: The host-private workspace registry the install/cowork-setup skills write
+#: (``tools/workspace_registry.py``). It lives in the operator's home, NOT in
+#: any workspace, so a VM cannot edit it — which is the whole reason the mount
+#: boundary is read from here rather than from staging files on the mount.
+_REGISTRY_HOME_ENV = "BRAINIAC_HOME"
+
+
+def _declared_workspace_roots(vroot: Path) -> list[Path]:
+    """Mount roots THIS HOST declares for ``vroot`` — never vault content.
+
+    ``$BRAIN_WORKSPACE_ROOT`` wins outright when set; otherwise every
+    ``workspace_path`` the workspace registry records for this vault. A
+    missing/unreadable registry contributes nothing (the marker fallback in
+    ``vm_visible_roots`` still applies) — it can only ever ADD roots."""
+    raw = os.environ.get(WORKSPACE_ROOT_ENV, "")
+    declared = [p for p in (part.strip() for part in raw.split(os.pathsep)) if p]
+    if declared:
+        return [Path(p).expanduser() for p in declared]
+    home = os.environ.get(_REGISTRY_HOME_ENV) or str(Path.home() / ".brainiac")
+    try:
+        import json
+
+        data = json.loads((Path(home).expanduser() / "workspaces.json")
+                          .read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    out: list[Path] = []
+    for entry in (data.get("entries") if isinstance(data, dict) else None) or []:
+        if not isinstance(entry, dict) or not entry.get("workspace_path"):
+            continue
+        try:
+            if Path(str(entry.get("vault_path"))).expanduser().resolve() != vroot:
+                continue
+        except (OSError, ValueError, TypeError):
+            continue
+        out.append(Path(str(entry["workspace_path"])).expanduser())
+    return out
+
+
+def vm_visible_roots(vault: str | os.PathLike[str] | None = None) -> list[Path]:
+    """Every directory tree a Cowork VM session can reach on this host.
+
+    Always the vault itself and its runtime dir. "Outside the vault" is not the
+    same claim as "outside the mount": ``$BRAIN_INDEX_DIR`` can name a sibling
+    of ``vault/`` inside the same mounted workspace and clear a vault-only check
+    while sitting squarely on the mount. So the WORKSPACE ROOT counts too, and
+    it comes from HOST-ONLY configuration — ``$BRAIN_WORKSPACE_ROOT`` or the
+    workspace registry in the operator's home — because it is security
+    evidence and the mount is the untrusted side.
+
+    The workspace-install staging markers (``.brain/bin``, ``.brain/model``,
+    ``.brain/vendor``) remain a fallback for an unregistered staged vault, but
+    they may only ever WIDEN this set. Round 3 found the bug in the other
+    direction: with the markers as the ONLY signal, a VM that deleted its own
+    ``.brain/vendor`` shrank this list to ``[vault, runtime]``, after which a
+    sibling ``$BRAIN_INDEX_DIR`` inside the same mount passed
+    ``proven_off_mount`` — the exact case this arm exists to catch — and the
+    writer lock, the anchor store and the approved queue all landed back on the
+    mount. Attacker-writable file existence is not evidence; host configuration
+    is. What stays open, recorded in ``docs/cos-ops.md``: a staged workspace
+    that was never registered AND has had its markers deleted has no host-side
+    boundary left to read, so it falls back to vault-only.
+
+    ONE definition (it lives here, not in ``cos``, because ``config`` is what
+    resolves the single-writer lock and cannot import ``cos``)."""
+    vroot = vault_root(vault).resolve()
+    runtime = brain_runtime_dir(vault).expanduser().resolve()
+    roots = [vroot, runtime]
+    for declared in _declared_workspace_roots(vroot):
+        try:
+            roots.append(declared.resolve())
+        except OSError:
+            continue
+    if any((runtime / marker).exists() for marker in ("bin", "model", "vendor")):
+        # A staged workspace: the mount root is the dir holding the vault (and,
+        # for a relocated $BRAIN_RUNTIME_DIR, the one holding that).
+        roots += [vroot.parent, runtime.parent]
+    return roots
+
+
+def proven_off_mount(d: Path, vault: str | os.PathLike[str] | None = None, *,
+                     what: str) -> Path:
+    """``d`` resolved and PROVEN outside every VM-visible root, or refused.
+
+    Raises :class:`HostPathUnsafe` otherwise — a misconfigured
+    ``$BRAIN_INDEX_DIR``, or a symlink that lands back on the mount
+    (``resolve()`` follows those). ONE implementation: the approved queue, the
+    attachment-anchor store (INT-04) and the single-writer lock (INT-05) all
+    route through it, and a second copy of a verification rule is how the first
+    one ends up subtly weaker."""
+    d = d.expanduser().resolve()
+    for root in vm_visible_roots(vault):
+        if d == root or root in d.parents:
+            raise HostPathUnsafe(
+                f"{what} {d} resolves inside {root}, which a Cowork VM "
+                f"session can reach. Point $BRAIN_INDEX_DIR at a host-only path "
+                f"outside the workspace.")
+    return d
+
+
+def host_private_base() -> Path:
+    """The host-controlled root for state a Cowork VM must not reach at all.
+
+    An explicit ``$BRAIN_INDEX_DIR`` (host CONFIGURATION, not vault content)
+    else the per-user app-data base. Deliberately NOT ``index_dir``, which is
+    keyed on the mount-resident ``.brain/vault-id`` — a file the VM can
+    rewrite. ONE definition, shared by the COS approved queue, the per-ledger
+    append locks and the single-writer lock below.
+
+    ``$BRAIN_INDEX_DIR`` is host-wide configuration and MUST be set identically
+    in every context that writes a given vault (see ``docs/cos-ops.md`` INT-05).
+    That is not a second identity for the lock: the lock protects the sqlite
+    index, ``$BRAIN_INDEX_DIR`` IS where that index lives, so lock and index can
+    never disagree about which index is being protected — two contexts with
+    different values are writing different indexes."""
+    override = os.environ.get("BRAIN_INDEX_DIR")
+    return Path(override).expanduser() if override else _app_data_base()
+
+
+def host_lock_dir(vault: str | os.PathLike[str] | None = None, *,
+                  create: bool = False) -> Path:
+    """The off-mount directory every host lockfile lives in (0700).
+
+    Resolution ONLY by default. A name-resolution function that mkdirs and
+    chmods as a side effect materialises host state from any caller that merely
+    wanted the path — including the read-side ``update-probe`` liveness check —
+    so creation is the acquisition path's job (``brain.lock.writer_lock``).
+
+    The resolved directory is PROVEN off every VM-visible root: an override (or
+    a symlink) landing inside the mounted workspace would put the lockfile back
+    under VM control, where the locked inode can be unlinked and replaced and
+    ``flock`` stops excluding anything.
+
+    When ``$BRAIN_INDEX_DIR`` is misconfigured onto the mount the lock does NOT
+    follow it there and does not take the whole write path down with it: it
+    falls back to the per-user app-data base, which is host-controlled by
+    construction. Refusing outright would be fail-closed for the lock and
+    fail-BROKEN for everything else — the approved queue already refuses that
+    misconfiguration on its own (``cos.approved_queue_root``), and a lock that
+    is unconditionally off the mount is the property INT-05 needs. If even the
+    app-data base resolves onto the mount, that is unrecoverable and raises.
+
+    The fallback is DIAGNOSED, not silent — but by ``warn_if_lock_dir_fallback``
+    below, called from the ACQUISITION path, for the same reason creation lives
+    there: a plain name resolution must leave no trace."""
+    try:
+        return _ensure(proven_off_mount(host_private_base() / "locks", vault,
+                                        what="host lock dir"), create)
+    except HostPathUnsafe:
+        return _ensure(proven_off_mount(_app_data_base() / "locks", vault,
+                                        what="host lock dir (app-data fallback)"),
+                       create)
+
+
+#: (vault, reason) pairs already reported in THIS process. Marked BEFORE the
+#: defect is written: ``cos.log_defect`` appends under an append lock, which
+#: resolves through ``host_lock_dir`` again.
+_LOCK_FALLBACK_REPORTED: set[tuple[str, str]] = set()
+
+
+def warn_if_lock_dir_fallback(vault: str | os.PathLike[str] | None = None) -> None:
+    """Diagnose an index directory that pushed the writer lock to app-data.
+
+    Round 3: the fallback keeps the LOCK off the mount, but ``index_path()``
+    still points at the mounted sqlite — so the write path continues against a
+    VM-writable index under a host lock. That was visible only as an
+    approved-queue refusal on some other code path. Now the lock's own
+    acquisition says it, once per (process, reason). Never raises: a diagnosis
+    that can break the write path is worse than the thing it diagnoses."""
+    try:
+        proven_off_mount(host_private_base() / "locks", vault,
+                         what="host lock dir")
+        return
+    except HostPathUnsafe as exc:
+        reason = str(exc)
+    except Exception:  # noqa: BLE001
+        return
+    key = (str(vault or os.environ.get("BRAIN_VAULT", "")), reason)
+    if key in _LOCK_FALLBACK_REPORTED:
+        return
+    _LOCK_FALLBACK_REPORTED.add(key)
+    try:
+        from . import cos
+
+        cos.log_defect(
+            vault, "host-lock-dir-fallback",
+            f"$BRAIN_INDEX_DIR is on the mount, so the writer lock fell back to "
+            f"the app-data base: {reason} The INDEX itself did NOT move — it is "
+            f"still the VM-writable path — so repoint $BRAIN_INDEX_DIR at a "
+            f"host-only directory.")
+    except Exception:  # noqa: BLE001 — diagnosis must never break the lock path
+        pass
+
+
+def _ensure(d: Path, create: bool) -> Path:
+    if create:
+        d.mkdir(parents=True, exist_ok=True)
+        secure_file_permissions(d, 0o700)
+    return d
+
+
 def writer_lock_path(vault: str | os.PathLike[str] | None = None) -> Path:
     """Single-writer advisory lock (CC-02) between the hourly scheduled job
     and a hand-run CLI write — covers sync/rebuild/maintain/snapshot/restore,
     ALL of which mutate the same index file. Distinct from
     ``maintain_lock_path`` (that one is a single-*maintain*-runner lock, a
     narrower concept); this one gates the index file itself. NEVER created on
-    a read path or the VM leg."""
-    return brain_runtime_dir(vault) / "writer.lock"
+    a read path or the VM leg.
+
+    OFF THE MOUNT (INT-05). It used to be ``<vault>/.brain/writer.lock``,
+    beside the vault a Cowork VM session can write: unlink the inode while one
+    holder has it, drop a replacement at the same name, and a second holder
+    locks the NEW inode and runs concurrently — two writers on one sqlite
+    index, which is the exact exposure that moved the per-ledger append lock
+    off the mount first. Open-time checking cannot fix that; being unreachable
+    can. Keyed by vault identity so two vaults never share one lock."""
+    return host_lock_dir(vault) / f"writer-{vault_slug8(vault)}.lock"
 
 
 def graph_dir(vault: str | os.PathLike[str] | None = None) -> Path:

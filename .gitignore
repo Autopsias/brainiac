@@ -23,6 +23,10 @@ build/
 # ignore those, but KEEP the authored, version-controlled specs under packaging/.
 /*.spec
 !packaging/**/*.spec
+# CAP-02: the COS capture corpus — real message bodies at MNPI. It lives under
+# the host-private base (off the Cowork mount, outside any checkout), so this is
+# belt-and-braces for an operator who points $BRAIN_INDEX_DIR inside a clone.
+cos-corpus/
 # The derived SQLite index lives under app-data, never in-repo, but ignore any
 # stray local index/snapshot just in case.
 *.sqlite

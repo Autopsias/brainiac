@@ -11,7 +11,7 @@ Run from the repo root with the MINIMAL venv active:
     python tools/generate_sbom.py
 
 The "minimal set" is the DIST-01 contract: the smallest set of third-party
-packages that runs e5-small (+ optional gte) with NO fastembed, NO qwen3-embed,
+packages that runs bge-m3-int8 (+ optional gte) with NO fastembed, NO qwen3-embed,
 NO torch/transformers/sentence-transformers. Runtime = what the frozen `brain`
 binary needs at run time; eval/test = what the dev/eval harness needs (NOT
 shipped in the corporate build).
@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import pathlib
 import sys
 from datetime import datetime, timezone
@@ -31,9 +30,9 @@ import importlib.metadata as md
 # Everything else in the venv is transitive (pulled by one of these) or
 # eval/test-only.
 RUNTIME_DIRECT = {
-    "onnxruntime": "ONNX model inference (e5-small embedder + gte reranker)",
-    "tokenizers": "BERT/e5 tokenisation (Rust, no Python tokenizer dep)",
-    "numpy": "ndarray math for mean-pooling / rerank scoring",
+    "onnxruntime": "ONNX model inference (bge-m3-int8 embedder + gte reranker)",
+    "tokenizers": "bge/e5 tokenisation (Rust, no Python tokenizer dep)",
+    "numpy": "ndarray math for pooling / rerank scoring",
     "sqlite-vec": "vector ANN backend for the SQLite index",
     "huggingface-hub": "OFFLINE snapshot resolution from a bundled cache dir",
     "cryptography": "Ed25519 audit chain (CORE-03)",
@@ -222,14 +221,14 @@ def main() -> int:
         "eval_test_direct": eval_direct,
         "full_closure": full_closure,
         "excluded": [
-            "fastembed (REMOVED DIST-01: e5-small migrated to direct-ONNX OnnxEmbedder)",
+            "fastembed (REMOVED DIST-01: embedder migrated to direct-ONNX OnnxEmbedder)",
             "qwen3-embed (REMOVED DIST-01: S11-overturned; Qwen3 CPU-dead on HP fleet)",
             "torch / transformers / sentence-transformers (never a runtime dep; ONNX-only)",
         ],
         "notes": [
             "The corporate frozen build bundles ONLY the runtime_direct set +",
             "their transitive deps. eval_test_direct are dev/CI-only and are NOT",
-            "shipped. The e5-small ONNX model (~120MB) is bundled inline as a data",
+            "shipped. The bge-m3-int8 ONNX model (~563MB) is bundled inline as a data",
             "asset, not a pip dep; the gte reranker (~1.1GB) is default-OFF and is",
             "NOT bundled (opt-in: pre-seed / vendor / HF-allowlist — see DIST-02).",
             "runtime_detail[].metadata_sha256 is the sha256 of the dist's METADATA",
@@ -282,9 +281,9 @@ def main() -> int:
     # The bundled model as a data component (not a pip package).
     components.append({
         "type": "data",
-        "bom-ref": "model:intfloat/multilingual-e5-small",
-        "name": "intfloat/multilingual-e5-small (ONNX)",
-        "version": "Xenova/multilingual-e5-small snapshot",
+        "bom-ref": "model:BAAI/bge-m3-int8",
+        "name": "BAAI/bge-m3-int8 (ONNX)",
+        "version": "Xenova/bge-m3 model_int8.onnx snapshot",
         "licenses": [{"license": {"id": "Apache-2.0"}}],
         "properties": [
             {"name": "brain:scope", "value": "runtime (bundled inline, offline-first)"},

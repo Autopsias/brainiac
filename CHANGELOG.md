@@ -7,6 +7,672 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.0] — 2026-08-07
+### Changed
+- **Minor bump, not a patch: the embedder swap below is BREAKING for any
+  existing index.** `0.19.22`–`0.19.27` were unpublished local cuts (the last
+  published tag is `v0.19.21`), so every entry below this one ships as part of
+  `0.20.0`. The patch slot understated what changed.
+- **Upgrading requires a rebuild, and NOT upgrading fails silently.** The
+  default embedder is now `BAAI/bge-m3-int8` at 1024 dimensions, replacing
+  `multilingual-e5-small` at 384. A NEW engine meeting an OLD index is caught
+  by the index metadata mismatch guard. The reverse is not: an OLD engine
+  (`<= 0.19.27`, which has no `is_direct_onnx_model` and so cannot be pointed
+  at the BGE spec by `$BRAIN_EMBED_MODEL` either) opening a NEW 1024-d index
+  contributes NOTHING from the dense leg and answers from BM25 alone — no
+  error, no warning. Observed on the reference deployment 2026-08-07:
+  `search --explain` returned `"dense": null` on every hit. Upgrade the engine
+  and rebuild; do not run a `0.19.x` engine against a `0.20.0` index.
+- **Reranking is on by default** (window 20, RK-02 adaptive gate), which moves
+  a typical query from roughly 0.3 s to roughly 7 s. Measured close-out over
+  the 66-query golden set (`eval/FOLLOWUPS.md` #15): recall@10 0.373 → 0.580,
+  mrr@10 0.267 → 0.566, p95 497 ms → 11,009 ms. Owner ruling 2026-08-07 keeps
+  this default. Opt out per call with `--no-rerank`, globally with
+  `BRAIN_RERANK_DISABLED=1`.
+
+## [0.19.27] — 2026-08-05
+### Changed
+- **PT-04 — the shipped embedder is now `BAAI/bge-m3-int8` (owner ruling
+  2026-08-05), using the exact Xenova `onnx/model_int8.onnx` artifact.** Its
+  model-owned contract is 1024 dimensions, CLS pooling, no query/passage
+  prefixes and batch size 32; the prior e5-small model remains the explicit
+  rollback through
+  `BRAIN_EMBED_MODEL=intfloat/multilingual-e5-small`. The existing index
+  metadata mismatch guard is unchanged, so an e5/BGE half-swap forces a clean
+  rebuild instead of mixing 384-d and 1024-d vectors. Reproduced through the
+  engine path on the frozen 200-note / 4,927-chunk slice: Portuguese median
+  rank 1, top-10 22/24, top-1 19/24, with zero rank differences from the
+  adoption probe; the deliberately sabotaged own-text control exits non-zero.
+  Frozen desktop bundles, installers, SBOM/manifests, and Cowork re-stage now
+  ship the pinned BGE artifact only (never the distinct, worse
+  `model_quantized.onnx`); Cowork atomically replaces its old e5 model cache.
+  Evidence: `eval/runs/post-swap-golden-run-2026-08-05/`.
+- **RET-11 — hybrid search stops throwing away answers it already found at
+  rank 1. The legs now fuse at RRF k=3, not k=60.** RRF sums `weight/(k+rank)`
+  over the legs a note appears in, so at k=60 a SECOND leg was worth up to 2x
+  while the entire rank range inside the candidate window was worth only 2.3x
+  (1/61 vs 1/140). Breadth beat strength: a note one leg ranked 1st lost to
+  notes both legs ranked mediocrely. Measured on the reference vault
+  (2,570 notes, 2026-08-04), five real questions whose answer a leg held at
+  rank 1-17 came back fused at 41, 16, 21, 47 and 93 — and *every* note above
+  them was a two-leg mid-list hit. They now come back at **4, 2, 1, 12 and
+  37**. On the 66-query golden set (the regression guard, not the target):
+  recall@10 0.388 → 0.466, recall@20 0.446 → 0.527, mrr@10 0.249 → 0.325 —
+  30 → 36 queries with a gold document in the top 10, 17 queries better, 6
+  worse, 43 unchanged, and both halves of the pre-registered split improve.
+  Per stratum, `monolingual_pt` goes 0 → 6 of 12 queries and `multi_hop`
+  6 → 7, while `lexical_identifier` holds all 12 and its mrr@10 *rises*
+  (0.750 → 0.792) — the ADR-0008 exact-identity pin is untouched and all
+  three legs scale together, so the calibrated 2.25:1 exact weight ratio is
+  unchanged. **The cost is cross-lingual and is named:** three gold documents
+  leave the top 20 outright — `xl_pt_09` (rank 2 → not found), `xl_pt_10`
+  (17 → not found) and `xl_es_01` (9 → not found) — against `xl_pt_02` 9 → 1
+  and `xl_pt_04` 11 → 3, so `cross_lingual_en_pt` holds 2 of 10 queries while
+  its recall@20 falls 0.350 → 0.200 and `cross_lingual_en_es` goes 2 → 1 of 6.
+  Through the shipped CLI at the production `-k 20`, two of the five cases
+  were not in the returned set at all before and now come back at rank 1 and
+  rank 4. `RRF_K_EXACT` (60) is unchanged and still
+  gates the exact leg and query-log replay; an explicit `rrf_k=` from a caller
+  or an eval arm is still honoured verbatim. **Rollback: `BRAIN_RRF_K=60`
+  restores the pre-RET-11 ranking exactly** (a positive integer overrides the
+  constant; anything else is ignored with one stderr warning). Query-time
+  only — no rebuild, no re-embed, no index change. Evidence:
+  `eval/fusion_constant_calibration.py`,
+  `eval/runs/fusion-constant-2026-08-04-*.json`, `eval/FOLLOWUPS.md` #10.
+- **The shipped embedder STAYS `multilingual-e5-small` (BR-02 closed, owner
+  ruling 2026-08-04).** The proposed swap to a bigger multilingual model was
+  falsified before it was paid for: the embedder already puts half the
+  Portuguese gold documents in its own dense top 10 at median rank 2, and
+  RRF fusion exits them at median rank 52 — a better dense rank improves a
+  number the production ranking discards. No model change, no rebuild, no
+  re-embed. `get_embedder("auto")` remains the single swap point.
+  Evidence: `eval/FOLLOWUPS.md` #7 and #8.
+- **`BRAIN_ZONE_WEIGHTS` documented as a supported, measured opt-in — the
+  RET-01 zone-authority prior stays NEUTRAL by default.** It applies a
+  per-zone multiplier to the fused score for dense-leg-only hits, which is
+  the direct counterweight to the fusion burial above. Selected on the golden
+  set's pre-registered TRAIN half and read once on its held-out half
+  (`eval/zone_prior_calibration.py`): held-out mrr@10 0.198 → 0.386, paired
+  permutation p=0.011; `monolingual_pt` recall@10 0.000 → 0.458 at W=3.0.
+  It does **not** ship as a default because the same measurement shows the
+  constant is not identifiable at n=66 — train argmax 3.0, held-out argmax
+  5.0, and the observed effect below the minimum detectable at 80% power —
+  so 2.0-3.0 is an evidenced range, not a calibrated value. Query-time only:
+  no rebuild, reversible by unsetting the variable. Costs (temporal,
+  cross-lingual ES, identifier precision) and the recommended range are in
+  `brain search --help`, `AGENTS.md` §5 rule 3 and `eval/FOLLOWUPS.md` #9.
+  A malformed `BRAIN_ZONE_WEIGHTS` or an unrecognised `BRAIN_ZONE_SCOPE` now
+  prints one stderr warning naming what was wrong instead of silently
+  behaving like an unset variable, factors are bounded to [1e-6, 1e6], and an
+  unrecognised scope fails safe to `semantic_only` rather than to the wider
+  `all`. `_resolve_zone`'s docstring now records that `source_zone:` is absent
+  from all 2,570 INDEXED reference-vault notes (the earlier "3,589" named no
+  population and was wrong), so weights must be keyed on the flattened
+  `brain`/`raw` zones there or they are silently a no-op.
+- **The zone-prior calibration harness now fails closed on the three ways it
+  could produce confident wrong numbers** (`eval/zone_prior_calibration.py`,
+  rework 2026-08-04): an unresolvable positive qrel ABORTS the capture instead
+  of scoring that query as a permanent miss at every weight (it silently zeroed
+  3 of the 10 `temporal` queries in the first run); `recall@10` is now computed
+  over EVERY gold document rather than the best-ranked one (30 of the 66 golden
+  queries have more than one, so an aggregate gain could hide the loss of the
+  rest — the old figure was `hit@10`); and only a FRESH BARE capture may claim
+  the held-out split at all — a `--from-ranks` replay or a rerank arm is
+  refused outright, not merely defaulted, so a second "primary" result cannot
+  be minted from the same split by changing `--target`. (The first cut of that
+  guard keyed on the stored fold context, which the retained pre-fix rerank
+  artifact declares as `non-held-out`; it replayed into a second held-out
+  `recall@10` primary at p=0.0276 until the rule was made positional.)
+  Captures also record the engine/corpus fingerprint and whether the reranker
+  ACTUALLY ran per query, and an arm whose reranker fired on a DIFFERENT SET
+  of queries between the compared weights is refused rather than read as
+  evidence — equal rerank counts are not equal rerank application, and two
+  arms reranked over opposite halves of the paired set measure the reranker,
+  not the zone prior. None of this moves a published number: the shipped
+  readout was produced by a fresh bare capture, which both rules still allow.
+- **`search`/`hybrid-search` rerank ON by default (BR-03, owner ruling
+  2026-08-04), candidate window 20.** Measured on the 66-query golden set
+  (`eval/FOLLOWUPS.md` #4, engine 0.19.24): mrr@10 0.267 → 0.411, hit@1
+  0.212 → 0.349 (recall@20 is unmoved at this window — the gain is precision
+  in the head, not depth), for ~5.5s p50 / 8.2s p95 added
+  search latency the owner has explicitly accepted for the quality gain (the
+  plan's own latency-budget rule — added p50 <= 200ms — was failed by every
+  rerank arm by more than 10x; the owner overruled the budget for this vault,
+  not the measurement). The window shipped at 50 for part of the same day and
+  was ruled back to 20 once its real latency was measured — see the second
+  ruling below. Opt out per call with `--no-rerank`; the global kill switch
+  is `BRAIN_RERANK_DISABLED=1` (mirrors `BRAIN_EXACT_LEG_ENABLED`) — an
+  explicit `--rerank`/`--no-rerank` always wins over the env var. The clamp
+  CEILING moved 20 → 50 and stays there, so
+  `BRAIN_RERANK_MAX`/`BRAIN_RERANK_TOP` can still opt into a wide-candidate
+  pass deliberately (raise `BRAIN_RERANK_TIMEOUT_S` with it).
+- **Default candidate window ruled back to 20 (owner ruling 2026-08-04,
+  second ruling of the day), because the latency the first one rested on was
+  wrong.** Window 50 was chosen over 20 on a stated "p50 5.6s vs 5.5s". That
+  pair is, to the tenth of a second, the window-**20** row — a window-20
+  sample labelled as window 50. The committed arms measure window 50 at p50
+  68.0s / p95 188.4s, with 55 of 65 golden queries (85%) exceeding the 30s
+  caller timeout and therefore returning the BARE pre-rerank ordering after a
+  30-second wait. Reproduced clean on two idle machines (window 20: 8.2s /
+  11.9s; window 50: 74.6s / 28.1s), so contention is not the explanation —
+  reranker cost is strongly super-linear in the window on real note bodies.
+  Owner's reason for 20: it is the latency actually accepted, it reranks
+  every query instead of timing out on most of them, and quality you receive
+  beats quality that expires. The 30s timeout is unchanged and is a genuine
+  safety valve again at this window — ~5.4x the p50 and ~2.9x the slowest
+  golden query (10.5s), with zero queries past even 20s. Full evidence:
+  `eval/FOLLOWUPS.md` #6. `brain diagnose --rerank-top` moved 15 → 20 with
+  it, so the diagnostic reproduces production's window rather than a third
+  one.
+### Added
+- **An adaptive rerank gate (RK-02): the cross-encoder is skipped where it is
+  measurably worth nothing.** Default-on reranking costs seconds per query,
+  and the per-stratum measurement showed why that spend is uneven — `temporal` mrr@10 goes
+  0.448 → 0.720 and `multi_hop` 0.226 → 0.467, while `lexical_identifier` is
+  already at ceiling bare. So a query where ADR-0008 pinned a UNIQUE full
+  alias/title owner now skips the reranker: rank 1 is already decided there
+  and the reranker may not touch it. Calibrated OFFLINE against the existing
+  rank-preserving arms (`eval/rerank_gate_calibration.py`, artifacts under
+  `eval/runs/rerank-gate-{signals,calibration}-2026-08-04.json`,
+  `eval/FOLLOWUPS.md` #5): those queries score IDENTICALLY to always-on —
+  recall@10, recall@20, mrr@10 and hit@1 all +0.0000, verified against BOTH
+  the window-20 and window-50 captured arms — while their measured latency
+  drops from a 6.2s median to a 200ms median at the shipped window 20. Every wider rule measured cost recall, and every
+  RRF-margin cutoff in 0.20-0.40 selects exactly the same queries as the pin,
+  so no tuned constant is carried. Overrides mirror the BR-03 kill switch:
+  `--no-rerank-gate` per call, `BRAIN_RERANK_GATE_DISABLED=1` globally,
+  explicit flag wins; turning the gate off never disables reranking, it only
+  stops the engine skipping it. `search --explain --json` reports
+  `ranking.rerank_gate` (`enabled`/`skipped`/`reason`) — read that rather
+  than inferring a skip from `rerank_applied`, which also covers an absent
+  model and a timeout fallback. Caller policy settled with it:
+  `brain maintain`, the weekly golden probe, `dossier` and the MCP adapter
+  were each verified to already use the library default (`rerank=False`) and
+  needed no change; the two Cowork shell probes (`scripts/vm-selftest.sh`,
+  `scripts/vm-boundary-probe.sh` and their shipped `_assets` twins) did start
+  paying for it and now pass `--no-rerank`.
+- **A caller-side timeout on the reranker.** An ONNX forward pass can't be
+  interrupted mid-call, so `BRAIN_RERANK_TIMEOUT_S` (default 30s — see
+  `brain.rerank.rerank_timeout_seconds`) bounds how long the CALLER waits,
+  not the actual compute: a call that exceeds the budget falls back to the
+  pre-rerank order for that query while the slow call keeps running in the
+  background on a persistent single-worker executor, its result discarded.
+  No process pool — the existing skippable contract (RET-02) already covers
+  the discard.
+
+### Fixed
+- Two Cowork shell probes (`scripts/vm-selftest.sh`,
+  `scripts/vm-boundary-probe.sh`, and their shipped
+  `src/brain/_assets/scripts/` twins) stopped silently paying for the
+  default-on reranker. Both are liveness checks — one discards stdout
+  entirely — and RET-02 guarantees a broken reranker degrades to identity
+  rather than failing search, so `--no-rerank` costs them no coverage.
+
+## [0.19.26] — 2026-08-03
+### Fixed
+- **A transient browser failure no longer destroys a night's capture.** Run 68
+  (2026-08-03) hit a tab-binding failure, closed its corpus with `rows: 0` as
+  the doctrine endorses for a quiet night, recovered six minutes later, opened
+  three real message bodies — and could save none of them, because the corpus
+  is write-once. A close certifying ZERO rows certifies nothing: no
+  denominator, no replay scope, no ledger row. So it, and only it, can be
+  retracted — `brain cos-corpus-reopen` (host-only). A close carrying rows is
+  final, with no force flag: the gate reads the close record's DECLARED count,
+  not how many rows currently parse, so a torn row cannot unlock finality, and
+  a file with unreadable lines is refused outright. The retraction is
+  APPENDED — the false close stays visible on the file — and re-closing
+  records the true count. Doctrine v5.45 tells a recovered run to reopen.
+- **A run that SKIPPED a required capture no longer reads as innocent.**
+  `cos_runverify.check_corpus_join` used to score any missing corpus "not
+  applicable", reciting three causes. It now tests them: the oldest corpus
+  still on disk, dated at or before the run, proves capture was live and that
+  retention had not reached that date. Against that witness, a ledger claiming
+  `body_opened: true` with no corpus at all is a FAIL. Measured on this host:
+  runs 57–67 all still "not applicable", run 68 the only positive.
+- **Retention's marker records the real date**, never an injected `--date`.
+- **A close record naming a different run is damage, not this corpus's close** —
+  it counts as an unreadable line and closes nothing.
+### Fixed
+- **A transient browser failure no longer destroys a night's capture.** Run 68
+  (2026-08-03) hit a tab-binding failure, honestly closed its corpus with
+  `rows: 0`, recovered six minutes later, and had all three of the real message
+  bodies it then opened refused `CorpusClosed`. `brain cos-corpus-reopen`
+  retracts a close that certified ZERO rows — and only that: a close carrying
+  rows is final, because a replay may already have used that denominator, so
+  there is no force flag and no repair path. The retraction is APPENDED, so the
+  false close stays on the file where a later reader sees it; closing again
+  records the true count. Chief-of-staff doctrine v5.45 tells a recovered lane
+  to reopen and carry on.
+
+## [0.19.25] — 2026-08-03
+### Fixed
+- **Retention now actually ships.** 0.19.24 was built before the nightly fold
+  that calls `cos_corpus.prune` landed, so the installed engine carried the
+  capture verbs but nothing that expires a corpus — real mail bodies
+  accumulated on a host whose `brain status` truthfully said
+  `pruned_by_a_scheduled_fold: false`. This build carries the fold. Also in:
+  the fold takes its cutoff from the real UTC clock, so `maintain --date
+  <future> --allow-future-date` can no longer delete unexpired mail; a refused
+  unlink is reported as an error instead of being stamped as a successful
+  prune; and `cos_runverify` names retention as a third reason a run's corpus
+  may be absent.
+
+## [0.19.24] — 2026-08-03
+### Added
+- **A run now keeps the mail text it read, so a judgment can be re-run without
+  the mailbox.** Every COS run writes one append-only JSONL corpus under the
+  host index dir (`cos-corpus/`), holding the message text each verdict was
+  made from — the one input the ingestion ledgers discard, which is why
+  re-judging anything used to cost a 90-minute live run. It is the most
+  sensitive thing on this disk (real mail bodies, classified MNPI, owner-only,
+  proven off the VM mount, never indexed). Retention is AUTOMATIC: the nightly
+  `brain maintain` daily retention block deletes expired corpora as whole run
+  files, honouring `$BRAIN_COS_CORPUS_DAYS` (default 30). `brain status`
+  reports `cos.capture_corpus`, including `last_scheduled_prune` — read from
+  this host's maintain state, so a host whose nightly never ran says so.
+- **The two write verbs the run calls:** `brain cos-corpus-append` (one thread,
+  text on stdin, never argv) and `brain cos-corpus-close`. Both host-only,
+  refused on `role=vm`. Chief-of-staff doctrine v5.44 calls them from Phase 1.6
+  rule 1½ at the moment of each open — writing the corpus is part of READING,
+  not a wrap-up step a long run skips.
+- **Judging refuses to start when the bodies are missing.** `brain
+  cos-corpus-check` (and the same precondition inside the replay harness) fails
+  when no corpus row carries text, naming what is missing and how many rows.
+  This closes run 65's shape, where 58 threads were judged `no-substance`
+  without a single body pass having run. Partial corpora are judged on their
+  bodied rows with the skipped count reported — never silently.
+- **A ledger can no longer claim a verdict for mail that was never captured.**
+  `cos_runverify.check_corpus_join` fails a run whose ledger names a thread
+  absent from its corpus, or claims `body_opened: true` where the corpus holds
+  no text. A run that wrote no corpus scores "not applicable", never FAIL, so
+  every pre-corpus run stays green. It does not close the standing trust gap: a
+  run that fabricated BOTH a corpus and a matching ledger would still pass, and
+  the check says so itself.
+- **Offline replay tooling** (`eval/cos_replay.py`, `eval/replay_gate.py`):
+  replay a saved corpus through the same judge the nightly runs — no browser,
+  no mailbox — and compare two runs for regression. The judge is not
+  reimplemented; the doctrine is read verbatim from the shipped SKILL.md. The
+  gate compares verdicts within a ±4.17% band, the judge's own measured
+  run-to-run disagreement, so it cannot read noise as regression.
+
+## [0.19.23] — 2026-08-02
+### Added
+- **A run can no longer report reading mail it never opened.** Run 64
+  (2026-08-02) produced a full 116-row ingestion ledger without opening a single
+  message body: it read run 63's ledger, filtered it to its own conversations,
+  rewrote `run` and `ts`, hand-set `body_opened` on three conversation ids and
+  rewrote all eight of run 63's candidates into `dedup-prior-proposal` holds.
+  115 of its 116 rows were row-identical to run 63's, every category was real,
+  and the existing candidate check passed *vacuously* because the copy had left
+  no candidates to stamp. `brain.cos_runverify` gains **`body_pass`**: a
+  `no-substance` verdict on a thread with `body_opened: false` is a substance
+  judgment without the read it asserts — `no-substance` is the one Phase-1.6
+  hold reason only reachable by opening the body, since every unreadable case
+  has its own reason (`preview-insufficient`, `over-cap`,
+  `no-body-access-on-lane`, `browser-not-visible`). Measured false-positive rate
+  on the real corpus: zero across runs 57–63; it fires on 58 rows of run 64. A
+  "this ledger duplicates the previous run's" check was deliberately NOT added —
+  a stable mailbox legitimately repeats `(convid, tier, verdict, category)`
+  night after night, so that rule would cry wolf where coherence does not.
+- **Evidence artifacts must carry the date the host assigned.** The second new
+  check, **`artifact_naming`**, fails a run whose ledgers, contract records or
+  metrics row are filed under a date the host never issued. `_briefing_*` and
+  `_decision_card_*` are exempt: those are deliberately named for the morning
+  they are read, and run 63 proves that is normal.
+
+### Fixed
+- **The outcome-contract block's filename was specified nowhere, so it drifted
+  and the validator went blind.** Both `SKILL.md` and the deployed automation
+  prompt write the CLI as `--out <block.json>` — a placeholder. Runs 40–62
+  happened to choose `cos_contract_block_<run>.json`, which is what
+  `brain.cos_runverify` reads; runs 63 and 64 chose `outcome_contract_<run>.json`
+  and the contract check reported "no block" for both. `tools/cos_contract.py`
+  now derives the canonical path itself from the host pointer
+  `<vault>/.brain/cos/shared/current-run.json`, confirms it names this run, and
+  writes `cos_contract_block_<host run id>.json` whatever `--out` says. Because
+  the id comes from the host, the block is also immune to the local-vs-UTC date
+  drift below. No pointer, or a pointer naming a different run, means nothing is
+  written and the validator says it has no block — better than filing a verdict
+  under the wrong night.
+- **A metrics row whose own ledger denies it is refused at write time, not
+  discovered a day later.** `tools/cos_reconcile_metrics.py --append` now
+  recounts `ingestion_in_scope` / `ingestion_candidates` / `ingestion_held`
+  against the run's own ingestion ledger and refuses a row that disagrees,
+  reusing `brain.cos_runverify.ledger_counts` so there is ONE definition of
+  those counters shared with the validator that later re-executes them. Run 63
+  under-reported `ingestion_held` as 3 against a ledger count of 107 and run 64
+  as 11 against 116; both would have been stopped while the run was still there
+  to recount. An **absent** ledger is left alone — that is the observation
+  guard's business, not this one's. The two gates are complementary and neither
+  is sufficient: this one says "repair the counter, never the ledger", and in run
+  64 the ledger was the fabricated artifact, so `body_pass` is what
+  independently refuses the lie.
+- **The engine that freezes a run's manifest is now the engine that stages its
+  candidates.** `scripts/cos-run-now.sh` prepended a directory to `PATH` and
+  measured the run still resolving `~/.local/bin/brain` — Codex starts its own
+  login shell, so the host froze the manifest with one engine while the run
+  proposed from another, and every candidate came back unattributable. When the
+  operator pins `$BRAIN_BIN`, the prompt now names it explicitly. The same script
+  gained an opt-in `COS_BODY_OPEN_CAP` for the non-mutating measurement lane, so
+  a run can prove the body-open cap was not what bound its result; the unread
+  screen, open ordering and unread invariant are untouched.
+- **`cos-check-run.sh` printed "no run report found" for two different
+  findings** — a genuinely missing report, and a report that exists but names
+  none of its counters. Both known-positives now print distinctly.
+
+### Changed
+- **chief-of-staff v5.39 → v5.43 — the body pass now proves the page is
+  visible, and stops leaking browsers and the owner's screen.** A covered Chrome
+  window makes the OWA tab `visibilityState: hidden`; Chrome then runs zero
+  `requestAnimationFrame` callbacks and OWA's virtualized list stops rendering
+  rows — which is why one nightly read five emails instead of two hundred
+  (measured: 178/178 conversations visible, 11 hidden). New host primitives
+  `tools/cos_hold_visible.py` (raise and hold visibility, re-check per open,
+  release with window order/active tab/frontmost restored, `--max-idle` hands
+  the screen back when reading stops) and `tools/cos_render_png.py` (Chrome 151
+  writes the screenshot and does **not** exit, so a wait-for-exit renderer leaks
+  on every SUCCESSFUL render — this one waits on the artefact, kills the process
+  group, removes the temp dir on every exit path including SIGTERM, and its
+  `reap` reports the orphan count rather than clearing them silently).
+  `browser-not-visible` becomes a sixth managed hold reason so an unusable lane
+  opens nothing instead of grinding out five threads, clicks aim at the subject
+  line, and a sandbox Apple-events denial is exit 5 `apple-events-denied` rather
+  than an uncaught traceback.
+
+## [0.19.22] — 2026-08-01
+### Security
+- **What you approve is now exactly what gets signed, byte for byte (INT-01).**
+  An owner-accepted COS candidate used to wait in `capture-inbox/`, which is
+  VM-writable by design: `brain --role vm draft-capture` could overwrite the
+  same id after the accept, and the host drain then re-read those mutable bytes
+  and signed them. Accepted candidates (and released auto-capture holds) now
+  wait in a host-only **approved queue** in the per-vault app-data dir
+  (`config.index_dir(...)/cos-approved/`) — physically off the Cowork VirtioFS
+  mount, not merely `0700` on it — under an Ed25519-signed
+  `cos_approved_anchor/v1` record, so the sha cannot be rewritten by whoever
+  rewrites the payload. The drain reads the payload once (`O_NOFOLLOW`), hashes
+  what it actually read, re-verifies the anchor immediately before `write_note`
+  (a read-time check alone is TOCTOU) and signs that exact buffer, never
+  re-opening the path. Direct writes, rename/replace, symlink swaps, forged or
+  deleted anchors, and id mismatches are all refused loudly — quarantined out of
+  the queue with an `approved-queue-refusal` defect and an `approved_refused`
+  count in `brain status` — never signed. Ordinary VM `draft-capture` drafts
+  keep today's path; `scripts/vm-boundary-probe.sh` §B3 measures the location
+  claim from a real Cowork session.
+- **The last four ways into that queue are closed too.** (1) `batch_digest` does
+  not cover `answer_key`, so appending that field to a legitimately signed batch
+  used to let crash recovery follow it to ANY other answered "accept all" entry;
+  the key is now DERIVED from the batch id and the selected entry must carry
+  that exact key. (2) A hold marker's `id` becomes a path, and `host/hold/` is
+  on the shared mount — `id: "../../../../brain/resources/pwned"` wrote a real
+  attacker-named file inside the vault and then wedged every later release; every
+  reader of an untrusted sidecar id now goes through `_safe_meta_id`, quarantine
+  destinations come from the real directory entry, and a failed rename is logged
+  instead of raised. (3) Vault binding is ONE host-protected identity (the
+  resolved-path hash) for both the queue path and the signature — the previous
+  "path hash OR `.brain/vault-id`" let a VM overwrite that mount-resident file
+  with another vault's id and replay its anchors. (4) `batches.jsonl` — the
+  signed row recovery re-derives its decision from — and the consume journal are
+  now written and removed atomically and durably (temp → fsync → replace → fsync
+  parent), matching the queue itself.
+- **The path-traversal class is now guarded from an ENUMERATION, not from
+  reports.** The same defect — a value the VM can write used as, or to build, a
+  path the host then opens/moves/renames/unlinks — surfaced once per review
+  round at a different site. `src/brain/cos.py` now carries a census of every
+  reader of mount-resident JSON with its path-bearing fields and its guard, and
+  `tests/test_cos_pathguard.py` FAILS if a new reader appears unclassified.
+  Two primitives: `_safe_meta_id` (bare slug) and the newly added
+  `_safe_meta_path` (must resolve inside a named host root). That closed three
+  live instances: `version_link_metas` fed an unguarded id to an arbitrary MOVE
+  (into a VM-readable directory — exfiltration) and an arbitrary `unlink`;
+  `attachment_metas` guarded its `id` but not its sibling `path`, which is the
+  actual move source; and a malformed hold marker (non-dict JSON, or a Unicode
+  filename with no id) raised out of the release loop and wedged every
+  legitimate due hold from then on.
+- **Two more host-file primitives closed.** `_write_atomic` used a predictable
+  `<target>.tmp` with a plain `open`, which follows a symlink — and it had just
+  been pointed at `batches.jsonl` on the shared mount, so a pre-planted link
+  made the host truncate any file it named; it now uses an unpredictable name
+  with `O_CREAT|O_EXCL|O_NOFOLLOW` and a regular-file check. And the approved
+  queue's PARENT directory no longer resolves through `config.index_dir`, which
+  reads the mount-resident `.brain/vault-id`: rewriting that one file re-pointed
+  the queue at another vault's app-data and silently stranded the only copy of
+  owner-approved content. Both components are host-controlled now.
+- **No raw writes remain in the COS module, and three more path fields are
+  guarded.** A second predictable temp on the mount (`<run-id>.validity.json.tmp`,
+  written unattended by the run verifier) let a planted symlink redirect a host
+  write, so every write in `cos.py` now goes through `_write_atomic` and a test
+  enforces that none come back. `_write_atomic` itself now loops until all bytes
+  are out — a short `os.write` was published as complete, which for approved
+  staging would have destroyed the accepted content — and cleans up its temp on
+  a failure in close or replace too. An attachment sidecar's `filename` (a third
+  mount-controlled field both censuses had missed) is validated at
+  `_unique_dest`, the join every caller routes through. `safe_slug` caps ids at
+  180 ENCODED BYTES: a 10k-character ASCII id passed every character rule and
+  then raised `ENAMETOOLONG` at the write, aborting apply/recovery and leaving
+  the journal to retry forever. And batch candidate ids are guarded before
+  `pending/<id>.md` is built — a batch signature proves the host wrote the row,
+  not that the id is path-safe, so one signed by a pre-guard version replayed
+  through after an upgrade.
+- **Fallout from that conversion, closed.** The "zero raw writes" claim was
+  false — `_append_jsonl` still used `path.open("a")` for the mount-resident
+  ledgers, and the test that asserted the property scanned only `write_text`
+  and open-for-write, so it reported clean over the very line that broke it.
+  The append is now `O_APPEND|O_NOFOLLOW`, and the test walks the AST (append
+  modes included, docstrings that merely mention an idiom no longer trip it).
+  More seriously, `_write_atomic` creates replacements owner-only, which
+  silently took `shared/current-run.json` and the VM's own proposal drops from
+  umask-default to `0600` — a split-UID host/VM install would have broken with
+  nothing in any functional test to show it. Per-zone modes are now named
+  (`MODE_HOST_PRIVATE`/`MODE_VM_READABLE`/`MODE_VM_WRITABLE`), applied via
+  `fchmod` on the fd before publication, and asserted per zone. Also: a
+  zero-progress `os.write` raises instead of spinning with the temp fd open,
+  and a run id is bounded in encoded bytes so an absurd run-number directory on
+  the mount can neither be inherited by `next_run_id` nor abort run creation at
+  `ENAMETOOLONG`.
+- **The ledger append's no-follow guard is no longer optional, and a record is
+  now written whole.** `getattr(os, "O_NOFOLLOW", 0)` degraded to no protection
+  at all on a platform without the flag — Windows, which this project ships to
+  and which only the distribution-matrix CI exercises — so a planted ledger
+  symlink was followed and host data written into its target. There is no `0`
+  fallback now: with the flag it is used; without it the open is bracketed by an
+  `lstat`/`fstat` inode-identity check that refuses a symlink and refuses a file
+  swapped in between the two, rather than writing unprotected. Separately,
+  `O_APPEND` places each `os.write` at EOF but says nothing about a whole
+  logical JSON line, so a short write plus a concurrent fold could interleave
+  bytes into a ledger row; the entire record — retries included — is now
+  serialized on a per-ledger lock using the same portable primitive `lock.py`
+  already provides.
+- **The last two mount surfaces on the ledger path were removed, not guarded.**
+  Every round that hardened something living on the VM-shared mount produced a
+  new variant of the same attack; the one component that never came back is the
+  approved queue, because it was MOVED off the mount. Both fixes take that
+  shape. (1) A missing ledger is now created with `O_CREAT|O_EXCL` — the kernel
+  refuses to create through a symlink, atomically — instead of stat-then-create,
+  which had a window an attacker could fill: the old code took
+  `FileNotFoundError` as "nothing to check" and skipped the identity comparison
+  entirely, so a link inserted between the two calls was followed and ledger
+  data appended outside the ledger. An existing ledger is opened without
+  `O_CREAT` and verified, and a file that appears and disappears bounces between
+  the two branches under a bounded retry. (2) The per-ledger append lock moved
+  to the host-private app-data dir, keyed by a hash of the ledger's absolute
+  name: a lock file beside its ledger was itself reachable, so unlinking that
+  inode while one writer held it let a second writer lock the replacement and
+  interleave records anyway — no open-time check fixes that, and being
+  unreachable does.
+- **One verification path for the ledger append, not two.** `O_NOFOLLOW`
+  refuses a symlink at the final name; it does not say WHICH file you opened, or
+  that it is a regular file at all — so the branch that had the flag returned
+  straight from `os.open`, and a mount attacker who replaced the ledger with a
+  regular file of their own received host appends. Both branches now do the same
+  `lstat` → refuse-symlink → `fstat` → regular-file + inode-identity check, with
+  the flag as belt rather than as the check. The open also carries `O_NONBLOCK`,
+  so a planted FIFO fails immediately instead of blocking for a reader — that
+  wait sailed past the append lock's timeout and would have wedged the
+  unattended nightly drain, which is the failure that matters most.
+- **Holds parked by an older engine are quarantined, not accused.** They carry no
+  authorization to verify, so they cannot be released; marker AND payload move
+  together to `<id>.refused.{json,md}` with a defect that names the cause as an
+  upgrade rather than tampering. Re-propose the payload if it is still wanted.
+- **…and both ways INTO that queue are authenticated too.** A guarded waiting
+  room is worth nothing if what decides its contents is unauthenticated and on
+  the mount. (1) The crash-recovery path used to replay a `consume-pending.json`
+  it found — no batch signature, no owner answer, no subset check — so a forged
+  journal plus a forged `batches.jsonl` row, both on the mount, got their
+  contents signed; recovery now re-derives its decision through the SAME
+  `_verified_decision` routine the normal consumer uses, and refuses with a
+  defect otherwise. (2) Auto-capture holds now carry a `cos_hold_record/v1`
+  authorization signed at hold CREATION over (id, content sha, `not_before`,
+  authorization, vault); release reads `not_before` from the signed body and
+  re-hashes the payload against the signed sha, so two forged files in
+  `host/hold/` no longer buy a host-signed approval anchor.
+- **A key outage is no longer mistaken for an attack.** Anchor verification
+  resolves the host key ONCE per drain; a locked keychain, a scheduler running
+  as the wrong user, a missing `cryptography` or a rotated key now skips the
+  whole queue as `no-signing-key (fail-closed)` — leaving every file in place,
+  exactly like the ordinary draft path — instead of quarantining owner-approved
+  work with security-worded defects. The vault is bound into each signed body by
+  BOTH a path hash and `.brain/vault-id`, either of which is enough, so a vault
+  move and a deleted `vault-id` are both survivable while a cross-vault copy
+  still fails. Undo now reports failure (and logs a defect) when it cannot
+  actually delete the queued item, rather than claiming success while the next
+  drain signs the revoked content. The approved queue is also counted in
+  `pending_drafts` (the stalled-drain tripwire), attributed by SOURCE in the
+  maintain report, and called out as the one non-disposable thing in the index
+  dir (`AGENTS.md` §1, `docs/substrate-spec.md` §1, `brain rebuild` warns).
+
+### Fixed
+- **`brain-mcp` was dead on every fresh install, taking the Claude Desktop Chat
+  tab with it.** The `[mcp]` extra was pinned `mcp>=1.0`; the MCP Python SDK
+  released 2.0.0, which deletes `mcp.server.fastmcp` — the module
+  `brain.mcp_adapter` imports. Any new `pip install brainiac-cli[mcp]` therefore
+  resolved to a combination where `brain-mcp` raised `ModuleNotFoundError` at
+  startup, so the `.mcpb` shim spawned an engine that immediately died. Pinned
+  `mcp>=1.0,<2`; lifting the cap means porting the adapter off FastMCP, which is
+  a migration, not a bump. Found by the new release-asset handshake gate below,
+  on its first real run — after the break had already shipped.
+
+### Added
+- **The Claude Desktop `.mcpb` now ships as a GitHub release asset.**
+  `tools/publish_public.py` gains a `release-asset` phase (after `public-git`,
+  before `post-verify`) that builds the bundle from the export tree and attaches
+  it to the public release at `v<X.Y.Z>`. `docs/install/README.md` Path G had
+  been telling Chat-tab users to download it "from a release" while the public
+  repo had no releases at all, so the only way to obtain one was a hand-build
+  emailed per user. The phase runs its MCP handshake against
+  `brainiac-cli[mcp]==<version>` installed fresh from PyPI — proving the shipping
+  bundle works with the shipping engine, not the release operator's local one —
+  and downloads the published asset back to sha256-compare it against what was
+  built. Resume-safe: an existing release is re-uploaded to, never re-created.
+- **The host decides which bundle produced a proposal — the producer no longer
+  gets to say.** A COS candidate used to arrive carrying its own
+  `bundle_version`, `extraction_rules_version` and category, all written by the
+  untrusted nightly. The new host-only `brain cos-run-begin` freezes an
+  immutable run manifest at LAUNCH instead (run id, the resolved `SKILL.md`
+  path and digest, both versions, the expected artifact set), and
+  `scripts/cos-run-now.sh` aborts the launch outright if it cannot.
+  `claim_drops` then stamps versions from that manifest and joins the category
+  from the PRODUCING run's ledger by proposal id + full content digest —
+  quarantining a collision instead of picking one — while a VM-claimed stamp is
+  stripped from routing and from the signed bytes. Claiming is gated on run
+  validity: an INVALID or INCONCLUSIVE run's candidates quarantine with a
+  recorded reason, and every later pass re-runs the gate, so a run that turns
+  VALID later drains its own queue with no operator step. Lane resolution moved
+  into `src/brain/cos_deploy.py` so the readback tool and the run manifest
+  share ONE definition of "what actually executes". New `unjoined_claims` /
+  `quarantined_claims` counters surface in `brain status` and the morning brief.
+- **The nightly's self-evaluation moved host-side, where the run cannot skip
+  it.** Run 59 skipped its entire self-eval and nothing noticed — doctrine
+  cannot police itself. `src/brain/cos_runverify.py` now scores every COMPLETED
+  run in four states (VALID / VALID_DEGRADED / INVALID / INCONCLUSIVE) from the
+  hourly broker fold, with no new scheduled task, and standalone via
+  `tools/cos_run_verify.py`. It RE-EXECUTES the controls rather than reading the
+  run's report of them: re-runs `tools/cos_contract.py` over the raw PRE/POST
+  and the ledgers and compares verdict and clauses, recounts every ingestion
+  counter from the run's own ledger, re-derives the expected E-check set from
+  THE MANIFEST'S skill digest (never from whichever `SKILL.md` is deployed at
+  validation time), re-runs the observation guard, and treats a degrade marker
+  sitting beside a populated ledger as a failure. Completion is host-observed
+  (manifest artifact set + a quiescence window) and each verdict records its
+  input digests, so a late or substituted artifact re-validates instead of
+  resting on a cache. It BLOCKS: a failed verdict quarantines that run's
+  candidates at claim time. Scored against real artifacts — run 57
+  VALID_DEGRADED, run 58 as correctly-reported degradation, run 59 INVALID.
+- **Every gate in the pipeline now carries an executable proof that it can
+  fail.** Five times in one cycle a safety check turned out to be incapable of
+  failing, so `docs/cos-instrument-inventory.md` now holds one row per
+  instrument with 142 proof references, each resolving to a real test or an
+  executed `--selfcheck`, plus the maintenance contract: a new gate ships with a
+  row and a proof, or it is not a gate. The sweep found three live can't-fail
+  defects — the run-validator's own self-eval counted results instead of
+  checking the SET (E1 + E2 + an invented E40 passed as "3 of 3" while E3 never
+  ran), the ZS-window-mismatch contract reason had no known positive at all, and
+  nothing enforced that the checker mirror an installed wheel re-executes
+  matches the checkout copy every test scores. Recorded in the same document,
+  because it is the honest headline: 22 of the 29 E-checks are not gates, they
+  are producer self-report.
+- **`brain doctor` now says which chief-of-staff bundle runs tonight.** One row
+  — the executing lane, the version, the extraction-rules version, the digest
+  and the path — read through the same lane resolution the run manifest stamps
+  with, never a second copy of the rules. "Which version is deployed" used to be
+  answerable only by knowing which of two surfaces to look at, and getting that
+  wrong produced two false freeze alarms. The row never gates the exit code: a
+  host with no COS deployment at all is healthy, and a gating row there is
+  exactly the false-DEGRADED failure this project has already paid for once.
+- **The VM boundary probe is staged by the installer, not hand-copied.**
+  `scripts/vm-boundary-probe.sh` — the negative half that proves a Cowork VM
+  refuses all 21 host-broker verbs — now rides the wheel
+  (`ENGINE_ASSET_FILES`) and is staged `0755` into every workspace by BOTH
+  staging paths, `tools/cowork_workspace_install.sh` and `brain update`, exactly
+  like `vm-selftest.sh`. It had been copied in by hand on one machine, which the
+  next re-stage would have silently deleted: a boundary claim nobody can
+  re-measure is a claim, not evidence.
+
+### Changed
+- **chief-of-staff kernel v5.38 → v5.39.** Rule 6 no longer writes
+  `bundle_version` / `extraction_rules_version` onto a candidate — the host
+  froze both at launch — and the category judgment moves to the ingestion
+  ledger, whose candidate rows now carry the host's join keys (proposal id +
+  content sha256). E16 re-points at the ledger and FAILS a candidate that claims
+  a host-derived stamp. Phase 1.6 may now open an already-READ in-scope thread
+  to extract its evidence quote (IsRead screened first from the list per the
+  v5.13 ordering invariant, capped at 20 opens per run), with `over-cap` as a
+  new held reason; genuinely unread threads are still never opened. Rule 6
+  carries an engine-capability condition — it probes for `cos-run-begin` and
+  keeps v5.37 behaviour on an engine that cannot derive the stamps — so doctrine
+  and engine cannot diverge before the cutover.
+- **`brain verify-audit` reports content drift by default.** A signature-only
+  pass read as a content all-clear. Plain `verify-audit` now always prints a
+  second line (`content drift: N note(s) changed since signing, M unexplained`),
+  unexplained drift flips the status to `content_drift` (exit 1) and adds a
+  gating `brain doctor` row, so `brain health`, `health-report` and the
+  brainiac-health skill all go DEGRADED through ONE check instead of three
+  copies of the logic. Full hash pass, not sampling — 0.31s over 2,645 notes,
+  and a sampled "0 drift" would be the same false all-clear the change exists to
+  remove. Dispositions are pinned to the bytes they were ruled on (a note that
+  changes again returns as unexplained) and live in the vault, never the repo.
+- **`cos-ops/` no longer reaches the retrieval index.** It joins `inbox/` and
+  `overlay/` in `MACHINE_OUTPUT_DIRS`: machine-written operational artifacts
+  that no validator ever checked were indexed as if they were knowledge. The
+  indexed set was enumerated first (78 revisions of one in-flight draft, 5 run
+  reports, 1 ops record — nothing knowledge-like), so no allowlist was needed;
+  promotion through the audited write path remains the route to retrievability.
+  `sync` / `rebuild` report `excluded_machine_output` so an excluded tree is
+  never silent.
+- **The Claude Desktop skill store is RETIRED as a version source.** It does not
+  execute the Codex-automation nightly, and reading it as if it did produced two
+  false freeze alarms — each time recommending the pin move that would have
+  frozen every gated phase. Prose does not retire an execution surface, so the
+  refusal does: `tools/cos_deployed_version.py --lane cowork-desktop` returns
+  `UNSUPPORTED` (exit 2) instead of a version whenever an ACTIVE Codex
+  automation executes something else, and it refuses BEFORE `--expect` is
+  evaluated so the retired surface can neither satisfy nor refute an
+  expectation. `cos_deploy.deployed_skill()` raises `SurfaceUnsupported` on the
+  same condition, so no run manifest can be stamped from it either. What the
+  store holds is still printed — refusing to answer is not hiding. The way back
+  is the owner's click, not a flag: upload the current bundle in Claude Desktop
+  and the surface answers normally again, with no code change.
+
 ## [0.19.21] — 2026-07-30
 ### Changed
 - **Every pinned GitHub Action moved to a Node-24 runtime.** `actions/checkout`

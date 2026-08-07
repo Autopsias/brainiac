@@ -24,3 +24,7 @@ the published read-only snapshot and never signs — see
 `docs/cowork-windows-install.md`.
 
 **Active plan:** [Brain Engine — Observability & Crash-Safety](_plans/engine-observability-crash-safety-2026-07-19/PLAN.html) · 7 sessions · run via `/plan-execute _plans/engine-observability-crash-safety-2026-07-19` · see also `_plans_index.md`
+
+**Active plan:** [Brainiac Improvements — Cross-Engine Analysis Follow-Up](_plans/brainiac-cross-engine-improvements-2026-08-03/PLAN.html) · 10 sessions · run via `/plan-execute _plans/brainiac-cross-engine-improvements-2026-08-03` · see also `_plans_index.md`
+
+**Active plan:** [NapMem Adoption — Breadth Routing + Navigation Telemetry](_plans/napmem-adoption-breadth-routing-navigation-telemetry-2026-08-07/PLAN.html) · 2 sessions · run via `/plan-execute _plans/napmem-adoption-breadth-routing-navigation-telemetry-2026-08-07` · see also `_plans_index.md`

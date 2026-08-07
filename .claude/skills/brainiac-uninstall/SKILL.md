@@ -172,6 +172,11 @@ Brainiac uninstall report
 ✅/❌ engine removed — channel: uv tool | pipx | pip --user | editable-checkout (~/.brainiac/venv) | already absent
 ✅/❌ registry entries dropped: <N> (host: <hostname>)
 ℹ️  left in place (delete yourself if you want it gone):
+    - <index dir>/cos-corpus/ — MNPI: up to 30 nights of real MAIL BODIES the
+      COS runs read (see `brain status` -> cos.capture_corpus). The nightly
+      aged it out at 30 days — but you just removed the nightly, so what is
+      left stays at rest forever: keep it deliberately as replay evidence, or
+      delete it deliberately.
     - ~/brainiac (the code clone)
     - <vault_path> and its data — never touched
     - audit signing key (Keychain/Credential Manager, service:

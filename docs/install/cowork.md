@@ -66,9 +66,9 @@ Doing it by hand instead:
 ```bash
 # On the HOST (Mac/Windows), from a clone of this repo:
 cd brainiac
-python3 packaging/stage_model.py --repo Xenova/multilingual-e5-small --out /tmp/e5 \
-  --patterns "onnx/model.onnx" "tokenizer.json" "tokenizer_config.json" "special_tokens_map.json" "config.json"
-tools/cowork_workspace_install.sh <workspace>/vault /tmp/e5
+python3 packaging/stage_model.py --repo Xenova/bge-m3 --out /tmp/bge-m3-int8 \
+  --patterns "onnx/model_int8.onnx" "tokenizer.json" "tokenizer_config.json" "special_tokens_map.json" "config.json"
+tools/cowork_workspace_install.sh <workspace>/vault /tmp/bge-m3-int8
 ```
 
 (Frozen Linux ELFs via `tools/build_brain_binary.sh` remain an optional
@@ -83,7 +83,7 @@ the engine:
 ├── engine/          staged pure-Python engine source (what the `brain` shim runs)
 ├── vendor/<arch>/   per-architecture semantic deps (onnxruntime, tokenizers, ...)
 ├── bin/             per-arch frozen Linux ELFs — OPTIONAL fallback for VMs without python3
-├── model/           bundled e5-small ONNX model (no HF fetch needed in the VM)
+├── model/           bundled bge-m3-int8 ONNX model (no HF fetch needed in the VM)
 ├── snapshot/        read-only index.snapshot.sqlite + manifest
 ├── skills/          the 10 .skill bundles, REBUILT at the current version every run
 └── routines/        routines/manifest.json + the Cowork registrar paste-prompt + a brain-init report

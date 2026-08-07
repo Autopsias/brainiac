@@ -153,10 +153,33 @@ def publish_snapshot(source_db: Path, dest_dir: Path) -> SnapshotManifest:
     # lock around this call, so real contention here should be rare.
     con = sqlite3.connect(str(source_db))
     con.isolation_level = None
+
+    def _checkpoint() -> None:
+        # `PRAGMA wal_checkpoint` reports contention by RETURNING busy=1 -- it
+        # does NOT raise. Executing it without reading the result row therefore
+        # swallows exactly the failure this block exists to catch, and the
+        # shutil.copy2 below then copies the main DB WITHOUT its -wal, losing
+        # every page that still lived only there. Re-raise as a lock-shaped
+        # error so with_write_retry retries it and, past its bound, aborts the
+        # publish. Mirrors the same check on the rebuild swap path in
+        # index.py::_swap_staging.
+        busy, log_frames, _checkpointed = con.execute(
+            "PRAGMA wal_checkpoint(TRUNCATE)"
+        ).fetchone()
+        # log_frames == -1 means the DB is simply not in WAL mode: nothing to
+        # checkpoint, nothing to lose. Only a busy checkpoint or frames left
+        # behind after a TRUNCATE is a real failure.
+        if busy or (log_frames or 0) > 0:
+            raise sqlite3.OperationalError(
+                f"database is busy: wal_checkpoint(TRUNCATE) did not fully "
+                f"truncate (busy={busy}, log_frames={log_frames}) -- a reader is "
+                f"very likely still holding a transaction open against the "
+                f"index, so publishing now would copy a DB whose newest pages "
+                f"live only in its WAL"
+            )
+
     try:
-        with_write_retry(
-            lambda: con.execute("PRAGMA wal_checkpoint(TRUNCATE)"), conn=con
-        )
+        with_write_retry(_checkpoint, conn=con)
     finally:
         con.close()
 

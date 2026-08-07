@@ -211,14 +211,14 @@ brain rebuild                                            # if importing into a n
     notes without a <code>classification:</code> label are <strong>invisible to search</strong> until
     classified (deny-by-default) — mass-classification is part of a real migration, not polish.</p>
 
-  <h2 id="model">5 · The embedding model — when the ~465 MiB (~487 MB) download happens</h2>
+  <h2 id="model">5 · The embedding model — when the ~563 MB download happens</h2>
   <p>Brainiac separates “installed and searchable” from “semantic search at full quality”, so
     installation never blocks on a big download:</p>
   <div class="wide">
   <table>
     <tr><th>Stage</th><th>What runs</th><th>Network</th></tr>
     <tr><td>install + init</td><td>index built with the offline placeholder embedder (hash) — lexical search works</td><td>none</td></tr>
-    <tr><td><code>brain warmup</code> (or first real semantic use)</td><td>downloads <code>multilingual-e5-small</code> (ONNX, ~465&nbsp;MiB (~487&nbsp;MB), one-time, cached)</td><td>Hugging Face, once</td></tr>
+    <tr><td><code>brain warmup</code> (or first real semantic use)</td><td>downloads <code>bge-m3-int8</code> (ONNX, ~563&nbsp;MB, one-time, cached)</td><td>Hugging Face, once</td></tr>
     <tr><td><code>brain sync</code> after warmup</td><td>re-embeds the index with the real model</td><td>none</td></tr>
   </table>
   </div>
@@ -233,10 +233,10 @@ brain rebuild                                            # if importing into a n
     <line x1="240" y1="74" x2="272" y2="74" class="a"/><polygon points="270,70 270,78 278,74" class="ah"/>
     <rect x="282" y="28" width="220" height="92" rx="10" class="b"/>
     <text x="392" y="52" text-anchor="middle" class="tt">2 · brain warmup</text>
-    <text x="392" y="72" text-anchor="middle" class="ts">downloads multilingual-e5-small</text>
+    <text x="392" y="72" text-anchor="middle" class="ts">downloads bge-m3-int8</text>
     <text x="392" y="87" text-anchor="middle" class="ts">(ONNX, one-time, cached)</text>
     <rect x="317" y="97" width="150" height="17" rx="8" class="b2"/>
-    <text x="392" y="109" text-anchor="middle" class="ta">network: ~465 MiB, once</text>
+    <text x="392" y="109" text-anchor="middle" class="ta">network: ~563 MB, once</text>
     <line x1="506" y1="74" x2="538" y2="74" class="a"/><polygon points="536,70 536,78 544,74" class="ah"/>
     <rect x="548" y="28" width="220" height="92" rx="10" class="b"/>
     <text x="658" y="52" text-anchor="middle" class="tt">3 · brain sync</text>

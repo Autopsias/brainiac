@@ -326,7 +326,7 @@ if ($Dev) {
 }
 
 Write-Host ""
-Write-Host "Semantic search downloads its model (multilingual-e5-small, ~465 MB) on first real use, with a"
+Write-Host "Semantic search downloads its model (bge-m3-int8, ~563 MB) on first real use, with a"
 Write-Host "progress line on stderr -- or run 'brain warmup' now, then 'brain sync'"
 Write-Host "to apply it to the index ('brain status' shows embedder: ready|pending)."
 if ($PathWasAdded) {

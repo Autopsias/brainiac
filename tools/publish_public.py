@@ -61,11 +61,12 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PUBLIC_REMOTE_NAME = "disabled-public-DO-NOT-PUSH"  # fetch URL is the public repo; push URL is disabled and stays so
+PUBLIC_REPO = "Autopsias/brainiac"                  # the gh-api slug; the push URL is read from the remote above
 DIST_MATRIX_WORKFLOW = "distribution-matrix.yml"
 
 PHASES = [
     "preflight", "worktree", "tests", "export", "build", "windows-ci",
-    "testpypi", "pypi", "npm", "public-git", "post-verify",
+    "testpypi", "pypi", "npm", "public-git", "release-asset", "post-verify",
 ]
 
 
@@ -78,12 +79,14 @@ class GateDeclined(Exception):
 
 
 def _run(cmd: list[str], *, cwd: Path | None = None, interactive: bool = False,
-         timeout: int | None = 1800) -> subprocess.CompletedProcess:
+         timeout: int | None = 1800,
+         env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     """Interactive=True hands the terminal to the child (twine/npm prompting
     for the operator's own credentials — this script never sees them)."""
     if interactive:
-        return subprocess.run(cmd, cwd=cwd, timeout=timeout)
-    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+        return subprocess.run(cmd, cwd=cwd, timeout=timeout, env=env)
+    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
+                          timeout=timeout, env=env)
 
 
 AUTH_URL_RE = re.compile(r"https://\S*(?:npmjs\.com|npmjs\.org)/(?:auth|login)\S*")
@@ -432,7 +435,7 @@ def phase_windows_ci(accept_reason: str | None) -> str:
     PowerShell-5.1 encoding class never reproduces there — that class is
     guarded by tests/test_windows_portability.py instead."""
     proc = _run(["gh", "api",
-                 f"repos/Autopsias/brainiac/actions/workflows/{DIST_MATRIX_WORKFLOW}/runs?per_page=1"])
+                 f"repos/{PUBLIC_REPO}/actions/workflows/{DIST_MATRIX_WORKFLOW}/runs?per_page=1"])
     if proc.returncode != 0:
         if accept_reason:
             return f"UNREACHABLE, explicitly accepted: {accept_reason}"
@@ -701,10 +704,115 @@ def phase_public_git(export_dir: Path, version: str, scratch: Path,
     return f"pushed {head[:9]} to {default_branch} + tag v{version}"
 
 
+def build_mcpb(export_dir: Path, version: str, scratch: Path) -> Path:
+    """Build the Claude Desktop `.mcpb` FROM THE EXPORT TREE, with its own
+    handshake gate pointed at the just-published engine.
+
+    `packaging/mcpb/build.sh` already validates the manifest, packs the
+    bundle, and completes a real MCP `initialize`/`list_tools` against the
+    shim — reuse it rather than reimplementing any of that here. All this
+    adds is WHICH engine the handshake talks to: a throwaway venv holding
+    `brainiac-cli[mcp]==version` straight from PyPI, first on PATH. So the
+    gate proves the bundle about to ship works against the engine that just
+    shipped, instead of against whatever the release operator happens to
+    have installed (which, mid-release, is the PREVIOUS version).
+
+    build.sh version-stamps `packaging/mcpb/manifest.json` in place. That is
+    why this runs AFTER public-git: the pushed tree is already final, and the
+    only tree mutated here is the throwaway export.
+    """
+    bin_dir = _throwaway_venv(scratch, "mcpb-engine")
+    _poll(lambda: _run([str(bin_dir / "pip"), "install", "--quiet",
+                        f"brainiac-cli[mcp]=={version}"], timeout=1200),
+          what=f"pip install brainiac-cli[mcp]=={version} for the handshake gate")
+    env = {**os.environ, "PATH": os.pathsep.join([str(bin_dir), os.environ.get("PATH", "")])}
+    script = export_dir / "packaging" / "mcpb" / "build.sh"
+    if not script.exists():
+        raise PublishError(f"{script} is missing from the export tree — "
+                           f"packaging/mcpb is no longer exported?")
+    _need(_run(["bash", str(script)], cwd=export_dir, env=env, timeout=900),
+          "packaging/mcpb/build.sh (validate + pack + MCP handshake gate)")
+    bundle = export_dir / "dist" / "brainiac.mcpb"
+    if not bundle.exists():
+        raise PublishError(f"build.sh reported success but {bundle} does not exist")
+    return bundle
+
+
+def phase_release_asset(export_dir: Path, version: str, scratch: Path,
+                        gate_fn) -> str:
+    """Attach the `.mcpb` to a GitHub release on the public repo at v<version>.
+
+    Why this phase exists (2026-07-31): `docs/install/README.md` Path G tells
+    Chat-tab users to download `brainiac.mcpb` "from a release" — and the
+    public repo had no releases at all, for any version. The path dead-ended,
+    and the bundle had to be hand-built and emailed one user at a time. The
+    `.mcpb` is a few-KB Node stdio shim, identical for every platform, so
+    there was never a build for a consumer to do.
+
+    The published asset is downloaded back and compared by sha256 to the file
+    that was uploaded: a release that exists is not evidence that the right
+    bytes are on it.
+    """
+    bundle = build_mcpb(export_dir, version, scratch)
+    digest = hashlib.sha256(bundle.read_bytes()).hexdigest()
+    size_kb = bundle.stat().st_size / 1024
+
+    gate_fn("release-asset", f"publish GitHub release v{version} on {PUBLIC_REPO}",
+            "a release is public the moment it is created; the asset can be "
+            "replaced but the release itself is visible immediately",
+            [f"{bundle.name} built from the export tree ({size_kb:.1f} KB)",
+             "MCP handshake passed: read verb set only, no write verbs exposed",
+             f"handshake ran against brainiac-cli[mcp]=={version} from PyPI",
+             f"sha256 {digest[:16]}…",
+             f"tag v{version} already pushed in the previous phase"])
+
+    notes = (
+        f"Brainiac v{version}.\n\n"
+        f"**Engine** (needed by every surface): `uv tool install brainiac-cli` / "
+        f"`pip install brainiac-cli`, or `npx brainiac-install`.\n\n"
+        f"**Claude Desktop Chat tab:** download `brainiac.mcpb` below and double-click "
+        f"it (or Settings → Extensions → Advanced settings → Install Extension…). It is "
+        f"a small Node stdio shim that spawns the engine you already installed — it "
+        f"never vendors its own copy, and exposes read-only verbs under the same "
+        f"classification egress gate as the CLI. There is nothing to build: the same "
+        f"file works on macOS and Windows. Full steps: `docs/install/README.md` Path G.\n\n"
+        f"See `CHANGELOG.md` section `[{version}]` for what changed."
+    )
+
+    # Resume safety: a run that created the release and then died must not fail
+    # here on "release already exists" — re-upload over it instead.
+    existing = _run(["gh", "release", "view", f"v{version}", "--repo", PUBLIC_REPO])
+    if existing.returncode == 0:
+        _need(_run(["gh", "release", "upload", f"v{version}", str(bundle),
+                    "--repo", PUBLIC_REPO, "--clobber"], timeout=600),
+              "gh release upload")
+        action = "re-uploaded the asset onto the existing release"
+    else:
+        _need(_run(["gh", "release", "create", f"v{version}", str(bundle),
+                    "--repo", PUBLIC_REPO, "--title", f"brainiac v{version}",
+                    "--notes", notes], timeout=600),
+              "gh release create")
+        action = "created the release"
+
+    back = scratch / "asset-verify"
+    back.mkdir(exist_ok=True)
+    _poll(lambda: _run(["gh", "release", "download", f"v{version}", "--repo", PUBLIC_REPO,
+                        "--pattern", "brainiac.mcpb", "--dir", str(back), "--clobber"],
+                       timeout=600),
+          what=f"gh release download of brainiac.mcpb from v{version}",
+          seconds=180, every=10)
+    served = hashlib.sha256((back / "brainiac.mcpb").read_bytes()).hexdigest()
+    if served != digest:
+        raise PublishError(
+            f"the release serves a brainiac.mcpb whose sha256 ({served[:16]}…) differs "
+            f"from the built bundle ({digest[:16]}…) — do not point users at it")
+    return f"{action}; brainiac.mcpb served, sha256 verified ({digest[:16]}…)"
+
+
 def phase_post_verify(version: str, scratch: Path, *, npm_published: bool = True) -> str:
     """The consumption paths a new user actually takes, from clean environments."""
     lines = [_clean_venv_check(version, [], scratch, "pypi-final")]
-    proc = _run(["gh", "api", f"repos/Autopsias/brainiac/git/refs/tags/v{version}"])
+    proc = _run(["gh", "api", f"repos/{PUBLIC_REPO}/git/refs/tags/v{version}"])
     lines.append(f"public tag v{version}: {'visible' if proc.returncode == 0 else 'NOT VISIBLE YET'}")
     if not npm_published:
         # Verifying a channel the operator deliberately skipped would fail the
@@ -743,7 +851,7 @@ def main() -> int:
                         help="proceed despite a missing/red distribution-matrix signal; "
                              "the reason is recorded in the evidence transcript")
     parser.add_argument("--confirm", action="append", default=[], metavar="ACT",
-                        choices=["testpypi", "pypi", "npm", "public-git"],
+                        choices=["testpypi", "pypi", "npm", "public-git", "release-asset"],
                         help="pre-authorize ONE irreversible act (repeatable). For "
                              "harness-driven runs where the owner approved that "
                              "specific act in-session; requires --consent-note")
@@ -851,11 +959,18 @@ def main() -> int:
         else:
             print(f"[10/{len(PHASES)}] public git: skipped (--from {args.from_phase})")
 
+        if do("release-asset"):
+            summary = phase_release_asset(export_dir, version, scratch, gate_fn)
+            ev.record("release-asset", "OK", summary); verified.append(summary)
+            print(f"[11/{len(PHASES)}] release asset: {summary}")
+        else:
+            print(f"[11/{len(PHASES)}] release asset: skipped (--from {args.from_phase})")
+
         # A resume that started past the npm phase never published it, so the
         # npx path cannot exist for this version yet.
         summary = phase_post_verify(version, scratch, npm_published=do("npm"))
         ev.record("post-verify", "OK", summary)
-        print(f"[11/{len(PHASES)}] post-verify:\n{summary}")
+        print(f"[12/{len(PHASES)}] post-verify:\n{summary}")
 
         ev.record("DONE", "OK", f"v{version} fully published and verified")
         print(f"\nDONE — transcript: {ev.path}")

@@ -6,7 +6,7 @@
 #
 # ONE install flow lands the full operational layer (INS-01):
 #   (a) the engine        — per-arch brain ELFs into .brain/bin/
-#   (b) the model cache   — bundled Arctic model into .brain/model/
+#   (b) the model cache   — bundled bge-m3-int8 model into .brain/model/
 #   (c) the host index    — reconciled (sync when current, full rebuild only on
 #                            schema/embedder mismatch or an absent/corrupt index)
 #                            + published as the read-only .brain/snapshot/
@@ -26,8 +26,8 @@
 #   tools/cowork_workspace_install.sh <vault-dir> <model-cache-dir> [dist-dir]
 #
 #   <vault-dir>        the workspace vault/ (holds brain/ raw/)
-#   <model-cache-dir>  a fastembed cache dir already containing the Arctic model
-#                      (model.onnx + tokenizer/config); copied into .brain/model/
+#   <model-cache-dir>  a staged bge-m3-int8 snapshot (model_int8.onnx + tokenizer/config);
+#                      copied into .brain/model/
 #   [dist-dir]         where the built ELFs live (default: dist/)
 set -euo pipefail
 
@@ -111,6 +111,10 @@ fi
 echo "[install] model cache -> $BRAIN_DIR/model/ (bundled; VM has no HF egress)"
 # -RL dereferences: an HF-cache snapshot dir is all symlinks into ../../blobs/,
 # so copying links verbatim (cp -a) stages a model made of dangling symlinks.
+# Replace the directory wholesale: otherwise an e5 -> BGE upgrade retains the
+# old model.onnx beside model_int8.onnx and inflates the VM bundle silently.
+rm -rf "$BRAIN_DIR/model"
+mkdir -p "$BRAIN_DIR/model"
 cp -RL "$MODEL_SRC/." "$BRAIN_DIR/model/"
 DANGLING="$(find -L "$BRAIN_DIR/model" -type l 2>/dev/null)"
 if [ -n "$DANGLING" ]; then
@@ -284,14 +288,20 @@ echo "[install] staged skill bundle version: $STAGED_SKILL_VERSION (matches engi
 echo "[install] task manifest -> $BRAIN_DIR/routines/manifest.json"
 cp -f "$REPO/routines/manifest.json" "$BRAIN_DIR/routines/manifest.json"
 
-# (e1) vm-selftest.sh — the un-fakeable PASS/FAIL retrieval self-test staged
-# into every workspace (0755) so a Cowork session can run
-# `bash vault/.brain/vm-selftest.sh` and show the verdict verbatim.
-if [ -f "$REPO/scripts/vm-selftest.sh" ]; then
-  echo "[install] vm self-test -> $BRAIN_DIR/vm-selftest.sh"
-  cp -f "$REPO/scripts/vm-selftest.sh" "$BRAIN_DIR/vm-selftest.sh"
-  chmod 0755 "$BRAIN_DIR/vm-selftest.sh"
-fi
+# (e1) the two VM probes, staged into every workspace (0755) so a Cowork
+# session can run either verbatim from the workspace root:
+#   vm-selftest.sh        proves the VM leg WORKS (search/snapshot/embed).
+#   vm-boundary-probe.sh  proves it REFUSES everything the host broker holds.
+# The boundary probe was hand-copied into one workspace on 2026-07-31 and
+# would have vanished at the next re-stage — a boundary claim nobody can
+# re-measure is a claim, not evidence.
+for _vm_script in vm-selftest.sh vm-boundary-probe.sh; do
+  if [ -f "$REPO/scripts/$_vm_script" ]; then
+    echo "[install] vm probe -> $BRAIN_DIR/$_vm_script"
+    cp -f "$REPO/scripts/$_vm_script" "$BRAIN_DIR/$_vm_script"
+    chmod 0755 "$BRAIN_DIR/$_vm_script"
+  fi
+done
 
 # (e2) the conventions contract + session prompt. Cowork DOES auto-load a
 # workspace-root CLAUDE.md at session start (verified 2026-07: Cowork shares
@@ -377,7 +387,7 @@ cat <<EOF
 [install] done. Full operational layer assembled at:
   $BRAIN_DIR
     bin/       per-arch brain ELFs (the engine)
-    model/     bundled Arctic model (VM has no HF egress)
+    model/     bundled bge-m3-int8 model (VM has no HF egress)
     snapshot/  read-only index snapshot + export-snapshot.json (PF-02 record)
     skills/    $skills_shipped .skill bundle(s), version $STAGED_SKILL_VERSION (matches engine)
     routines/  manifest.json + cowork-registrar-prompt.md + brain-init-report.json

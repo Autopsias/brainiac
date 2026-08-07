@@ -18,18 +18,18 @@ import os
 # submodules explicitly so optional-dep guards resolve at runtime, not import.
 hiddenimports = collect_submodules("brain")
 
-# DIST-02: bundle the e5-small ONNX model INLINE so the frozen binary is
+# DIST-02: bundle the bge-m3-int8 ONNX model INLINE so the frozen binary is
 # offline-first (no HF download at run time). The snapshot is staged to
-# packaging/model_bundle/e5-small/ by build_macos.sh before PyInstaller runs.
-# At runtime, brain_entry.py resolves the bundled _INTERNAL/e5-small dir and
+# packaging/model_bundle/bge-m3-int8/ by build_macos.sh before PyInstaller runs.
+# At runtime, brain_entry.py resolves the bundled _INTERNAL/bge-m3-int8 dir and
 # exports BRAIN_MODEL_CACHE at it, so OnnxEmbedder loads the model in place.
 MODEL_BUNDLE = os.environ.get(
     "BRAIN_MODEL_BUNDLE",
-    os.path.abspath(os.path.join(SPECPATH, "..", "model_bundle", "e5-small")),
+    os.path.abspath(os.path.join(SPECPATH, "..", "model_bundle", "bge-m3-int8")),
 )
 datas = []
 if os.path.isdir(MODEL_BUNDLE):
-    datas.append((MODEL_BUNDLE, "e5-small"))
+    datas.append((MODEL_BUNDLE, "bge-m3-int8"))
 else:
     # CI / hash-embed path: no model staged (BRAIN_EMBEDDER=hash). The binary
     # still builds + runs the offline HashEmbedder fallback.

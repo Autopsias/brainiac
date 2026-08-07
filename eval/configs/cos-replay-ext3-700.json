@@ -1,0 +1,10 @@
+{
+  "name": "cos-replay-ext3-700-pre-v5.42",
+  "doctrine_path": "eval/fixtures/cos-doctrine-v5.40-ext3.md",
+  "doctrine_section": "## Phase 1.6 — Ingestion proposal engine",
+  "doctrine_section_end": "## Phase 1.6b",
+  "window_chars": 700,
+  "window_from": "head",
+  "model": "gpt-5.6-sol",
+  "reasoning_effort": "high"
+}

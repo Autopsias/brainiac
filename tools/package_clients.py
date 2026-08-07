@@ -379,16 +379,28 @@ ENGINE_ASSET_FILES = [
     "scripts/brain-synthesis.sh",
     "scripts/brain-synthesis-mac.plist",
     # session-start alert hook (installer copies it into ~/.claude/hooks/) +
-    # the un-fakeable Cowork VM retrieval self-test (staged into every
-    # workspace by update.stage_engine_and_skills / cowork_workspace_install.sh)
+    # BOTH Cowork VM probes (staged into every workspace by
+    # update.stage_engine_and_skills / cowork_workspace_install.sh): the
+    # un-fakeable retrieval self-test, and the negative boundary probe that
+    # proves the VM leg refuses every host-broker verb. The boundary probe
+    # rides the wheel for the same reason the self-test does — a staged
+    # workspace has no `scripts/` dir of its own, so a hand copy is the only
+    # alternative and it does not survive the next re-stage.
     "scripts/brainiac-alerts.sh",
     "scripts/vm-selftest.sh",
+    "scripts/vm-boundary-probe.sh",
     # FL-03 COS retro miner. brain-synthesis.sh resolves it SCRIPT-RELATIVE
     # (`../tools/cos_retro.py`), so it must ride the wheel beside the wrapper:
     # launchd runs the INSTALLED `_assets/scripts/brain-synthesis.sh`, and a
     # registered workspace has no `tools/` dir of its own.
     "tools/cos_retro.py",
     "tools/cos_browser_scan.mjs",
+    # INS-01 host run validator. `brain.cos_runverify` RE-EXECUTES these two
+    # rather than reading the run's report of them (the outcome-contract verdict
+    # and the ledger-derived counters), so an installed engine with no `tools/`
+    # dir of its own has to carry them or every nightly scores INCONCLUSIVE.
+    "tools/cos_contract.py",
+    "tools/cos_reconcile_metrics.py",
     # `brain graph-report` HTML shell — the payload <script type="application/
     # json"> block is spliced in at render time by src/brain/graphreport.py;
     # everything else here is static (CSS/JS/WebGL viewer).

@@ -18,10 +18,11 @@ from typing import Any
 from . import classification
 from . import config
 from . import frontmatter
+from . import provenance
 from .audit import AuditChain, KeyUnavailable
 from .index import BrainIndex, Hit
-from .lock import WriterLockBusy, writer_lock
-from .notes import load_note, safe_slug, sha256_text
+from .lock import WriterLockBusy, vault_writer_lock
+from .notes import note_from_text, safe_slug, sha256_text
 
 
 def _contained_in(target: Path, base: Path) -> bool:
@@ -74,12 +75,35 @@ def _stamp_draft_frontmatter(content: str, note_id: str, is_source: bool) -> str
     return f"---{new_block}---{after}"
 
 
+def _audit_status_summary(audit_res: dict[str, Any]) -> str:
+    """One line naming WHAT is wrong with the chain — signature/linkage errors
+    and, since INT-02, content drift. "status=content_drift (0 error(s))" alone
+    reads like a chain with nothing wrong."""
+    parts = [f"audit chain status={audit_res.get('status')}",
+             f"({len(audit_res.get('errors', []))} chain error(s)"]
+    unexplained = audit_res.get("content_drift_unexplained")
+    if unexplained:
+        parts.append(f", {unexplained} of {audit_res.get('content_drift_count')} "
+                     f"signed note(s) changed after signing with no disposition")
+    return "".join(parts) + ")"
+
+
 class RoleError(RuntimeError):
     """A host-broker operation was attempted from the read+draft-only VM leg.
 
     The VM leg (``role=vm``) may never write notes, mutate/WAL the index, publish
     a snapshot, or resolve a signing key. These ops fail with RoleError BEFORE
     any signing-key resolution or index write is attempted (S06 hard guarantee).
+    """
+
+
+class SupersedePreconditionFailed(ValueError):
+    """A caller's out-of-band ``expect`` preconditions no longer hold.
+
+    Raised INSIDE ``supersede``'s writer lock, before the first signed write,
+    so a proposal decided against one state of the vault can never apply
+    against another (VER-02: an owner-accepted supersede proposal sits in the
+    queue while the nightly folds keep running).
     """
 
 
@@ -134,17 +158,19 @@ class BrainCore:
 
     def hybrid_search(
         self, query: str, k: int = 10, *, rerank: bool = False, rerank_top: int = 15,
-        rrf_k: int = 60,
+        rrf_k: int = 60, rerank_gate: bool | None = None,
     ) -> list[Hit]:
         """Fused RRF(k) BM25 + dense retrieval (RET-01), optional skippable
-        reranker (RET-02). UNFILTERED — the CLI applies the egress gate."""
+        reranker (RET-02), RK-02 adaptive rerank gate. UNFILTERED — the CLI
+        applies the egress gate."""
         return self.index.hybrid_search(
             query, k=k, rerank=rerank, rerank_top=rerank_top, rrf_k=rrf_k,
+            rerank_gate=rerank_gate,
         )
 
     def hybrid_search_with_trace(
         self, query: str, k: int = 10, *, rerank: bool = False,
-        rerank_top: int = 15, rrf_k: int = 60,
+        rerank_top: int = 15, rrf_k: int = 60, rerank_gate: bool | None = None,
     ):
         """Production hybrid search plus opt-in, pre-egress S03 attribution.
 
@@ -153,6 +179,7 @@ class BrainCore:
         """
         return self.index.hybrid_search_with_trace(
             query, k=k, rerank=rerank, rerank_top=rerank_top, rrf_k=rrf_k,
+            rerank_gate=rerank_gate,
         )
 
     def diagnose_target(
@@ -435,8 +462,46 @@ class BrainCore:
     # -- maintenance (HOST-broker only) ----------------------------------
     def rebuild(self, *, json_mode: bool = False) -> dict[str, Any]:
         self._require_host("rebuild the index")
-        with writer_lock(config.writer_lock_path(self.vault), verb="rebuild"):
-            return self.index.rebuild(self.vault, json_mode=json_mode)
+        with vault_writer_lock(self.vault, verb="rebuild"):
+            res = self.index.rebuild(self.vault, json_mode=json_mode)
+        # INT-01 durability: the index dir is a disposable cache EXCEPT for the
+        # approved queue, which is the only copy of owner-accepted content until
+        # it is signed. Rebuild guidance ("just delete it and rebuild") is
+        # exactly the habit that would destroy it, so never let it be silent.
+        try:
+            from . import cos as _cos_q
+
+            waiting = len(_cos_q.approved_pending(self.vault))
+            # INT-04: the SECOND non-disposable item in this dir. An armed
+            # acceptance anchor is the only thing holding its inbox file at the
+            # email-derived MNPI floor; lose it and the file ingests at
+            # `Internal`, silently. Same warning surface, same reason.
+            anchors = _cos_q.attachment_anchors_awaiting_drain(self.vault)
+        except Exception:  # noqa: BLE001 — never fail a rebuild on the check
+            waiting = anchors = 0
+        if waiting or anchors:
+            # A `progress_note` here was a TTY-gated whisper: a headless
+            # launchd rebuild — the exact context that would then delete the
+            # dir — saw nothing at all. Put it in the RESULT, where every
+            # caller (JSON, human, scheduled) actually reads it.
+            parts = []
+            if waiting:
+                res["approved_awaiting_signature"] = waiting
+                parts.append(f"{waiting} owner-approved item(s) wait in "
+                             f"{_cos_q.approved_queue_dir(self.vault)}")
+            if anchors:
+                res["attachment_anchors_awaiting_drain"] = anchors
+                parts.append(f"{anchors} accepted-attachment anchor(s) wait in "
+                             f"{_cos_q.attachment_anchor_dir(self.vault)}")
+            res["warning"] = (
+                " and ".join(parts) + " — NOT rebuildable from vault/. Run "
+                "`brain sync` to drain them before deleting or repointing the "
+                "index dir.")
+            from .progress import progress_note
+
+            progress_note("WARNING: " + res["warning"], json_mode=json_mode,
+                          verb="rebuild")
+        return res
 
     def embedder_pending(self) -> bool:
         """True when the index's stored dense vectors were built with a
@@ -507,16 +572,57 @@ class BrainCore:
             out.append(d)
         return out
 
+    def _drain_sources(self) -> tuple[list[tuple[Path, bool, Any]],
+                                      list[dict[str, str]]]:
+        """``[(dir, is_approved_queue, pubkey)]`` in drain order, plus refusals.
+
+        The broker's HOST-ONLY approved queue is drained FIRST, deliberately: a
+        VM draft-capture under the same id would otherwise be signed ahead of
+        the bytes the owner approved, and the owner's copy would then lose to
+        the duplicate-id guard.
+
+        The verification key is resolved ONCE, here. If it cannot be resolved —
+        locked keychain, scheduler running as another user, missing
+        ``cryptography``, a rotated key — the queue is not drained AT ALL and
+        says ``no-signing-key (fail-closed)``, exactly like the ordinary draft
+        path. Verifying per item instead would turn every key outage into a
+        pile of security-worded refusals over perfectly good owner-approved
+        work."""
+        from . import cos as _cos_mod
+
+        out: list[tuple[Path, bool, Any]] = []
+        refusals: list[dict[str, str]] = []
+        try:
+            queue = _cos_mod.approved_queue_root(self.vault)
+            out.append((queue, True, _cos_mod.approved_verify_key(self.vault)))
+        except _cos_mod.ApprovedQueueUnsafe as exc:
+            refusals.append({"draft": "(approved queue)", "source": "approved-queue",
+                             "reason": f"not drained (fail-closed): {exc}"})
+        except _cos_mod.ApprovedKeyUnavailable as exc:
+            refusals.append({"draft": "(approved queue)", "source": "approved-queue",
+                             "reason": f"no-signing-key (fail-closed): the approved "
+                                       f"queue was left untouched ({exc})"})
+        out += [(d, False, None) for d in self._draft_sources()]
+        return out, refusals
+
     def drain_drafts(self) -> dict[str, Any]:
         """drain-on-invoke (HOST only): promote pending capture drafts.
 
         The incremental indexer IS the capture drain. The host picks up each
-        draft in ``.brain/drafts/`` AND ``capture-inbox/`` (the VM-facing drop),
-        signs + writes it into ``raw/`` (if a source) or ``brain/resources/`` (if
+        item in the broker's host-only approved queue (INT-01), then each draft
+        in ``.brain/drafts/`` AND ``capture-inbox/`` (the VM-facing drop), signs
+        + writes it into ``raw/`` (if a source) or ``brain/resources/`` (if
         a note) via the audited host-broker ``write_note``, then removes the
         draft. Idempotent and cheap: empty drop dirs are a no-op. Fails CLOSED —
         if no signing key resolves, drafts are LEFT in place (never promoted
         unsigned) and reported as skipped.
+
+        An APPROVED-QUEUE item is additionally bound to the bytes the owner
+        accepted: its payload is read once (no-follow), hashed, and checked
+        against an Ed25519-signed anchor the VM cannot reach or forge — twice,
+        the second time immediately before ``write_note``, because a
+        consume-time check alone is TOCTOU. The buffer that was verified is the
+        buffer that gets signed; the path is never re-opened.
 
         This is NOT a dedicated scheduled task and NOT a daemon: it runs as the
         first step of any host ``sync`` invocation. There is no capture daemon
@@ -524,17 +630,46 @@ class BrainCore:
         ux-02 brief/digest, which doubles as the guaranteed daily drain floor.
         """
         self._require_host("drain capture drafts (sign + index)")
+        from . import cos as _cos_mod
+
         promoted: list[str] = []
-        skipped: list[dict[str, str]] = []
+        sources, skipped = self._drain_sources()
         any_dir = False
-        for ddir in self._draft_sources():
+        for ddir, approved, pubkey in sources:
             if not ddir.is_dir():
                 continue
             any_dir = True
+            # Every skip carries WHERE it came from, so the maintain report can
+            # attribute it by source instead of pattern-matching its prose.
+            src_name = "approved-queue" if approved else "capture-inbox"
+
+            def _skip(draft: Path, reason: str, _src: str = src_name) -> None:
+                skipped.append({"draft": draft.name, "source": _src,
+                                "reason": reason})
+
             for draft in sorted(ddir.glob("*.md")):
-                note = load_note(draft, self.vault)
+                approved_sha: str | None = None
+                if approved:
+                    try:
+                        content, approved_sha = _cos_mod.read_approved(
+                            self.vault, draft, pubkey=pubkey)
+                    except _cos_mod.ApprovedRefused as exc:
+                        _cos_mod.refuse_approved(self.vault, draft, str(exc))
+                        _skip(draft, f"approved-queue refusal (NOT signed): {exc}")
+                        continue
+                    except _cos_mod.ApprovedKeyUnavailable as exc:
+                        # Never quarantine on a key problem — leave it parked.
+                        _skip(draft, f"no-signing-key (fail-closed): {exc}")
+                        continue
+                else:
+                    try:
+                        content = draft.read_text(encoding="utf-8")
+                    except (OSError, UnicodeDecodeError) as exc:
+                        _skip(draft, f"unreadable: {type(exc).__name__}")
+                        continue
+                note = note_from_text(content, draft, self.vault)
                 if note is None:
-                    skipped.append({"draft": draft.name, "reason": "no-frontmatter"})
+                    _skip(draft, "no-frontmatter")
                     continue
                 # C-2 trust boundary: note.id comes from attacker-controlled
                 # draft frontmatter — refuse non-slug ids (fail closed, draft
@@ -542,10 +677,24 @@ class BrainCore:
                 try:
                     nid = safe_slug(note.id)
                 except ValueError as exc:
-                    skipped.append({"draft": draft.name, "reason": f"unsafe-id (fail-closed): {exc}"})
+                    _skip(draft, f"unsafe-id (fail-closed): {exc}")
+                    continue
+                if approved and nid != draft.stem:
+                    # The anchor is keyed on the FILENAME id; a payload whose
+                    # frontmatter claims a different id would be signed under an
+                    # id nothing approved.
+                    _cos_mod.refuse_approved(
+                        self.vault, draft,
+                        f"frontmatter id {nid!r} != approved id {draft.stem!r}")
+                    _skip(draft, f"approved-queue refusal (NOT signed): "
+                                 f"id mismatch {nid!r} != {draft.stem!r}")
                     continue
                 # COS owner-gate integrity: never sign a draft whose id is still
                 # awaiting the owner's accept/reject in the proposal pipeline.
+                # Approved-queue items are EXEMPT: they are the gated route's own
+                # output. A crash between staging and clearing pending/ leaves the
+                # id looking "undecided", and quarantining the owner's approved
+                # payload for it would discard the very decision it carries.
                 # The gated copy is authoritative; only the owner's answer may
                 # promote it (consume_answers moves it here itself on accept).
                 # Quarantined rather than skipped-in-place — see
@@ -553,18 +702,15 @@ class BrainCore:
                 # later REJECT still leak the content on the next drain.
                 try:
                     from . import cos as _cos_mod
-                    if nid in _cos_mod.undecided_proposal_ids(self.vault):
+                    if not approved and nid in _cos_mod.undecided_proposal_ids(self.vault):
                         dest = _cos_mod.quarantine_gate_bypass(self.vault, draft)
-                        skipped.append({
-                            "draft": draft.name,
-                            "reason": f"gate-bypass: {nid!r} is awaiting the owner's "
-                                      f"accept/reject — quarantined to {dest.parent.name}/{dest.name}",
-                        })
+                        _skip(draft, f"gate-bypass: {nid!r} is awaiting the owner's "
+                                     f"accept/reject — quarantined to "
+                                     f"{dest.parent.name}/{dest.name}")
                         continue
                 except Exception as exc:  # noqa: BLE001 — never break the drain floor
-                    skipped.append({"draft": draft.name,
-                                    "reason": f"gate-check-failed (fail-closed, left in place): "
-                                              f"{type(exc).__name__}: {exc}"})
+                    _skip(draft, f"gate-check-failed (fail-closed, left in place): "
+                                 f"{type(exc).__name__}: {exc}")
                     continue
                 # raw source -> raw/<id>.md ; otherwise a brain note -> resources/.
                 if note.type == "source" or note.zone == "raw":
@@ -582,19 +728,44 @@ class BrainCore:
                 except Exception:
                     already_indexed = False
                 if already_indexed or dest_path.exists():
-                    skipped.append({"draft": draft.name,
-                                     "reason": f"duplicate-id: {nid!r} already exists"})
+                    _skip(draft, f"duplicate-id: {nid!r} already exists")
                     continue
-                content = draft.read_text(encoding="utf-8")
+                # NOTE (INT-01): `content` was read ONCE above — for an approved
+                # item, the exact buffer whose hash the signed anchor covers.
+                # The path is never re-opened here; re-opening after verifying
+                # would reintroduce the substitution window inside the critical
+                # section. Everything below transforms that buffer in memory.
+                #
                 # codex 2026-07-22: the capture-inbox IS the trust boundary — a
                 # draft is untrusted by POSITION, not by what its frontmatter
                 # claims. A file written straight into the inbox (bypassing
                 # `draft-capture`'s additive stamp) could omit or forge the
                 # stamp, so the drain overwrites it unconditionally.
                 if frontmatter.split(content) is not None:
+                    # Same reasoning one step further (2026-07-30 review): a
+                    # HOST-ONLY key is a host assertion, so bytes sitting in
+                    # the VM-writable inbox can never carry one either — an
+                    # accepted proposal waits here, and `draft-capture` can
+                    # overwrite it under the same id before this runs. Strip
+                    # unconditionally, and fail closed if a construct resolves
+                    # the key anyway rather than signing a forged assertion.
+                    try:
+                        content = provenance.without_host_only_text(content)
+                    except provenance.HostOnlyKeyResidue as exc:
+                        _skip(draft, f"host-only provenance forgery: {exc}")
+                        continue
                     content = frontmatter.set_keys(
                         content, {"provenance.trust": "untrusted"})
-                split = frontmatter.split(content)
+                # INT-01: the two transforms above are SECURITY ones — they
+                # remove host assertions untrusted bytes may not carry. Autolink
+                # is a convenience one, and it EDITS THE BODY using vault state,
+                # so it is skipped for an approved item: the body the owner
+                # approved is the body that gets signed, verbatim. (No fold
+                # backfills those links today — `graph_hygiene` counts links, it
+                # does not create them — and that is the deliberate trade: an
+                # approval cannot be re-obtained after the fact, a wikilink can
+                # be added by hand or by a later fold.)
+                split = None if approved else frontmatter.split(content)
                 if split is not None:
                     from . import autolink as _autolink
 
@@ -605,25 +776,48 @@ class BrainCore:
                     )
                     if linked_body != body:
                         content = f"---{fm_block}---{linked_body}"
+                if approved and not _cos_mod.anchor_still_binds(
+                        self.vault, nid, approved_sha or "", pubkey=pubkey):
+                    # TOCTOU close: re-verified INSIDE the signing critical
+                    # section, immediately before the signature, against the
+                    # buffer actually in hand.
+                    _cos_mod.refuse_approved(
+                        self.vault, draft,
+                        "the signed approval anchor no longer binds these bytes "
+                        "(changed during the drain)")
+                    _skip(draft, "approved-queue refusal (NOT signed): "
+                                 "anchor changed during the drain")
+                    continue
                 try:
                     self.write_note(rel, content,
                                     reason=f"drain-on-invoke promote {draft.name}",
                                     subtree=subtree)
                 except KeyUnavailable:
-                    skipped.append({"draft": draft.name, "reason": "no-signing-key (fail-closed)"})
+                    _skip(draft, "no-signing-key (fail-closed)")
                     continue
                 except ValueError as exc:
-                    skipped.append({"draft": draft.name, "reason": f"unsafe-path (fail-closed): {exc}"})
+                    _skip(draft, f"unsafe-path (fail-closed): {exc}")
                     continue
-                draft.unlink()
+                if approved:
+                    if not _cos_mod.clear_approved(self.vault, nid):
+                        # Signed, but still queued: the next drain would refuse
+                        # it as a duplicate id forever. Say so now.
+                        _skip(draft, f"signed as {rel}, but the queue copy could "
+                                     f"NOT be removed — delete it by hand")
+                else:
+                    draft.unlink()
                 promoted.append(rel)
-        if not any_dir:
-            return {"promoted": 0, "skipped": 0, "details": [], "reason": "no-drafts-dir"}
-        return {
+        out = {
             "promoted": len(promoted),
             "skipped": len(skipped),
             "details": {"promoted": promoted, "skipped": skipped},
         }
+        if not any_dir:
+            # Same SHAPE either way: this used to return `details: []`, which
+            # silently dropped refusals recorded before any drop dir existed —
+            # including "the approved queue was skipped, no signing key".
+            out["reason"] = "no-drafts-dir"
+        return out
 
     def ingest_dropzone(self, *, dry_run: bool = False) -> dict[str, Any]:
         """HOST-only: drain ``<vault>/inbox/`` (ADR-0003 Ruling 1 / ING-01).
@@ -671,7 +865,7 @@ class BrainCore:
         note (closing the capture loop). Set ``drain=False`` only for a host
         read-only reconcile."""
         self._require_host("sync (mutate) the index")
-        with writer_lock(config.writer_lock_path(self.vault), verb="sync"):
+        with vault_writer_lock(self.vault, verb="sync"):
             drain_res = self.drain_drafts() if drain else {"promoted": 0, "skipped": 0, "drain": "off"}
             if drain:
                 try:
@@ -703,7 +897,7 @@ class BrainCore:
         from .snapshot import publish_snapshot as _publish
 
         dest_dir = Path(dest) if dest else config.snapshot_dir(self.vault)
-        with writer_lock(config.writer_lock_path(self.vault), verb="snapshot"):
+        with vault_writer_lock(self.vault, verb="snapshot"):
             return _publish(self.index.db_path, dest_dir).to_dict()
 
     def restore_index_from_snapshot(
@@ -723,7 +917,7 @@ class BrainCore:
         verifies the note count post-restore.
         """
         self._require_host("restore the index from a snapshot")
-        with writer_lock(config.writer_lock_path(self.vault), verb="restore-index"):
+        with vault_writer_lock(self.vault, verb="restore-index"):
             return self._restore_index_from_snapshot_locked(force=force, dry_run=dry_run)
 
     def _restore_index_from_snapshot_locked(
@@ -828,7 +1022,8 @@ class BrainCore:
         # METADATA — the model the index was BUILT with; it does NOT prove which
         # embedder would answer a query right now. On a partial install
         # (onnxruntime missing) get_embedder() degrades to HashEmbedder while the
-        # metadata still says e5-small. Surface the model_id of the embedder
+        # metadata still names the prior semantic model. Surface the model_id
+        # of the embedder
         # actually constructed, and flag a mismatch loudly so a silent semantic
         # downgrade is visible in `brain status`/`brain health`.
         try:
@@ -912,10 +1107,17 @@ class BrainCore:
         return out
 
     def _count_pending_drafts(self) -> int:
+        """Everything waiting for the drain — the stalled-drain tripwire reads
+        this. It must include the approved queue (INT-01): owner-approved,
+        unsigned content is precisely what a stalled drain must not hide."""
         n = 0
         for ddir in self._draft_sources():
             if ddir.is_dir():
                 n += len(list(ddir.glob("*.md")))
+        if self.role == config.ROLE_HOST:
+            from . import cos as _cos_q
+
+            n += len(_cos_q.approved_pending(self.vault))
         return n
 
     # -- write verb (HOST-BROKER ONLY; audited; fails closed) ------------
@@ -1007,7 +1209,8 @@ class BrainCore:
         path.unlink(missing_ok=True)
         return result
 
-    def supersede(self, old_id: str, new_id: str, *, reason: str = "") -> dict[str, Any]:
+    def supersede(self, old_id: str, new_id: str, *, reason: str = "",
+                  expect: dict[str, Any] | None = None) -> dict[str, Any]:
         """Retire ``old_id`` in favour of ``new_id`` — both sides of the version
         chain, written through the audited ``write_note`` path (ADR-0003 Ruling
         2/8). HOST-broker only.
@@ -1043,12 +1246,59 @@ class BrainCore:
         silent block — and the lock's re-entrant depth counter means the
         trailing ``self.sync()`` call's own acquisition is a same-process no-op,
         not a second wait.
+
+        ``expect`` (HARDENED:codex-8) is an OPTIONAL precondition set a caller
+        computed OUT of band — content hashes and chain-head values it saw when
+        it decided this supersession was correct. Every key present is verified
+        **inside this lock, before the first signed write**. A caller that
+        re-checks its own preconditions and THEN calls in is TOCTOU: the
+        nightly folds hold the same lock and can retire or rewrite either note
+        in the gap between that check and this acquisition. Recognised keys —
+        ``old_sha256``/``new_sha256`` (``sha256_text`` of the whole note file),
+        ``old_superseded_by``, ``old_is_latest_version``,
+        ``new_is_latest_version``, ``new_previous_version``. A mismatch raises
+        :class:`SupersedePreconditionFailed` and nothing is written.
         """
         self._require_host("supersede notes (writes both sides of a version chain)")
-        with writer_lock(config.writer_lock_path(self.vault), verb="supersede"):
-            return self._supersede_locked(old_id, new_id, reason=reason)
+        with vault_writer_lock(self.vault, verb="supersede"):
+            return self._supersede_locked(old_id, new_id, reason=reason,
+                                          expect=expect)
 
-    def _supersede_locked(self, old_id: str, new_id: str, *, reason: str = "") -> dict[str, Any]:
+    @staticmethod
+    def _check_supersede_expect(expect: dict[str, Any], *, old_id: str, new_id: str,
+                                old_before: str, new_before: str,
+                                old_meta: dict[str, Any],
+                                new_meta: dict[str, Any]) -> None:
+        """Verify a caller's out-of-band preconditions. Raises on ANY mismatch.
+
+        The two content hashes alone are sufficient (frontmatter is inside the
+        file, so any chain mutation moves the hash); the chain-head keys are
+        kept because they name WHAT drifted, and "the pair was chained while
+        the proposal waited" is the case an operator most needs spelled out.
+        """
+        actual: dict[str, Any] = {
+            "old_sha256": sha256_text(old_before),
+            "new_sha256": sha256_text(new_before),
+            "old_superseded_by": str(old_meta.get("superseded_by") or "").strip(),
+            "new_previous_version": str(new_meta.get("previous_version") or "").strip(),
+            "old_is_latest_version": str(
+                old_meta.get("is_latest_version", "")).strip().lower(),
+            "new_is_latest_version": str(
+                new_meta.get("is_latest_version", "")).strip().lower(),
+        }
+        for key, want in expect.items():
+            if key not in actual:
+                raise SupersedePreconditionFailed(
+                    f"supersede: unknown precondition {key!r}")
+            got = actual[key]
+            if str(want).strip().lower() != str(got).strip().lower():
+                raise SupersedePreconditionFailed(
+                    f"supersede {old_id} -> {new_id}: precondition {key!r} "
+                    f"drifted (expected {want!r}, found {got!r}) — the pair "
+                    "changed after the decision was made; nothing was written")
+
+    def _supersede_locked(self, old_id: str, new_id: str, *, reason: str = "",
+                          expect: dict[str, Any] | None = None) -> dict[str, Any]:
         self._recover_pending_supersede()
 
         if old_id == new_id:
@@ -1065,6 +1315,13 @@ class BrainCore:
         new_before = new_path.read_text(encoding="utf-8")
         old_meta, _ = frontmatter.parse_text(old_before)
         new_meta, _ = frontmatter.parse_text(new_before)
+
+        # Caller preconditions FIRST: a drifted pair gets the precise "this
+        # changed under you" error rather than a generic invariant failure.
+        if expect:
+            self._check_supersede_expect(
+                expect, old_id=old_id, new_id=new_id, old_before=old_before,
+                new_before=new_before, old_meta=old_meta, new_meta=new_meta)
 
         # -- chain invariants + classification ruling (refused before any write) --
         if old_meta.get("superseded_by") or str(old_meta.get("is_latest_version", "")).strip().lower() == "false":
@@ -1128,13 +1385,22 @@ class BrainCore:
         # HOST-broker only: verify() derives the public key via the resolved
         # signing key — the VM leg must never resolve a key.
         self._require_host("verify the audit chain (resolves the signing key)")
+        from . import audit as _audit
+
         res = self.audit.verify()
+        # INT-02: the content pass runs on the DEFAULT surface too. A
+        # signature-only "ok" reads as a content all-clear while notes signed
+        # weeks ago sit changed on disk — so the plain command always reports
+        # the count, and `--check-content` only adds the per-note detail.
+        summary = _audit.drift_summary(self.vault, self.audit)
+        res["content_drift_count"] = summary["total"]
+        res["content_drift_unexplained"] = summary["unexplained"]
         if check_content:
-            drift = self.audit.content_drift(self.vault)
-            res["content_drift"] = drift
-            if drift and res["status"] == "ok":
-                # signatures fine, but a signed note's bytes changed on disk
-                res["status"] = "content_drift"
+            res["content_drift"] = summary["records"]
+        if summary["unexplained"] and res["status"] == "ok":
+            # signatures fine, but a signed note's bytes changed on disk and
+            # nothing has triaged it
+            res["status"] = "content_drift"
         return res
 
     # -- off-host anchor + encrypted backup (HOST-broker only; SEC-03) ----
@@ -1280,6 +1546,14 @@ class BrainCore:
         if snap.get("snapshot") == "present" and snap.get("age_seconds") is not None:
             age_hours = snap["age_seconds"] / 3600
 
+        cos_liveness: dict[str, Any] | None = None
+        if self.role == config.ROLE_HOST:
+            try:
+                from . import cos as cos_mod
+                cos_liveness = cos_mod.batch_liveness(self.vault)
+            except Exception:  # noqa: BLE001 — a liveness read never breaks the brief
+                cos_liveness = None
+
         result = brief_mod.build_brief(
             index_stats=stats,
             recent_notes=surfaced,
@@ -1288,6 +1562,7 @@ class BrainCore:
             snapshot_age_hours=age_hours,
             max_recent=max_recent,
             maintain_state=self._load_maintain_state(),
+            cos_liveness=cos_liveness,
         )
         result["egress"] = egress_report
         return result
@@ -1530,6 +1805,29 @@ class BrainCore:
             skipped_list = details.get("skipped", []) if isinstance(details, dict) else []
             for skip in skipped_list:
                 reason = skip.get("reason", "")
+                # Attribute by SOURCE, not by matching words in the reason: an
+                # approved-queue item that is skipped for ANY cause (duplicate
+                # id, bad frontmatter, a refusal) does not live in capture-inbox,
+                # and printing a path that does not exist sends the operator to
+                # the wrong directory.
+                if skip.get("source") == "approved-queue":
+                    from . import cos as _cos_q
+                    draft_path = str(_cos_q.approved_queue_dir(self.vault)
+                                     / skip.get("draft", ""))
+                    refused = "approved-queue refusal" in reason
+                    action_required.append(maint.action_required_item(
+                        (f"owner-approved candidate {skip.get('draft')} was REFUSED "
+                         f"at the signing gate (not signed)" if refused else
+                         f"owner-approved candidate {skip.get('draft')} could not "
+                         f"be signed"),
+                        reason,
+                        ("inspect the quarantined *.refused copy and the "
+                         "approved-queue-refusal defect row; re-propose if the "
+                         "content is still wanted" if refused else
+                         "resolve the cause above — the item stays queued and is "
+                         "retried on every drain until it is"),
+                        draft_path))
+                    continue
                 draft_path = str(self.capture_inbox_dir() / skip.get("draft", ""))
                 if "no-signing-key" in reason:
                     blocked.append(maint.blocked_item(
@@ -1567,10 +1865,10 @@ class BrainCore:
             audit_res = self.verify_audit()
             if audit_res.get("status") not in ("ok", "empty"):
                 action_required.append(maint.action_required_item(
-                    f"audit chain status={audit_res.get('status')} "
-                    f"({len(audit_res.get('errors', []))} error(s))",
+                    _audit_status_summary(audit_res),
                     "chain tamper/break needs human judgment, never auto-repaired",
-                    "inspect the chain errors; re-link from the last-good entry",
+                    "inspect the chain errors; re-link from the last-good entry "
+                    "(content drift: `brain verify-audit --check-content --json`)",
                     str(self.audit.log_path) if self.audit else "audit chain"))
         except Exception as exc:
             blocked.append(maint.blocked_item(
@@ -1604,7 +1902,7 @@ class BrainCore:
                 "live embedder is the non-semantic HashEmbedder but the index was "
                 f"built with {status_res.get('index', {}).get('embed_model')!r}",
                 "retrieval quality is effectively random on this install "
-                "(onnxruntime/tokenizers missing or the e5-small model absent)",
+                "(onnxruntime/tokenizers missing or the bge-m3-int8 model absent)",
                 "install the 'corporate' extras (onnxruntime + tokenizers) or the "
                 "bundled model; set BRAIN_REQUIRE_REAL_EMBEDDER=1 to fail closed",
                 "brain status --json (live_embedder block)"))
@@ -1717,10 +2015,10 @@ class BrainCore:
         audit_issue: dict[str, Any] | None = None
         if audit_res and audit_res.get("status") not in ("ok", "empty"):
             audit_issue = maint.action_required_item(
-                f"audit chain status={audit_res.get('status')} "
-                f"({len(audit_res.get('errors', []))} error(s))",
+                _audit_status_summary(audit_res),
                 "chain tamper/break needs human judgment, never auto-repaired",
-                "inspect the chain errors; re-link from the last-good entry",
+                "inspect the chain errors; re-link from the last-good entry "
+                "(content drift: `brain verify-audit --check-content --json`)",
                 str(self.audit.log_path) if self.audit else "audit chain")
 
         # M-2: `verify()` above only checks linkage + signatures over the
@@ -1825,7 +2123,6 @@ class BrainCore:
 
         from . import egress
         from . import graphify as gmod
-        from . import maintenance as maint
         from .graph import build_graph
         from .progress import progress_note
 
@@ -2452,7 +2749,8 @@ class BrainCore:
             self._write_inbox(entries)
         return appended
 
-    def answer_question(self, key: str, answer: str, *, today: Any = None) -> bool:
+    def answer_question(self, key: str, answer: str, *, today: Any = None,
+                        answered_at: str | None = None) -> bool:
         """Record the owner's answer to queued question ``key``. Host-only. The
         answer is CONSUMED (executed through the audited write path) by the next
         fold — recording it here is plain host queue state, not an index write."""
@@ -2461,7 +2759,8 @@ class BrainCore:
         self._require_host("answer an owner question")
         d = today or _dt.date.today()
         entries, matched = ibx.record_answer(
-            self._read_inbox(), key, answer, answered=d.isoformat())
+            self._read_inbox(), key, answer, answered=d.isoformat(),
+            answered_at=answered_at)
         if matched:
             self._write_inbox(entries)
         return matched
@@ -2487,13 +2786,107 @@ class BrainCore:
 
         return cos_mod.propose_correction(self.vault, payload)
 
+    def cos_run_begin(self, *, run_id: str | None = None,
+                      lane: str | None = None,
+                      skill_path: str | None = None) -> dict[str, Any]:
+        """HOST-ONLY (STA-01): freeze the run manifest at run LAUNCH.
+
+        The manifest — run id, resolved SKILL.md path + content digest, both
+        producer versions, the artifacts the run owes — is what later stamps
+        that run's candidates. `claim_drops` fires hourly and the deployed
+        bundle changes between runs, so reading the version at CLAIM time would
+        stamp a proposal with a bundle that did not produce it."""
+        from . import cos as cos_mod
+
+        self._require_host("begin a COS run (write the run manifest)")
+        return cos_mod.write_run_manifest(self.vault, run_id=run_id, lane=lane,
+                                          skill_path=skill_path)
+
+    def cos_corpus_check(self, run_id: str) -> dict[str, Any]:
+        """HOST-ONLY (WIR-02): may this run's Phase 1.6 judgment start?
+
+        The judge's input is the message body. This reports how many of the
+        run's captured threads actually carry one, and REFUSES
+        (:class:`brain.cos_corpus.NoBodiesToJudge`) when none does — the run-65
+        shape, where a body pass that never executed still produced 58
+        ``no-substance`` verdicts. Judging cannot honestly begin from there.
+
+        A corpus with SOME bodyless rows is normal (an unread thread is never
+        opened, and opens are capped) and passes; the count comes back so the
+        run states its denominator rather than implying one."""
+        from . import cos_corpus as corpus_mod
+
+        self._require_host("check the COS capture corpus before judging")
+        rows = corpus_mod.read_corpus(self.vault, run_id)
+        _, report = corpus_mod.judgeable(rows, source=f"run {run_id}")
+        return report
+
+    def cos_corpus_append(self, run_id: str, rows: list[dict[str, Any]]
+                          ) -> dict[str, Any]:
+        """HOST-ONLY (WIR-01): save the text the run just READ.
+
+        The nightly extracts a message body, judges it, and throws the text
+        away — so re-judging anything costs a 90-minute live run, and a run
+        that never read at all is indistinguishable from one that read and
+        found nothing. This is the call that makes the reading leave evidence.
+
+        Takes a LIST because the two shapes are different work: the row for an
+        opened body is written one at a time, in the same breath as the open,
+        while the rows for threads that were enumerated and never opened carry
+        no text and so have nothing to lose by going in one batch.
+        """
+        from . import cos_corpus as corpus_mod
+
+        self._require_host("append to the COS capture corpus")
+        written: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                written.append(corpus_mod.append_thread(self.vault, run_id, **row))
+            except corpus_mod.CorpusRefused as exc:
+                # NAME WHERE IT STOPPED. The corpus is append-only, so a caller
+                # told only "refused" re-sends the whole batch and duplicates
+                # every row that already landed.
+                raise type(exc)(
+                    f"{exc} — {len(written)} of {len(rows)} row(s) were "
+                    f"appended before this one; re-send only the rest"
+                ) from None
+        return {"run": run_id, "appended": len(written),
+                "conversation_ids": [w["conversation_id"] for w in written],
+                "chars": sum(w["chars"] for w in written)}
+
+    def cos_corpus_close(self, run_id: str) -> dict[str, Any]:
+        """HOST-ONLY (WIR-01): close this run's corpus.
+
+        Retention only deletes CLOSED corpora, so an unclosed one is unfiltered
+        mail held at rest forever; and a closed corpus carrying ``rows: 0`` is
+        how a genuinely quiet night stays distinguishable from a capture stage
+        that died."""
+        from . import cos_corpus as corpus_mod
+
+        self._require_host("close the COS capture corpus")
+        return corpus_mod.close_run(self.vault, run_id)
+
+    def cos_corpus_reopen(self, run_id: str) -> dict[str, Any]:
+        """HOST-ONLY: retract a close that certified ZERO rows.
+
+        Run 68 closed its corpus with ``rows: 0`` after a transient browser
+        failure, then recovered and opened three real bodies that could never
+        be captured. A zero-row close certifies nothing — no denominator, no
+        replay scope, no ledger row — so it alone is retractable. A close
+        carrying rows is refused here and always will be."""
+        from . import cos_corpus as corpus_mod
+
+        self._require_host("reopen the COS capture corpus")
+        return corpus_mod.reopen_run(self.vault, run_id)
+
     def cos_broker_fold(self, *, today: Any = None) -> dict[str, Any]:
         """HOST broker step (wired into ``maintain``): claim + validate drops,
-        expire/requeue, consume owner answers (move ONLY accepted candidates
-        into capture-inbox), release due holds, enqueue at most one new
+        expire/requeue, consume owner answers (stage ONLY accepted candidates
+        into the host-only approved queue), release due holds, enqueue one new
         signed batch, GC. Each stage is independent — one failure never
         aborts the rest."""
         from . import cos as cos_mod
+        from . import cos_runverify
         import datetime as _dt
 
         self._require_host("run the COS broker")
@@ -2508,6 +2901,14 @@ class BrainCore:
             return expired
 
         for stage, fn in (
+            # INS-01 runs FIRST, deliberately: `claim_drops` gates on the run
+            # verdict, so scoring in the same pass means a run that just
+            # finished has its candidates claimed (or quarantined) one hour
+            # after it ends — never "eventually", and never on the run's own
+            # say-so. It writes only its own verdict files, so it takes no
+            # writer lock; `claim_drops` below still takes it as before.
+            ("run_validity", lambda: cos_runverify.verify_pending_runs(
+                self.vault, now=now)),
             ("claimed", lambda: cos_mod.claim_drops(self.vault, now)),
             ("batch_expired", _expire_batches),
             ("proposals_expired", lambda: cos_mod.expire_proposals(self.vault, now)),
@@ -2518,6 +2919,15 @@ class BrainCore:
             # hold store BEFORE building the owner batch, so only
             # non-qualifying candidates ever reach the owner.
             ("auto_captured", lambda: cos_mod.auto_capture_fold(self.vault, now)),
+            # VER-01/VER-02: deduce version links from email context and stage
+            # them as candidates BEFORE the batch is built, so a supersede
+            # proposal rides the SAME nightly owner question as ingestion —
+            # never a second queue, never a second ritual. Wired here rather
+            # than as its own date-gated `maintain` branch because this is the
+            # smaller integration: the broker fold already owns the proposal
+            # directories, the stage-isolated error handling and the ordering
+            # (generate -> batch -> consume) this needs.
+            ("version_links", lambda: cos_mod.version_link_fold(self, now)),
             ("batch", lambda: cos_mod.enqueue_batch(self, now)),
             ("gc", lambda: cos_mod.gc_compact(self.vault, now)),
             # SP-01/SP-02: refresh the VM-readable spine-summary.md projection
@@ -2594,7 +3004,16 @@ class BrainCore:
         from . import cos as cos_mod
 
         self._require_host("cancel an auto-capture hold")
-        return cos_mod.hold_cancel(self.vault, ident)
+        return bool(cos_mod.hold_undo(self.vault, ident, core=self)["undone"])
+
+    def cos_hold_undo(self, ident: str) -> dict[str, Any]:
+        """The full undo state machine (held → releasing → capture-pending →
+        signed), with the audited-retirement branch available because this
+        call has the host core. Demotes the item's category in every branch."""
+        from . import cos as cos_mod
+
+        self._require_host("undo an auto-captured item")
+        return cos_mod.hold_undo(self.vault, ident, core=self)
 
     def cos_hold_release_due(self) -> list[str]:
         from . import cos as cos_mod
@@ -2794,9 +3213,9 @@ class BrainCore:
         # writer-lock aware: if a hand-run rebuild/sync holds the single-writer
         # lock, defer (mark 'available') and let next hour retry — same posture
         # as the daily branch's skipped-writer-busy.
-        from .lock import WriterLockBusy, writer_lock
+        from .lock import WriterLockBusy, vault_writer_lock
         try:
-            with writer_lock(config.writer_lock_path(self.vault), verb="update-probe", timeout=0.1):
+            with vault_writer_lock(self.vault, verb="update-probe", timeout=0.1):
                 pass
         except WriterLockBusy as exc:
             brain_update.write_update_state(
@@ -2961,9 +3380,25 @@ class BrainCore:
                         blocked.append(maint.blocked_item(
                             f"workspace sweep failed: {exc}",
                             "filesystem", "next maintain run"))
+                # DOC-01: the sweep runs BEFORE the broker fold so a swept
+                # attachment reaches its host-private quarantine in time to
+                # join THIS run's owner batch — documents and email text are
+                # decided in the same question, not an hour apart.
+                try:
+                    sweep_res = self.cos_ingest_sweep()
+                    results["cos_ingest_sweep"] = sweep_res
+                    if sweep_res.get("moved"):
+                        auto_fixed.append(maint.auto_fixed_item(
+                            "cos-ingest-sweep", str(self.vault),
+                            f"quarantined {len(sweep_res['moved'])} manifest-named "
+                            f"download(s) for an owner verdict"))
+                except Exception as exc:
+                    blocked.append(maint.blocked_item(
+                        f"COS ingest sweep failed: {exc}",
+                        "downloads dir / cos ops dir", "next maintain run"))
                 # CUT-01E: the COS broker step runs BEFORE the first sync so
-                # broker-accepted candidates and released holds land in
-                # capture-inbox in time for THIS run's drain to sign them —
+                # broker-accepted candidates and released holds land in the
+                # approved queue in time for THIS run's drain to sign them —
                 # a VM cos-propose drop becomes a queued owner-inbox batch
                 # within one nightly interval, never "eventually".
                 try:
@@ -2980,6 +3415,21 @@ class BrainCore:
                             f"queued COS ingestion batch "
                             f"{cos_res['batch']['batch_id']} "
                             f"({len(cos_res['batch']['candidates'])} candidate(s))"))
+                    # INS-01: a run the host validator could not certify is a
+                    # hot.md LOG line (§9) as well as a `brain status` / brief
+                    # warning — keyed on the run ids + verdicts so a standing
+                    # failure is not re-reported every hour, and a NEW one is.
+                    from . import cos as _cos, cos_runverify as _crv
+                    not_ok = [s for s in (cos_res.get("run_validity") or {})
+                              .get("scored", [])
+                              if s.get("verdict") not in _cos.CLAIMABLE_VERDICTS]
+                    if not_ok:
+                        self._append_hot_once(
+                            "maintain:cos-run-invalid:" + ",".join(
+                                f"{s['run_id']}={s['verdict']}"
+                                for s in sorted(not_ok, key=lambda x: x["run_id"])),
+                            _crv.hot_entry(not_ok, d.isoformat()),
+                        )
                     waiting = (cos_res.get("batch", {}) or {}).get("waiting") or []
                     if waiting:
                         # Backpressure (ing-02) is correct, but SILENT
@@ -2995,14 +3445,36 @@ class BrainCore:
                             maint.render_cos_waiting_hot_entry(waiting, d),
                         )
                     consumed = cos_res.get("consumed", {}) or {}
-                    if consumed.get("accepted"):
+                    applied_links = consumed.get("supersedes_applied") or []
+                    # A version link is accepted but never signed into
+                    # the approved queue — it retires a note in place — so it is
+                    # counted separately rather than mis-reported as a capture.
+                    n_captured = len(consumed.get("accepted") or []) - len(applied_links)
+                    if n_captured > 0:
+                        from . import cos as _cos_q
                         auto_fixed.append(maint.auto_fixed_item(
-                            "cos-broker", str(self.capture_inbox_dir()),
-                            f"moved {len(consumed['accepted'])} owner-accepted "
-                            f"candidate(s) into capture-inbox for signing"))
+                            "cos-broker", str(_cos_q.approved_queue_dir(self.vault)),
+                            f"moved {n_captured} owner-accepted candidate(s) into "
+                            f"the host-only approved queue for signing"))
+                    if applied_links:
+                        auto_fixed.append(maint.auto_fixed_item(
+                            "version-link", str(self.vault),
+                            f"applied {len(applied_links)} owner-accepted "
+                            f"supersede proposal(s) deduced from email context"))
+                    # CUR-01: the currency layer's own coverage number, from
+                    # the fold that just ran. Persisted so `health-report` can
+                    # show it and so a run that stopped producing it is
+                    # visible as a STALE number rather than as nothing.
+                    cov = (cos_res.get("version_links") or {}).get("coverage")
+                    if isinstance(cov, dict):
+                        prev_daily = state.get("daily") if isinstance(
+                            state.get("daily"), dict) else {}
+                        state["daily"] = {**prev_daily,
+                                          "curated_coverage": dict(cov)}
                     if cos_res.get("holds_released"):
+                        from . import cos as _cos_q
                         auto_fixed.append(maint.auto_fixed_item(
-                            "cos-broker", str(self.capture_inbox_dir()),
+                            "cos-broker", str(_cos_q.approved_queue_dir(self.vault)),
                             f"released {len(cos_res['holds_released'])} due "
                             f"auto-capture hold(s)"))
                     for err in cos_res.get("errors", []):
@@ -3014,21 +3486,6 @@ class BrainCore:
                     blocked.append(maint.blocked_item(
                         f"COS broker fold failed: {exc}",
                         "cos ops dir", "next maintain run"))
-                # v2.1: sweep VM ingest-manifest lines against the host
-                # downloads dir BEFORE sync, so a matched attachment lands in
-                # inbox/ in time for THIS run's ingest drain to sign it.
-                try:
-                    sweep_res = self.cos_ingest_sweep()
-                    results["cos_ingest_sweep"] = sweep_res
-                    if sweep_res.get("moved"):
-                        auto_fixed.append(maint.auto_fixed_item(
-                            "cos-ingest-sweep", str(self.vault / "inbox"),
-                            f"moved {len(sweep_res['moved'])} manifest-named "
-                            f"download(s) into inbox/ for signed ingest"))
-                except Exception as exc:
-                    blocked.append(maint.blocked_item(
-                        f"COS ingest sweep failed: {exc}",
-                        "downloads dir / cos ops dir", "next maintain run"))
                 try:
                     # First pass WITHOUT publish: the self-organization folds
                     # below mutate metadata/paths, and the snapshot must carry
@@ -3264,6 +3721,65 @@ class BrainCore:
                             blocked.append(maint.blocked_item(
                                 f"query-log retention fold failed: {exc}",
                                 "host query ledger", "next maintain run"))
+
+                        # CAP-02: the capture corpus holds UNFILTERED MNPI mail
+                        # bodies, so "for how long" has to be enforced by the
+                        # schedule — a retention function nothing calls keeps
+                        # them forever. Same shape as the fold above: whole
+                        # expired run files only, never rows inside one.
+                        try:
+                            from . import cos_corpus as _corpus
+
+                            # THE CUTOFF IS THE REAL UTC CLOCK, NEVER `d`.
+                            # `--date` exists to exercise WHETHER a date-gated
+                            # fold runs; passing it into a DESTRUCTIVE window
+                            # made `--date <future>` delete real, unexpired
+                            # mail bodies — irrecoverable, and this plan's own
+                            # sessions use that flag.
+                            cres = _corpus.prune(self.vault)
+                            results["cos_corpus_retention"] = cres
+                            # The marker is what `brain status` reports as
+                            # `pruned_by_a_scheduled_fold`. Stamp it only when
+                            # the scan actually completed: a permission error
+                            # leaves expired MNPI bodies on disk, and marking
+                            # that "pruned" is the instrument-lies failure this
+                            # whole module exists to avoid.
+                            if not dry_run and not cres["errors"]:
+                                # …and it records the REAL UTC date, for the
+                                # same reason the cutoff comes from the real
+                                # clock: `--date <future>` would otherwise make
+                                # status report a prune that happened today as
+                                # having happened then.
+                                state[_corpus.PRUNE_MARKER] = {
+                                    "last_run": _corpus.cos.utcnow().date().isoformat()}
+                            if cres["errors"]:
+                                blocked.append(maint.blocked_item(
+                                    f"COS capture-corpus retention did not complete: "
+                                    f"{'; '.join(cres['errors'][:3])} — expired mail "
+                                    f"bodies are still on disk and status will keep "
+                                    f"reporting retention as not run here",
+                                    "COS capture corpus", "next maintain run"))
+                            if cres["pruned"]:
+                                auto_fixed.append(maint.auto_fixed_item(
+                                    "cos-corpus-retention", "COS capture corpus",
+                                    f"pruned {len(cres['pruned'])} corpus file(s) "
+                                    f"older than {cres['retention_days']}d"))
+                            if cres["held"]:
+                                # An expired corpus that never closed is kept on
+                                # purpose (a live writer's inode) — but silence
+                                # here IS the "forever" this fold exists to end.
+                                action_required.append(maint.action_required_item(
+                                    f"{len(cres['held'])} expired capture corpus/corpora "
+                                    f"are past retention but never closed",
+                                    "an unclosed corpus is never auto-deleted — its "
+                                    "capture stage may still hold the file open",
+                                    "confirm no run is writing them, then "
+                                    "`brain cos-corpus-close <run>` so they age out",
+                                    "COS capture corpus"))
+                        except Exception as exc:
+                            blocked.append(maint.blocked_item(
+                                f"COS capture-corpus retention fold failed: {exc}",
+                                "COS capture corpus", "next maintain run"))
 
                     # CUT-02: monthly quarantine triage summary — NEVER
                     # deletes; queues a hot.md summary at most once per ISO

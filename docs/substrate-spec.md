@@ -15,7 +15,11 @@ in scope (see §7 + `corpus-migration.md`).
 1. **Markdown + YAML is the single source of truth.** Files on disk are
    authoritative. The sqlite index (resolved host app-data, or
    `$BRAIN_INDEX_DIR`) is a *derived cache* — deletable, rebuildable from
-   `vault/` at any time. No database is ever the truth.
+   `vault/` at any time. No database is ever the truth. *(One deliberate
+   exception shares that directory and is NOT disposable: the COS approved
+   queue, `<index dir>/cos-approved/` — owner-accepted content awaiting the
+   signature, and the only copy until the drain runs. See `docs/cos-ops.md`
+   §2c and AGENTS.md §1.)*
 2. **Two zones.** `raw/` is an **immutable** inbox of captured sources;
    `brain/` is **agent-owned** atomic, densely-linked notes plus `index.md` and
    a generated `backlinks.md`.
@@ -56,8 +60,8 @@ vault/
 ## 3 · The engine (`brain`)
 
 - **Index:** sqlite-vec (dense vectors) + FTS5 (lexical), one `.sqlite` file.
-- **Embeddings:** **multilingual-e5-small** via ONNX (revision-pinned
-  download; `Xenova/multilingual-e5-small`), model mmap'd from the mount
+- **Embeddings:** **bge-m3-int8** via ONNX (revision-pinned download;
+  `Xenova/bge-m3`, exact `onnx/model_int8.onnx`), model mmap'd from the mount
   (never copied to `/tmp`). Bundle the model for Cowork — the VM egress
   allowlist excludes HuggingFace.
 - **Four agent verbs:** `search`, `get`, `recent`, `draft_capture` (see §5 +
@@ -71,6 +75,18 @@ vault/
   process restart; no rebuild is required. `--rerank` is optional and skippable,
   bounded to 10-20 candidates, and keeps cross-encoder scores separate from RRF
   scores.
+- **Zone-authority prior — a measured opt-in, neutral by default.** RRF rewards
+  a document's presence in *many* legs over its strength in *one*, which buries
+  cross-lingual hits the dense leg alone can reach. `BRAIN_ZONE_WEIGHTS`
+  (JSON `zone -> multiplier`, e.g. `{"brain": 2.5, "raw": 1.0}`) applies a
+  per-zone boost after fusion, only to dense-leg-only hits. Query-time only —
+  no rebuild, reversible by unsetting it. It ships neutral because the 66-query
+  golden set can establish the effect (held-out mrr@10 0.198 → 0.386,
+  p=0.011) but not calibrate the constant — train argmax 3.0, held-out argmax
+  5.0; `eval/FOLLOWUPS.md` #9 carries the evidence and the costs. A malformed
+  map or an unrecognised `BRAIN_ZONE_SCOPE` warns on stderr and is dropped
+  (scope fails safe to `semantic_only`); confirm what applied per hit with
+  `search --explain --json` (`zone.applied` / `zone.factor`).
 - **Build matrix:** host macOS + host Windows (Code-tab / terminal) **and**
   Linux aarch64 + x86_64 (Cowork VM). One codebase, four targets.
 

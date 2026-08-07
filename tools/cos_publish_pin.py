@@ -21,11 +21,20 @@ Run it on the HOST after any pin re-stamp:
     python3 tools/cos_publish_pin.py <vault>
     python3 tools/cos_publish_pin.py --check <vault>   # verify, write nothing
 
+`--restamp` does the re-stamp itself, so a bundle upload and its BLOCKING pin
+move are ONE command instead of a hand-edit that has to be remembered:
+    python3 tools/cos_publish_pin.py --restamp --reason="..." <vault>
+It sets `classifier.bundle_version` to the active skill's `kernel_version`,
+records the move under a dated `repinned_*` key beside the existing history,
+and republishes the projection in the same act. Idempotent: re-running once
+canonical already matches prints "already stamped" and changes nothing.
+
 ponytail: derived projection, not a second source of truth. `--check` exists so
 a re-stamp that forgets to republish is detectable rather than silent.
 """
 from __future__ import annotations
 
+import datetime as _dt
 import hashlib
 import json
 import re
@@ -77,18 +86,64 @@ def build(vault: Path) -> dict:
     }
 
 
+def restamp(vault: Path, reason: str) -> int:
+    """Move `classifier.bundle_version` to the active skill's kernel_version.
+
+    Guard condition 4 is a STRING EQUALITY, so a bundle that ships without this
+    move silently freezes every guard-4-gated phase (field precedent: run 37,
+    2026-07-25 — `archived: 0` against `would_archive_count: 11`, every E-check
+    green). Doing it here rather than by hand keeps the upload and the re-stamp
+    in one act, and makes the no-op case explicit instead of a second edit.
+    """
+    src = canonical_path(vault)
+    data = json.loads(src.read_text(encoding="utf-8"))
+    active = skill_version()
+    prev = data["classifier"]["bundle_version"]
+    if prev == active:
+        print(f"already stamped: canonical is {active!r} — nothing to do")
+        return 0
+    key = "repinned_{}_{}".format(
+        _dt.date.today().isoformat().replace("-", "_"),
+        re.sub(r"[^a-z0-9]", "", active.rsplit(" ", 1)[-1].lower()),
+    )
+    data["classifier"]["bundle_version"] = active
+    data["classifier"][key] = f"{prev} -> {active}: {reason}"
+    tmp = src.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    tmp.replace(src)  # atomic: a half-written pin is never readable
+    print(f"restamped {prev!r} -> {active!r} (history key: {key})")
+    return 0
+
+
 def main(argv: list[str]) -> int:
+    # `--reason=TEXT` (equals form only) so a reason string can never be
+    # mistaken for the positional <vault>.
     args = [a for a in argv[1:] if not a.startswith("--")]
     check = "--check" in argv
+    do_restamp = "--restamp" in argv
+    reason = next((a.split("=", 1)[1] for a in argv[1:]
+                   if a.startswith("--reason=")), "")
     if not args:
-        print(__doc__.strip().splitlines()[-4], file=sys.stderr)
-        print("usage: cos_publish_pin.py [--check] <vault>", file=sys.stderr)
+        print("usage: cos_publish_pin.py [--check] "
+              "[--restamp --reason=TEXT] <vault>", file=sys.stderr)
         return 2
     vault = Path(args[0]).expanduser().resolve()
     src = canonical_path(vault)
     if not src.exists():
         print(f"FAIL: no calibration record at {src}", file=sys.stderr)
         return 1
+    if do_restamp:
+        if check:
+            print("FAIL: --restamp and --check are mutually exclusive",
+                  file=sys.stderr)
+            return 2
+        if not reason.strip():
+            print("FAIL: --restamp requires --reason=TEXT (what moved, and why "
+                  "it is a re-stamp rather than a re-measure)", file=sys.stderr)
+            return 2
+        rc = restamp(vault, reason)
+        if rc:
+            return rc
 
     try:
         want = build(vault)
@@ -148,6 +203,21 @@ def _selfcheck() -> None:
         assert main(["x", str(v)]) == 0
         assert main(["x", "--check", str(v)]) == 0
         assert json.loads(projection_path(v).read_text())["bundle_version"] == version
+
+        # --restamp: a stale canonical must be moved AND republished in one act,
+        # the history preserved, and a second run must be a no-op.
+        c.write_text(json.dumps({"classifier": {"bundle_version": "old v0.0",
+                                                "repinned_earlier": "keep me"}}))
+        assert main(["x", "--check", str(v)]) == 1, "stale canonical went undetected"
+        assert main(["x", "--restamp", str(v)]) == 2, "--restamp accepted no reason"
+        assert main(["x", "--restamp", "--reason=t", str(v)]) == 0
+        assert main(["x", "--check", str(v)]) == 0, "restamp did not republish"
+        after = json.loads(c.read_text())["classifier"]
+        assert after["bundle_version"] == version
+        assert after["repinned_earlier"] == "keep me", "restamp dropped history"
+        assert any(k.startswith("repinned_2") and "old v0.0" in after[k]
+                   for k in after), "restamp recorded no dated history key"
+        assert main(["x", "--restamp", "--reason=t", str(v)]) == 0  # idempotent
     print("selfcheck OK")
 
 

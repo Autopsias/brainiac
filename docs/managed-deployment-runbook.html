@@ -86,7 +86,7 @@
     <li><strong>A reviewed, internally-built <code>brainiac-cli</code> wheel</strong>, code-signed per
       your policy, published to that index (build: <code>python -m build</code> from a reviewed tag).</li>
     <li><strong>A staged model bundle</strong> — the reviewed, checksummed
-      <code>multilingual-e5-small</code> ONNX + tokenizer (see §3), distributed via MDM.</li>
+      <code>bge-m3-int8</code> ONNX + tokenizer (see §3), distributed via MDM.</li>
     <li><strong>MDM tooling</strong> (Jamf / Intune) to push env vars, files, and the scheduled task,
       and to enforce FDE.</li>
   </ul>
@@ -132,19 +132,19 @@ brain --version        # expect: the X.Y.Z you deployed</code></pre>
 <pre><code># --- build the bundle ONCE on a reviewer's box (has network) ---
 # --revision defaults to the runtime-pinned commit, so the bundle is reproducible.
 python packaging/stage_model.py \
-    --repo Xenova/multilingual-e5-small \
-    --out ./e5-small-bundle \
-    --patterns onnx/model.onnx tokenizer.json tokenizer_config.json special_tokens_map.json config.json
-sha256sum -b ./e5-small-bundle/onnx/model.onnx &gt; e5-small-bundle.SHA256   # record for review
+    --repo Xenova/bge-m3 \
+    --out ./bge-m3-int8-bundle \
+    --patterns onnx/model_int8.onnx tokenizer.json tokenizer_config.json special_tokens_map.json config.json
+sha256sum -b ./bge-m3-int8-bundle/onnx/model_int8.onnx &gt; bge-m3-int8-bundle.SHA256
 
 # --- on each managed endpoint (MDM copies the bundle in, read-only) ---
-export BRAIN_MODEL_CACHE=/opt/brainiac/models/e5-small        # points at the staged bundle
+export BRAIN_MODEL_CACHE=/opt/brainiac/models/bge-m3-int8     # points at the staged bundle
 export BRAIN_EMBEDDER=auto                                     # uses the cache; no download
 
 # air-gapped alternative (no model at all): lexical-only search
 # export BRAIN_EMBEDDER=hash</code></pre>
   <div class="callout"><strong>Cache layout note:</strong> <code>$BRAIN_MODEL_CACHE</code> accepts either
-    a flat snapshot dir (containing <code>onnx/model.onnx</code> + the tokenizer files, as staged above)
+    a flat snapshot dir (containing <code>onnx/model_int8.onnx</code> + the tokenizer files, as staged above)
     or an HF cache root. Verify the recorded <code>.SHA256</code> on each endpoint before trusting the
     bundle.</div>
   <p class="org"><b>ORG-INFRA:</b> review + checksum + (ideally) sign the bundle; verify the recorded

@@ -41,6 +41,24 @@ CATEGORIES: tuple[str, ...] = ("voice", "brand", "keywords", "people")
 # change, and removing it is the complete rollback.
 OPTIONAL_CATEGORIES: tuple[str, ...] = ("cos",)
 
+# TAX-01/TAX-02 — the ingest/no-ingest category taxonomy lives in
+# `overlay/cos/ingest.md`. It is a GATE (a `never` rule suppresses candidates
+# outright), so hand-edited markdown cannot be trusted unvalidated: every rule
+# line is shape-checked here, and anything the checker cannot recognise
+# resolves to `propose` — the fail-CLOSED direction. Full spec:
+# `docs/cos-ingest-taxonomy.md`; schema in `overlay/template/cos/ingest.md`.
+INGEST_FILENAME = "ingest.md"
+DISPOSITIONS: tuple[str, ...] = ("always", "propose", "never")
+DEFAULT_DISPOSITION = "propose"
+INGEST_LANES: tuple[str, ...] = ("text", "attachment", "both")
+DEFAULT_LANE = "both"
+TIERS: tuple[str, ...] = ("Public", "Internal", "Confidential", "Restricted", "MNPI")
+
+_RULE_RE = re.compile(r"^-\s+([a-z0-9]+(?:-[a-z0-9]+)*)\s*:\s*(\S.*)$")
+_FENCE_RE = re.compile(r"^\s*(```|~~~)")
+_COMMENT_OPEN = "<!--"
+_COMMENT_CLOSE = "-->"
+
 # AUT-01/AUT-03 (ADR-0003 Ruling c/e): the HTML brief/digest renderers are
 # pure-render — all overlay I/O happens here, once, before the render call.
 # Two OPTIONAL frontmatter keys on a brand/*.md file (alongside the existing
@@ -96,6 +114,110 @@ def _validate_category_file(path: Path, category: str) -> list[str]:
     return issues
 
 
+def _strip_noise(body: str) -> list[str]:
+    """Drop fenced code blocks and HTML comments — the two places a template
+    legitimately shows EXAMPLE rules that must never be read as real ones."""
+    out: list[str] = []
+    in_fence = False
+    in_comment = False
+    for line in body.splitlines():
+        if in_comment:
+            if _COMMENT_CLOSE in line:
+                in_comment = False
+            continue
+        if _COMMENT_OPEN in line:
+            # a whole-line or trailing comment opener; single-line comments close here
+            if _COMMENT_CLOSE not in line.split(_COMMENT_OPEN, 1)[1]:
+                in_comment = True
+            continue
+        if _FENCE_RE.match(line):
+            in_fence = not in_fence
+            continue
+        if not in_fence:
+            out.append(line)
+    return out
+
+
+def parse_ingest_rules(body: str) -> dict[str, Any]:
+    """Parse `overlay/cos/ingest.md` body rules. Never raises.
+
+    Rule syntax (one list line per category)::
+
+        - <category-id>: always|propose|never | lane=<lane> | min_tier=<Tier>
+
+    Everything the parser cannot recognise resolves to ``propose`` and emits a
+    WARNING rather than an error — the fail-CLOSED direction. A `never` rule
+    suppresses candidates outright, so it is never inferred from a typo.
+    """
+    rules: dict[str, dict[str, Any]] = {}
+    warnings: list[str] = []
+
+    for line in _strip_noise(body):
+        m = _RULE_RE.match(line.rstrip())
+        if not m:
+            continue
+        cat_id, rest = m.group(1), m.group(2).strip()
+        parts = [p.strip() for p in rest.split("|")]
+        disposition = parts[0].strip().strip("`")
+        if disposition not in DISPOSITIONS:
+            warnings.append(
+                f"{cat_id}: unknown disposition {disposition!r} — "
+                f"treated as {DEFAULT_DISPOSITION!r}"
+            )
+            disposition = DEFAULT_DISPOSITION
+        rule: dict[str, Any] = {"disposition": disposition, "lane": DEFAULT_LANE,
+                                "min_tier": None}
+        for opt in parts[1:]:
+            if not opt:
+                continue
+            key, sep, value = opt.partition("=")
+            key, value = key.strip(), value.strip().strip("`")
+            if not sep:
+                warnings.append(f"{cat_id}: unparseable option {opt!r} — ignored, "
+                                f"rule treated as {DEFAULT_DISPOSITION!r}")
+                rule["disposition"] = DEFAULT_DISPOSITION
+            elif key == "lane":
+                if value in INGEST_LANES:
+                    rule["lane"] = value
+                else:
+                    warnings.append(f"{cat_id}: unknown lane {value!r} — "
+                                    f"treated as {DEFAULT_LANE!r}")
+            elif key == "min_tier":
+                if value in TIERS:
+                    rule["min_tier"] = value
+                else:
+                    warnings.append(f"{cat_id}: unknown min_tier {value!r} — ignored "
+                                    "(a category never lowers a tier)")
+            else:
+                warnings.append(f"{cat_id}: unknown option {key!r} — ignored")
+        if cat_id in rules:
+            warnings.append(f"{cat_id}: duplicate rule — treated as "
+                            f"{DEFAULT_DISPOSITION!r}")
+            rule = {"disposition": DEFAULT_DISPOSITION, "lane": DEFAULT_LANE,
+                    "min_tier": None}
+        rules[cat_id] = rule
+
+    if not rules:
+        warnings.append("no category rules found — the file declares no taxonomy")
+    return {"rules": rules, "warnings": warnings}
+
+
+def _ingest_report(path: Path) -> dict[str, Any]:
+    """Shape-check one `cos/ingest.md`. Structural problems are ISSUES (they
+    make the overlay invalid); rule-level problems are WARNINGS (fail closed to
+    `propose`, per docs/cos-ingest-taxonomy.md §5)."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception as exc:  # pragma: no cover - unreadable file is rare
+        return {"present": True, "rules": {}, "warnings": [],
+                "issues": [f"{path.name}: unreadable ({type(exc).__name__}: {exc})"]}
+    _meta, body = frontmatter.parse_text(text)
+    parsed = parse_ingest_rules(body)
+    return {"present": True, "rules": parsed["rules"],
+            "warnings": [f"{path.name}: {w}" for w in parsed["warnings"]],
+            "issues": []}
+
+
 def validate_overlay(path: Path) -> dict[str, Any]:
     """Validate an overlay directory's shape. Pure filesystem check.
 
@@ -114,10 +236,12 @@ def validate_overlay(path: Path) -> dict[str, Any]:
                 for c in CATEGORIES
             },
             "errors": [f"overlay dir does not exist: {path}"],
+            "warnings": [],
         }
 
     categories: dict[str, Any] = {}
     errors: list[str] = []
+    warnings: list[str] = []
 
     for cat in CATEGORIES:
         cat_dir = path / cat
@@ -149,8 +273,23 @@ def validate_overlay(path: Path) -> dict[str, Any]:
         md_files = sorted(cat_dir.glob("*.md"))
         for f in md_files:
             issues.extend(_validate_category_file(f, cat))
-        categories[cat] = {"present": True, "file_count": len(md_files),
-                           "issues": issues, "optional": True}
+        entry: dict[str, Any] = {"present": True, "file_count": len(md_files),
+                                 "issues": issues, "optional": True}
+        # TAX-02: `cos/ingest.md` carries machine-read rules, so it gets a
+        # rule-level shape check on top of the generic frontmatter check. The
+        # file being ABSENT is not a problem at any level — absent means the
+        # whole category feature is OFF (docs/cos-ingest-taxonomy.md §5).
+        if cat == "cos":
+            ingest_path = cat_dir / INGEST_FILENAME
+            if ingest_path.is_file():
+                ing = _ingest_report(ingest_path)
+                entry["ingest"] = ing
+                issues.extend(ing["issues"])
+                warnings.extend(f"{cat}: {w}" for w in ing["warnings"])
+            else:
+                entry["ingest"] = {"present": False, "rules": {}, "warnings": [],
+                                   "issues": []}
+        categories[cat] = entry
         errors.extend(f"{cat}: {issue}" for issue in issues)
 
     return {
@@ -159,7 +298,103 @@ def validate_overlay(path: Path) -> dict[str, Any]:
         "valid": len(errors) == 0,
         "categories": categories,
         "errors": errors,
+        "warnings": warnings,
     }
+
+
+# PRV-02 (HARDENED:codex-2) — the keyword decoder ring doubles as the owner's
+# tier map: an OPTIONAL third table column naming a classification tier says
+# "material mentioning this term is <Tier>". It is the ONLY thing that lowers
+# an email-derived source off its MNPI default, so it is read strictly: a row
+# whose third cell is not an exact tier name contributes nothing.
+_TABLE_ROW_RE = re.compile(r"^\s*\|(.+)\|\s*$")
+_PLACEHOLDER_RE = re.compile(r"^<.*>$")
+
+
+def _table_cells(line: str) -> list[str]:
+    m = _TABLE_ROW_RE.match(line)
+    if not m:
+        return []
+    return [c.strip().strip("`").strip() for c in m.group(1).split("|")]
+
+
+def resolve_keyword_tiers(
+    vault: str | os.PathLike[str] | None = None,
+    explicit: str | os.PathLike[str] | None = None,
+) -> dict[str, str]:
+    """``{term (casefolded): tier}`` from the overlay's ``keywords/*.md`` tables.
+
+    Rows are ``| Term | Expansion | Classification |``; the third column is
+    OPTIONAL (a glossary without it maps nothing, exactly as before). Template
+    placeholders (``<ACRONYM>``) and header/separator rows are skipped. Never
+    raises — an unreadable or absent overlay maps nothing.
+    """
+    out: dict[str, str] = {}
+    kdir = overlay_dir(vault, explicit) / "keywords"
+    if not kdir.is_dir():
+        return out
+    for f in sorted(kdir.glob("*.md")):
+        try:
+            _meta, body = frontmatter.parse_text(f.read_text(encoding="utf-8"))
+        except Exception:  # pragma: no cover - unreadable file is rare
+            continue
+        for line in _strip_noise(body):
+            cells = _table_cells(line)
+            if len(cells) < 3:
+                continue
+            term, tier = cells[0], cells[2]
+            if tier not in TIERS or not term or _PLACEHOLDER_RE.match(term):
+                continue
+            out[term.casefold()] = tier
+    return out
+
+
+def match_keyword_tier(
+    text: str,
+    vault: str | os.PathLike[str] | None = None,
+    explicit: str | os.PathLike[str] | None = None,
+) -> tuple[str | None, str | None]:
+    """Highest tier any mapped keyword found in ``text`` resolves to, plus the
+    term that matched. Word-boundary matching, case-insensitive."""
+    tiers = resolve_keyword_tiers(vault, explicit)
+    if not tiers:
+        return None, None
+    hay = text.casefold()
+    best: tuple[str, str] | None = None
+    for term, tier in sorted(tiers.items()):
+        pattern = re.escape(term)
+        if term[:1].isalnum():
+            pattern = r"\b" + pattern
+        if term[-1:].isalnum():
+            pattern = pattern + r"\b"
+        if not re.search(pattern, hay):
+            continue
+        if best is None or TIERS.index(tier) > TIERS.index(best[0]):
+            best = (tier, term)
+    return best if best else (None, None)
+
+
+def load_ingest_rules(
+    vault: str | os.PathLike[str] | None = None,
+    explicit: str | os.PathLike[str] | None = None,
+) -> dict[str, Any]:
+    """The active ``cos/ingest.md`` taxonomy (TAX-01/TAX-02), or an empty,
+    absent report. Never raises; see docs/cos-ingest-taxonomy.md §5 for the
+    absent/unparseable semantics."""
+    path = overlay_dir(vault, explicit) / "cos" / INGEST_FILENAME
+    if not path.is_file():
+        return {"present": False, "rules": {}, "warnings": [], "issues": []}
+    return _ingest_report(path)
+
+
+def category_min_tier(
+    category: str,
+    vault: str | os.PathLike[str] | None = None,
+    explicit: str | os.PathLike[str] | None = None,
+) -> str | None:
+    """The ingest category's classification FLOOR, if it declares one."""
+    rule = load_ingest_rules(vault, explicit)["rules"].get(str(category or ""))
+    return rule.get("min_tier") if isinstance(rule, dict) else None
 
 
 def resolve_brand(

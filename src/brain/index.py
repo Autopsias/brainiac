@@ -18,6 +18,7 @@ S03 added:
 """
 from __future__ import annotations
 
+import concurrent.futures
 import datetime as _dt
 import hashlib
 import json
@@ -25,8 +26,10 @@ import math
 import os
 import re
 import sqlite3
+import sys
 import time
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -80,6 +83,26 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def rerank_gate_enabled(requested: bool | None = None) -> bool:
+    """Is the RK-02 adaptive rerank gate live for this call?
+
+    Reranking is ON by default and costs seconds per query (BR-03: ~5.5s p50
+    at the shipped window 20). The gate decides, per query, whether that spend
+    can buy anything. Precedence mirrors the
+    BR-03/ADR-0008 kill-switch pattern exactly: an explicit ``requested``
+    (CLI ``--rerank-gate`` / ``--no-rerank-gate``) always wins; absent that,
+    ``BRAIN_RERANK_GATE_DISABLED=1`` turns the gate off globally (restoring
+    unconditional always-on reranking); absent both, the gate is ON.
+
+    Turning the gate OFF never disables reranking — it only stops the engine
+    from skipping it.
+    """
+    if requested is not None:
+        return bool(requested)
+    raw = os.environ.get("BRAIN_RERANK_GATE_DISABLED", "").strip().lower()
+    return raw not in {"1", "true", "yes", "on"}
+
+
 # near_dup boilerplate-caveat patterns (finding 3, 2026-07-20 dedup batch) --
 # recurring/templated artifact types whose near-dup score is boilerplate-prone.
 # fnmatch globs, checked against the note `id`. Configurable via
@@ -119,6 +142,26 @@ _TEMPORAL_INTENT_RE = re.compile(
     r"est[ae] (?:semana|mês|trimestre|ano))\b", re.IGNORECASE)
 
 
+@lru_cache(maxsize=8)
+def _fusion_k_from_env(raw: str) -> int:
+    """``$BRAIN_RRF_K`` as a positive int, else ``RRF_K_FUSE``.
+
+    Cached on the raw string so a misconfigured value is reported once per
+    process rather than once per query — and so a fresh value (a test changing
+    the environment) still re-parses.
+    """
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value >= 1:
+        return value
+    if raw:
+        print(f"brain: ignoring BRAIN_RRF_K={raw!r} (want a positive integer); "
+              f"fusing at {RRF_K_FUSE}", file=sys.stderr)
+    return RRF_K_FUSE
+
+
 def _recency_factor(date_str: str, today: _dt.date, weight: float,
                     half_life: float) -> float:
     """Gentle multiplicative STALENESS PENALTY for the RRF fusion, bounded to
@@ -128,8 +171,9 @@ def _recency_factor(date_str: str, today: _dt.date, weight: float,
     An undated note (or ``weight<=0``) is neutral at ``1.0`` — undated notes are
     never penalised.
 
-    With ``rrf_k = 60`` and ``w_exact_max = 2.25``, raw RRF never exceeds
-    ``(2 + w_exact_max) / (rrf_k + 1) = 4.25 / 61``. This factor is a penalty
+    With ``w_exact_max = 2.25``, raw RRF never exceeds
+    ``(2 + w_exact_max) / (k + 1) = 4.25 / (k + 1)`` at the constant the legs
+    were fused at (``RRF_K_FUSE``, not ``RRF_K_EXACT``). This factor is a penalty
     in ``(0, 1]``; the separately configured zone-authority multiplier is
     applied after raw RRF and may intentionally exceed 1. Relative order
     between any two dated notes is identical to a symmetric boost, so the newer
@@ -229,6 +273,36 @@ class _ExactLeg:
 
 
 RRF_K_EXACT = 60
+
+# RET-11 — the RRF constant the legs are actually FUSED at.
+#
+# `RRF_K_EXACT` stays 60: it is ADR-0008's calibration key (it gates the exact
+# leg and is what a stored query-log record replays against), not a tuning dial.
+# `RRF_K_FUSE` is the denominator, and it is 3 rather than 60 because 60 was
+# measurably wrong for a two/three-leg fusion over an 80-160 candidate window.
+#
+# RRF sums `weight/(k + rank)` over the legs a note appears in. At k=60 a
+# SECOND leg is worth up to 2x, while the whole rank range from 1 to 80 is
+# worth only 2.3x (1/61 vs 1/140) — so "both legs found it mediocrely" beats
+# "one leg found it first", and the ranking discards answers it already had.
+# Measured on the reference vault (2,570 notes) 2026-08-04, at the k=128 depth
+# the burial was first recorded at: five real questions whose answer a leg held
+# at rank 1-17 came back fused at 41, 16, 21, 47 and 93, and EVERY note above
+# them was a two-leg mid-list hit. At k=3 they come back at 4, 2, 1, 12 and 37
+# (eval/FOLLOWUPS.md items 7 and 10;
+# eval/runs/fusion-constant-2026-08-04-bare.json).
+#
+# k=60 comes from Cormack et al. 2009, where it damps one run's top hit while
+# fusing 100+ TREC runs. Nothing derives it for three legs. Lowering it is the
+# whole fix: it is precisely the exchange rate between leg STRENGTH and leg
+# BREADTH. 3 is the largest constant satisfying "a note one leg ranked 1st
+# outranks a note no leg ranked inside its top 5" (1/(k+1) > 2/(k+6) iff k < 4),
+# and it sits inside the flat region of the 66-query golden sweep rather than at
+# its argmax (train argmax 2, held-out argmax 0 — see eval/FOLLOWUPS.md).
+#
+# Rollback: `BRAIN_RRF_K=60` restores the pre-RET-11 ranking exactly.
+RRF_K_FUSE = 3
+
 EXACT_WEIGHT_UNIQUE_FULL = 2.25
 EXACT_WEIGHT_COLLIDING_FULL = 1.0
 EXACT_WEIGHT_PARTIAL_TITLE = 0.25
@@ -257,6 +331,14 @@ class _SearchTrace:
     pre_rerank_order: list[int] = field(default_factory=list)
     final_pre_egress_order: list[int] = field(default_factory=list)
     rerank_applied: bool = False
+    # RK-02 adaptive gate: whether the gate was live, whether it SKIPPED the
+    # cross-encoder for this query, and the rule that decided. Always
+    # populated in trace mode, so a later audit reads the decision instead of
+    # inferring it from `rerank_requested` vs `rerank_applied` (which cannot
+    # tell a gate skip apart from a missing model or a timeout).
+    rerank_gate: dict[str, Any] = field(
+        default_factory=lambda: {"enabled": True, "skipped": False, "reason": None}
+    )
     _records: dict[int, dict[str, Any]] = field(default_factory=dict)
     _id_by_rowid: dict[int, str] = field(default_factory=dict)
 
@@ -317,22 +399,35 @@ class _SearchTrace:
                 for key, item in value.items()
             }
 
+        # The serialized totals are recomputed from the serialized PARTS, not
+        # rounded independently from the internal accumulator. `round(a + b)`
+        # and `round(a) + round(b)` differ in the last place, so rounding each
+        # separately leaves an attribution record whose legs do not add up to
+        # its own total. That discrepancy stayed under 1e-12 only while the
+        # fusion constant was 60 and every contribution was ~0.016; at
+        # RRF_K_FUSE it is visible. The values still track the real arithmetic
+        # to within the serialization precision — this fixes which of two
+        # equally-rounded answers is printed, nothing else.
+        legs = [leg(record["lexical"]), leg(record["dense"]), leg(record["exact"])]
+        raw = self._round(sum(v["contribution"] for v in legs if v))
+        zone_factor = self._round(record["zone"]["factor"])
+        stale_factor = self._round(record["staleness"]["factor"])
         result = {
-            "lexical": leg(record["lexical"]),
-            "dense": leg(record["dense"]),
-            "exact": leg(record["exact"]),
-            "raw_rrf_score": self._round(record["raw_rrf_score"]),
+            "lexical": legs[0],
+            "dense": legs[1],
+            "exact": legs[2],
+            "raw_rrf_score": raw,
             "zone": {
                 "scope": record["zone"]["scope"],
-                "factor": self._round(record["zone"]["factor"]),
+                "factor": zone_factor,
                 "applied": bool(record["zone"]["applied"]),
             },
-            "staleness": {"factor": self._round(record["staleness"]["factor"])},
+            "staleness": {"factor": stale_factor},
             "near_duplicate": {
                 "exempt": bool(record["near_duplicate"]["exempt"]),
                 "suppressed": bool(record["near_duplicate"]["suppressed"]),
             },
-            "pre_rerank_score": self._round(record["pre_rerank_score"]),
+            "pre_rerank_score": self._round(raw * zone_factor * stale_factor),
             "pre_rerank_rank": record["pre_rerank_rank"],
             "pin": {
                 "eligible": bool(record["pin"]["eligible"]),
@@ -469,6 +564,23 @@ class BrainIndex:
         # making rerank-bound eval pathologically slow. The cache is keyed on the
         # resolved model id so a mid-session BRAIN_RERANKER_MODEL change is honoured.
         self._reranker_cache: tuple[str, Any] | None = None
+        # Logged once (not per query) when a RESOLVED reranker's .rerank() call
+        # itself raises -- distinct from "no model available" (that path never
+        # reaches rerank(), since get_reranker() already returned a NoopReranker
+        # and applied is already False before any try/except). A real crash
+        # here was previously indistinguishable from "reranking made no
+        # difference": the skippable contract (RET-02) must still degrade to
+        # identity, but doing so silently hid a real bug (BL-02) as a null
+        # delta. See the except block in _rerank_impl.
+        self._rerank_failure_logged = False
+        # BR-03 circuit breaker: a single persistent worker thread that every
+        # rerank call is submitted to, so a call can be TIMED OUT from the
+        # caller's side (see _rerank_impl). Lazily created on first rerank —
+        # constructing the index must never spin up a thread pool no one asked
+        # for. Not a process pool (nothing here needs one): a slow ONNX call
+        # cannot be killed, only abandoned, and a single background thread is
+        # enough to abandon it in.
+        self._rerank_executor: "concurrent.futures.ThreadPoolExecutor | None" = None
         # Multi-hop retrieval (RET-06) caches: the wikilink graph and the entity
         # lexicon are both derived from the immutable ``notes`` table, so build
         # them once per index lifetime (not per query). None until first use.
@@ -591,6 +703,11 @@ class BrainIndex:
         if self._conn is not None:
             self._conn.close()
             self._conn = None
+        if self._rerank_executor is not None:
+            # wait=False: a still-running rerank call is abandoned, not
+            # awaited — see the comment on _rerank_executor's creation.
+            self._rerank_executor.shutdown(wait=False, cancel_futures=True)
+            self._rerank_executor = None
 
     # -- schema -----------------------------------------------------------
     def _create_schema(self) -> None:
@@ -1094,9 +1211,10 @@ class BrainIndex:
         # Pass 1: plan every note (chunk + contextual prefix + id dedup) — no
         # embedding. Done in full even on resume, both to rebuild ``_seen_ids``
         # identically to the original run and to compute the vault fingerprint.
+        scan_stats: dict[str, int] = {}
         plans: list[_NotePlan] = [
             self._plan_note(note, i)
-            for i, note in enumerate(scan_vault(vault), start=1)
+            for i, note in enumerate(scan_vault(vault, stats=scan_stats), start=1)
         ]
         fingerprint = self._vault_fingerprint(plans)
         resume_from_batch = 0
@@ -1203,6 +1321,7 @@ class BrainIndex:
         self._seen_ids = None  # scope dedup strictly to the rebuild loop
         return {
             "indexed": len(plans),
+            "excluded_machine_output": scan_stats.get("excluded_machine_output", 0),
             "chunks": chunk_rowid - 1,
             "backend": self.backend.name,
             "embed_model": self.embedder.model_id,
@@ -1237,7 +1356,8 @@ class BrainIndex:
         c = self.conn
         # Current on-disk state: path -> Note.
         on_disk: dict[str, Note] = {}
-        for note in scan_vault(vault):
+        scan_stats: dict[str, int] = {}
+        for note in scan_vault(vault, stats=scan_stats):
             on_disk[note.path.as_posix()] = note
         # Indexed state: path -> (note_rowid, content_hash).
         indexed: dict[str, tuple[int, str]] = {
@@ -1358,6 +1478,7 @@ class BrainIndex:
             "deleted": deleted,
             "rebased": rebased,
             "indexed": added + updated + unchanged,
+            "excluded_machine_output": scan_stats.get("excluded_machine_output", 0),
             "chunks": total_chunks,
             "backend": self.backend.name,
             "embed_model": self.embedder.model_id,
@@ -1400,37 +1521,110 @@ class BrainIndex:
     # train+dev, all 5 folds agreeing) in the PT-02 eval — see
     # `docs/eval-bench/pt-fix.md`. They live in the OWNER's config now, not in
     # shipped defaults, because the zone names are vault-specific.
+    #
+    # STILL `{}` AFTER THE s06 CALIBRATION (2026-08-04) — deliberately, and the
+    # measurement is why. On the flattened `brain`/`raw` zones of the reference
+    # vault, `BRAIN_ZONE_WEIGHTS={"brain": W, "raw": 1.0}` is a large real
+    # effect: selected on the golden set's pre-registered TRAIN half and read
+    # ONCE on its held-out half, mrr@10 goes 0.198 -> 0.386 (paired permutation
+    # p=0.011). But the two halves disagree on WHICH W (train argmax 3.0,
+    # held-out argmax 5.0) and the held-out curve is flat to within 0.011 across
+    # 2.5-5.0 — so 66 queries can resolve the DIRECTION and not the CONSTANT.
+    # A number that cannot be calibrated must not ship as a default; it ships
+    # as a documented, measured opt-in.
+    # Evidence: `eval/FOLLOWUPS.md` #9, `eval/zone_prior_calibration.py`.
     _DEFAULT_ZONE_WEIGHTS: "dict[str, float]" = {}
+
+    # A zone factor is a multiplier on an already-fused RRF score. Values are
+    # bounded so a typo cannot silently annihilate or dominate the ranking:
+    # 5e-324 parses as a positive finite float and multiplies every contribution
+    # to zero, which is indistinguishable from the feature being off.
+    _ZONE_WEIGHT_MIN = 1e-6
+    _ZONE_WEIGHT_MAX = 1e6
+    _ZONE_SCOPES = ("all", "semantic_only")
+
+    def _zone_config_warning(self, var: str, problems: list[str]) -> None:
+        """Say so, once per process, on stderr — the same shape the reranker
+        fallback uses. A misconfigured opt-in that behaves exactly like an
+        unset one is the failure mode this exists to prevent."""
+        seen = getattr(self, "_zone_config_warned", None)
+        if seen is None:
+            seen = set()
+            self._zone_config_warned = seen
+        if var in seen:
+            return
+        seen.add(var)
+        print(f"brain: WARNING — {var} is misconfigured and was not fully "
+              f"applied: {'; '.join(problems)}.", file=sys.stderr)
 
     def _zone_weight(self, zone: str) -> float:
         """Authority multiplier for a note's zone (see hybrid_search). Curated
         typed zones get a modest boost over voluminous transcript/source zones;
-        unknown zones default to 1.0. Override via BRAIN_ZONE_WEIGHTS (JSON)."""
+        unknown zones default to 1.0. Override via BRAIN_ZONE_WEIGHTS (JSON).
+
+        Invalid input is REPORTED, not swallowed: unparseable JSON, a non-object
+        document, a non-numeric value, or a factor outside
+        [`_ZONE_WEIGHT_MIN`, `_ZONE_WEIGHT_MAX`] is dropped with one stderr
+        warning naming what was wrong. Confirm what actually applied per hit
+        with ``search --explain --json`` (``zone.applied`` / ``zone.factor``).
+        """
         weights = getattr(self, "_zone_weights", None)
         if weights is None:
             import json as _json
             import os as _os
             weights = dict(self._DEFAULT_ZONE_WEIGHTS)
-            raw = _os.environ.get("BRAIN_ZONE_WEIGHTS")
+            raw = (_os.environ.get("BRAIN_ZONE_WEIGHTS") or "").strip()
             if raw:
+                problems: list[str] = []
+                configured: object = None
                 try:
                     configured = _json.loads(raw)
-                    if isinstance(configured, dict):
-                        for key, value in configured.items():
-                            try:
-                                factor = float(value)
-                            except (TypeError, ValueError):
-                                continue
-                            if math.isfinite(factor) and factor > 0:
-                                weights[str(key)] = factor
-                except Exception:
-                    pass
+                except Exception as exc:
+                    problems.append(f"not valid JSON ({type(exc).__name__})")
+                if configured is not None and not isinstance(configured, dict):
+                    problems.append('must be a JSON object like {"brain": 2.5, "raw": 1.0}')
+                    configured = None
+                for key, value in (configured or {}).items():
+                    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+                        problems.append(f"{key!r}: {value!r} is not a number")
+                        continue
+                    try:
+                        factor = float(value)
+                    except (TypeError, ValueError):
+                        problems.append(f"{key!r}: {value!r} is not a number")
+                        continue
+                    if not math.isfinite(factor) or not (
+                            self._ZONE_WEIGHT_MIN <= factor <= self._ZONE_WEIGHT_MAX):
+                        problems.append(
+                            f"{key!r}: {value!r} is outside the supported range "
+                            f"[{self._ZONE_WEIGHT_MIN}, {self._ZONE_WEIGHT_MAX}]")
+                        continue
+                    weights[str(key)] = factor
+                if problems:
+                    self._zone_config_warning("BRAIN_ZONE_WEIGHTS", problems)
             self._zone_weights = weights
         try:
             factor = float(weights.get(zone, 1.0))
         except (TypeError, ValueError):
             return 1.0
         return factor if math.isfinite(factor) and factor > 0 else 1.0
+
+    def _zone_scope(self) -> str:
+        """`all` | `semantic_only` (default). An UNRECOGNISED value fails safe
+        to `semantic_only`, never to `all`: `all` also multiplies lexical and
+        exact-identity candidates, which demotes identifier hits and changes
+        what the reranker is handed. A typo must not silently opt into the
+        wider, riskier behaviour."""
+        raw = (os.environ.get("BRAIN_ZONE_SCOPE") or "").strip().lower()
+        if not raw:
+            return "semantic_only"
+        if raw not in self._ZONE_SCOPES:
+            self._zone_config_warning(
+                "BRAIN_ZONE_SCOPE",
+                [f"{raw!r} is not one of {' | '.join(self._ZONE_SCOPES)}; "
+                 "falling back to semantic_only"])
+            return "semantic_only"
+        return raw
 
     def _resolve_zone(self, zone_col: str, path: str) -> str:
         """Anti-burial authority KEY for a note (PT-02, s05).
@@ -1465,6 +1659,21 @@ class BrainIndex:
         Kill switch: ``BRAIN_ZONE_SOURCE_MODE=column`` disables this and
         restores the pre-fix behaviour (flattened column only) for rollback
         without a code change.
+
+        MEASURED DEAD ON THE REFERENCE VAULT (2026-08-04, s05 Gate 0): 0 of
+        its 2,570 INDEXED notes carry ``source_zone:`` (the scan covers exactly
+        the indexed zones — ``brain/`` + ``raw/``, excluding
+        ``raw/originals/`` — so it is the same population the ranking sees; an
+        earlier "3,589" here counted a different, unnamed set and is wrong).
+        The field is absent because the vault was migrated again
+        after that field was written, so every lookup here takes the fallback
+        and this method contributes no signal there. It is kept, not deleted,
+        because the fallback is correct and the field still exists on vaults
+        that were migrated once: removing it would silently change ranking for
+        them. The consequence for anyone TUNING the prior is the part that
+        matters — on a vault with no ``source_zone``, ``BRAIN_ZONE_WEIGHTS``
+        must be keyed on the flattened zone names (``brain`` / ``raw``), not
+        on Johnny-Decimal zone names, or it is a no-op.
         """
         if os.environ.get("BRAIN_ZONE_SOURCE_MODE", "auto").strip().lower() == "column":
             return zone_col
@@ -1512,6 +1721,21 @@ class BrainIndex:
             cached = (monotonic_now, _dt.date.today())
             self._search_today_cache = cached
         return cached[1]
+
+    # -- RET-11 fusion constant ------------------------------------------
+    @staticmethod
+    def _fusion_k(rrf_k: int) -> int:
+        """The RRF denominator this call fuses at (see ``RRF_K_FUSE``).
+
+        An explicit non-production ``rrf_k`` is honoured verbatim — an
+        experiment, an eval arm (``eval/capture_run.py --rrf-k``) or a query-log
+        replay gets exactly the constant it asked for. Only the production pin
+        ``RRF_K_EXACT`` is remapped, and ``$BRAIN_RRF_K`` overrides that;
+        setting it back to 60 is the exact rollback.
+        """
+        if rrf_k != RRF_K_EXACT:
+            return rrf_k
+        return _fusion_k_from_env(os.environ.get("BRAIN_RRF_K", "").strip())
 
     # -- ADR-0008 identity / exact leg -----------------------------------
     @staticmethod
@@ -2174,11 +2398,13 @@ class BrainIndex:
         rerank: bool = False,
         reranker: Any | None = None,
         rerank_top: int = 15,
+        rerank_gate: bool | None = None,
     ) -> list[Hit]:
         """Normal fused retrieval path, deliberately free of trace records."""
         return self._hybrid_search_impl(
             query, k=k, rrf_k=rrf_k, candidate_factor=candidate_factor,
-            rerank=rerank, reranker=reranker, rerank_top=rerank_top, trace=None,
+            rerank=rerank, reranker=reranker, rerank_top=rerank_top,
+            rerank_gate=rerank_gate, trace=None,
         )
 
     def hybrid_search_with_trace(
@@ -2191,6 +2417,7 @@ class BrainIndex:
         rerank: bool = False,
         reranker: Any | None = None,
         rerank_top: int = 15,
+        rerank_gate: bool | None = None,
     ) -> tuple[list[Hit], _SearchTrace]:
         """Run the production ranking with opt-in, pre-egress attribution.
 
@@ -2200,7 +2427,11 @@ class BrainIndex:
         """
         n = max(k * candidate_factor, k) if k > 0 else 0
         trace = _SearchTrace(
-            rrf_k=rrf_k,
+            # The constant the legs were actually fused at, so `--explain`'s
+            # per-leg `contribution` reconciles with the `rrf_k` beside it.
+            # Whether the exact leg ran is recorded separately (it is gated on
+            # the ADR-0008 calibration key, not on the fusion constant).
+            rrf_k=self._fusion_k(rrf_k),
             exact_leg_enabled=self._exact_leg_enabled(rrf_k),
             rerank_requested=rerank,
             candidate_limit=n,
@@ -2208,7 +2439,8 @@ class BrainIndex:
         )
         hits = self._hybrid_search_impl(
             query, k=k, rrf_k=rrf_k, candidate_factor=candidate_factor,
-            rerank=rerank, reranker=reranker, rerank_top=rerank_top, trace=trace,
+            rerank=rerank, reranker=reranker, rerank_top=rerank_top,
+            rerank_gate=rerank_gate, trace=trace,
         )
         return hits, trace
 
@@ -2222,19 +2454,28 @@ class BrainIndex:
         rerank: bool = False,
         reranker: Any | None = None,
         rerank_top: int = 15,
+        rerank_gate: bool | None = None,
         trace: _SearchTrace | None,
     ) -> list[Hit]:
         """Fuse FTS5 BM25 (lexical, note-level) + dense vectors (semantic,
         chunk-level → folded to note) into ONE ranking via Reciprocal Rank
-        Fusion, RRF(k=60). UNFILTERED — classification filtering is the
-        integration surface's job (CLI).
+        Fusion. UNFILTERED — classification filtering is the integration
+        surface's job (CLI).
 
         RRF score for a note = Σ over each list it appears in of
-        ``weight / (rrf_k + rank)`` (rank 1-based). The lexical and dense legs
-        use weight 1; ADR-0008 adds a bounded calibrated exact leg at RRF(k=60).
+        ``weight / (fuse_k + rank)`` (rank 1-based). The lexical and dense legs
+        use weight 1; ADR-0008 adds a bounded calibrated exact leg.
         With ``w_exact_max = 2.25``, raw RRF is bounded by
-        ``(2 + w_exact_max) / (rrf_k + 1) = 4.25 / 61`` before the separately
-        configured zone multiplier and the staleness penalty are applied.
+        ``(2 + w_exact_max) / (fuse_k + 1)`` before the separately configured
+        zone multiplier and the staleness penalty are applied.
+
+        RET-11: ``fuse_k`` is ``RRF_K_FUSE`` (3), NOT the ADR-0008 pin
+        ``rrf_k = RRF_K_EXACT`` (60) that still gates the exact leg — at 60 the
+        presence of a second leg was worth more than the entire rank range
+        inside the candidate window, so a note one leg ranked 1st lost to notes
+        both legs ranked mediocrely. All three legs scale together, so the
+        calibrated exact:lexical weight ratio is unchanged. ``$BRAIN_RRF_K=60``
+        is the rollback.
 
         Adapter seam (HARDENED:codex): the dense list comes through the
         ``VectorBackend`` adapter, NOT a hard-wired sqlite-vec call, so a pre-v1
@@ -2266,16 +2507,20 @@ class BrainIndex:
             trace.lexical_order = list(lex)
             trace.dense_order = list(dense)
             trace.exact_order = list(exact.ranked)
+        # RET-11: the legs are fused at `fuse_k`, not at the ADR-0008
+        # calibration key. All three legs scale together, so the exact leg's
+        # calibrated 2.25:1 weight ratio against lexical/dense is preserved.
+        fuse_k = self._fusion_k(rrf_k)
         scores: dict[int, float] = {}
         for rank, rid in enumerate(lex, start=1):
-            contribution = 1.0 / (rrf_k + rank)
+            contribution = 1.0 / (fuse_k + rank)
             scores[rid] = scores.get(rid, 0.0) + contribution
             if trace is not None:
                 record = trace.record(rid)
                 record["lexical"] = {"rank": rank, "contribution": contribution}
                 record["raw_rrf_score"] += contribution
         for rank, rid in enumerate(dense, start=1):
-            contribution = 1.0 / (rrf_k + rank)
+            contribution = 1.0 / (fuse_k + rank)
             scores[rid] = scores.get(rid, 0.0) + contribution
             if trace is not None:
                 record = trace.record(rid)
@@ -2289,7 +2534,7 @@ class BrainIndex:
         owner_count = len(exact.owner_rowids)
         for rank, rid in enumerate(exact.ranked, start=1):
             weight = self._exact_weight(exact.tiers[rid], owner_count)
-            contribution = weight / (rrf_k + rank)
+            contribution = weight / (fuse_k + rank)
             scores[rid] = scores.get(rid, 0.0) + contribution
             if trace is not None:
                 record = trace.record(rid)
@@ -2349,7 +2594,7 @@ class BrainIndex:
                 col_zone[rid] = z or ""
                 zmap[rid] = self._resolve_zone(z or "", p or "")
                 rdate[rid] = d or ""
-            scope = os.environ.get("BRAIN_ZONE_SCOPE", "semantic_only").strip().lower()
+            scope = self._zone_scope()
             for rid in scores:
                 if scope == "semantic_only" and (rid in in_lex or rid in in_exact):
                     if trace is not None:
@@ -2468,7 +2713,36 @@ class BrainIndex:
                         if trace is not None:
                             trace.record(exact.unique_full_rowid)["pin"]["applied"] = True
                         break
-        if rerank and hits:
+        # RK-02 ADAPTIVE RERANK GATE (2026-08-04). Reranking is default-on and
+        # costs seconds per query (BR-03). On a query where ADR-0008
+        # just pinned a UNIQUE full alias/title owner, rank 1 is already decided
+        # and the cross-encoder is contractually forbidden from touching it — so
+        # the only thing that spend can buy is a reshuffle below the pin.
+        # MEASURED, not assumed: on the 66-query golden set the 7 queries this
+        # fires on score IDENTICALLY with and without the cross-encoder —
+        # recall@10, recall@20, mrr@10 and hit@1 all +0.0000 vs always-on,
+        # checked against BOTH the window-20 and window-50 captured arms — while
+        # their measured latency drops from a 6.2s median (rerank20 arm, the
+        # shipped window) to a 200ms median (bare arm). See
+        # eval/runs/rerank-gate-calibration-2026-08-04.json and eval/FOLLOWUPS.md
+        # #5. A rank1/rank2 RRF margin threshold selects the SAME 7 queries
+        # for any cutoff in 0.20-0.40, so the pin is that rule without a tuned
+        # constant; every wider rule measured — including adding a COLLIDING
+        # alias hit — cost recall@10. Force reranking back on with
+        # rerank_gate=False (CLI --no-rerank-gate) or BRAIN_RERANK_GATE_DISABLED=1.
+        gate_on = rerank_gate_enabled(rerank_gate)
+        gate_skipped = bool(rerank and hits and gate_on and pinned is not None)
+        if trace is not None:
+            trace.rerank_gate = {
+                "enabled": gate_on,
+                "skipped": gate_skipped,
+                "reason": (
+                    "pinned_unique_identity" if gate_skipped
+                    else "gate_disabled" if not gate_on
+                    else "no_unique_identity_pin"
+                ),
+            }
+        if rerank and hits and not gate_skipped:
             if trace is None:
                 hits = self._apply_rerank(query, hits, reranker, rerank_top)
             else:
@@ -2535,14 +2809,19 @@ class BrainIndex:
             return None
 
     def _diagnose_exact_rank(
-        self, query: str, rowid: int, rrf_k: int,
+        self, query: str, rowid: int, enabled: bool,
     ) -> tuple[int | None, int, bool]:
-        """Return exact-leg rank/cutoff/membership for a target-only probe."""
+        """Return exact-leg rank/cutoff/membership for a target-only probe.
+
+        ``enabled`` is the decision the SEARCH made, carried on the trace —
+        never re-derived here. Since RET-11 the fusion constant on the trace is
+        no longer the ADR-0008 calibration key, so re-deriving it from that
+        would report an exact leg that ran as disabled.
+        """
         query_norm = normalize_identity(query)
         if not query_norm:
             return None, 0, False
         owners, _aliases, _titles = self._identity_owner_rowids(query_norm)
-        enabled = self._exact_leg_enabled(rrf_k)
         if rowid in owners:
             records = self._identity_records(owners)
             ordered = sorted(records, key=lambda rid: self._exact_tiebreak(records[rid]))
@@ -2658,7 +2937,7 @@ class BrainIndex:
             }
         else:
             exact_rank, exact_cutoff, exact_matched = self._diagnose_exact_rank(
-                query, rowid, trace.rrf_k,
+                query, rowid, trace.exact_leg_enabled,
             )
             exact_stage = stage(
                 trace.exact_order, rank=exact_rank, cutoff=exact_cutoff,
@@ -2865,12 +3144,16 @@ class BrainIndex:
     ) -> list[Hit] | tuple[list[Hit], dict[str, tuple[float, int]], bool]:
         """Re-order ONLY the top ``rerank_top`` hits with a cross-encoder; the
         tail is left untouched and appended after. The window is clamped to
-        [10, ceiling] where ceiling is 20 by default but raisable via
+        [10, ceiling] where ceiling is 50 by default but raisable via
         BRAIN_RERANK_MAX; ``BRAIN_RERANK_TOP`` overrides the requested window
         size itself (so a wide-candidate pass can be driven by env without
         changing call sites). Skippable: a None/identity reranker is a no-op
-        (RET-02)."""
-        from .rerank import NoopReranker, clamp_rerank_top, get_reranker, _resolve_reranker_model
+        (RET-02), and a call that exceeds its timeout budget degrades to the
+        same pre-rerank order (BR-03)."""
+        from .rerank import (
+            NoopReranker, clamp_rerank_top, get_reranker, rerank_timeout_seconds,
+            _resolve_reranker_model,
+        )
 
         env_top = os.environ.get("BRAIN_RERANK_TOP")
         if env_top:
@@ -2904,11 +3187,54 @@ class BrainIndex:
         # cross-encoder rerank in S03 attribution.
         applied = not isinstance(rr, NoopReranker)
         try:
-            rel = rr.rerank(query, passages)
-        except Exception:
+            if applied:
+                # BR-03 circuit breaker. An ONNX forward pass cannot be
+                # interrupted mid-call -- `Future.result(timeout=...)` bounds
+                # how long THIS caller waits, not how long the reranker
+                # actually runs: on timeout the worker thread keeps executing
+                # rr.rerank() to completion in the background (on the
+                # persistent single-worker executor below) and its result is
+                # simply discarded when it eventually lands. This is a
+                # caller-side safety valve, not a cancellation mechanism.
+                if self._rerank_executor is None:
+                    self._rerank_executor = concurrent.futures.ThreadPoolExecutor(
+                        max_workers=1, thread_name_prefix="brain-rerank",
+                    )
+                fut = self._rerank_executor.submit(rr.rerank, query, passages)
+                rel = fut.result(timeout=rerank_timeout_seconds())
+            else:
+                rel = rr.rerank(query, passages)
+        except concurrent.futures.TimeoutError:
+            timeout_s = rerank_timeout_seconds()
+            if not self._rerank_failure_logged:
+                self._rerank_failure_logged = True
+                print(
+                    f"brain: WARNING — reranker {rr.model_id!r} exceeded "
+                    f"{timeout_s:.0f}s; falling back to unreranked order for "
+                    "this and all further queries this session (the slow "
+                    "call keeps running in the background; its result is "
+                    "discarded).",
+                    file=sys.stderr,
+                )
+            rel = NoopReranker().rerank(query, passages)
+            applied = False
+        except Exception as exc:
             # SKIPPABLE contract (RET-02): if the cross-encoder runtime/model is
             # unavailable (offline, not bundled), degrade to identity — never let
-            # an absent precision-booster break retrieval.
+            # an absent precision-booster break retrieval. But a RESOLVED
+            # reranker (applied was True going in) raising here is a real bug,
+            # not an absent model -- surface it once so it reads as a broken
+            # reranker, never a silent null delta (BL-02 found this the hard
+            # way: a ragged-array crash on every real query, invisible until
+            # something diffed against a non-reranked run).
+            if applied and not self._rerank_failure_logged:
+                self._rerank_failure_logged = True
+                print(
+                    f"brain: WARNING — reranker {rr.model_id!r} raised "
+                    f"{type(exc).__name__}: {exc}; falling back to unreranked "
+                    "order for this and all further queries this session.",
+                    file=sys.stderr,
+                )
             rel = NoopReranker().rerank(query, passages)
             applied = False
         # Keep exactly the old stable ordering semantics, while retaining the

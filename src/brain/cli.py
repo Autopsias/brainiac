@@ -9,7 +9,9 @@ FINAL stage before stdout. A harness self-discovers the whole contract from
                                             # per-user overlay/{voice,brand,
                                             # keywords,people}/ layer (minimal
                                             # slice; full init lands later)
-    brain search <query> [--json] [-k N] [--rerank] [--explain] [--max-tier TIER]
+    brain search <query> [--json] [-k N] [--no-rerank] [--explain] [--max-tier TIER]
+                                            # rerank is ON by default (window 20, BR-03);
+                                            # --no-rerank / $BRAIN_RERANK_DISABLED=1 opt out
     brain hybrid-search <query> ...        # alias of search (RRF BM25+dense+exact)
     brain diagnose <query> --target ID     # gated target-miss tracer
     brain eval replay --against FILE.jsonl # host-only private query-log replay
@@ -94,6 +96,86 @@ ADR-0008 exact identity:
   collision slot normalization are disabled, while already-surfaced organic
   hits can still carry truthful evidence/create_safety labels.
 
+BR-03 rerank default (owner ruling 2026-08-04, window revised same day):
+  search/hybrid-search rerank ON by default, cross-encoder candidate window
+  20 — measured on the 66-query golden set (eval/FOLLOWUPS.md #4): mrr@10
+  0.267 -> 0.411, hit@1 0.212 -> 0.349, for ~5.5s p50 / 8.2s p95 added
+  latency the owner has explicitly accepted for the quality gain. The window
+  briefly shipped at 50 on a latency figure that turned out to be the
+  window-20 row mislabelled; at 50 it really costs p50 68.0s and 85% of
+  queries blow the 30s timeout and get the BARE ordering anyway
+  (eval/FOLLOWUPS.md #6). Window 20 is the latency actually accepted and it
+  reranks every query. The CEILING stays 50, so BRAIN_RERANK_TOP /
+  BRAIN_RERANK_MAX still opt into the wide pass deliberately. Skippable per
+  call (--no-rerank) or globally:
+    BRAIN_RERANK_DISABLED=1 <restart the invoking process>
+  An explicit --rerank/--no-rerank always wins over the env var. A slow
+  rerank call is also caller-bounded: it degrades to the pre-rerank order
+  after $BRAIN_RERANK_TIMEOUT_S (default 30s) rather than hanging the
+  caller — the model can't be interrupted mid-call, so the slow call keeps
+  running in the background and its result is discarded (BrainIndex._rerank_impl).
+  At window 20 the slowest golden query measures 10.5s, so 30s is ~2.9x the
+  measured worst case; raise it alongside any wide-candidate pass.
+  BRAIN_RERANK_MAX raises the window ceiling further; BRAIN_RERANK_TOP
+  overrides the requested window size itself.
+
+RK-02 adaptive rerank gate (2026-08-04):
+  reranking is default-on but not always worth what it costs. When ADR-0008
+  pins a UNIQUE full alias/title owner, rank 1 is already decided and the
+  cross-encoder may not touch it — so search SKIPS reranking on those
+  queries. Measured on the same 66-query golden set
+  (eval/runs/rerank-gate-calibration-2026-08-04.json): the 7 queries it
+  fires on score IDENTICALLY to always-on — recall@10/recall@20/mrr@10/hit@1
+  all +0.0000 (checked against both the window-20 and window-50 arms) —
+  while their latency drops from a 6.2s median to a 200ms median at the
+  shipped window 20. Force unconditional reranking back on per
+  call with --no-rerank-gate, or globally with
+    BRAIN_RERANK_GATE_DISABLED=1 <restart the invoking process>
+  An explicit --rerank-gate/--no-rerank-gate always wins over the env var.
+  `search --explain --json` reports the decision under
+  ranking.rerank_gate (enabled/skipped/reason).
+
+RET-01 zone-authority prior — a measured OPT-IN, off by default (s06, 2026-08-04):
+  RRF sums 1/(60+rank) across legs, so a document present weakly in TWO legs
+  outranks one present strongly in ONE. That is why a Portuguese question
+  against English notes loses: its BM25 leg finds nothing (no shared tokens),
+  the dense leg has the answer at median rank 2, and the fused ranking exits
+  it at median rank 52 (eval/FOLLOWUPS.md #7). The engine carries a
+  counterweight — a multiplicative per-zone boost applied AFTER fusion, only
+  to dense-leg-only hits (scope=semantic_only, so an exact/lexical hit's OWN
+  factor stays 1.0). That protects the exact hit's SCORE, not its RANK:
+  boosting its neighbours can still out-rank it, and measurably does —
+  lexical_identifier mrr@10 falls 0.750 -> 0.725 at W=3.0 (and 0.631 at 5.0)
+  while its recall@10 holds flat. It is NEUTRAL out of the box.
+  Arm it per vault, keyed on that vault's ZONE NAMES:
+    BRAIN_ZONE_WEIGHTS='{"brain": 2.5, "raw": 1.0}' <restart the process>
+  Measured on the 66-query golden set, weight selected on its pre-registered
+  TRAIN half and read ONCE on the held-out half (eval/FOLLOWUPS.md #9,
+  eval/zone_prior_calibration.py): held-out mrr@10 0.198 -> 0.386, paired
+  permutation p=0.011; monolingual_pt recall@10 0.000 -> 0.458 at W=3.0.
+  NO REBUILD — it is a query-time multiplier, it never touches embed_model /
+  embed_dim; unset it and the next process is back to shipped behaviour.
+  It ships OFF because 66 queries can resolve the DIRECTION but not the
+  CONSTANT: the train half's argmax is 3.0, the held-out half's is 5.0, and
+  the observed effect sits below the minimum this n could reliably detect
+  (MDE 0.199 at 80% power). 2.0-3.0 is the evidenced range, not a calibrated
+  value. Costs at 3.0: temporal mrr@10 0.431 -> 0.344 (and one gold document
+  out of the top 10), cross-lingual-ES recall@10 0.250 -> 0.167, identifier
+  precision as above. At 4.0-5.0 those become a collapse — identifier mrr@10
+  0.665/0.631, temporal mrr@10 0.317/0.179, cross-lingual-ES recall@10 0.000
+  at 4.0 — while the aggregate barely moves. That is the ceiling.
+  CONFIRM IT ENGAGED: `search --explain --json` reports each hit's
+  zone.applied / zone.factor (an unknown zone key resolves to 1.0). A
+  malformed BRAIN_ZONE_WEIGHTS / BRAIN_ZONE_SCOPE prints one stderr warning
+  and is dropped; an unrecognised scope fails safe to semantic_only.
+  NOTE for tuning: _resolve_zone prefers a note's `source_zone:` frontmatter
+  and falls back to the flattened `brain`/`raw` zone column. On a vault whose
+  notes carry no `source_zone` (the reference vault: 0 of its 2,570 indexed
+  notes), keys other than `brain`/`raw` are silently a no-op. Zone factors
+  must be finite and within [1e-6, 1e6]. BRAIN_ZONE_SCOPE = all |
+  semantic_only (default semantic_only); BRAIN_ZONE_SOURCE_MODE=column
+  disables the frontmatter lookup.
+
 evidence/create_safety:
   every surfaced search hit carries one evidence label: alias_hit,
   exact_title_match, title_phrase_match, keyword_exact, high_vector_match, or
@@ -108,10 +190,11 @@ explain / diagnose:
   candidate digest whose ids are also egress-surfaced. `diagnose` runs the same
   production ranking and then reports a target's stage presence/rank/cutoff;
   if the target is above the egress cap, the target prints only as `withheld`.
-  `--rerank` is skippable and bounded to the top 10-20; unique full identities
-  are pinned outside the reranker, collision groups keep live-before-retired
-  order only inside the slots the reranker selected, and reranker scores remain
-  separate from RRF scores.
+  rerank is skippable and bounded to the top 10-50 (ON by default at window
+  20 — see BR-03
+  above); unique full identities are pinned outside the reranker, collision
+  groups keep live-before-retired order only inside the slots the reranker
+  selected, and reranker scores remain separate from RRF scores.
 
 host query log / replay:
   host query capture is post-egress, best-effort, and HOST ONLY. It writes raw
@@ -213,6 +296,18 @@ def _emit(obj: Any, as_json: bool, human: str | None = None) -> None:
         sys.stdout.write("\n")
     else:
         sys.stdout.write((human if human is not None else str(obj)) + "\n")
+
+
+def _excluded_note(res: dict[str, Any]) -> str:
+    """INT-03: name the machine-output files this build left OUT of the index.
+    Silence is what let an unvalidated tree sit in retrieval unnoticed."""
+    n = res.get("excluded_machine_output") or 0
+    if not n:
+        return ""
+    from .notes import MACHINE_OUTPUT_DIRS
+
+    return (f"; excluded {n} machine-output file(s) "
+            f"({'/'.join(MACHINE_OUTPUT_DIRS)}, not knowledge — never indexed)")
 
 
 # Set True by main() on role=vm: the untrusted leg must not be told to
@@ -387,14 +482,41 @@ def build_parser() -> argparse.ArgumentParser:
         )
 
     def add_search(name: str, help_text: str) -> None:
-        sp = sub.add_parser(name, help=help_text)
+        # EPILOG is entirely about the ranking these two verbs run (exact leg,
+        # rerank, rerank gate, zone prior, evidence labels, explain/diagnose),
+        # and AGENTS.md/CHANGELOG send readers to `brain search --help` for it.
+        # Attaching it here is what makes that pointer true.
+        sp = sub.add_parser(name, help=help_text, epilog=EPILOG,
+                            formatter_class=argparse.RawDescriptionHelpFormatter)
         sp.add_argument("query")
         sp.add_argument("-k", type=int, default=10, help="max results (default: 10)")
-        sp.add_argument("--rerank", action="store_true",
+        # BR-03 (owner ruling 2026-08-04): rerank ships ON by default. default=None
+        # (not True) so _main can tell "not typed" apart from an explicit --rerank,
+        # which is what lets an explicit flag win over $BRAIN_RERANK_DISABLED.
+        sp.add_argument("--rerank", dest="rerank",
+                        action=argparse.BooleanOptionalAction, default=None,
                         help="re-order the top results with the cross-encoder (RET-02); "
-                             "skippable — off by default, degrades to no-op if absent")
-        sp.add_argument("--rerank-top", type=int, default=15,
-                        help="rerank window, clamped to 10-20 (default: 15)")
+                             "ON by default (window 20) — skippable, degrades to the "
+                             "pre-rerank order if the model is absent or a call exceeds "
+                             "its timeout budget. --no-rerank opts out per call; "
+                             "BRAIN_RERANK_DISABLED=1 is the global kill switch "
+                             "(mirrors BRAIN_EXACT_LEG_ENABLED) — an explicit "
+                             "--rerank/--no-rerank always wins over the env var")
+        sp.add_argument("--rerank-top", type=int, default=20,
+                        help="rerank window, clamped to 10-50 by default "
+                             "(BRAIN_RERANK_MAX raises the ceiling further; "
+                             "default: 20 — a wider window costs strongly "
+                             "super-linearly, see eval/FOLLOWUPS.md #6)")
+        # RK-02 (2026-08-04): default=None means "not typed", so an explicit
+        # flag can win over $BRAIN_RERANK_GATE_DISABLED — same shape as --rerank.
+        sp.add_argument("--rerank-gate", dest="rerank_gate",
+                        action=argparse.BooleanOptionalAction, default=None,
+                        help="adaptive rerank gate (RK-02): skip the "
+                             "cross-encoder on a query whose rank 1 is already "
+                             "fixed by a unique exact-identity pin, where it is "
+                             "measurably worth nothing. ON by default; "
+                             "--no-rerank-gate (or BRAIN_RERANK_GATE_DISABLED=1) "
+                             "forces unconditional reranking back on")
         sp.add_argument("--rrf-k", type=int, default=60,
                         help="Reciprocal Rank Fusion constant (default: 60)")
         sp.add_argument("--explain", action="store_true",
@@ -579,9 +701,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--target", required=True, help="note id to trace (egress-gated)")
     sp.add_argument("-k", type=int, default=10, help="production max results (default: 10)")
     sp.add_argument("--rerank", action="store_true",
-                    help="diagnose the same optional cross-encoder rerank path")
-    sp.add_argument("--rerank-top", type=int, default=15,
-                    help="production rerank window, clamped to 10-20 (default: 15)")
+                    help="diagnose the same cross-encoder rerank path search/hybrid-search "
+                         "run by default (this diagnostic itself stays opt-in)")
+    # 20, matching search/hybrid-search: a diagnostic that reproduces a
+    # DIFFERENT window than production explains the wrong ranking. (It was 15
+    # while search's default was also 15; BR-03 moved search to 50 and left
+    # this behind, so the two only agree again now.)
+    sp.add_argument("--rerank-top", type=int, default=20,
+                    help="production rerank window, clamped to 10-50 by default "
+                         "(default: 20 — same as search/hybrid-search)")
     sp.add_argument("--rrf-k", type=int, default=60,
                     help="production Reciprocal Rank Fusion constant (default: 60)")
     add_common(sp)
@@ -683,6 +811,82 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--id", default=None, help="note id (default: frontmatter or content hash)")
     sp.add_argument("--kind", default="proposal", choices=("proposal", "correction"))
     sp.add_argument("--content", default=None, help="content (default: read stdin)")
+    sp.add_argument("--json", action="store_true")
+
+    sp = sub.add_parser(
+        "cos-run-begin",
+        help="HOST-ONLY: freeze the run manifest for a COS run BEFORE it "
+             "starts (run id, executing SKILL.md path + digest, bundle + "
+             "extraction-rules versions, expected artifacts). Every later "
+             "claim stamps candidates from THIS record, never from whatever "
+             "skill happens to be deployed at claim time.",
+    )
+    sp.add_argument("--run-id", default=None,
+                    help="<YYYY-MM-DD>-run<N> (default: one past the highest "
+                         "run number on disk)")
+    sp.add_argument("--lane", default=None,
+                    choices=("codex-automation", "cowork-desktop"),
+                    help="assert which surface executes (default: resolve it; "
+                         "an unresolvable lane REFUSES rather than guesses)")
+    sp.add_argument("--skill", default=None,
+                    help="assert the executing SKILL.md path outright")
+    sp.add_argument("--json", action="store_true")
+
+    sp = sub.add_parser(
+        "cos-corpus-check",
+        help="HOST-ONLY (WIR-02): the gate a run passes BEFORE it judges. "
+             "Reports how many of this run's captured threads carry body "
+             "text, and REFUSES (exit 3) when none does — the judge's input "
+             "is the body, so no bodies is a MISSING INPUT, never a quiet "
+             "night. Some bodyless rows are normal and pass.",
+    )
+    sp.add_argument("--run-id", required=True, help="<YYYY-MM-DD>-run<N>")
+    sp.add_argument("--json", action="store_true")
+
+    sp = sub.add_parser(
+        "cos-corpus-append",
+        help="HOST-ONLY (WIR-01): save the text a run just READ, as it reads "
+             "it. ONE row per in-scope thread: --conversation-id with the "
+             "extracted message text on stdin for a thread whose body was "
+             "opened, or --bodyless <id>... in one call for the threads that "
+             "were enumerated and never opened. The ledger keeps the verdict; "
+             "this keeps the input the verdict was made from.",
+    )
+    sp.add_argument("--run-id", required=True, help="<YYYY-MM-DD>-run<N>")
+    sp.add_argument("--conversation-id", default=None,
+                    help="the ONE thread this text belongs to — the join key "
+                         "back to that run's ingestion ledger")
+    sp.add_argument("--bodyless", nargs="+", default=None, metavar="CONV_ID",
+                    help="conversation ids enumerated but NOT opened (unread, "
+                         "over-cap, no body access on the lane, page not "
+                         "visible) — one empty row each")
+    sp.add_argument("--text", default=None,
+                    help="the extracted message text (default: read stdin)")
+    sp.add_argument("--sender", default=None)
+    sp.add_argument("--sent", default=None, help="ISO date or datetime")
+    sp.add_argument("--subject", default=None)
+    sp.add_argument("--read-lane", default=None,
+                    help="the elected observation lane, as the ledger names it")
+    sp.add_argument("--json", action="store_true")
+
+    sp = sub.add_parser(
+        "cos-corpus-close",
+        help="HOST-ONLY (WIR-01): close this run's corpus (write-once from "
+             "here, and only a CLOSED corpus is ever deleted by retention). A "
+             "closed corpus with 0 rows is a quiet night; an unclosed one is a "
+             "capture stage that died.",
+    )
+    sp.add_argument("--run-id", required=True, help="<YYYY-MM-DD>-run<N>")
+    sp.add_argument("--json", action="store_true")
+
+    sp = sub.add_parser(
+        "cos-corpus-reopen",
+        help="HOST-ONLY: retract a close that certified ZERO rows, after a "
+             "lane failure turned out to be transient (run 68). A close "
+             "carrying rows is final and is refused — capture the rest of the "
+             "night under a new run id.",
+    )
+    sp.add_argument("--run-id", required=True, help="<YYYY-MM-DD>-run<N>")
     sp.add_argument("--json", action="store_true")
 
     sp = sub.add_parser(
@@ -1349,6 +1553,17 @@ def _main(argv: list[str] | None = None) -> int:
     from . import config
 
     args = build_parser().parse_args(argv)
+    # BR-03 (owner ruling 2026-08-04): rerank default-on for search/hybrid-search.
+    # --rerank uses BooleanOptionalAction with default=None so it's only left
+    # None here when the user typed neither --rerank nor --no-rerank; `diagnose`
+    # still uses a plain store_true (default False), so this never fires there.
+    # Precedence: an explicit --rerank/--no-rerank always wins; absent that,
+    # BRAIN_RERANK_DISABLED=1 is the global kill switch (mirrors
+    # BRAIN_EXACT_LEG_ENABLED's env contract); absent both, the default is ON.
+    if getattr(args, "rerank", "unset") is None:
+        from .rerank import rerank_enabled
+
+        args.rerank = rerank_enabled()
     role = config.role(getattr(args, "role", None))
     # Role-aware egress default (owner decision, 2026-07-10): the trusted host
     # surfaces the FULL vault unless --max-tier changes it; the untrusted VM
@@ -1478,6 +1693,8 @@ def _main(argv: list[str] | None = None) -> int:
                 lines.append(f"  {cat}/: {status} ({info['file_count']} file(s))")
                 for issue in info["issues"]:
                     lines.append(f"    - {issue}")
+            for warning in report.get("warnings", []):
+                lines.append(f"  warning: {warning}")
             _emit(None, False, "\n".join(lines))
         return 0 if report["valid"] else 1
 
@@ -1625,12 +1842,14 @@ def _main(argv: list[str] | None = None) -> int:
             trace_hits, trace = core.hybrid_search_with_trace(
                 args.query, k=args.k, rerank=args.rerank,
                 rerank_top=args.rerank_top, rrf_k=args.rrf_k,
+                rerank_gate=args.rerank_gate,
             )
             hits = [hit.to_dict() for hit in trace_hits]
         else:
             hits = [h.to_dict() for h in core.hybrid_search(
                 args.query, k=args.k, rerank=args.rerank,
-                rerank_top=args.rerank_top, rrf_k=args.rrf_k)]
+                rerank_top=args.rerank_top, rrf_k=args.rrf_k,
+                rerank_gate=args.rerank_gate)]
         surfaced, report = _filter_dicts(hits, args.max_tier)
         # ADR-0008: identity ownership is computed before egress, but its
         # create/no-create conclusion must be finalized after the gate so a
@@ -1659,6 +1878,10 @@ def _main(argv: list[str] | None = None) -> int:
                     "exact_leg_enabled": trace.exact_leg_enabled,
                     "rerank_requested": trace.rerank_requested,
                     "rerank_applied": trace.rerank_applied,
+                    # RK-02: why the cross-encoder did or didn't run. Read this
+                    # rather than inferring a skip from requested-but-not-applied,
+                    # which also covers an absent model and a timeout fallback.
+                    "rerank_gate": trace.rerank_gate,
                 },
                 "results": surfaced,
                 # This bounded projection is built only from IDs that survived
@@ -1959,6 +2182,100 @@ def _main(argv: list[str] | None = None) -> int:
               f"(the host broker + owner inbox gate what gets signed)", args.json)
         return 0
 
+    if cmd == "cos-run-begin":
+        try:
+            res = core.cos_run_begin(run_id=args.run_id, lane=args.lane,
+                                     skill_path=args.skill)
+        except Exception as exc:  # RoleError / unresolvable lane -> fail closed
+            _emit({"error": type(exc).__name__, "detail": str(exc)} if args.json
+                  else f"cos-run-begin refused ({type(exc).__name__}): {exc}",
+                  args.json)
+            return 3
+        _emit(res if args.json else
+              f"run {res['run_id']} begun: {res.get('bundle_version')} "
+              f"(ext {res.get('extraction_rules_version')}) from {res['skill_path']} "
+              f"[{res['skill_sha256'][:12]}…]", args.json)
+        return 0
+
+    if cmd == "cos-corpus-check":
+        try:
+            res = core.cos_corpus_check(args.run_id)
+        except Exception as exc:  # NoBodiesToJudge / RoleError -> fail closed
+            _emit({"error": type(exc).__name__, "detail": str(exc)} if args.json
+                  else f"cos-corpus-check REFUSED ({type(exc).__name__}): {exc}",
+                  args.json)
+            return 3
+        _emit(res if args.json else
+              f"cos-corpus-check: {res['judgeable']} of {res['rows']} row(s) "
+              f"carry body text ({res['bodyless']} bodyless) — judging may "
+              f"proceed over the {res['judgeable']} bodied row(s)", args.json)
+        return 0
+
+    if cmd == "cos-corpus-append":
+        try:
+            if bool(args.conversation_id) == bool(args.bodyless):
+                raise ValueError(
+                    "give exactly ONE of --conversation-id (one thread whose "
+                    "body was opened, its text on stdin) or --bodyless (the "
+                    "threads that were enumerated and never opened)")
+            if args.conversation_id:
+                text = args.text if args.text is not None else sys.stdin.read()
+                if not text.strip():
+                    # A row asserting an opened body with nothing in it is
+                    # exactly run 65's shape — a read that did not happen,
+                    # recorded as one that did.
+                    raise ValueError(
+                        f"no message text for {args.conversation_id!r}. A row "
+                        f"claiming an opened body with nothing in it is a read "
+                        f"that did not happen; use --bodyless for a thread "
+                        f"that was never opened.")
+                rows = [{"conversation_id": args.conversation_id, "text": text,
+                         "sender": args.sender, "sent": args.sent,
+                         "subject": args.subject, "read_lane": args.read_lane,
+                         "body_opened": True}]
+            else:
+                rows = [{"conversation_id": c, "text": "",
+                         "read_lane": args.read_lane, "body_opened": False}
+                        for c in args.bodyless]
+            res = core.cos_corpus_append(args.run_id, rows)
+        except Exception as exc:  # CorpusRefused / RoleError -> fail closed
+            _emit({"error": type(exc).__name__, "detail": str(exc)} if args.json
+                  else f"cos-corpus-append REFUSED ({type(exc).__name__}): {exc}",
+                  args.json)
+            return 3
+        _emit(res if args.json else
+              f"cos-corpus-append: {res['appended']} row(s) -> {res['run']} "
+              f"({res['chars']} chars of message text)", args.json)
+        return 0
+
+    if cmd == "cos-corpus-close":
+        try:
+            res = core.cos_corpus_close(args.run_id)
+        except Exception as exc:  # CorpusClosed / RoleError -> fail closed
+            _emit({"error": type(exc).__name__, "detail": str(exc)} if args.json
+                  else f"cos-corpus-close REFUSED ({type(exc).__name__}): {exc}",
+                  args.json)
+            return 3
+        _emit(res if args.json else
+              f"cos-corpus-close: {res['run']} closed with {res['rows']} row(s) "
+              f"— read-only from here; retention deletes it whole", args.json)
+        return 0
+
+    if cmd == "cos-corpus-reopen":
+        try:
+            res = core.cos_corpus_reopen(args.run_id)
+        except Exception as exc:  # CorpusRefused / RoleError -> fail closed
+            _emit({"error": type(exc).__name__, "detail": str(exc)} if args.json
+                  else f"cos-corpus-reopen REFUSED ({type(exc).__name__}): {exc}",
+                  args.json)
+            return 3
+        _emit(res if args.json else
+              f"cos-corpus-reopen: {res['run']} is open again — {res['reason']}"
+              f". The false close stays on the file; keep appending, then "
+              f"close for real.",
+              args.json)
+        return 0
+
     if cmd == "cos-broker":
         try:
             res = core.cos_broker_fold()
@@ -2084,14 +2401,22 @@ def _main(argv: list[str] | None = None) -> int:
             elif args.action == "cancel":
                 if not args.id:
                     raise ValueError("cancel requires --id")
-                ok = core.cos_hold_cancel(args.id)
-                res = {"cancelled": ok, "id": args.id}
-                human = (f"cancelled hold {args.id}" if ok
-                         else f"no cancellable hold {args.id} (already released or cancelled)")
+                undo = core.cos_hold_undo(args.id)
+                res = {**undo, "cancelled": undo["undone"]}
+                if undo["undone"]:
+                    human = (f"undo of {undo['id']} from state "
+                             f"{undo['state_before']}: {undo['action']}")
+                    if undo.get("demoted"):
+                        human += (f" (category {undo['demoted']['category']} "
+                                  f"demoted from auto-ingest)")
+                else:
+                    human = (f"nothing to undo for {undo['id']} "
+                             f"(state={undo['state_before']})")
             else:  # release-due
                 released = core.cos_hold_release_due()
                 res = {"released": released}
-                human = (f"released {len(released)} due hold(s) into capture-inbox"
+                human = (f"released {len(released)} due hold(s) into the "
+                         f"approved queue (host-only; signed on the next drain)"
                          if released else "no due holds")
         except Exception as exc:
             _emit({"error": type(exc).__name__, "detail": str(exc)} if args.json
@@ -2154,7 +2479,8 @@ def _main(argv: list[str] | None = None) -> int:
             return 3
         _emit(res if args.json else
               f"indexed {res['indexed']} notes ({res['chunks']} chunks) via "
-              f"{res['backend']} [{res['embed_model']} d={res['embed_dim']}] -> {res['db']}",
+              f"{res['backend']} [{res['embed_model']} d={res['embed_dim']}] -> {res['db']}"
+              + _excluded_note(res),
               args.json)
         return 0
 
@@ -2214,7 +2540,8 @@ def _main(argv: list[str] | None = None) -> int:
                   f"sync [{res['mode']}]: +{res.get('added',0)} ~{res.get('updated',0)} "
                   f"-{res.get('deleted',0)} ={res.get('unchanged',0)} "
                   f"({res['chunks']} chunks); drained {d.get('promoted',0)} "
-                  f"(skipped {d.get('skipped',0)})" + reb_note + tail)
+                  f"(skipped {d.get('skipped',0)})" + reb_note + tail
+                  + _excluded_note(res))
         return 0
 
     if cmd == "snapshot":
@@ -2272,6 +2599,30 @@ def _main(argv: list[str] | None = None) -> int:
                     f"  WARNING: snapshot schema_version {ver.get('snapshot_schema_version')} > "
                     f"binary SCHEMA_VERSION {ver.get('binary_schema_version')} — "
                     "snapshot is newer than this CLI; update the engine")
+            # LIVENESS (HARDENED:claude-2): an unanswered COS ingestion batch
+            # is not an error anywhere — it just quietly re-kills the funnel
+            # behind the one-open-batch backpressure. Say so out loud.
+            live = (res.get("cos") or {}).get("batch_liveness") or {}
+            if live.get("alert"):
+                skew_lines.append(f"  WARNING: {live['alert_text']}")
+            # R8 (2026-07-30 review): the JSON status and the morning brief both
+            # carry `unstamped_batched`, but `brain status` — the primary human
+            # diagnostic — printed nothing, so an operator read a healthy status
+            # while EVERY candidate was being diverted for a missing stamp.
+            if live.get("unstamped_batched"):
+                skew_lines.append(
+                    f"  WARNING: {live['unstamped_batched']} COS candidate(s) sent to "
+                    f"the owner batch for a missing category/ruleset stamp — "
+                    f"pattern auto-capture {live.get('pattern_autocapture', 'suspended')}")
+            # INS-01: a run the host validator could not certify. Loud here
+            # because run 59 skipped its whole self-eval and NOTHING noticed —
+            # an instrument that only writes a log is the failure being fixed.
+            if live.get("run_validity_text"):
+                skew_lines.append(f"  WARNING: {live['run_validity_text']}")
+            # STA-01: same treatment for a candidate the host could not
+            # attribute to a VALID run — quarantined, never silently bound.
+            if live.get("quarantine_text"):
+                skew_lines.append(f"  WARNING: {live['quarantine_text']}")
             _emit(None, False,
                   f"brain {ver.get('package_version','?')}\n"
                   f"index: {ix.get('notes','?')} notes / {ix.get('chunks','?')} chunks "
@@ -2396,10 +2747,18 @@ def _main(argv: list[str] | None = None) -> int:
 
     if cmd == "verify-audit":
         res = core.verify_audit(check_content=args.check_content)
-        drift = res.get("content_drift", [])
         text = (f"audit chain: {res['status']} ({res['entries_checked']} entries, "
-                f"{len(res['errors'])} errors")
-        text += f", {len(drift)} content-drift)" if args.check_content else ")"
+                f"{len(res['errors'])} errors)")
+        # INT-02: never let a signature-only pass read as a content all-clear.
+        unexplained = res.get("content_drift_unexplained", 0)
+        text += (f"\ncontent drift: {res.get('content_drift_count', 0)} note(s) changed "
+                 f"since signing, {unexplained} unexplained")
+        if not args.check_content:
+            text += " — run `brain verify-audit --check-content --json` for the list"
+        elif res.get("content_drift"):
+            for rec in res["content_drift"]:
+                mark = rec.get("disposition") or "UNEXPLAINED"
+                text += f"\n  {mark:<24} {rec['issue']:<14} {rec['path']}"
         _emit(res if args.json else text, args.json)
         return 0 if res["status"] in ("ok", "empty") else 1
 

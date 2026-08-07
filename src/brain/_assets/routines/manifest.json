@@ -89,7 +89,7 @@
       "command": "brain integrity --min-score 0.95 --json",
       "connectors": [],
       "vm_eligible": false,
-      "notes": "Audit-chain verify + corpus-wide near-dup scan directly over the brain vector backend (e5-small ONNX) -- no MCP round-trip. Near-dup bands re-baselined for e5-small per execution-contract.md S5."
+      "notes": "Audit-chain verify + corpus-wide near-dup scan directly over the brain vector backend (bge-m3-int8 ONNX) -- no MCP round-trip."
     },
     {
       "id": "curation",

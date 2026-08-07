@@ -9,18 +9,20 @@ Three eval surfaces serving different questions:
 
 | Surface | Question it answers | Tooling |
 |---|---|---|
-| **Qualitative cascade eval (this skill, primary)** | "Does the model, using the brain's composable read tools, answer real questions correctly — supersession, completeness, timing, multi-hop, calibration?" | hand-written questions + `brain search/grep/bases-query/graph-expand/get` |
-| **Quantitative Recall@k harness** | "Did a substrate/embedder change regress retrieval, measured against a frozen golden set?" | `eval/harness.py` + `eval/gate.py` in this repo |
+| **Standing graded gate (this skill, primary)** | "Did the current engine regress on the frozen 66-query golden set?" | `eval/harness_direct.py` + `eval/gate.py` in this repo |
+| **Qualitative cascade eval** | "Does the model, using the brain's composable read tools, answer real questions correctly — supersession, completeness, timing, multi-hop, calibration?" | hand-written questions + `brain search/grep/bases-query/graph-expand/get` |
+| **Quantitative Recall@k harness** | "Did a substrate/embedder change regress retrieval, measured against a frozen golden set?" | `eval/harness_direct.py` + `eval/gate.py` in this repo |
 | **Cross-engine A/B (shared corpus)** | "Does a DIFFERENT engine indexing the same corpus rank better or worse than brain, on the same golden set + qrels?" | per-engine capture adapters + the same `harness_direct.py`/`gate.py` — contract: `eval/PORTABLE-CONTRACT.md` |
 
 ## When to run
 
-- **Monthly cadence** — the qualitative eval below.
-- **Go-live / structural-change gate** — after an embedder swap, index
-  rebuild, or a change to which read tools the harness composes (e.g. adding
-  `graph-rank`). `<80%` on any dimension reverts the change.
-- **Post structural change to `brain` itself** — a new CLI verb, an egress
-  filter change, a vector-backend swap.
+- **Monthly and go-live / structural-change gate** — run the behavioural
+  probes first as a smoke check, then run the standing 66-query graded gate
+  below. A nonzero probe result is a hard stop; probe success does not replace
+  graded scoring.
+- **Structural changes** include an embedder swap, index rebuild, a change to
+  which read tools the harness composes (e.g. adding `graph-rank`), a new CLI
+  verb, an egress-filter change, or a vector-backend swap.
 
 ## Qualitative cascade eval — five dimensions
 
@@ -84,6 +86,56 @@ collapsed dimension (e.g. T=40% hidden behind S=100%/X=100%).
   re-registered") becomes: **brain binary version or embed-model drift** —
   compare `brain status --json`'s `embed_model` / `schema_version` against
   the last baseline's recorded values before trusting a "no change" report.
+
+## Standing monthly / go-live gate
+
+The graded golden set is the standing quality instrument: capture the current
+engine over all queries in `eval/golden_set.json`, score it with
+`eval/harness_direct.py` against `eval/qrels/qrels.json`, and decide with
+`eval/gate.py` against the standing baseline. The gate is the PRIMARY decision:
+its Recall@10 non-inferiority, powered language segments, and within-engine p95
+latency checks determine pass/fail.
+
+```bash
+python3 eval/capture_run.py --golden eval/golden_set.json \
+  --vault "$BRAIN_VAULT" --system brain-current \
+  --out eval/runs/<current-run>.json
+python3 eval/harness_direct.py \
+  --golden eval/golden_set.json --qrels eval/qrels/qrels.json \
+  --current eval/runs/rebaseline-<version>-<date>-<standing>.json \
+  --new eval/runs/<current-run>.json \
+  --out _evidence/<session>/scorecard.json --md _evidence/<session>/scorecard.md
+python3 eval/gate.py --scorecard _evidence/<session>/scorecard.json
+```
+
+The standing-baseline convention is
+`eval/runs/rebaseline-<version>-<date>-*.json`. Select a full-golden capture
+that carries `index_state.fingerprint`; for this rollout, the frozen reference
+is `eval/runs/rebaseline-0.19.24-2026-08-04-bare.json` (66 queries). Do not
+promote fixture-only or synthetic probe runs to a standing baseline. If
+`gate.py` refuses because corpus-fingerprint drift exceeds 10%, do not pass
+`--allow-drift`: capture a fresh baseline, date and fingerprint it, and use
+that new `rebaseline-<version>-<date>-*.json` run as the standing baseline for
+subsequent gates.
+
+### Standing gate checklist
+
+- [ ] Run `brain-golden-probe`; stop on any nonzero result.
+- [ ] Capture all 66 golden queries and verify the run metadata/fingerprint.
+- [ ] Score with `harness_direct.py` against the standing baseline.
+- [ ] Decide with `gate.py`; re-baseline on >10% fingerprint drift, never with `--allow-drift`.
+
+## Behavioural smoke check
+
+Run the existing four behavioural probes before the graded gate. A probe failure
+(any nonzero `brain-golden-probe` exit, including regression, invalid
+configuration, or transient failure) is a hard stop requiring investigation;
+probe success is only clearance to continue to the graded gate.
+
+```bash
+brain-golden-probe "$BRAIN_VAULT/eval/golden-probes.json" \
+  --vault "$BRAIN_VAULT"
+```
 
 ## Smoke test (sub-second mode)
 

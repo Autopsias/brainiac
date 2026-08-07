@@ -27,7 +27,7 @@ The Cowork sandbox sees the workspace root. We place the runtime under
         │   ├── brain-linux-x86_64       ← arch-matched Linux ELF (Intel/AMD VM)
         │   └── brain-linux-aarch64      ← arch-matched Linux ELF (ARM VM)
         ├── brain                        ← symlink → the arch that matches `uname -m`
-        ├── model/                       ← bundled e5-small ONNX model cache (model.onnx + tokenizer)
+        ├── model/                       ← bundled bge-m3-int8 cache (model_int8.onnx + tokenizer)
         ├── snapshot/
         │   ├── index.snapshot.sqlite    ← READ-ONLY published index (single file)
         │   └── snapshot.manifest.json   ← generation id + age + counts + sha256
@@ -47,7 +47,7 @@ The Cowork sandbox sees the workspace root. We place the runtime under
    `brain` → the one matching `uname -m`. Build matrix + recipe:
    `tools/build_brain_binary.sh`.
 2. **Bundle the ONNX model.** HuggingFace is **not** on the VM egress allowlist,
-   so the embedding model (multilingual-e5-small; cache layout: `model.onnx` +
+   so the embedding model (bge-m3-int8; cache layout: `model_int8.onnx` +
    tokenizer/config) is shipped in `.brain/model/`. Point fastembed at it with
    `BRAIN_MODEL_CACHE=<.brain>/model` (no network fetch — the embedder reads the
    bundled cache, never downloads).

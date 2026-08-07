@@ -43,8 +43,20 @@ ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # counter-arguments section; decision notes must anchor claims to a source
 # (either a `source:` frontmatter key or a wikilink resolving to a raw/ note).
 COUNTER_ARGUMENTS_HEADING = re.compile(r"^#{1,6}\s*counter[- ]?argument", re.I | re.M)
+# Email provenance (PRV-01/PRV-02) — FLAT DOTTED keys, siblings of the
+# pre-existing capture stamp `provenance.trust: untrusted`. All optional; a
+# note carrying none of them validates exactly as before. `provenance.verified`
+# is host-only (set when the ingest pipeline parsed the metadata out of the
+# archived original itself); everything else may be an unverified claim.
+PROVENANCE_PREFIX = "provenance."
+PROVENANCE_DATE_KEYS = ("provenance.sent",)
+PROVENANCE_BOOL_KEYS = ("provenance.verified",)
+PROVENANCE_KEYS = set(PROVENANCE_DATE_KEYS) | set(PROVENANCE_BOOL_KEYS) | {
+    "provenance.trust", "provenance.sender", "provenance.conversation_id",
+    "provenance.subject",
+}
 # Frontmatter keys recognised by the optional OKF-aligned lint profile.
-OKF_ALLOWED_KEYS = REQUIRED_BRAIN | REQUIRED_RAW | BITEMPORAL_KEYS | {
+OKF_ALLOWED_KEYS = REQUIRED_BRAIN | REQUIRED_RAW | BITEMPORAL_KEYS | PROVENANCE_KEYS | {
     "source", "tags", "sha256", "status", "provenance", "related", "aliases",
 }
 JD_FILENAME = re.compile(r"^\d\d[. ]")          # Johnny-Decimal, e.g. "60.03 x"
@@ -280,6 +292,34 @@ def check_bitemporal_note(rel: str, meta: dict) -> None:
     if superseded_by and ilv_raw is None:
         warn(f"{rel}: superseded_by present but is_latest_version is absent "
              f"(should be explicit false)")
+
+
+def check_provenance(rel: str, meta: dict) -> None:
+    """Per-note provenance checks (PRV-01/PRV-02). Every key optional.
+
+    Known keys are type-checked (``provenance.sent`` must be an ISO-8601 date
+    or datetime, ``provenance.verified`` a boolean); an unrecognised
+    ``provenance.*`` subkey WARNS and never errors — the vocabulary is meant to
+    grow without breaking the conventions gate."""
+    for key in sorted(k for k in meta if str(k).startswith(PROVENANCE_PREFIX)):
+        val = meta.get(key)
+        if key not in PROVENANCE_KEYS:
+            warn(f"{rel}: unrecognized provenance subkey {key!r} (known: "
+                 f"{sorted(PROVENANCE_KEYS)})")
+            continue
+        if key in PROVENANCE_DATE_KEYS and val is not None:
+            text = str(val).strip().replace(" ", "T")
+            head = text[:10]
+            ok = bool(ISO_DATE.match(head))
+            if ok and len(text) > 10:
+                try:
+                    datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
+                except ValueError:
+                    ok = False
+            if not ok:
+                err(f"{rel}: {key} must be an ISO-8601 date or datetime, got {val!r}")
+        if key in PROVENANCE_BOOL_KEYS and val is not None and parse_bool(val) is None:
+            err(f"{rel}: {key} must be a boolean, got {val!r}")
 
 
 def check_bitemporal_global(notes: list[dict]) -> None:
@@ -526,6 +566,7 @@ def check_note(path: Path, zone: str, okf: bool) -> dict | None:
 
     check_aliases(rel, zone, meta)
     check_bitemporal_note(rel, meta)
+    check_provenance(rel, meta)
 
     ntype = meta.get("type")
     if ntype:
@@ -535,7 +576,10 @@ def check_note(path: Path, zone: str, okf: bool) -> dict | None:
                  f"(accepted: {sorted(accepted)})")
 
     if okf:
-        unknown = set(meta) - OKF_ALLOWED_KEYS
+        # `provenance.*` is owned by check_provenance above (which warns on an
+        # unrecognised subkey) — never double-reported here.
+        unknown = {k for k in set(meta) - OKF_ALLOWED_KEYS
+                   if not str(k).startswith(PROVENANCE_PREFIX)}
         if unknown:
             warn(f"[okf] {rel}: keys outside OKF profile: {sorted(unknown)}")
 

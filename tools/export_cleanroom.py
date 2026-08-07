@@ -47,6 +47,13 @@ EXCLUDE_PREFIXES = (
     # (harness/gate/stats/capture_run/path_normalize) stays — it's clean.
     "tests/",
     "eval/build_golden_set.py",
+    # Same class, found by the v0.20.0 contamination gate (2026-08-07): the PT
+    # capacity fixture is SYNTHETIC, but it was written to imitate the owner's
+    # corpus, so it reads as ~35 denylist hits of ordinary Portuguese business
+    # vocabulary. It proves a capacity-vs-plumbing signature for whoever runs
+    # the investigation and has no public value; the generic PT diagnostics
+    # beside it stay.
+    "eval/pt_capacity_fixture.py",
     # One-time, owner-specific corpus-migration scripts + doc (excluded
     # 2026-07-12, owner decision): they map the owner's real Obsidian vault
     # taxonomy and are not general-purpose. Not useful

@@ -1,0 +1,11 @@
+{
+  "name": "cos-replay-head-1500",
+  "doctrine_path": ".claude/skills/chief-of-staff/SKILL.md",
+  "doctrine_section": "## Phase 1.6 — Ingestion proposal engine",
+  "doctrine_section_end": "## Phase 1.6b",
+  "window_chars": 1500,
+  "window_from": "head",
+  "substance_bar": "Treat a thread as substantive ONLY when the body states a committed outcome (a signed/agreed term, a firm number, or a named owner with a dated obligation). A proposal still under negotiation is not enough.",
+  "model": "gpt-5.6-sol",
+  "reasoning_effort": "high"
+}

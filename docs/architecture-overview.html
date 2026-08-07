@@ -158,7 +158,7 @@
     <text x="426" y="267" text-anchor="middle" class="ts">every commit Ed25519-signed → audit chain</text>
     <rect x="566" y="168" width="184" height="50" rx="8" class="b2"/>
     <text x="658" y="188" text-anchor="middle" class="t">on-device embeddings</text>
-    <text x="658" y="205" text-anchor="middle" class="ts">e5-small ONNX · hash fallback</text>
+    <text x="658" y="205" text-anchor="middle" class="ts">bge-m3-int8 ONNX · hash fallback</text>
     <rect x="566" y="228" width="184" height="50" rx="8" class="b2"/>
     <text x="658" y="248" text-anchor="middle" class="t">optional reranker</text>
     <text x="658" y="265" text-anchor="middle" class="ts">cross-encoder, skippable</text>
@@ -208,7 +208,7 @@
 │  ├── write verbs     write / ingest / supersede / sync / snapshot /     │
 │  │   (HOST-ONLY)     rebuild / graphify / maintain                      │
 │  ├── egress gate     classification filter, applied before EVERY stdout │
-│  ├── embedders       e5-small ONNX default · hash offline fallback ·    │
+│  ├── embedders       bge-m3-int8 ONNX · e5 rollback · hash fallback ·   │
 │  │                   optional Arctic / catalog models · opt. reranker   │
 │  └── audit chain     every committed write signed + hash-chained        │
 │                                                                         │
@@ -233,7 +233,7 @@
     <tr><td>CLI + dispatch</td><td><code>cli.py</code></td><td>the one entry point; <code>brain --help</code> is the always-current contract</td></tr>
     <tr><td>Orchestration core</td><td><code>core.py</code></td><td>wires vault + index + gate together; owns <code>maintain</code>; enforces the host/VM role gate</td></tr>
     <tr><td>Index</td><td><code>index.py</code>, <code>vectors.py</code></td><td>one SQLite file: FTS5 tables + sqlite-vec vector tables, incremental upsert by path+content-hash; pure-Python brute-force vector fallback when the sqlite-vec extension can't load</td></tr>
-    <tr><td>Embedders</td><td><code>embed.py</code></td><td><strong>default: <code>multilingual-e5-small</code></strong> via direct ONNX Runtime (384-dim, ~465&nbsp;MB one-time download); deterministic <em>hash embedder</em> as fully-offline fallback; optional Arctic-embed / catalog models behind an extra; resolved lazily on first semantic use</td></tr>
+    <tr><td>Embedders</td><td><code>embed.py</code></td><td><strong>default: <code>bge-m3-int8</code></strong> via direct ONNX Runtime (1024-dim, ~563&nbsp;MB one-time download); deterministic <em>hash embedder</em> as fully-offline fallback; <code>multilingual-e5-small</code> remains the env-selectable rollback; resolved lazily on first semantic use</td></tr>
     <tr><td>Reranker</td><td><code>rerank.py</code></td><td>optional cross-encoder (jina-reranker-v2) over the top hits; identity fallback — always skippable</td></tr>
     <tr><td>Egress gate</td><td><code>classification.py</code>, <code>egress.py</code></td><td>tier filter before stdout; deny-by-default (see security doc)</td></tr>
     <tr><td>Audit chain</td><td><code>audit.py</code>, <code>anchor.py</code></td><td>Ed25519-signed, hash-chained JSONL of every committed write; key in the OS secret store; optional off-host anchoring (<code>brain anchor</code> / <code>verify-anchor</code>)</td></tr>
@@ -416,7 +416,7 @@
   <table>
     <tr><th>Choice</th><th>Rationale</th></tr>
     <tr><td>SQLite (FTS5 + sqlite-vec)</td><td>one file, zero administration, rebuildable; no client/server DB to operate or secure; brute-force fallback keeps working without the native extension</td></tr>
-    <tr><td>ONNX embeddings on-device (multilingual-e5-small default)</td><td>no document content sent to an embedding API; works offline after a one-time ~465&nbsp;MB download; deterministic hash fallback keeps the system usable with no model at all</td></tr>
+    <tr><td>ONNX embeddings on-device (bge-m3-int8 default)</td><td>no document content sent to an embedding API; works offline after a one-time ~563&nbsp;MB download; deterministic hash fallback keeps the system usable with no model at all</td></tr>
     <tr><td>Ed25519 + hash chain (JSONL)</td><td>tamper-evident write history (each entry binds a content hash, so post-commit edits are detectable via <code>verify-audit --check-content</code>) at ~zero operational cost; keys live in the OS secret store</td></tr>
     <tr><td>Plain Markdown + YAML</td><td>vendor-neutral, human-readable, diffable, survives any tool's demise</td></tr>
     <tr><td>Python ≥3.9, short dependency list</td><td><code>onnxruntime</code>, <code>tokenizers</code>, <code>numpy</code>, <code>sqlite-vec</code>, <code>cryptography</code>, <code>PyYAML</code>, document parsers — no web framework, no ORM, no network client</td></tr>

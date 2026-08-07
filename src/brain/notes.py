@@ -49,6 +49,12 @@ def _bitemporal_bool(val: object) -> str:
 _SLUG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
+#: Longest id we will turn into a path component, in ENCODED BYTES. Filesystem
+#: components cap at 255 bytes; this leaves room for the suffixes and stamps
+#: callers append (``<id>.anchor.json``, ``<ts>-<id>.md.refused``, …).
+MAX_SLUG_BYTES = 180
+
+
 def safe_slug(ident: object) -> str:
     """Validate an (untrusted) note id as a bare, path-safe slug — fail closed.
 
@@ -60,12 +66,27 @@ def safe_slug(ident: object) -> str:
     The id is NFC-normalized BEFORE validation so a decomposed variant cannot
     reconstitute '..' or '/' after the check (fullwidth forms are not in the
     allowed charset, so they are rejected outright).
+
+    LENGTH is part of being path-safe. A 10,000-character all-ASCII id passes
+    every character rule, becomes a filename, and raises ``ENAMETOOLONG`` at the
+    write — which, on the broker's apply/recovery path, aborted the operation
+    and left the journal to retry it forever. The cap is on ENCODED BYTES
+    (a filesystem component limit is bytes, and NFC still leaves multibyte
+    characters), and it is deliberately below the usual 255 so the suffixes and
+    timestamp prefixes this codebase appends — ``.anchor.json``,
+    ``.refused.json``, ``<YYYYMMDDTHHMMSS>-`` — still fit.
     """
     s = unicodedata.normalize("NFC", str(ident))
     if not s or ".." in s or _SLUG_RE.fullmatch(s) is None:
         raise ValueError(
             f"unsafe note id {ident!r}: must be a bare slug "
             "([A-Za-z0-9._-], no leading '.', no '/', no '..')"
+        )
+    n = len(s.encode("utf-8"))
+    if n > MAX_SLUG_BYTES:
+        raise ValueError(
+            f"unsafe note id {str(ident)[:40]!r}…: {n} encoded bytes exceeds the "
+            f"{MAX_SLUG_BYTES}-byte path-component limit"
         )
     return s
 
@@ -132,6 +153,17 @@ def load_note(path: Path, vault: Path) -> Note | None:
         # note is honest; a mojibake-indexed one is not.
         warnings.warn(f"skipping unreadable note {path}: {exc}", stacklevel=2)
         return None
+    return note_from_text(text, path, vault)
+
+
+def note_from_text(text: str, path: Path, vault: Path) -> Note | None:
+    """Build a :class:`Note` from bytes ALREADY IN HAND (INT-01).
+
+    ``load_note`` re-opens the file to read it. A caller that has verified a
+    byte buffer (the COS approved queue hashes its payload against a
+    host-signed anchor) must never re-open the path afterwards — that re-opens
+    the substitution window it just closed — so it parses the verified buffer
+    through here instead."""
     meta, body = frontmatter.parse_text(text)
     if not meta:
         return None
@@ -160,10 +192,28 @@ def load_note(path: Path, vault: Path) -> Note | None:
     )
 
 
-def scan_vault(vault: Path) -> Iterator[Note]:
+
+# INT-03: top-level dirs holding MACHINE OUTPUT — run reports, review-gate
+# drafting workspaces, decision cards a fold wrote for itself. They are
+# operational artifacts, not knowledge: nothing validates them (tools/
+# validate.py never looks at them), they carry no `classification:`, and
+# indexing them put 78 successive revisions of one in-flight draft into
+# retrieval alongside the curated note that supersedes them. A cos-ops
+# artifact that turns out to BE knowledge gets promoted into brain/ or raw/
+# through the normal audited write path — that promotion, not a second
+# indexing scope, is how it becomes retrievable.
+MACHINE_OUTPUT_DIRS = ("cos-ops",)
+
+
+def scan_vault(vault: Path, *, stats: dict | None = None) -> Iterator[Note]:
     """Yield every note under vault/, skipping the .brain/ runtime cache, the
-    top-level inbox/ drop zone, archived ingestion originals under
-    raw/originals/, and the generated backlinks.md."""
+    top-level inbox/ drop zone, the overlay/ personalization layer, machine
+    output dirs (``MACHINE_OUTPUT_DIRS``), archived ingestion originals under
+    raw/originals/, and the generated backlinks.md.
+
+    Pass ``stats`` (a dict) to receive the exclusion counts — ``sync``/
+    ``rebuild`` report them so a whole excluded tree is never silent."""
+    excluded_machine = 0
     for p in sorted(vault.rglob("*.md")):
         sp = p.as_posix()
         if "/.brain/" in sp:
@@ -193,6 +243,12 @@ def scan_vault(vault: Path) -> Iterator[Note]:
         # .brain/: present on disk, never a search hit.
         if rel_parts and rel_parts[0] == "overlay":
             continue
+        # INT-03 — machine output (see MACHINE_OUTPUT_DIRS). Counted, not
+        # silently dropped: an excluded tree that nobody reports is how 146
+        # unvalidated files ended up in a retrieval index unnoticed.
+        if rel_parts and rel_parts[0] in MACHINE_OUTPUT_DIRS:
+            excluded_machine += 1
+            continue
         # C5: raw/originals/ holds the archived, immutable ORIGINAL file a
         # handler claimed during ingestion (e.g. a promoted .md's own source
         # copy) — it is evidence, never a real note, and must not be
@@ -204,3 +260,5 @@ def scan_vault(vault: Path) -> Iterator[Note]:
         note = load_note(p, vault)
         if note is not None:
             yield note
+    if stats is not None:
+        stats["excluded_machine_output"] = excluded_machine

@@ -25,6 +25,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -495,8 +496,76 @@ def _read_version_stamp(stamp_path: Path) -> Optional[str]:
     return m.group(1) if m else None
 
 
-def stage_engine_and_skills(engine_src: Path, workspace_path: str) -> dict:
-    """(a)+(d) legs of cowork_workspace_install.sh for one cowork-vm
+def _resolve_shipped_model_source() -> tuple[Path, str]:
+    """Resolve the exact model snapshot/file selected by the running engine."""
+    from .embed import OnnxEmbedder
+
+    embedder = OnnxEmbedder()
+    onnx_path, base = embedder._resolve_model_files()
+    if Path(onnx_path).name != Path(embedder._onnx_file).name:
+        raise RuntimeError(
+            f"resolved ONNX file {onnx_path!r} does not match "
+            f"the selected model contract {embedder._onnx_file!r}"
+        )
+    return Path(base), embedder._onnx_file
+
+
+def _stage_model_cache(brain_dir: Path, source: tuple[Path, str]) -> dict:
+    """Atomically replace ``.brain/model`` with the selected minimal snapshot."""
+    base, onnx_file = source
+    required = (onnx_file, "tokenizer.json")
+    optional = ("tokenizer_config.json", "special_tokens_map.json", "config.json")
+    missing = [rel for rel in required if not (base / rel).is_file()]
+    if missing:
+        raise FileNotFoundError(
+            f"selected model snapshot {base} is incomplete; missing {', '.join(missing)}"
+        )
+
+    brain_dir.mkdir(parents=True, exist_ok=True)
+    staged = Path(tempfile.mkdtemp(prefix=".model-stage-", dir=brain_dir))
+    try:
+        copied: list[str] = []
+        for rel in (*required, *optional):
+            src = base / rel
+            if not src.is_file():
+                continue
+            dst = staged / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst, follow_symlinks=True)
+            copied.append(rel)
+
+        model_dir = brain_dir / "model"
+        old = brain_dir / ".model-previous"
+        if old.exists():
+            shutil.rmtree(old)
+        if model_dir.exists():
+            model_dir.replace(old)
+        try:
+            staged.replace(model_dir)
+        except Exception:
+            if old.exists() and not model_dir.exists():
+                old.replace(model_dir)
+            raise
+        if old.exists():
+            shutil.rmtree(old)
+        return {
+            "model_dir": str(model_dir),
+            "model_file": onnx_file,
+            "model_files": copied,
+            "model_bytes": sum((model_dir / rel).stat().st_size for rel in copied),
+        }
+    finally:
+        if staged.exists():
+            shutil.rmtree(staged)
+
+
+def stage_engine_and_skills(
+    engine_src: Path,
+    workspace_path: str,
+    *,
+    model_source: tuple[Path, str] | None = None,
+) -> dict:
+    """(a)+(b)+(d) legs of cowork_workspace_install.sh for one cowork-vm
     workspace: re-copy the engine source into ``<vault>/.brain/engine/brain/``
     and refresh the ``.skill`` bundles into ``<vault>/.brain/skills/`` from
     whatever ``dist/cowork-skills/*.skill`` currently ships in ``engine_src``
@@ -517,6 +586,13 @@ def stage_engine_and_skills(engine_src: Path, workspace_path: str) -> dict:
     shutil.copytree(engine_src / "src" / "brain", engine_dir / "brain")
     for cache_dir in (engine_dir / "brain").rglob("__pycache__"):
         shutil.rmtree(cache_dir, ignore_errors=True)
+
+    # (b) selected model snapshot — an engine refresh without this leg can
+    # leave e5 beside a BGE-configured engine and silently break every dense
+    # query in the VM. Resolve once per update, then replace the cache as one
+    # directory so the VM never observes a half-copied 563 MB model.
+    source = model_source or _resolve_shipped_model_source()
+    model_status = _stage_model_cache(brain_dir, source)
 
     # (d) skill bundles (cw-02) — refresh from the current dist build.
     skills_src_dir = engine_src / "dist" / "cowork-skills"
@@ -558,14 +634,22 @@ def stage_engine_and_skills(engine_src: Path, workspace_path: str) -> dict:
     if agents_src.exists():
         shutil.copyfile(agents_src, brain_dir / "AGENTS.md")
 
-    # vm-selftest.sh — the un-fakeable PASS/FAIL retrieval self-test every
-    # workspace carries (step 8). Ships in the wheel via _assets/scripts; stage
-    # it 0755 so a Cowork session can `bash vault/.brain/vm-selftest.sh`.
-    selftest_src = _packaged_script("vm-selftest.sh", engine_src)
-    if selftest_src is not None:
-        dst = brain_dir / "vm-selftest.sh"
-        shutil.copyfile(selftest_src, dst)
-        dst.chmod(0o755)
+    # The two VM probes, staged 0755 so a Cowork session can run either one
+    # straight from the workspace root. Both ship in the wheel via
+    # _assets/scripts:
+    #   vm-selftest.sh        the un-fakeable PASS/FAIL retrieval self-test —
+    #                         proves the VM leg WORKS (step 8).
+    #   vm-boundary-probe.sh  the NEGATIVE half — proves it REFUSES everything
+    #                         the host broker holds. It was hand-copied into
+    #                         one workspace on 2026-07-31 and would have
+    #                         vanished on the next re-stage; a boundary claim
+    #                         is only worth what can be re-measured on demand.
+    for script_name in ("vm-selftest.sh", "vm-boundary-probe.sh"):
+        script_src = _packaged_script(script_name, engine_src)
+        if script_src is not None:
+            dst = brain_dir / script_name
+            shutil.copyfile(script_src, dst)
+            dst.chmod(0o755)
 
     ssot = _ssot_version(engine_src)
     staged = _read_version_stamp(engine_dir / "brain" / "_version.py")
@@ -576,6 +660,7 @@ def stage_engine_and_skills(engine_src: Path, workspace_path: str) -> dict:
         "skills_shipped": len(zips),
         "skills_src_dir": str(skills_src_dir),
         "vendor_status": vendor_status,
+        "model_status": model_status,
     }
 
 
@@ -588,6 +673,8 @@ def restage_workspaces(
     import workspace_registry as _wr  # type: ignore
 
     results = []
+    model_source: tuple[Path, str] | None = None
+    model_source_error: str | None = None
     brain_bin = brainiac_home / "venv" / "bin" / "brain"
     for entry in _wr.list_entries():
         vault_path = entry.get("vault_path", "")
@@ -636,11 +723,24 @@ def restage_workspaces(
             # reads its version back as "ok" while the real VM engine at
             # `vault_path/.brain/engine` never moves. Must stage vault_path.
             try:
-                stage_info = stage_engine_and_skills(engine_src, vault_path)
-            except OSError as exc:
+                if model_source is None and model_source_error is None:
+                    try:
+                        model_source = _resolve_shipped_model_source()
+                    except Exception as exc:
+                        model_source_error = f"{type(exc).__name__}: {exc}"
+                if model_source_error is not None:
+                    raise RuntimeError(
+                        f"selected model could not be resolved: {model_source_error}"
+                    )
+                assert model_source is not None
+                stage_info = stage_engine_and_skills(
+                    engine_src, vault_path, model_source=model_source
+                )
+            except (OSError, RuntimeError) as exc:
                 results.append({"workspace_path": workspace_path, "target": target,
                                 "status": "failed",
-                                "reason": f"engine/skill re-stage failed: {type(exc).__name__}: {exc}"})
+                                "reason": f"engine/model/skill re-stage failed: "
+                                          f"{type(exc).__name__}: {exc}"})
                 continue
             # No-silent-no-op (DV-01, ADR-0005 Ruling 1): a re-stage that
             # lands a missing/mismatched _version.py must never report ok —
@@ -834,8 +934,8 @@ def run_update(
         resolved_engine_src is not None and (resolved_engine_src / "pyproject.toml").exists()
     )
     no_checkout_detail = (
-        f"skipped — no local checkout resolved (tried explicit/$BRAINIAC_ENGINE_SRC/"
-        f"__file__/marketplace installLocation) (a PyPI-first install "
+        "skipped — no local checkout resolved (tried explicit/$BRAINIAC_ENGINE_SRC/"
+        "__file__/marketplace installLocation) (a PyPI-first install "
         "has none by default; only needed to re-stage Cowork workspaces — clone "
         "https://github.com/Autopsias/brainiac.git and pass --engine-src, or set "
         "$BRAINIAC_ENGINE_SRC, if you use Cowork)"

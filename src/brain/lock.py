@@ -80,15 +80,23 @@ def _read_holder(lock_path: Path) -> dict[str, Any]:
 
 
 def _open_lock_fd(lock_path: Path) -> int:
-    """Open the lockfile read/write, never inheritable by a child process.
+    """Open the lockfile read/write, never inheritable, never through a symlink.
 
     An inherited fd would keep the lock alive after the process that acquired
     it exits -- the exact leaked-lock failure mode this module exists to avoid.
     POSIX spells that ``O_CLOEXEC``; Windows spells it ``O_NOINHERIT`` and also
     needs ``O_BINARY`` so the holder JSON is written without newline
     translation.
+
+    ``O_NOFOLLOW`` because the caller ``ftruncate``s this descriptor to write
+    the holder JSON: a symlink planted at the lock name would hand that
+    truncation to whatever it points at (the sqlite index, say). Both lock
+    files this opens now live off the mount, so nothing should be able to plant
+    one -- which is exactly why the primitive itself should not be the weak
+    link if that ever stops being true. Windows has no ``O_NOFOLLOW``; there
+    the flag resolves to 0 and the location is the whole defence.
     """
-    flags = os.O_CREAT | os.O_RDWR
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
     for name in ("O_CLOEXEC", "O_NOINHERIT", "O_BINARY"):
         flags |= getattr(os, name, 0)
     return os.open(str(lock_path), flags, 0o600)
@@ -128,7 +136,34 @@ def _unlock(fd: int) -> None:
 
 
 @contextlib.contextmanager
-def writer_lock(lock_path: Path, *, verb: str, timeout: float | None = None) -> Iterator[None]:
+def vault_writer_lock(vault: Any, *, verb: str,
+                      timeout: float | None = None) -> Iterator[None]:
+    """The single-writer lock for ``vault``, off the mount (INT-05).
+
+    Every index-mutating verb goes through here, and there is exactly ONE lock:
+    ``config.writer_lock_path``. A real host runs two engines (the launchd job
+    on a ``BRAIN_BIN``-pinned build, a hand-run ``brain`` off PATH), so they
+    only exclude each other once BOTH resolve this path — which makes restaging
+    the pinned engine an ordered release step, not something the code can
+    absorb. A second lock at the old ``<vault>/.brain/writer.lock`` was tried
+    and removed: a lock on the VM-writable mount cannot provide exclusion at
+    all (unlink the inode, drop a replacement, and the next holder flocks a
+    different file), so it bought nothing while exposing this module's
+    ``ftruncate`` to a planted symlink. See the INT-05 appendix in
+    ``docs/release-runbook.md`` for the ordering it was standing in for.
+    """
+    from . import config
+
+    # Acquisition-time diagnosis (INT-05 round 3): if $BRAIN_INDEX_DIR is on the
+    # mount, this lock lives in app-data while the INDEX it protects does not.
+    config.warn_if_lock_dir_fallback(vault)
+    with writer_lock(config.writer_lock_path(vault), verb=verb, timeout=timeout):
+        yield
+
+
+@contextlib.contextmanager
+def writer_lock(lock_path: Path, *, verb: str,
+                timeout: float | None = None) -> Iterator[None]:
     """Acquire the single-writer lock for ``verb``, re-entrantly.
 
     ``timeout`` bounds the wait (default ``$BRAIN_WRITER_LOCK_SECONDS`` or
@@ -149,7 +184,14 @@ def writer_lock(lock_path: Path, *, verb: str, timeout: float | None = None) -> 
     bound = timeout if timeout is not None else float(
         os.environ.get("BRAIN_WRITER_LOCK_SECONDS", "30")
     )
+    # Creation happens HERE, at acquisition — never in the name-resolution
+    # helper that every index-mutating verb (and the read-side liveness probe)
+    # calls just to learn the path.
     lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with contextlib.suppress(OSError, ImportError):
+        from .config import secure_file_permissions
+
+        secure_file_permissions(lock_path.parent, 0o700)
 
     fd = _open_lock_fd(lock_path)
     start = time.monotonic()

@@ -164,6 +164,26 @@ def _scalar(v: Any) -> str:
     return str(v)
 
 
+def yaml_scalar(value: Any) -> str:
+    """Serialise ``value`` as a SAFE one-line YAML scalar.
+
+    Quotes when the value carries YAML-special characters and — the part a
+    bare ``f'"{v}"'`` gets wrong — escapes an embedded backslash/quote and
+    strips raw control characters, so free text (an email subject, a sender
+    display name) can never inject a second frontmatter line into a signed
+    note. Mirrors ingest/pipeline._build_frontmatter's own escaping.
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    text = str(value)
+    text = "".join(" " if ch < " " or ch == "\x7f" else ch for ch in text)
+    if (any(c in text for c in (":", "#", "[", "]", "{", "}", ",", '"', "\\", "'"))
+            or text != text.strip() or not text or not text[:1].isalnum()):
+        escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    return text
+
+
 def set_keys(text: str, updates: dict[str, Any]) -> str:
     """Return ``text`` with each ``updates`` key set in the frontmatter block —
     replacing an existing ``key: ...`` line in place, appending new keys at the

@@ -106,6 +106,17 @@ NOTE_CREATION_POLICIES: dict[str, dict[str, str]] = {
         "reason": "crash-recovery rewrite restoring a note's pre-transaction "
                   "content — not note creation",
     },
+    "cos._retire_signed_note": {
+        "path": "cos._retire_signed_note (undo of an ALREADY-SIGNED "
+                "auto-captured note, HARDENED:codex-9)",
+        "kind": "exempt",
+        "reason": "stamps retired/retired_date/retired_reason on an EXISTING "
+                  "note through the audited write path — a retirement, not a "
+                  "new note body. Deliberately NOT the supersession keys: an "
+                  "undo has no successor, and is_latest_version/"
+                  "superseded_date without superseded_by is a shape "
+                  "tools/validate.py rejects (AGENTS.md §2)",
+    },
 }
 
 _VALID_KINDS = {"autolinked", "chained", "exempt", "counted"}

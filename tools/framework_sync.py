@@ -141,16 +141,35 @@ def check_claude_md_import(claude_md_path: Path = REPO_ROOT / "CLAUDE.md") -> di
     return {"ok": False, "reason": "CLAUDE.md no longer imports @AGENTS.md on its own line"}
 
 
+def check_agents_md_mirror(
+    canonical_path: Path = REPO_ROOT / "AGENTS.md",
+    mirror_path: Path = REPO_ROOT / "src" / "brain" / "_assets" / "AGENTS.md",
+) -> dict:
+    """The AGENTS.md ships inside the wheel as src/brain/_assets/AGENTS.md —
+    the Cowork VM's contract copy. Nothing else gated this pair drifting
+    apart (the skill-mirror workflow excludes the path, and this was the
+    only unguarded hand-maintained mirror), so compare content directly."""
+    if not canonical_path.is_file():
+        return {"ok": False, "reason": f"missing {canonical_path}"}
+    if not mirror_path.is_file():
+        return {"ok": False, "reason": f"missing {mirror_path}"}
+    if canonical_path.read_text(encoding="utf-8") != mirror_path.read_text(encoding="utf-8"):
+        return {"ok": False, "reason": f"{mirror_path} content differs from {canonical_path}"}
+    return {"ok": True, "reason": None}
+
+
 def audit(**kwargs) -> dict:
     """kwargs forward selectively to check_skill_drift / check_claude_md_import
     by name (claude_md_path vs the skill-drift params)."""
     claude_md_path = kwargs.pop("claude_md_path", REPO_ROOT / "CLAUDE.md")
     drift = check_skill_drift(**kwargs)
     claude_md = check_claude_md_import(claude_md_path)
+    agents_md = check_agents_md_mirror()
     return {
-        "clean": not drift and claude_md["ok"],
+        "clean": not drift and claude_md["ok"] and agents_md["ok"],
         "skill_drift": drift,
         "claude_md_import": claude_md,
+        "agents_md_mirror": agents_md,
     }
 
 
@@ -167,12 +186,15 @@ def main() -> int:
             print(f"DRIFT  {d['skill']} [{d['mirror']}] {d['path']}: {d['reason']}")
         if not report["claude_md_import"]["ok"]:
             print(f"DRIFT  CLAUDE.md: {report['claude_md_import']['reason']}")
+        if not report["agents_md_mirror"]["ok"]:
+            print(f"DRIFT  AGENTS.md mirror: {report['agents_md_mirror']['reason']}")
         if report["clean"]:
             print("OK: canonical .claude/skills/ matches .agents/skills/ + plugins/ mirrors; "
-                  "CLAUDE.md imports @AGENTS.md.")
+                  "CLAUDE.md imports @AGENTS.md; src/brain/_assets/AGENTS.md matches AGENTS.md.")
         else:
             print(f"\n{len(report['skill_drift'])} drifted file(s)"
-                  + ("" if report["claude_md_import"]["ok"] else " + CLAUDE.md import broken"))
+                  + ("" if report["claude_md_import"]["ok"] else " + CLAUDE.md import broken")
+                  + ("" if report["agents_md_mirror"]["ok"] else " + AGENTS.md mirror drift"))
     return 0 if report["clean"] else 1
 
 

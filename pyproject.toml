@@ -8,13 +8,13 @@ build-backend = "setuptools.build_meta"
 # check. The IMPORT package stays `brain` and the console script stays
 # `brain` — only the distribution/project name changes.
 name = "brainiac-cli"
-version = "0.19.21"
+version = "0.20.0"
 description = "Brainiac — local any-LLM second-brain core engine + brain CLI (Markdown truth, derived SQLite index)."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.9"
 # DEFAULT INSTALL = FULL CAPACITY (owner decision, 2026-07-04): a plain
-# `pip install .` ships real semantic search (direct-ONNX e5-small), the
+# `pip install .` ships real semantic search (direct-ONNX bge-m3-int8), the
 # sqlite-vec ANN backend, the signed audit chain, PyYAML, and the ReDoS-guard
 # regex engine. The code still degrades gracefully if any of these are absent,
 # so constrained environments (Intune / air-gapped) can strip deps with
@@ -60,11 +60,11 @@ vec = ["sqlite-vec>=0.1.6"]
 # write_note fails closed rather than writing an unsigned record.
 audit = ["cryptography>=41"]
 # Alternate fastembed-based embedder (NOT installed by default — the default
-# semantic path is the direct-ONNX e5-small embedder in the core deps).
+# semantic path is the direct-ONNX bge-m3-int8 embedder in the core deps).
 embed = ["fastembed>=0.3"]
-# CORPORATE minimal-dep set (DIST-01, S12): e5-small via DIRECT ONNX Runtime —
+# CORPORATE minimal-dep set (DIST-01, S12): bge-m3-int8 via DIRECT ONNX Runtime —
 # NO fastembed, NO PyTorch. This is what the signed Intune build ships. The
-# e5-small ONNX model is bundled inline as a data asset (not a pip dep).
+# bge-m3-int8 ONNX model is bundled inline as a data asset (not a pip dep).
 corporate = [
     "onnxruntime>=1.17",
     "tokenizers>=0.15",
@@ -94,7 +94,14 @@ quant-tools = ["onnx>=1.14"]
 # OPTIONAL, DELETABLE MCP bridge for the pure Claude Desktop Chat tab only
 # (src/brain/mcp_adapter.py). MCP is never the foundation — every other harness
 # calls the `brain` CLI directly. `pip install -e .[mcp]` then `brain-mcp`.
-mcp = ["mcp>=1.0"]
+# ponytail: capped at <2 because mcp 2.0.0 DELETED mcp.server.fastmcp, which
+# brain.mcp_adapter imports — an unbounded `mcp>=1.0` resolved to 2.0.0 on any
+# fresh install and `brain-mcp` then died at startup with ModuleNotFoundError,
+# taking the whole Chat-tab/.mcpb path with it (caught 2026-07-31 by the
+# release pipeline's release-asset handshake gate, after it had already shipped).
+# Upgrade path: port the adapter off FastMCP (mcp.server.lowlevel, or the
+# separate `fastmcp` package) and lift the cap — a real migration, not a bump.
+mcp = ["mcp>=1.0,<2"]
 # Timeout-bounded regex engine (mrab-regex) used by BrainIndex.grep's --regex
 # path (RET-04 hardening) as a ReDoS guard: regex.search(text, timeout=...)
 # genuinely bounds catastrophic backtracking, unlike stdlib `re`. Absent ->
@@ -127,6 +134,11 @@ brain = ["_assets/**"]
 # Scope collection to tests/ so pytest never descends into a local model venv
 # (.venv-embed/) or the fastembed model cache (.fastembed_cache/).
 testpaths = ["tests"]
+
+# Import `brain` from THIS checkout's src/, not from whatever editable install
+# happens to be in the venv — otherwise a git worktree silently tests the
+# parent checkout's engine. (pytest's own ini option; no conftest needed.)
+pythonpath = ["src"]
 
 # ---------------------------------------------------------------------------
 # LICENSING NOTE (FLEET / r2-codex)

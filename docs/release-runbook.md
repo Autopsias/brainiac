@@ -668,6 +668,10 @@ pipeline closes that class structurally, not just procedurally:
   (the 0.19.11 class). `--accept-windows-ci '<reason>'` overrides with the
   reason recorded in evidence — legitimate when the red run is the very bug
   the release fixes, since the signal only recovers after the publish.
+- **The Claude Desktop `.mcpb` ships as a GitHub release asset** (added
+  2026-07-31 — see §7.11 below), so the Chat-tab install path in
+  `docs/install/README.md` Path G resolves to a real download instead of
+  "build it yourself".
 - **Post-publish verification is the real user path**: clean-venv
   `pip install` + `brain --version`, sha256 of the PyPI-served artifact
   against what was built, `npx brainiac-install@<ver> --dry-run`, public tag
@@ -684,6 +688,39 @@ remote is never pushed or reconfigured (ADR-0001 intact — and
 `tools/release.py` still never gains an upload subcommand. The manual steps
 in §7.6/§7.9/§8 remain the documented fallback and the reference for what
 the pipeline does.
+
+---
+
+## 7.11. Claude Desktop `.mcpb` release asset (owner decision 2026-07-31)
+
+The `release-asset` phase runs after `public-git` (the tag has to exist on the
+public repo before a release can hang off it) and before `post-verify`. It
+builds `packaging/mcpb/build.sh` **from the export tree**, then attaches
+`brainiac.mcpb` to a GitHub release at `v<X.Y.Z>` on the public repo.
+
+**Why it exists:** `docs/install/README.md` Path G told Chat-tab users to
+download the bundle "from a release", and the public repo had **no releases at
+all, for any version** — so the only way to get one was to hand-build and email
+it (which is exactly what happened on 2026-07-31). The `.mcpb` is a few-KB Node
+stdio shim, byte-identical on macOS and Windows; there was never a per-user
+build to do.
+
+Two properties make it a gate rather than a copy step:
+
+- **The handshake runs against the just-published engine**, not the operator's
+  installed one. The phase installs `brainiac-cli[mcp]==<version>` from PyPI
+  into a throwaway venv and puts it first on `PATH`, so `build.sh`'s MCP
+  `initialize`/`list_tools` check proves the shipping bundle talks to the
+  shipping engine. Its first real run **immediately caught a live bug**: the
+  `[mcp]` extra was pinned `mcp>=1.0`, which resolves to `mcp 2.0.0`, which
+  deleted `mcp.server.fastmcp` — so `brain-mcp` died at startup on every fresh
+  install and the whole Chat-tab path was broken in the wild. The pin is now
+  `mcp>=1.0,<2` (`tests/test_publish_public.py` guards it).
+- **The published asset is downloaded back and sha256-compared** to what was
+  built. A release that exists is not evidence the right bytes are on it.
+
+Resume-safe: if the release already exists (a run that died after creating it),
+the asset is re-uploaded with `--clobber` instead of failing.
 
 ---
 
@@ -729,3 +766,77 @@ marketplace before reading any version-comparison state. The two ends meet
 at the version SSOT: what `publish_release.py` validates as
 `pyproject.toml`'s version is the exact value `/brainiac-update`'s
 before/after table and `brain doctor` report on the consumer side.
+
+---
+
+## Appendix — single-writer lock upgrade (INT-05, added 2026-08-02)
+
+**RESTAGE THE PINNED ENGINE FIRST. This is an ordered release step, not a
+recommendation.** INT-05 moved the single-writer lock off the Cowork mount
+(`<vault>/.brain/writer.lock` → `config.host_lock_dir()/writer-<slug8>.lock`).
+This host runs two engines — the hourly launchd job on a `BRAIN_BIN`-pinned
+staged build, a hand-run `brain` off `PATH` — and they only exclude each other
+once BOTH resolve the same off-mount lock. While one lane is still on the old
+build it locks the old mount path and the other locks the host path; `flock` on
+two different files excludes nothing, so two writers hit one sqlite index and
+the corruption is silent (no error, no defect row — you find it in a later
+rebuild).
+
+A compat lock — the new engine also taking the old mount path — was written for
+this and then removed: a lock file on the VM-writable mount cannot provide
+exclusion at all (unlink the locked inode, drop a replacement at the same name,
+and the next holder flocks a different file), and it put the lock acquisition's
+`os.ftruncate` behind a name a VM could replace with a symlink. Ordering is the
+real control.
+
+The order, per host, per release that crosses this boundary:
+
+1. **Restage the launchd-pinned engine to the new build FIRST** — repoint
+   `BRAIN_BIN` at the new path, keeping the previous plist as a `.bak`, then
+   `launchctl bootout` + `bootstrap` the job.
+2. **Verify by RUNNING it, not by reading the plist** — trigger the job and
+   confirm with `ps` that the job's own child process is executing the NEW
+   `brain` path. A plist that names the right binary proves nothing about what
+   the running job resolved (this is exactly how one lane sat three weeks stale).
+3. **Only then use the new engine from `PATH`** (and confirm `which brain` /
+   `brain --version` agree with the restaged lane).
+
+If the order is violated, nothing fails loudly — the two lanes simply stop
+excluding each other for the length of the window.
+
+Two further consequences for the release process:
+
+- **A mixed-version window is not covered by code.** An un-restaged old engine
+  takes only the old mount lock and is therefore NOT excluded, however new the
+  other lane is. Shorten the window; do not rely on the engine to close it.
+- **`$BRAIN_INDEX_DIR` is host-wide configuration.** It must be identical in
+  every context that writes a given vault. A context that sets it differently
+  is writing a different index (and takes that index's lock), which is
+  consistent but is not what an operator who set it in one shell expects.
+
+**Attachment ingest in-flight at upgrade time: the CLAIM STORE needs no manual
+drain, the HELD bucket does.** The pre-INT-04 claim store
+(`<vault>/.brain/ingest-provenance.json`) is consumed by the first drain after
+the upgrade: any inbox file it covers is REFUSED (`approved_anchor_missing`,
+with a defect row) rather than ingested unanchored at `Internal`, and the store
+is deleted. Re-accept those attachments; the payloads are intact in
+`vault/inbox/_quarantine/`.
+
+**Two in-flight buckets DO need an operator, and neither is self-healing**
+(corrected 2026-08-02 — an earlier version of this appendix said "needs no
+manual drain" full stop, which was true of the claim store and false of these):
+
+- an attachment sitting in the auto-capture **held** state at upgrade time has
+  no `cos_attachment_hold/v1` authorization (or, after round 3, one with no
+  signed destination name), so every hourly run logs
+  `attachment-release-unauthorized` and it is never released. Nothing returns
+  it to `pending`; `expire_proposals` moves it aside at its TTL, so an
+  owner-accepted capture is lost after N defect rows if nobody looks;
+- an **open owner batch** signed before round 3 carries no `candidates[].name`,
+  so accepting it refuses each attachment (`no host-protected destination
+  name`, filed under `invalid`). That one IS self-healing: the attachment stays
+  in quarantine and rejoins the next batch, which binds the name.
+
+After upgrading, grep the defect ledger for `attachment-release-unauthorized`
+(`brain cos-hold list` covers the note-lane holds only, not the attachment
+quarantine) and re-propose anything in that bucket through the owner queue.

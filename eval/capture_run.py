@@ -25,6 +25,7 @@ vector support yet (``no such table: vec_index`` means this).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import statistics
@@ -44,6 +45,41 @@ def _iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _golden_set_sha256(golden_path: str) -> str | None:
+    try:
+        return hashlib.sha256(Path(golden_path).read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _fingerprint(index_stats: dict, golden_path: str) -> dict:
+    """BL-01 (BR-06): the corpus size/shape a run was captured against, so a
+    score from one vault generation is never silently gated against another.
+    Missing pieces -> null rather than a crash (index_stats may itself be {}
+    on an unbuilt index)."""
+    # The version of the CODE THAT RAN, not of whatever wheel is registered in
+    # this interpreter: brain.__version__ prefers importlib.metadata (correct
+    # for an installed host, ADR-0005), which on a source checkout reports the
+    # stale editable install instead — a fingerprint that mislabels the engine
+    # it measured defeats the point. brain._version ships in the wheel too, so
+    # it is the truthful stamp in both cases.
+    try:
+        from brain._version import __version__ as engine_version
+    except Exception:
+        try:
+            from brain import __version__ as engine_version
+        except Exception:
+            engine_version = None
+    return {
+        "notes": index_stats.get("notes"),
+        "chunks": index_stats.get("chunks"),
+        "embed_model": index_stats.get("embed_model"),
+        "embed_dim": index_stats.get("embed_dim"),
+        "engine_version": engine_version,
+        "golden_set_sha256": _golden_set_sha256(golden_path),
+    }
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -58,6 +94,15 @@ def main() -> int:
     ap.add_argument("--rerank", dest="rerank", action="store_true", default=False)
     ap.add_argument("--no-rerank", dest="rerank", action="store_false")
     ap.add_argument("--rerank-top", type=int, default=15)
+    # RK-02: the gate is ON unless disabled, so a capture that never named it
+    # measured the gated path without saying so. Default None = "not typed"
+    # (same precedence as the CLI flag); the RESOLVED value is stamped into
+    # params below, so a run file can never again be ambiguous about which
+    # rerank path produced it.
+    ap.add_argument("--rerank-gate", dest="rerank_gate",
+                    action=argparse.BooleanOptionalAction, default=None,
+                    help="adaptive rerank gate (RK-02); ON by default, "
+                         "--no-rerank-gate forces unconditional reranking")
     ap.add_argument("--warmup", type=int, default=0,
                     help="unmeasured searches per query before timing (default: 0)")
     ap.add_argument("--samples", type=int, default=1,
@@ -94,6 +139,15 @@ def main() -> int:
         ap.error("--read-only-index requires --index-db")
     if args.index_db and args.rebuild:
         ap.error("--index-db cannot be combined with --rebuild")
+    if args.rerank:
+        # This script records hit.score, and reranking REORDERS hits without
+        # changing their RRF score — so a scorer re-sorting on score silently
+        # discards the whole reordering. Measured 2026-08-06: a rerank arm
+        # captured here scored mrr@10 0.300 against 0.566 for the same engine,
+        # same index, same queries, captured rank-correctly. Refuse rather than
+        # emit a run file that quietly measures something else.
+        ap.error("--rerank is not supported here (it would discard the rerank "
+                 "ordering); use eval/rebaseline_rerank_capture.py")
 
     source_root = Path(args.source_root).resolve() if args.source_root else REPO / "src"
     sys.path.insert(0, str(source_root))
@@ -148,8 +202,9 @@ def main() -> int:
             print(f"rebuilt: {info.get('indexed')} notes, backend={info.get('backend')}, "
                   f"model={info.get('embed_model')}")
         search = index.hybrid_search
+        index_stats = index.stats()
         index_state = {
-            "index": index.stats(),
+            "index": index_stats,
             "prebuilt_index": str(db_path) if args.index_db else None,
             "read_only_index": args.read_only_index,
         }
@@ -160,13 +215,19 @@ def main() -> int:
             print(f"rebuilt: {info.get('indexed')} notes, backend={info.get('backend')}, "
                   f"model={info.get('embed_model')}")
         search = core.hybrid_search
+        index_stats = {}
         try:
             status = core.status()
-            index_state = {"index": status.get("index")}
+            index_stats = status.get("index") or {}
+            index_state = {"index": index_stats}
         except Exception:
             index_state = {}
 
-    params = {"rrf_k": args.rrf_k, "rerank": args.rerank, "rerank_top": args.rerank_top}
+    index_state["fingerprint"] = _fingerprint(index_stats, args.golden)
+    from brain.index import rerank_gate_enabled
+    params = {"rrf_k": args.rrf_k, "rerank": args.rerank, "rerank_top": args.rerank_top,
+              "rerank_gate": rerank_gate_enabled(args.rerank_gate),
+              "rerank_gate_requested": args.rerank_gate}
     index_state.update({"params": params, "vault": vault_root, "source_root": str(source_root)})
 
     runs: dict[str, dict[str, float]] = {}
@@ -175,13 +236,15 @@ def main() -> int:
     for qid, q in qmeta.items():
         for _ in range(args.warmup):
             search(q["text"], k=args.k, rerank=args.rerank,
-                   rerank_top=args.rerank_top, rrf_k=args.rrf_k)
+                   rerank_top=args.rerank_top, rrf_k=args.rrf_k,
+                   rerank_gate=args.rerank_gate)
         samples: list[float] = []
         hits = []
         for _ in range(args.samples):
             t0 = time.perf_counter()
             hits = search(q["text"], k=args.k, rerank=args.rerank,
-                          rerank_top=args.rerank_top, rrf_k=args.rrf_k)
+                          rerank_top=args.rerank_top, rrf_k=args.rrf_k,
+                   rerank_gate=args.rerank_gate)
             samples.append((time.perf_counter() - t0) * 1000.0)
         latency[qid] = round(statistics.median(samples), 2)
 

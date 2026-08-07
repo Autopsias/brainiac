@@ -308,7 +308,7 @@ PyPI-first, same as `install.sh`: tries `uv tool install`, then `pipx`, then
 `pip install --user`, first success wins, each attempt visibly reported.
 Puts `brain` on your **User PATH** (additive — never overwrites your
 existing PATH, safe to re-run). Semantic search downloads its embedding
-model (~465 MB) lazily on first real use, or run `brain warmup` up front.
+model (~563 MB) lazily on first real use, or run `brain warmup` up front.
 Unlike `install.sh --with-ocr`, it never runs a package manager for you — it
 just prints the `winget`/`choco` command for the OCR toolchain, since
 scanned PDFs degrade to a metadata-only quarantine without it rather than
@@ -387,10 +387,14 @@ only talks to whatever engine is already on your machine.
 
 1. Make sure the engine is installed (`brain --version` works in a terminal —
    if not, run Path A/E/F first).
-2. Download `brainiac.mcpb` (built from `packaging/mcpb/build.sh` in this
-   repo, or from a release) and **double-click it**, or drag it onto the
-   Claude Desktop window, or **Settings → Extensions → Advanced settings →
-   Install Extension…**.
+2. Download `brainiac.mcpb` from the latest release —
+   <https://github.com/Autopsias/brainiac/releases/latest> — and
+   **double-click it**, or drag it onto the Claude Desktop window, or
+   **Settings → Extensions → Advanced settings → Install Extension…**.
+   There is nothing to build and no Linux machine involved: the same few-KB
+   file works on macOS and Windows. (Building it yourself with
+   `packaging/mcpb/build.sh` stays available, but is only for engine
+   development.)
 3. Review the permissions prompt and finish install. Claude Desktop will
    prompt for the **Vault path** (required — point it at the folder
    containing `vault/brain`, `vault/raw`; there is no "default vault"

@@ -1,0 +1,30 @@
+{
+  "<empty-body-2026-08-01@contoso.example>": {
+    "expected_verdict": "refuse",
+    "why": "LOAD-BEARING for WIR-02: an empty body with body_opened=False. The judge must REFUSE this row (missing input), never emit a verdict for it; this is what proves the body-pass precondition actually refuses rather than silently judging on the subject alone."
+  },
+  "<long-thread-2026-07-15@contoso.example>": {
+    "expected_verdict": "candidate",
+    "why": "unusually long thread (23 replies, ~6724 chars) to exercise the extraction window; the substantive decision is in the LAST two replies, past where a naive head-only extraction would stop."
+  },
+  "<newsletter-2026-08-01@northwind.example>": {
+    "expected_verdict": "not_candidate",
+    "why": "newsletter - no decision, no thread-specific content, addressed to a distribution list."
+  },
+  "<notification-2026-08-01@billing.example>": {
+    "expected_verdict": "not_candidate",
+    "why": "automated notification - a no-reply system message, not a human correspondence."
+  },
+  "<renewal-2026-08-01@contoso.example>": {
+    "expected_verdict": "candidate",
+    "why": "substantive, decision-bearing: a contract renewal with a rate, an effective date, and an action (countersign) - the reference case for a genuine candidate."
+  },
+  "<scheduling-2026-08-01@contoso.example>": {
+    "expected_verdict": "not_candidate",
+    "why": "scheduling chatter - a meeting-time negotiation with nothing else in the body."
+  },
+  "<urgent-subject-2026-08-01@contoso.example>": {
+    "expected_verdict": "not_candidate",
+    "why": "subject looks important, body is empty of substance - the case a subject-only judge gets wrong; the body must win over the subject line."
+  }
+}

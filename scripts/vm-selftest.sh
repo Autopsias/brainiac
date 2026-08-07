@@ -55,7 +55,13 @@ PY
 
 say "== 4. SEMANTIC search — THE real test (this is what faked green before) =="
 # stdout -> json (results or {"error":...}); stderr -> err (onnxruntime cpuid warning lives here, NOT the JSON)
-brain search "energy transition strategy" --json > "$SCRATCH"/vmst_search.json 2>"$SCRATCH"/vmst_search.err
+# --no-rerank (RK-02 caller policy, 2026-08-04): this probe asks "does dense
+# retrieval work at all", which is decided entirely before the cross-encoder.
+# Since BR-03 made reranking default-on, leaving it on would add seconds to
+# minutes per run (eval/FOLLOWUPS.md #6) to test nothing this probe checks —
+# and RET-02 guarantees a broken reranker degrades to identity rather than
+# failing search, so it cannot hide a fault here.
+brain search "energy transition strategy" --no-rerank --json > "$SCRATCH"/vmst_search.json 2>"$SCRATCH"/vmst_search.err
 python3 - "$OUT" "$SCRATCH/vmst_search.json" "$SCRATCH/vmst_search.err" <<'PY'
 import json,sys
 o=open(sys.argv[1],"a")

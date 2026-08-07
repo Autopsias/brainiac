@@ -4,7 +4,7 @@
     "ranx": "0.3.21"
   },
   "excluded": [
-    "fastembed (REMOVED DIST-01: e5-small migrated to direct-ONNX OnnxEmbedder)",
+    "fastembed (REMOVED DIST-01: embedder migrated to direct-ONNX OnnxEmbedder)",
     "qwen3-embed (REMOVED DIST-01: S11-overturned; Qwen3 CPU-dead on HP fleet)",
     "torch / transformers / sentence-transformers (never a runtime dep; ONNX-only)"
   ],
@@ -76,7 +76,7 @@
   "notes": [
     "The corporate frozen build bundles ONLY the runtime_direct set +",
     "their transitive deps. eval_test_direct are dev/CI-only and are NOT",
-    "shipped. The e5-small ONNX model (~120MB) is bundled inline as a data",
+    "shipped. The bge-m3-int8 ONNX model (~563MB) is bundled inline as a data",
     "asset, not a pip dep; the gte reranker (~1.1GB) is default-OFF and is",
     "NOT bundled (opt-in: pre-seed / vendor / HF-allowlist \u2014 see DIST-02).",
     "runtime_detail[].metadata_sha256 is the sha256 of the dist's METADATA",

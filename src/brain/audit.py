@@ -439,7 +439,7 @@ class AuditChain:
             "errors": errors,
         }
 
-    def content_drift(self, vault: Path) -> list[dict]:
+    def content_drift(self, vault: Path, *, dispositions: dict | None = None) -> list[dict]:
         """Notes whose CURRENT bytes differ from the last `content_sha256` the
         chain signed for them — i.e. edited (or deleted) after commit without a
         new signed write. Entries with no `content_sha256` (legacy) are skipped:
@@ -447,8 +447,16 @@ class AuditChain:
 
         This is what turns the signed hash into a real tamper check: the entry's
         own signature can be perfectly valid while the file it describes has
-        been changed on disk. Returns one record per drifted/missing path."""
+        been changed on disk. Returns one record per drifted/missing path.
+
+        Every record carries a ``disposition`` — ``None`` for UNEXPLAINED drift
+        (the number health surfaces gate on) or the recorded label when a
+        triaged disposition file explains it (see ``match_disposition``). Pass
+        ``dispositions`` to override the on-disk file (tests); the default
+        loads ``<vault>/.brain/audit-drift-dispositions.json``."""
         vault = Path(vault)
+        if dispositions is None:
+            dispositions = load_drift_dispositions(vault)
         latest: dict[str, str] = {}
         for raw in self._lines():
             s = raw.strip()
@@ -478,4 +486,80 @@ class AuditChain:
             if actual != expected:
                 drift.append({"path": path, "issue": "content_drift",
                               "expected_sha256": expected, "actual_sha256": actual})
+        for rec in drift:
+            match = match_disposition(rec, dispositions)
+            rec["disposition"] = (match or {}).get("disposition")
+            rec["disposition_reason"] = (match or {}).get("reason")
         return drift
+
+
+# --------------------------------------------------------------------------
+# drift dispositions (INT-02)
+# --------------------------------------------------------------------------
+# A vault that predates drift VISIBILITY carries a historical drift trail:
+# notes edited outside the audited write path before anything reported it.
+# Deleting or re-signing those would destroy the evidence, and leaving them
+# uncounted would make every future real drift invisible in the noise. So they
+# are TRIAGED once into a disposition file, and the health surfaces subtract
+# only what that file explains.
+#
+# A disposition is PINNED to the exact bytes it was recorded against: the file
+# drifting AGAIN produces a different `actual_sha256`, no longer matches, and
+# comes back as unexplained. Absorbing a whole path forever is exactly the
+# failure mode this instrument exists to prevent.
+DRIFT_DISPOSITIONS_FILENAME = "audit-drift-dispositions.json"
+
+
+def drift_dispositions_path(vault: Path) -> Path:
+    """Host-only triage file. Lives under ``.brain/`` (gitignored, never
+    indexed, never published to the VM snapshot)."""
+    return Path(vault) / ".brain" / DRIFT_DISPOSITIONS_FILENAME
+
+
+def load_drift_dispositions(vault: Path) -> dict[str, dict]:
+    """``{path: record}`` from the triage file; ``{}`` when absent or
+    unreadable. Fails OPEN into "nothing is explained" — an unreadable
+    disposition file must never silently clear a drift count."""
+    try:
+        raw = json.loads(drift_dispositions_path(vault).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    records = raw.get("dispositions") if isinstance(raw, dict) else raw
+    if not isinstance(records, list):
+        return {}
+    return {r["path"]: r for r in records
+            if isinstance(r, dict) and isinstance(r.get("path"), str)}
+
+
+def match_disposition(record: dict, dispositions: dict[str, dict]) -> dict | None:
+    """The disposition explaining THIS drift record, or ``None``.
+
+    Matching requires the same path, the same issue, and the same observed
+    hash the disposition was recorded against — so a further edit re-surfaces
+    as unexplained instead of hiding under an old ruling."""
+    d = dispositions.get(str(record.get("path")))
+    if not isinstance(d, dict) or not d.get("disposition"):
+        return None
+    if d.get("issue") != record.get("issue"):
+        return None
+    key = "expected_sha256" if record.get("issue") == "missing" else "actual_sha256"
+    if d.get(key) != record.get(key):
+        return None
+    return d
+
+
+def drift_summary(vault: Path, chain: "AuditChain") -> dict:
+    """``{"total": n, "unexplained": n, "records": [...]}`` — the one place the
+    unexplained count is derived, so every health surface gates on the same
+    number.
+
+    ponytail: full hash pass, no sampling — 0.3s over a 2,600-note vault on the
+    reference deployment. If a vault ever gets big enough for that to hurt
+    hourly, cache it on (path, mtime, size) rather than sampling: a sampled
+    "0 drift" is the false all-clear this whole item exists to remove."""
+    records = chain.content_drift(Path(vault))
+    return {
+        "total": len(records),
+        "unexplained": sum(1 for r in records if not r.get("disposition")),
+        "records": records,
+    }

@@ -92,19 +92,24 @@ def framework_sync_finding(report: dict[str, Any]) -> dict[str, Any] | None:
         return None
     drift = report.get("skill_drift") or []
     claude_md = report.get("claude_md_import") or {}
+    agents_md = report.get("agents_md_mirror") or {}
     paths = [f"{d['skill']} [{d['mirror']}] {d.get('path') or d['reason']}" for d in drift[:5]]
     parts = []
     if drift:
         parts.append(f"{len(drift)} skill-mirror file(s) diverged")
     if not claude_md.get("ok"):
         parts.append(f"CLAUDE.md: {claude_md.get('reason')}")
+    if not agents_md.get("ok", True):
+        parts.append(f"AGENTS.md mirror: {agents_md.get('reason')}")
     return action_required_item(
         "; ".join(parts) or "framework-sync drift detected",
-        "the .claude/skills canonical tree, .agents/skills mirror, and/or "
-        "plugins/ marketplace copies have drifted apart (or CLAUDE.md's "
-        "@AGENTS.md import broke)",
-        "run `python3 tools/package_clients.py` to resync, then re-run health",
-        "; ".join(paths) or "CLAUDE.md",
+        "the .claude/skills canonical tree, .agents/skills mirror, "
+        "plugins/ marketplace copies, and/or src/brain/_assets/AGENTS.md "
+        "have drifted apart (or CLAUDE.md's @AGENTS.md import broke)",
+        "run `python3 tools/package_clients.py` to resync, then re-run health "
+        "(AGENTS.md drift must be fixed by hand — copy AGENTS.md over "
+        "src/brain/_assets/AGENTS.md)",
+        "; ".join(paths) or ("AGENTS.md mirror" if not agents_md.get("ok", True) else "CLAUDE.md"),
     )
 
 
@@ -2603,6 +2608,14 @@ DEFAULT_QUARANTINE_REGRESSION_PCT = 0.25
 DEFAULT_GOLDEN_REGRESSION_PCT = 0.05
 HEALTH_TREND_MIN_DAYS = 7
 HEALTH_TREND_MIN_BASELINE_DAYS = 2
+# A median over a PARTIAL day is not a median. The hourly self-test is ONE
+# timing sample on a shared laptop (52ms..28s observed on the reference vault),
+# so the first one or two runs of a day routinely read as a huge regression
+# against a trailing median of whole days. Measured false positive, 2026-08-04:
+# at 10:15 the day held 2 samples and fired "+184.3%"; by 16:02 the same day
+# held 8 samples and the finding was gone. Median-reduced metrics wait for
+# enough of the day to have happened.
+HEALTH_TREND_MIN_CURRENT_SAMPLES = 4
 
 # Correction 5 — per-metric daily-bucket reducer. A single generic
 # "representative" (e.g. always "last") would average/suppress a real
@@ -2712,7 +2725,14 @@ def health_trend(
         if not buckets:
             return
         days_sorted = sorted(buckets)
-        current = buckets[days_sorted[-1]]
+        current_day = days_sorted[-1]
+        current = buckets[current_day]
+        if _DAILY_REDUCERS.get(metric) == "median":
+            samples = sum(1 for r in ordered
+                          if _record_date(r) == current_day
+                          and isinstance(r.get(metric), (int, float)))
+            if samples < HEALTH_TREND_MIN_CURRENT_SAMPLES:
+                return  # partial day — see HEALTH_TREND_MIN_CURRENT_SAMPLES
         baseline_vals = [buckets[d] for d in days_sorted[:-1] if buckets[d] is not None]
         if current is None or not span_ok or len(baseline_vals) < HEALTH_TREND_MIN_BASELINE_DAYS:
             return

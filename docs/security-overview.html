@@ -438,7 +438,7 @@
         unexpected top-level modules. Extraction happens in a temporary generation; the currently
         working vendor tree is preserved unless the whole new generation validates.</li>
       <li><strong>Model artifacts — now revision-pinned.</strong> The default model download is
-        pinned to an exact Hugging Face commit (<code>E5_SMALL_ONNX_REVISION</code>), so the bytes
+        pinned to an exact Hugging Face commit (<code>BGE_M3_ONNX_REVISION</code>), so the bytes
         are reproducible rather than "whatever <code>main</code> points at today"; override with
         <code>$BRAIN_EMBED_REVISION</code> (e.g. an internal mirror pin) or bypass downloads entirely
         with a pre-staged <code>$BRAIN_MODEL_CACHE</code> / the hash embedder. Residual: integrity
@@ -540,7 +540,7 @@
     <tr><td><code>BRAIN_MAX_EGRESS_TIER</code> (MCP)</td><td>hard server-side ceiling for the MCP read surface; an unset/invalid value fails closed to the default</td><td><strong>Internal</strong> — explicitly raise only for an approved MCP server</td></tr>
     <tr><td><code>BRAIN_AUDIT_KEY_CMD</code></td><td>external signing-key custody command (shell) — disable on managed builds (§6.6)</td><td>Keychain / Credential Manager</td></tr>
     <tr><td><code>BRAIN_ENCRYPTION_KEY_CMD</code> + module enable</td><td>AES-256-GCM — <strong>backups only</strong> today, not the live index/vault (§6.8)</td><td>off (FDE baseline)</td></tr>
-    <tr><td><code>BRAIN_EMBEDDER=hash</code></td><td>fully-offline embedder (no model download)</td><td><code>auto</code> (e5-small)</td></tr>
+    <tr><td><code>BRAIN_EMBEDDER=hash</code></td><td>fully-offline embedder (no model download)</td><td><code>auto</code> (bge-m3-int8)</td></tr>
     <tr><td><code>BRAIN_REQUIRE_REAL_EMBEDDER</code></td><td>fail-closed if the real model is absent (semantic paths only)</td><td>on for vm role</td></tr>
     <tr><td><code>brain project --dest --max-tier</code></td><td>filtered workspace copy that physically omits higher tiers (the real containment for an untrusted leg); refuses destructive/ancestor dests (§6.8)</td><td>vm cap: Internal</td></tr>
   </table>

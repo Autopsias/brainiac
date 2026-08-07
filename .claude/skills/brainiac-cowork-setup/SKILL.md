@@ -33,8 +33,8 @@ the user first. Only then continue.
 
 ```bash
 cd "$HOME/brainiac"
-python3 packaging/stage_model.py --repo Xenova/multilingual-e5-small --out /tmp/e5 \
-  --patterns "onnx/model.onnx" "tokenizer.json" "tokenizer_config.json" "special_tokens_map.json" "config.json"
+python3 packaging/stage_model.py --repo Xenova/bge-m3 --out /tmp/bge-m3-int8 \
+  --patterns "onnx/model_int8.onnx" "tokenizer.json" "tokenizer_config.json" "special_tokens_map.json" "config.json"
 ```
 
 Report ✅/❌ on exit code.
@@ -42,7 +42,7 @@ Report ✅/❌ on exit code.
 ## Step 2 — install the zero-install runtime into the workspace
 
 ```bash
-tools/cowork_workspace_install.sh "<workspace>/vault" /tmp/e5
+tools/cowork_workspace_install.sh "<workspace>/vault" /tmp/bge-m3-int8
 ```
 
 No Docker, no compilers — this stages the pure-Python engine + a `brain` shim
@@ -75,7 +75,7 @@ import sys
 sys.path.insert(0, "<repo>/tools")
 from workspace_registry import upsert_entry
 upsert_entry(vault_path="<workspace>/vault", workspace_path="<workspace>",
-             target="cowork-vm", model_dir="/tmp/e5")
+             target="cowork-vm", model_dir="/tmp/bge-m3-int8")
 ```
 
 `upsert_entry` keys on `(host, arch, target, realpath(vault_path),
@@ -88,7 +88,7 @@ duplicating it.
 ```
 Brainiac Cowork setup report
 -----------------------------
-✅/❌ model staged (/tmp/e5)
+✅/❌ model staged (/tmp/bge-m3-int8)
 ✅/❌ workspace install (tools/cowork_workspace_install.sh)
 ✅/❌ brain-nightly registered — label: com.brainiac.nightly.<id> (per-vault), vault: <workspace>/vault, schedule: <time>
 ✅/❌ workspace registry: recorded <vault_path> (target: cowork-vm)

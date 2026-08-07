@@ -21,6 +21,7 @@ from typing import Any
 from . import classification as cls
 from . import egress
 from .core import BrainCore
+from .rerank import RERANK_TOP_DEFAULT, rerank_enabled
 
 READ_TOOLS = ("search", "get", "recent", "bases_query", "dossier")
 
@@ -68,6 +69,24 @@ def _filtered(items: list[dict], max_tier: str) -> tuple[list[dict], dict]:
     return egress.apply_gate(items, max_tier)
 
 
+def _capture_rerank_metadata(
+    core: Any, trace: Any | None, *, requested: bool, rerank_top: int,
+) -> dict[str, Any]:
+    """Record the ranking MCP actually ran for host-side replay."""
+    applied = bool(getattr(trace, "rerank_applied", False))
+    model = None
+    if applied:
+        cache = getattr(getattr(core, "index", None), "_reranker_cache", None)
+        if isinstance(cache, tuple) and len(cache) == 2:
+            model = getattr(cache[1], "model_id", None) or cache[0]
+    return {
+        "requested": requested,
+        "applied": applied,
+        "model": str(model) if model else None,
+        "top_n": rerank_top if applied else 0,
+    }
+
+
 def dispatch(tool: str, args: dict[str, Any], *, core: BrainCore | None = None,
              vault: str | None = None) -> dict[str, Any]:
     """Run one read tool through the SAME egress gate as the CLI. Pure + testable.
@@ -88,14 +107,24 @@ def dispatch(tool: str, args: dict[str, Any], *, core: BrainCore | None = None,
         capture_enabled = querylog.capture_requested(role)
         started = time.perf_counter() if capture_enabled else None
         trace = None
+        # QR-01: MCP is a production search surface, so it must use the same
+        # BR-03 quality-first default as the CLI.  Before this explicit handoff
+        # the adapter inherited BrainCore's library-level ``rerank=False`` and
+        # silently returned the bare BGE ordering, including four measured
+        # English R@10 losses.  The shared resolver preserves the documented
+        # BRAIN_RERANK_DISABLED rollback.
+        use_rerank = rerank_enabled()
+        rerank_top = RERANK_TOP_DEFAULT
         if capture_enabled:
             trace_hits, trace = core.hybrid_search_with_trace(
                 str(args["query"]), k=int(args.get("k", 10)),
+                rerank=use_rerank, rerank_top=rerank_top,
             )
             hits = [h.to_dict() for h in trace_hits]
         else:
             hits = [h.to_dict() for h in core.hybrid_search(
-                str(args["query"]), k=int(args.get("k", 10)))]
+                str(args["query"]), k=int(args.get("k", 10)),
+                rerank=use_rerank, rerank_top=rerank_top)]
         surfaced, report = _filtered(hits, max_tier)
         # Match the CLI's post-egress safety finalization. A visible identity
         # owner must never look unique merely because a collision peer is above
@@ -131,7 +160,8 @@ def dispatch(tool: str, args: dict[str, Any], *, core: BrainCore | None = None,
                 query=str(args["query"]), mode=tool,
                 k=int(args.get("k", 10)), rrf_k=60,
                 exact_leg_enabled=bool(getattr(trace, "exact_leg_enabled", False)),
-                rerank={"requested": False, "applied": False, "model": None, "top_n": 0},
+                rerank=_capture_rerank_metadata(
+                    core, trace, requested=use_rerank, rerank_top=rerank_top),
                 latency_ms=(time.perf_counter() - started) * 1000,
                 top=capture_top, candidate_digest=capture_digest, max_tier=max_tier,
             )

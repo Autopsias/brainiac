@@ -112,6 +112,42 @@ calendar section to the generated HTML, or a separate personal automation
 reading `.brain/brief/brief-latest.html`) rather than the kernel growing a
 calendar dependency.
 
+## The `cos/` category (OPTIONAL — chief-of-staff settings)
+
+`overlay/cos/` is an **optional fifth category**: a vault with no `cos/`
+directory is exactly as valid as before, and removing the directory is the
+complete rollback. It carries the settings the `chief-of-staff` kernel skill
+reads at runtime — the skill hard-codes no owner content, so every knob it has
+lives here. Same frontmatter contract as the four required categories
+(`overlay_type: cos` — the DIRECTORY name, never `cos-<something>`), plus a
+`setting:` key naming which file this is.
+
+| File | `setting:` | What the skill reads it for |
+|---|---|---|
+| `priorities.md` | *(none — list body)* | Per-note priority overrides (`- <note-id>: high\|normal\|low\|exclude`) over the computed `brain cos-priority-map`, plus the `chips_confirmed` runtime chip gate. |
+| `drafts.md` | `drafts` | `enabled: true\|false` — whether the nightly composes reply drafts (it never sends). ABSENT ⇒ enabled. |
+| `auto-archive.md` | `auto-archive` | The kill switch and scope levers for every lane that may move mail on its own: `enabled`, `cap`, `scope`, `aged_read_lane`, `aged_read_min_days`, `any_sender_lane`, `recurring_digest_supersession`, `chip_reeval`. **Each key's absent-value is argued from its own blast radius** — `aged_read_lane` ABSENT ⇒ **on**, `any_sender_lane` and `chip_reeval` ABSENT ⇒ **off**. |
+| `ingest.md` | `ingest` | The ingest/no-ingest **category taxonomy** (`- <category-id>: always\|propose\|never \| lane=… \| min_tier=…`) that decides which extracted substance is kept automatically, proposed for review, or never turned into a candidate. Spec: `docs/cos-ingest-taxonomy.md`. |
+
+Starter templates for all four ship at `overlay/template/cos/` —
+placeholder-only, like every other template here.
+
+**`ingest.md` is the one overlay file that is a security-relevant GATE** (a
+`never` rule suppresses candidates outright), so it is the one file whose BODY
+is machine-checked, not just its frontmatter. `brain init --validate-overlay`
+parses every rule line and reports:
+
+- **ABSENT** ⇒ nothing at all. The category feature is simply OFF.
+- **An unknown disposition, lane, tier, or a malformed option** ⇒ a `warnings`
+  entry, and the rule resolves to `propose`. The overlay stays **valid** — the
+  fail-closed direction never blocks setup, it just refuses to infer `always`
+  or `never` from a typo.
+- **Broken frontmatter or an empty body** ⇒ an ordinary category ISSUE, exactly
+  like any other overlay file.
+
+Warnings appear in the `--json` report under a top-level `warnings` key and in
+the human output as `warning: …` lines.
+
 ## Note templates (TMP-04, ADR-0003 ruling 3)
 
 Kernel note templates for the typed entity vocabulary ship generic and
@@ -146,6 +182,8 @@ prose, so it is not covered by `brain init --validate-overlay`.
 
 ## Cross-references
 
+- `docs/cos-ingest-taxonomy.md` — the ingest/no-ingest category taxonomy read
+  from `cos/ingest.md` (dispositions, lanes, tier floors, absent-semantics)
 - `src/brain/overlay.py` — the validator implementation + `resolve_brand()`
   (AUT-01/AUT-03 HTML brief/digest branding)
 - `src/brain/brief.py` — the pure HTML brief/digest renderers

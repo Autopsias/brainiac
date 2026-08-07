@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DIST-02 — stage the e5-small ONNX model inline for the frozen bundle.
+"""DIST-02 — stage the shipped ONNX model inline for the frozen bundle.
 
 Resolves the model snapshot (from a local HF cache, or by download) and copies
 the minimal file set into a flat dir that PyInstaller bundles as a data asset.
@@ -8,9 +8,9 @@ OnnxEmbedder loads the model in place — no HF download, no network at run time
 
 Usage (called by build_macos.sh / build_windows.ps1):
     python packaging/stage_model.py \
-        --repo Xenova/multilingual-e5-small \
-        --out packaging/model_bundle/e5-small \
-        --patterns onnx/model.onnx tokenizer.json ... \
+        --repo Xenova/bge-m3 \
+        --out packaging/model_bundle/bge-m3-int8 \
+        --patterns onnx/model_int8.onnx tokenizer.json ... \
         [--cache /path/to/hf/cache]
 """
 from __future__ import annotations
@@ -23,27 +23,35 @@ import sys
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--repo", required=True, help="HF repo id, e.g. Xenova/multilingual-e5-small")
+    ap.add_argument("--repo", required=True, help="HF repo id, e.g. Xenova/bge-m3")
     ap.add_argument("--out", required=True, help="output dir (flat layout)")
     ap.add_argument("--patterns", nargs="+", required=True, help="files to stage")
     ap.add_argument("--cache", default=None, help="local HF cache root (offline)")
     ap.add_argument(
         "--revision", default=None,
         help="pin the online download to an exact HF commit (reproducible bundle). "
-             "Defaults to the runtime-pinned revision for the known e5-small repo, "
+             "Defaults to the runtime-pinned revision for a shipped ONNX repo, "
              "so what you stage matches what the engine would fetch; a different "
              "repo pins nothing unless given.")
     args = ap.parse_args()
 
     # Reproducibility: pin the online resolve to the SAME revision the runtime
-    # embedder uses (embed.E5_SMALL_ONNX_REVISION), so a staged bundle can't
-    # silently differ from a runtime download.
+    # embedder uses, so a staged bundle can't silently differ from a runtime
+    # download.
     revision = args.revision
     if revision is None:
         try:
-            from brain.embed import E5_SMALL_ONNX_REPO, E5_SMALL_ONNX_REVISION
-            if args.repo == E5_SMALL_ONNX_REPO:
-                revision = E5_SMALL_ONNX_REVISION
+            from brain.embed import (
+                BGE_M3_ONNX_REPO,
+                BGE_M3_ONNX_REVISION,
+                E5_SMALL_ONNX_REPO,
+                E5_SMALL_ONNX_REVISION,
+            )
+            revisions = {
+                BGE_M3_ONNX_REPO: BGE_M3_ONNX_REVISION,
+                E5_SMALL_ONNX_REPO: E5_SMALL_ONNX_REVISION,
+            }
+            revision = revisions.get(args.repo)
         except Exception:  # noqa: BLE001 — staging must not hard-depend on the engine import
             revision = None
 
@@ -54,6 +62,17 @@ def main() -> int:
         if os.path.isdir(cache_repo):
             snap = os.path.join(cache_repo, "snapshots")
             if os.path.isdir(snap):
+                if revision:
+                    src = os.path.join(snap, revision)
+                    if os.path.isdir(src):
+                        print(f"pinned revision {revision}")
+                        return _stage(src, args.out, args.patterns)
+                    print(
+                        f"ERROR: pinned revision {revision!r} for {args.repo!r} "
+                        f"not found in cache {args.cache!r}",
+                        file=sys.stderr,
+                    )
+                    return 2
                 revs = sorted(os.listdir(snap))
                 if revs:
                     src = os.path.join(snap, revs[-1])

@@ -26,15 +26,15 @@ import os
 
 hiddenimports = collect_submodules("brain")
 
-# DIST-02: bundle the e5-small ONNX model INLINE so the frozen binary is
+# DIST-02: bundle the bge-m3-int8 ONNX model INLINE so the frozen binary is
 # offline-first (no HF download at run time). Staged by build_windows.ps1.
 MODEL_BUNDLE = os.environ.get(
     "BRAIN_MODEL_BUNDLE",
-    os.path.abspath(os.path.join(SPECPATH, "..", "model_bundle", "e5-small")),
+    os.path.abspath(os.path.join(SPECPATH, "..", "model_bundle", "bge-m3-int8")),
 )
 datas = []
 if os.path.isdir(MODEL_BUNDLE):
-    datas.append((MODEL_BUNDLE, "e5-small"))
+    datas.append((MODEL_BUNDLE, "bge-m3-int8"))
 
 a = Analysis(
     ["../brain_entry.py"],            # package-aware entry shim (NOT cli.py directly)

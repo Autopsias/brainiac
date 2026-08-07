@@ -1,11 +1,19 @@
 """Reranker ADAPTER INTERFACE + a real cross-encoder + an identity fallback (RET-02).
 
-A reranker is an OPTIONAL precision booster: after the fused hybrid_search
+A reranker is a precision booster: after the fused hybrid_search
 (``brain.index.BrainIndex.hybrid_search``) produces a coarse top-N, a
 cross-encoder re-scores each (query, passage) pair jointly and re-orders only
-the top 10-20 candidates. It is strictly skippable — every retrieval path runs
-correctly with reranking switched OFF, and degrades to the identity reranker
-(order preserved) whenever the model runtime is unavailable.
+the top candidates (default window 20, ceiling 50). It is strictly skippable — every retrieval path runs
+correctly with reranking switched OFF (``--no-rerank`` / ``BRAIN_RERANK_DISABLED=1``),
+and degrades to the identity reranker (order preserved) whenever the model
+runtime is unavailable OR a call exceeds its timeout budget (see
+``rerank_timeout_seconds`` below).
+
+BR-03 (owner ruling 2026-08-04): the CLI ships rerank ON by default at
+``search``/``hybrid-search``. A second owner ruling the same day set the
+default candidate window to **20** (ceiling still 50) — see
+``RERANK_TOP_DEFAULT`` below, plus ``eval/FOLLOWUPS.md`` #4 (the ranking
+measurement) and #6 (the latency measurement that moved the window).
 
 Design of record: **Alibaba-NLP/gte-multilingual-reranker-base** (Apache-2.0,
 multilingual, ~int8/ONNX). Like the Arctic embedder it is run locally over ONNX
@@ -21,8 +29,10 @@ Two implementations satisfy the ``Reranker`` protocol:
                        available, network-free; the guaranteed fallback and the
                        "rerank skipped" path.
 
-Because rerank is bounded to the top 10-20 (``RERANK_TOP_DEFAULT``), its latency
-is comparable to today's single rerank step regardless of corpus size.
+Because rerank is bounded to a small window (``RERANK_TOP_DEFAULT``, 20), its
+latency is comparable to today's single rerank step regardless of corpus size.
+The bound is what makes that true: cost is strongly super-linear in the window
+on real note bodies (eval/FOLLOWUPS.md #6), not merely proportional.
 """
 from __future__ import annotations
 
@@ -66,12 +76,55 @@ def _ort_providers() -> list[str]:
 # transcript chunks) and never enter a top-20 rerank window. A wide-candidate
 # cross-encoder pass (top 100–200) is the standard agentic "retrieve broad →
 # rerank" recovery for exactly that case, so the ceiling is env-overridable via
-# BRAIN_RERANK_MAX (default 20 keeps the conservative latency default). The
-# cross-encoder re-scores the full note body, giving brain a whole-note signal
-# at rerank time — the incumbent's structural advantage, recovered post-hoc.
-RERANK_TOP_DEFAULT = 15
+# BRAIN_RERANK_MAX. The cross-encoder re-scores the full note body, giving
+# brain a whole-note signal at rerank time — the incumbent's structural
+# advantage, recovered post-hoc.
+#
+# BR-03 (owner ruling 2026-08-04) raised the ceiling 20 -> 50 AND moved the
+# default window to 50 with it. The CEILING stands. The DEFAULT was moved back
+# to 20 the same day, by a second owner ruling, once the latency the first one
+# rested on turned out to be wrong:
+#
+#   BR-03 chose 50 over 20 on "essentially the same clean latency, p50 5.6s vs
+#   5.5s". That 5.6s/8.8s pair is, to the tenth of a second, the WINDOW-20 row
+#   -- a window-20 sample labelled as window 50. The committed arms actually
+#   measure window 50 at p50 68.0s / p95 188.4s, with 55 of 65 golden queries
+#   (85%) exceeding the 30s caller timeout and therefore returning the BARE
+#   pre-rerank ordering after a 30-second wait. Reproduced clean on two idle
+#   machines (window 20: 8.2s / 11.9s; window 50: 74.6s / 28.1s), so contention
+#   is not the explanation -- cost is strongly SUPER-linear in the window, and
+#   the "the 50-candidate ONNX batch amortizes almost as well" premise is false
+#   on this corpus. Full evidence: eval/FOLLOWUPS.md #6.
+#
+# Owner ruling 2026-08-04 (second): default window 20. It is the latency
+# actually accepted (~5.5s p50 / 8.2s p95, zero timeouts), it reranks EVERY
+# query instead of timing out on most of them, and quality you receive beats
+# quality that expires. Window 50's better paper numbers (mrr@10 0.499 vs
+# 0.411, hit@1 0.439 vs 0.349, recall@20 0.542 vs 0.423 -- see
+# eval/FOLLOWUPS.md #4, still the correct RANKING analysis) are only reachable
+# if a search is allowed to take a minute or more.
+#
+# This is a change of DEFAULT, not of capability: the ceiling stays 50, so
+# BRAIN_RERANK_TOP / BRAIN_RERANK_MAX still opt into the wide-candidate pass
+# deliberately, exactly as before.
+RERANK_TOP_DEFAULT = 20
+
+
+def rerank_enabled(requested: bool | None = None) -> bool:
+    """Resolve the production rerank default and its global kill switch.
+
+    ``None`` means the caller did not make a per-request choice: reranking is
+    enabled unless ``$BRAIN_RERANK_DISABLED`` says otherwise.  An explicit
+    boolean always wins.  Keeping this outside the CLI prevents another
+    production surface (notably MCP) from silently falling back to bare
+    retrieval while the CLI follows BR-03's quality-first default.
+    """
+    if requested is not None:
+        return requested
+    raw = os.environ.get("BRAIN_RERANK_DISABLED", "").strip().lower()
+    return raw not in {"1", "true", "yes", "on"}
 RERANK_TOP_MIN = 10
-RERANK_TOP_MAX = 20
+RERANK_TOP_MAX = 50
 
 # The model of record. The original design named gte-multilingual-reranker-base,
 # but that model is NOT in fastembed's TextCrossEncoder catalog (verified
@@ -344,6 +397,17 @@ class OnnxReranker:
                 except Exception:
                     pass
                 self._tok.enable_truncation(max_length=_rmax)
+                # Truncation alone leaves each passage's encoded length free to
+                # differ (the normal case for real, variously-sized note
+                # bodies), and encode_batch then returns a RAGGED list of ids
+                # per passage -- np.array(..., dtype=np.int64) below cannot
+                # build a rectangular array from that and raises ValueError,
+                # which the skippable contract downstream silently swallows as
+                # "model unavailable". Padding to the batch's longest sequence
+                # makes every row equal length; attention_mask still zeroes the
+                # pad positions out of self-attention, so the exact pad_id/
+                # pad_token (irrelevant to a multilingual vocab) doesn't matter.
+                self._tok.enable_padding()
             except RerankerUnavailable:
                 raise
             except Exception as exc:  # pragma: no cover - model unavailable offline
@@ -414,12 +478,44 @@ def get_reranker(prefer: str = "noop") -> Reranker:
 
 def clamp_rerank_top(n: int) -> int:
     """Clamp the rerank window to [RERANK_TOP_MIN, ceiling], where the ceiling is
-    RERANK_TOP_MAX (20) by default but raisable via ``BRAIN_RERANK_MAX`` for the
-    wide-candidate cross-encoder pass that recovers cross-lingually buried docs.
-    A bad/zero env value falls back to the conservative default."""
+    RERANK_TOP_MAX (50) by default but raisable via ``BRAIN_RERANK_MAX`` for a
+    still-wider candidate pass. A bad/zero env value falls back to the default."""
     try:
         hi = int(os.environ.get("BRAIN_RERANK_MAX", "") or RERANK_TOP_MAX)
     except ValueError:
         hi = RERANK_TOP_MAX
-    hi = max(RERANK_TOP_MAX, hi)  # never below the design floor of 20
+    hi = max(RERANK_TOP_MAX, hi)  # never below the design floor of 50
     return max(RERANK_TOP_MIN, min(hi, n))
+
+
+def rerank_timeout_seconds() -> float:
+    """Per-call wall-clock BUDGET FOR THE CALLER, not the compute (BR-03
+    circuit breaker). An ONNX forward pass cannot be interrupted mid-call, so
+    a caller that times out here has NOT stopped the reranker -- the worker
+    thread keeps running to completion in the background and its result is
+    simply discarded; only the CALLER's wait is bounded. See
+    ``BrainIndex._rerank_impl`` for where this is enforced (a persistent
+    single-worker executor + ``Future.result(timeout=...)`` -- no process
+    pool, the existing skippable contract already covers the discard).
+
+    Default: 30s, and unchanged by the 2026-08-04 window ruling -- the window
+    moving 50 -> 20 is exactly what makes 30s a safety valve again. At the
+    shipped default window (rerank_top=20) the 66-query golden set measures
+    p50 5.5s / p95 8.2s, worst case 10.5s, with ZERO of 65 queries past even
+    20s (eval/FOLLOWUPS.md #6). So 30s is ~5.4x the median and ~2.9x the
+    SLOWEST query measured: it catches genuine degradation -- CPU contention,
+    a stalled model, a pathological note -- rather than sitting on the routine
+    path. (It emphatically was NOT a safety valve at window 50, where 85% of
+    the same queries blew it and silently fell back to the bare ordering.
+    That is the defect the window ruling fixed, not this constant.) A
+    wide-candidate pass via ``BRAIN_RERANK_TOP``/``BRAIN_RERANK_MAX`` will
+    need this raised with it. Override via ``$BRAIN_RERANK_TIMEOUT_S``."""
+    raw = os.environ.get("BRAIN_RERANK_TIMEOUT_S")
+    if raw:
+        try:
+            v = float(raw)
+            if v > 0:
+                return v
+        except ValueError:
+            pass
+    return 30.0

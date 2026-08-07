@@ -17,6 +17,7 @@ import hashlib
 from typing import Any
 
 from . import frontmatter as fm
+from . import provenance as prov
 
 REQUIRED_KEYS: tuple[str, ...] = ("id", "type", "classification", "created")
 _CAPTURE_CLASSIFICATION_DEFAULT = "Internal"
@@ -43,6 +44,11 @@ def enforce(content: str, *, override: dict[str, Any] | None = None) -> str:
     - Always sets ``status: draft`` and ``provenance.trust: untrusted`` so the
       host drain treats it as untrusted input during ingest validation.
     - Preserves all other existing frontmatter keys.
+    - PRV-01: the email provenance keys (``provenance.sender``/``.sent``/
+      ``.conversation_id``/``.subject``) ride through as CLAIMS — sanitized and
+      secret-scrubbed, never dropped. ``provenance.verified`` is REMOVED here:
+      capture is the untrusted-authoring path, and only the host ingest
+      pipeline may assert verification from an archived original.
 
     The result is STILL UNTRUSTED from the host's perspective until drain-on-invoke
     signs it — the host promote step validates, signs, indexes, and updates status.
@@ -72,17 +78,22 @@ def enforce(content: str, *, override: dict[str, Any] | None = None) -> str:
         "provenance.trust": "untrusted",
     }
     # Preserve any other keys from the original frontmatter (non-clobbering).
+    # A caller-supplied `provenance.verified` is dropped, and every provenance
+    # CLAIM value is sanitized + secret-scrubbed on the way through (PRV-01).
     for k, v in meta.items():
+        if k == prov.VERIFIED_KEY:
+            continue
+        if k in prov.CLAIM_KEYS:
+            sanitized = prov.sanitize_value(v)
+            if sanitized is not None:
+                block[k] = sanitized
+            continue
         if k not in block:
             block[k] = v
 
     lines = ["---"]
     for k, v in block.items():
-        sv = str(v)
-        # Quote values containing YAML-special characters.
-        if any(c in sv for c in (":", "#", "[", "]", "{", "}", ",")):
-            sv = f'"{sv}"'
-        lines.append(f"{k}: {sv}")
+        lines.append(f"{k}: {fm.yaml_scalar(v)}")
     lines.append("---")
     lines.append("")
     lines.append(body.lstrip("\n"))

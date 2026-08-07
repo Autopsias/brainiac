@@ -99,6 +99,22 @@ def _sent_date_iso(raw: str) -> Optional[str]:
         return None
 
 
+def _conversation_id(msg: "email.message.Message") -> Optional[str]:
+    """The THREAD's identity, not this message's: the root of the References
+    chain when there is one (every reply in a thread then agrees), else the
+    In-Reply-To parent, else this message's own Message-ID (a thread of one)."""
+    refs = _decode_header(msg.get("References"))
+    if refs:
+        first = refs.split()
+        if first:
+            return strip_control_chars(first[0])
+    parent = _decode_header(msg.get("In-Reply-To")).split()
+    if parent:
+        return strip_control_chars(parent[0])
+    mid = _decode_header(msg.get("Message-ID"))
+    return strip_control_chars(mid) if mid else None
+
+
 def _extract_body(msg: "email.message.Message") -> tuple[str, list[str]]:
     warnings: list[str] = []
     text_part = html_part = None
@@ -222,7 +238,19 @@ class EmailHandler(Handler):
         reason = density_gate(body_md)
         if reason:
             return ExtractResult.quarantine(reason, warnings=warnings)
+        # PRV-02: provenance parsed from the ORIGINAL bytes by the host. This
+        # is the one source the pipeline may stamp `provenance.verified: true`
+        # from — a VM-authored manifest claim never reaches this dict.
+        conversation = _conversation_id(msg)
+        prov = {
+            "sender": from_addrs[0] if from_addrs else None,
+            "sent": sent_iso or sent_raw or None,
+            "conversation_id": conversation,
+            "subject": subject or None,
+        }
         return ExtractResult(
             markdown=body_md, warnings=warnings,
-            metadata={"nested": nested, "attachment_count": len(attach_meta), "subject": subject},
+            metadata={"nested": nested, "attachment_count": len(attach_meta),
+                      "subject": subject,
+                      "provenance": {k: v for k, v in prov.items() if v}},
         )

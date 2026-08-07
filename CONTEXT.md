@@ -95,3 +95,21 @@ that ran and failed (`consecutive_failures`). A liveness escalation flags branch
 stopped running *at all*, keyed on `last_attempt` age. Only the latter can detect the mode
 that went unnoticed for 32 nights: when the process never runs, no handler fires, no
 counter increments, and a failure count stays at zero forever.
+
+## Capture provenance & ingestion learning
+
+**`provenance.*` keys** — flat dotted frontmatter keys, written and read as literal
+strings (`provenance.trust` at `capture.py:72`, `core.py:61`, `maintenance.py:1736`).
+There is **no `provenance:` mapping**: nesting these keys breaks the drain's
+untrusted-input detection (it looks up the literal dotted string) and the validator's
+allowlist. New provenance facts (sender, sent date, conversation id, subject) are added
+as **sibling flat dotted keys**, never as a nested block. This distinction caused a real
+plan-design error on 2026-07-30 (a session premised on "extend the mapping").
+
+**Pattern vs category** — two independent graduation keys in the auto-capture gate.
+*Pattern* is the existing opaque per-extraction-pattern string (`pattern_stats`,
+`autocap-config.json` `patterns`); *category* is the owner-facing ingest taxonomy label
+from `overlay/cos/ingest.md`. The never-graduate sentinel set `_UNPATTERNED`
+(`cos.py:1461`) contains the string `"unclassified"` — an unknown/missing value on
+either key must map to **that existing sentinel**, not a new spelling ("uncategorized"
+is graduable, which is the bug).

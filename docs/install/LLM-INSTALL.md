@@ -19,7 +19,7 @@ you need — OS, shell, whether you're sandboxed, network, an existing install
 | Q1 | always (unless already told) | "Where should your brain live? Give me a folder — I'll use `<folder>/vault`. (Default: `~/brainiac-workspace`)" |
 | Q2 | the chosen vault folder already contains notes | "That folder already has notes. Index them as-is, or import them properly through the ingestion pipeline (signed, classified)? [index-as-is / import / fresh-folder]" |
 | Q3 | after verification passes | "Do you also use Claude Desktop's Cowork (the Linux-VM sandbox mode) and want this brain available there? [yes/no]" |
-| Q4 | after verification passes | "Semantic search needs a one-time ~465 MB model download. Download now, or later on first use? [now/later]" |
+| Q4 | after verification passes | "Semantic search needs a one-time ~563 MB model download. Download now, or later on first use? [now/later]" |
 
 Bundle Q3+Q4 into one message. Everything else: decide from detection and
 tell the human what you decided in one line each.
@@ -153,7 +153,7 @@ bundle: Settings → Extensions → add `dist/brainiac.mcpb` (read-only bridge).
 
 ## 7 · Ask Q3 + Q4 (one message), then finish
 
-- **Q4 = now:** `brain warmup` (downloads multilingual-e5-small, ~465 MB,
+- **Q4 = now:** `brain warmup` (downloads bge-m3-int8, ~563 MB,
   progress on stderr) then `brain sync` (re-embeds the index).
   `brain status` must show `embedder: ready`. **later:** say that the first
   semantic query triggers the same download automatically.

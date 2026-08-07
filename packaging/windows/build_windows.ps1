@@ -33,22 +33,22 @@ if ($RebuildBootloader) {
 }
 
 # Install the product with the CORPORATE minimal-dep set (DIST-01): direct-ONNX
-# e5-small, NO fastembed/PyTorch. The model is bundled inline (DIST-02).
+# bge-m3-int8, NO fastembed/PyTorch. The model is bundled inline (DIST-02).
 python -m pip install --quiet -e ".[corporate]"
 
 # pefile is required on Windows to stamp the PE version resource.
 python -m pip install --quiet pefile
 
-# DIST-02: stage the e5-small ONNX model inline so the frozen binary is
+# DIST-02: stage the bge-m3-int8 ONNX model inline so the frozen binary is
 # offline-first (no HF download at run time). Set BRAIN_SKIP_MODEL_BUNDLE=1
 # (CI / hash-embedder path) to skip staging.
 if ($env:BRAIN_SKIP_MODEL_BUNDLE -ne "1") {
-  python "$PSScriptRoot\stage_model.py" --repo Xenova/multilingual-e5-small `
-    --out "$Repo\packaging\model_bundle\e5-small" `
-    --patterns "onnx/model.onnx" "tokenizer.json" "tokenizer_config.json" "special_tokens_map.json" "config.json"
+  python "$PSScriptRoot\stage_model.py" --repo Xenova/bge-m3 `
+    --out "$Repo\packaging\model_bundle\bge-m3-int8" `
+    --patterns "onnx/model_int8.onnx" "tokenizer.json" "tokenizer_config.json" "special_tokens_map.json" "config.json"
 }
 
-$env:BRAIN_MODEL_BUNDLE = "$Repo\packaging\model_bundle\e5-small"
+$env:BRAIN_MODEL_BUNDLE = "$Repo\packaging\model_bundle\bge-m3-int8"
 pyinstaller --clean --noconfirm `
   --distpath "$Repo\dist" --workpath "$Repo\build" `
   "$PSScriptRoot\brain-windows.spec"

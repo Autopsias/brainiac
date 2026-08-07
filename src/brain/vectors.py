@@ -47,7 +47,16 @@ def cosine(a: Sequence[float], b: Sequence[float]) -> float:
     nb = math.sqrt(sum(y * y for y in b))
     if na == 0.0 or nb == 0.0:
         return 0.0
-    return dot / (na * nb)
+    # `float(...)` is what makes the `-> float` annotation TRUE. The shipping
+    # embedder returns `numpy.float32` components, so this arithmetic yields a
+    # `numpy.float32` — which compares fine but is NOT JSON-serializable. That
+    # cost the version-link lane every run on the deployed engine (`TypeError:
+    # Object of type float32 is not JSON serializable`, measured 2026-07-31),
+    # and the suite never saw it because every fixture pins
+    # `BRAIN_EMBEDDER=hash`, whose vectors are plain Python floats. Converting
+    # HERE fixes it for every caller at once — `index.near_dup` (line ~3203)
+    # rounds this score into a dict and carries the same latent failure.
+    return float(dot / (na * nb))
 
 
 @runtime_checkable

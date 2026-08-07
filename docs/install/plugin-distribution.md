@@ -41,7 +41,7 @@ A typed store, written only through one helper (shipped in the repo, called by t
       "target": "host",                             // "host" | "cowork-vm"
       "host": "my-mac.local",                   // hostname at registration
       "arch": "arm64",
-      "model_dir": "~/.brainiac/models/arctic-embed",
+      "model_dir": "/tmp/bge-m3-int8",
       "staged_at": "2026-07-04T10:00:00Z",
       "last_refreshed": "2026-07-04T10:00:00Z"
     }

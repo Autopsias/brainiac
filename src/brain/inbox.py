@@ -100,14 +100,25 @@ def open_questions(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def record_answer(
     entries: list[dict[str, Any]], key: str, answer: str, *, answered: str,
+    answered_at: str | None = None,
 ) -> tuple[list[dict[str, Any]], bool]:
-    """Mark the open question ``key`` answered. Returns ``(entries, matched)``."""
+    """Mark the open question ``key`` answered. Returns ``(entries, matched)``.
+
+    ``answered`` stays the human-facing DATE. ``answered_at`` is the durable
+    full timestamp of the human act — consumers judge answer TIMELINESS on it
+    (HARDENED:codex-7), never on when they happen to run, so an answer given
+    inside a deadline is not lost because the consumer fired after it."""
+    import datetime as _dt
+
+    stamp = answered_at or _dt.datetime.now(_dt.timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ")
     matched = False
     for e in entries:
         if e.get("key") == key and e.get("status", "open") == "open":
             e["status"] = "answered"
             e["answer"] = answer
             e["answered"] = answered
+            e["answered_at"] = stamp
             matched = True
     return entries, matched
 

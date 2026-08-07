@@ -73,6 +73,35 @@ Principle / BLUF, not any one person's voice):
    `voice/` file names its own list: "delve", "foster", "multifaceted",
    "plays a crucial role", symmetric N/N bullet pairs, Title Case Headers,
    5+ em-dashes in one paragraph, "Warm regards," as a default close.
+9. Named slop patterns — flag and fix these sentence shapes wherever they
+   appear (generic craft, not owner identity; adapted from petergyang's
+   MIT-licensed no-ai-slop rules):
+   - Binary contrast / negative listing — "It's not X. It's Y.", "Not A.
+     Not B. C." → state the point directly.
+   - Faux-insight setup — "what nobody tells you", "the part everyone
+     misses" → cut the setup, keep the claim.
+   - Colon reveal — "The best part: it learns." → plain sentence; colons
+     are for lists, labels, and quotes.
+   - Trailing "-ing" analysis — "…, highlighting/underscoring/showcasing
+     X" → replace with the concrete consequence, or cut.
+   - Importance puffery — "a testament to", "marks a pivotal moment" →
+     state the fact; the reader judges whether it matters.
+   - Weasel attribution — "experts agree", "studies show" → name the
+     source or cut the claim; ask the owner, never invent one.
+   - Synonym cycling — rotating agent/assistant/tool for variety → repeat
+     the clear word.
+   - Fake-strong verbs — "serves as a centralized hub for" → prefer plain
+     "is"/"has" or the concrete verb.
+   - Rhetorical setups — "What if I told you…", "Plot twist:",
+     self-answered Q&A pairs → drop them and make the point.
+   - Stacked mic-drop fragments — "That's it. That's the whole thing."
+     (occasional short sentences for rhythm are fine; the theatrical
+     stack is the tell).
+   - Fake-profound kicker — a closing aphorism or metaphor → delete it
+     (never rewrite it into a better metaphor); end on the last concrete
+     point or next action.
+   - Summary-recap ending — a final paragraph restating the piece → end
+     on the last concrete point, takeaway, or next action.
 
 ## §2 — Voice DNA (100% overlay-sourced — only applies once `overlay/voice/` exists)
 

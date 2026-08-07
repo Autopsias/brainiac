@@ -3,7 +3,7 @@
 > **S12 update (2026-06-30):** the authoritative distribution-channel decision
 > is now `docs/operations/s12-channel-decision.md` (DIST-00: `.intunewin` +
 > Win32 app, NOT MSIX; verified 2026 facts on SmartScreen/CA-rotation/WDAC).
-> The minimal-dep build (DIST-01: direct-ONNX e5-small, no fastembed) + the
+> The minimal-dep build (DIST-01: direct-ONNX bge-m3-int8, no fastembed) + the
 > signing custody (DIST-03) + the clean-machine validation runbook (DIST-04)
 > live alongside. This S07 runbook remains the operational Windows procedure;
 > the S12 docs are the decisions of record.

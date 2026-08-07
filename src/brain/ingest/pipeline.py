@@ -327,6 +327,8 @@ def _yaml_dq_escape(s: str) -> str:
 
 
 def _build_frontmatter(meta: dict[str, Any], body: str) -> str:
+    from .. import frontmatter as _fm
+
     lines = ["---"]
     for k, v in meta.items():
         if isinstance(v, bool):
@@ -342,7 +344,13 @@ def _build_frontmatter(meta: dict[str, Any], body: str) -> str:
             # transcript.py's caller-supplied `origin`/`language` without
             # requiring each new caller to remember to pre-sanitize.
             v = H.strip_control_chars(v)
-            if ":" in v or "#" in v or '"' in v or "\\" in v:
+            if k.startswith("provenance."):
+                # PRV-02: a subject / sender display name is free text from an
+                # untrusted source — always emit it as an escaped quoted
+                # scalar rather than guessing which characters happen to be
+                # YAML-safe today.
+                lines.append(f"{k}: {_fm.yaml_scalar(v)}")
+            elif ":" in v or "#" in v or '"' in v or "\\" in v:
                 # C7: previously wrapped in double quotes WITHOUT escaping an
                 # embedded `"` — a value carrying one (e.g. origin embedding a
                 # hostile original filename) baked malformed YAML into a signed,
@@ -408,6 +416,8 @@ def run_ingest(core: Any, *, dry_run: bool = False) -> dict[str, Any]:
     # lists the inbox root, so this is defense-in-depth, not load-bearing).
     candidates = [p for p in candidates if p.name not in reserved]
 
+    from .. import cos as COS
+
     if dry_run:
         for link in symlinks:
             report["skipped"].append({"file": link.name, "reason": "symlink_rejected"})
@@ -421,19 +431,21 @@ def run_ingest(core: Any, *, dry_run: bool = False) -> dict[str, Any]:
                     {"file": path.name, "reason": f"missing_dependency:{handler.dependency_name}"}
                 )
                 continue
-            # C6: the stat()-based size gate was only applied on the
-            # non-dry-run path — dry-run called handler.extract() directly,
-            # and a handler like TextHandler does an unconditional
-            # read_bytes(), so a pathological multi-GB drop got fully loaded
-            # into memory even for a mere preview. Gate BEFORE extract here too.
+            # C6: the size gate was only applied on the non-dry-run path —
+            # dry-run called handler.extract() directly, and a handler like
+            # TextHandler does an unconditional read_bytes(), so a pathological
+            # multi-GB drop got fully loaded into memory even for a mere
+            # preview. Same ONE no-follow, capped read as the real path (the
+            # stat-then-read pair it replaces re-resolved the name twice).
             try:
-                size = path.stat().st_size
-            except OSError:
-                size = 0
-            if size > MAX_INGEST_BYTES:
+                preview = COS.read_nofollow(path, max_bytes=MAX_INGEST_BYTES)
+            except COS.ApprovedTooLarge:
                 report["quarantined"].append({"file": path.name, "reason": "file_too_large"})
                 continue
-            result = handler.extract(path)
+            except COS.ApprovedRefused:
+                report["skipped"].append({"file": path.name, "reason": "unreadable"})
+                continue
+            result = _extract_verified(handler, preview, path.suffix, vault)
             if result.ok:
                 report["processed"].append({"file": path.name, "would_write": True})
             else:
@@ -442,6 +454,33 @@ def run_ingest(core: Any, *, dry_run: bool = False) -> dict[str, Any]:
 
     manifest = _load_manifest(vault)
     today = _dt.date.today().isoformat()
+    anchor_pubkey: Any = None      # INT-04, resolved lazily ONCE per drain
+    # INT-04 round 2, the fail-CLOSED arm. "No anchor" legitimately means
+    # "ordinary inbox drop" — unless this host RELEASED the file as an accepted
+    # attachment, in which case it means the anchor was LOST (30-day GC, a
+    # repointed $BRAIN_INDEX_DIR, a deleted index dir) and ingesting it as an
+    # ordinary drop is the `Internal` downgrade the whole lane exists to
+    # prevent. Records whose sha is already in the manifest are spent (their
+    # file was ingested), so a later unrelated drop reusing the name is NOT
+    # refused. Legacy pre-INT-04 claims (`<vault>/.brain/ingest-provenance.json`,
+    # deleted below) count the same way: the file was accepted by an engine that
+    # left no anchor, so it is refused and re-accepted, never silently ingested
+    # unanchored. Deliberately NOT read as provenance — an unsigned mount file
+    # that is "also checked" is still a forgeable channel.
+    try:
+        released_shas = _released_without_anchor(vault, manifest)
+    except COS.ReleaseRecordsUnreadable as exc:
+        # The evidence that arms the fail-closed refusal is unreadable, so this
+        # drain cannot tell a released attachment from an ordinary drop. Ingest
+        # NOTHING this run and say why: a VM can trigger this (the records are
+        # on the mount), and a loud, recoverable halt is the correct trade
+        # against silently signing released material back down to `Internal`.
+        COS.log_defect(vault, "attachment-release-records-unreadable",
+                       f"{exc} — no file ingested this run")
+        report["skipped"].extend(
+            {"file": p.name, "reason": f"systemic_error:{type(exc).__name__}: {exc}"}
+            for p in candidates)
+        return report
 
     # Quarantine rejected symlinks by moving the LINK itself (os.rename never
     # follows it), so a hostile inbox symlink is neither ingested nor left to
@@ -460,26 +499,86 @@ def run_ingest(core: Any, *, dry_run: bool = False) -> dict[str, Any]:
             report["skipped"].append({"file": path.name, "reason": "claimed_elsewhere"})
             continue
 
-        # Size gate BEFORE any read_bytes() of the claimed file, so a
-        # pathological multi-GB drop never loads fully into memory before
-        # rejection — checked here (ahead of the content-key read below) so
-        # the gate still runs first even though _content_key now reads the
-        # file too.
-        try:
-            size = claimed.stat().st_size
-        except OSError:
-            size = 0
-        if size > MAX_INGEST_BYTES:
-            reason = "file_too_large"
-            _quarantine(claimed, quarantine_dir, reason,
-                        [f"{size} bytes exceeds ingest cap {MAX_INGEST_BYTES}"])
-            report["quarantined"].append({"file": claimed.name, "reason": reason})
-            continue
-
+        # INT-04 round 3 (HIGH): ONE no-follow open of the claimed entry, and
+        # every decision — regular-file, size cap, hash, extraction, archival —
+        # made about THAT descriptor's bytes. The symlink screen runs over the
+        # INBOX before `_claim`, so the `stat()` + `read_bytes()` pair this
+        # replaces re-resolved the name twice AFTER the rename: a symlink
+        # swapped into `_processing/` in that window made an ordinary inbox
+        # drop a signed copy of any host-readable file. The cap is enforced
+        # while reading the descriptor, so a pathological multi-GB drop still
+        # never loads fully into memory before rejection.
         # E5: key the per-file retry counter on the CONTENT hash, not the
         # (possibly claim-collision-renamed / retry-renamed) filename.
-        original_bytes = claimed.read_bytes()
+        try:
+            original_bytes = COS.read_nofollow(claimed, max_bytes=MAX_INGEST_BYTES)
+        except COS.ApprovedTooLarge as exc:
+            reason = "file_too_large"
+            _quarantine(claimed, quarantine_dir, reason,
+                        [f"{exc} (ingest cap {MAX_INGEST_BYTES})"])
+            report["quarantined"].append({"file": claimed.name, "reason": reason})
+            continue
+        except COS.ApprovedRefused as exc:
+            # A symlink, a device/fifo, or an unreadable entry — none of which
+            # was here when the inbox scan screened it. The LINK is quarantined
+            # (os.rename never follows it); its target is never opened.
+            reason = "irregular_entry"
+            _quarantine(claimed, quarantine_dir, reason, [str(exc)])
+            report["quarantined"].append({"file": claimed.name, "reason": reason})
+            continue
         original_sha = _sha256_bytes(original_bytes)
+
+        # INT-04: an owner-ACCEPTED attachment arrives here carrying a
+        # host-signed anchor (held off the mount) that names this destination
+        # and the bytes the owner accepted. It is the LAST check before these
+        # bytes are signed into the vault, so it is made against the buffer
+        # that is about to be signed — never against a re-read of the path.
+        # An unanchored file is an ordinary drop and is handled exactly as
+        # before; an anchored one that does not match is quarantined LOUDLY
+        # and never signed. The anchor also carries the owner's claimed
+        # provenance (PRV-02), which used to travel in a plain JSON store on
+        # the same mount as the payload — one write substituted both.
+        try:
+            if anchor_pubkey is None and COS.attachment_anchor_exists(
+                    vault, path, original_sha):
+                # Resolved ONCE per drain, like the note lane: resolution can
+                # shell out to the OS keystore, and a per-candidate keychain
+                # hit is both slow and a different failure surface per file.
+                anchor_pubkey = COS.approved_verify_key(vault)
+            anchor = COS.verify_attachment_bytes(vault, path, original_bytes,
+                                                 pubkey=anchor_pubkey)
+        except COS.ApprovedKeyUnavailable as exc:
+            # Anchored, but this host cannot verify right now (locked keychain,
+            # wrong scheduler user, missing `cryptography`). A key outage must
+            # never read as tampering — and must never sign on a guess.
+            if claimed.exists():
+                _move(claimed, _unique_dest(inbox, claimed.name))
+            report["skipped"].append({
+                "file": path.name,
+                "reason": f"systemic_error:{type(exc).__name__}: {exc}",
+            })
+            break
+        except COS.ApprovedRefused as exc:
+            reason = "approved_anchor_mismatch"
+            _quarantine(claimed, quarantine_dir, reason, [str(exc)])
+            COS.log_defect(vault, "attachment-anchor-mismatch",
+                           f"{path.name}: {exc}")
+            report["quarantined"].append({"file": path.name, "reason": reason})
+            continue
+        if anchor is None and original_sha in released_shas:
+            reason = "approved_anchor_missing"
+            _quarantine(claimed, quarantine_dir, reason, [
+                "a release record names these exact bytes as an owner-accepted "
+                "attachment, but no acceptance anchor covers them any more — "
+                "ingesting them now would drop them to `Internal`. Re-accept "
+                "the attachment (the payload is intact in the quarantine dir)."])
+            COS.log_defect(vault, "attachment-anchor-missing",
+                           f"{path.name}: a release record names these bytes "
+                           f"and no anchor covers them (anchor store lost or "
+                           f"GC'd) — NOT ingested")
+            report["quarantined"].append({"file": path.name, "reason": reason})
+            continue
+        claimed_prov = (anchor or {}).get("claim") or None
 
         try:
             _process_claimed(
@@ -487,7 +586,7 @@ def run_ingest(core: Any, *, dry_run: bool = False) -> dict[str, Any]:
                 original_sha=original_sha, core=core, manifest=manifest,
                 vault=vault, today=today, quarantine_dir=quarantine_dir,
                 duplicate_dir=duplicate_dir, processing_dir=processing_dir,
-                report=report,
+                report=report, prov=claimed_prov,
             )
         except Exception as exc:
             if _is_systemic_error(exc):
@@ -542,8 +641,116 @@ def run_ingest(core: Any, *, dry_run: bool = False) -> dict[str, Any]:
             if original_sha in failures:
                 failures.pop(original_sha, None)
                 _save_failures(vault, failures)
+            if anchor is not None:
+                # Signed and committed: the acceptance is spent. Leaving the
+                # anchor armed would refuse an unrelated later drop that
+                # happened to reuse the name.
+                COS.clear_attachment_anchor(vault, anchor.get("dest") or path,
+                                            original_sha)
 
     return report
+
+
+#: The pre-INT-04 claimed-provenance store. It lived on the mount beside the
+#: payload it described, which is why it is gone: one write substituted both.
+#: An attachment accepted by that engine and still in the inbox at upgrade time
+#: has an entry here and NO anchor, so the entry is read once — as evidence
+#: that the file was accepted, never as provenance — and the file is refused
+#: until it is re-accepted. Then the file is deleted; nothing reads it again.
+_LEGACY_CLAIM_STORE = "ingest-provenance.json"
+
+
+def _released_without_anchor(vault: Path, manifest: dict[str, str]) -> set[str]:
+    """Content shas of attachments this host released into the inbox and has NOT
+    yet ingested — see the call site in ``run_ingest``.
+
+    Keyed on the CONTENT SHA alone (round 3). It used to also match on the bare
+    destination NAME, which made the net steerable in the other direction: a
+    record naming ``invoice.pdf`` refused the owner's own ordinary drop of a
+    same-named file for the whole 30-day GC window, under a defect that told
+    him the host had released it. The sha names the released bytes exactly, so
+    the name adds false refusals and no protection.
+
+    Raises rather than returning a short set: this is the evidence that ARMS a
+    fail-closed refusal, it lives on the mount, and swallowing a read failure
+    turned "the records are gone" into "there are none" — the fail-open the
+    net exists to close, re-entering through its own evidence store."""
+    from .. import config
+    from .. import cos as COS
+
+    shas = {rec["sha256"] for rec in COS.attachment_release_records(vault)
+            if rec["sha256"] and rec["sha256"] not in manifest}
+    legacy = config.brain_runtime_dir(vault) / _LEGACY_CLAIM_STORE
+    if legacy.is_file():
+        try:
+            data = json.loads(legacy.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise COS.ReleaseRecordsUnreadable(
+                f"{_LEGACY_CLAIM_STORE}: {type(exc).__name__}: {exc}") from None
+        if isinstance(data, dict):
+            shas.update(k for k in data if k not in manifest)
+        legacy.unlink(missing_ok=True)
+    return shas
+
+
+def _scratch_dir(vault: Path) -> Path:
+    """A scratch dir PROVEN outside every VM-visible root.
+
+    The whole point of `_extract_verified` is that a handler parses bytes the VM
+    cannot touch, so "the OS temp dir is off the mount" is a claim that has to
+    be checked rather than assumed (a `$TMPDIR` pointed into the workspace would
+    hand the substitution window straight back). Falls back to the host-private
+    app-data base, which is host-controlled by construction; if THAT resolves
+    onto the mount there is nowhere safe to parse and it raises."""
+    import tempfile
+
+    from .. import config
+
+    try:
+        return config.proven_off_mount(Path(tempfile.gettempdir()), vault,
+                                       what="ingest scratch dir")
+    except config.HostPathUnsafe:
+        d = config.proven_off_mount(config.host_private_base() / "ingest-scratch",
+                                    vault, what="ingest scratch dir (fallback)")
+        d.mkdir(parents=True, exist_ok=True)
+        config.secure_file_permissions(d, 0o700)
+        return d
+
+
+def _extract_verified(handler: Any, data: bytes, suffix: str, vault: Path) -> Any:
+    """Run ``handler.extract`` over the VERIFIED BUFFER, never over the mount.
+
+    INT-04 round 2, CRITICAL. The anchor check hashes ``original_bytes``, but
+    handlers take a PATH and every one of them re-opens it — ``TextHandler``
+    and the HTML/eml handlers with ``read_bytes()``, the docx/xlsx/pptx/zip/pdf
+    handlers by handing the path to a library. That path is
+    ``vault/inbox/_processing/<name>`` — on the Cowork mount. A VM that swapped
+    the file between the anchor check and the extract got ITS content into the
+    signed Markdown while the archive kept the approved bytes: the exact
+    substitution window INT-04 exists to close, on the path that matters most.
+    A symlink dropped at that name in the same window was equally readable.
+
+    The buffer is therefore materialised in a HOST-PRIVATE temp file (the OS
+    temp dir — outside the vault, outside the workspace, unreachable from the
+    VM) with the original suffix, so libraries that need a real path and
+    handlers that sniff the extension both keep working, and nothing a handler
+    opens can be substituted. One helper, one call per handler dispatch — a
+    per-handler signature change would have been eleven places to get right and
+    would still leave the library-needs-a-path handlers reading the mount.
+    """
+    import tempfile
+
+    fd, tmp = tempfile.mkstemp(suffix=suffix or "", prefix="brain-ingest-",
+                               dir=_scratch_dir(vault))
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        return handler.extract(Path(tmp))
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 def _existing_note_classification(vault: Path, existing_id: str) -> str | None:
@@ -571,6 +778,7 @@ def _process_claimed(
     vault: Path, today: str, quarantine_dir: Path, duplicate_dir: Path,
     processing_dir: Path, report: dict[str, Any],
     depth: int = 0, budget: dict[str, int] | None = None, parent: str | None = None,
+    prov: dict[str, Any] | None = None,
 ) -> None:
     """Process one already-claimed file (in ``inbox/_processing/``) to
     completion: quarantine, duplicate, or promote. On success the claimed
@@ -588,7 +796,14 @@ def _process_claimed(
     ``_process_nested`` below) — all three are their defaults for every
     TOP-LEVEL inbox candidate. ``parent`` (the container's own note id) is
     stamped onto every report entry this call produces, so a nested item's
-    provenance is traceable in the ingest report."""
+    provenance is traceable in the ingest report.
+
+    ``prov`` (PRV-02) is the email provenance for this item: the host-verified
+    block a parent .eml was parsed into (inherited by its attachments), or the
+    VM-CLAIMED block a swept file carried in its manifest line. A handler that
+    parses provenance out of the original bytes ITSELF always wins over an
+    inherited or claimed one — that is the only path to
+    ``provenance.verified``."""
     if budget is None:
         budget = {"bytes": 0, "items": 0}
 
@@ -622,7 +837,8 @@ def _process_claimed(
         _append("quarantined", {"file": claimed.name, "reason": reason})
         return
 
-    result = handler.extract(claimed)
+    result = _extract_verified(handler, original_bytes, claimed.suffix,
+                              vault)
     if not result.ok:
         _quarantine(claimed, quarantine_dir, result.quarantine_reason, result.warnings)
         _append("quarantined", {"file": claimed.name, "reason": result.quarantine_reason})
@@ -650,7 +866,14 @@ def _process_claimed(
     linked_markdown, autolink_added = autolink.apply_autolinks(
         result.markdown, title=orig_name, vault=vault,
     )
-    meta = _meta(slug, today, archive_path, vault, hashlib.sha256(linked_markdown.encode("utf-8")).hexdigest())
+    # Host-parsed provenance (the handler read it out of the original bytes)
+    # outranks anything inherited or VM-claimed, and is the ONLY thing that
+    # earns `verified`.
+    parsed_prov = result.metadata.get("provenance") if isinstance(result.metadata, dict) else None
+    if isinstance(parsed_prov, dict) and parsed_prov:
+        prov = {**parsed_prov, "verified": True}
+    meta = _meta(slug, today, archive_path, vault,
+                 hashlib.sha256(linked_markdown.encode("utf-8")).hexdigest(), prov)
     body_sha = meta["sha256"]
     classification = meta["classification"]
     note_rel = f"raw/{slug}.md"
@@ -711,7 +934,7 @@ def _process_claimed(
             nested, parent_slug=slug, depth=depth, budget=budget,
             core=core, manifest=manifest, vault=vault, today=today,
             quarantine_dir=quarantine_dir, duplicate_dir=duplicate_dir,
-            processing_dir=processing_dir, report=report,
+            processing_dir=processing_dir, report=report, prov=prov,
         )
 
 
@@ -719,7 +942,7 @@ def _process_nested(
     nested: list[dict], *, parent_slug: str, depth: int, budget: dict[str, int],
     core: Any, manifest: dict[str, str], vault: Path, today: str,
     quarantine_dir: Path, duplicate_dir: Path, processing_dir: Path,
-    report: dict[str, Any],
+    report: dict[str, Any], prov: dict[str, Any] | None = None,
 ) -> None:
     """Re-enter the dispatcher for each nested (name, data) item a handler
     returned (zip member / eml attachment). Bounded by ``MAX_NESTED_DEPTH``
@@ -769,7 +992,7 @@ def _process_nested(
                 core=core, manifest=manifest, vault=vault, today=today,
                 quarantine_dir=quarantine_dir, duplicate_dir=duplicate_dir,
                 processing_dir=processing_dir, report=report,
-                depth=depth + 1, budget=budget, parent=parent_slug,
+                depth=depth + 1, budget=budget, parent=parent_slug, prov=prov,
             )
         except Exception as exc:
             if _is_systemic_error(exc):
@@ -834,7 +1057,10 @@ def _derive_document_date(name: str, today: str) -> str | None:
     return None
 
 
-def _meta(slug: str, today: str, archive_path: Path, vault: Path, body_sha: str) -> dict[str, Any]:
+def _meta(slug: str, today: str, archive_path: Path, vault: Path, body_sha: str,
+          prov: dict[str, Any] | None = None) -> dict[str, Any]:
+    from .. import provenance as P
+
     meta: dict[str, Any] = {
         "id": slug,
         "type": "source",
@@ -850,6 +1076,34 @@ def _meta(slug: str, today: str, archive_path: Path, vault: Path, body_sha: str)
     doc_date = _derive_document_date(archive_path.name, today)
     if doc_date and doc_date != today:
         meta["document_date"] = doc_date
+    # PRV-02 + HARDENED:codex-2 — EMAIL-DERIVED material is not ordinary
+    # Internal ingest: it is unlabelled third-party content, and defaulting it
+    # to Internal is a DOWNGRADE path that surfaces it to the VM egress cap.
+    # It defaults to MNPI, and only an explicit overlay keyword mapping (or a
+    # higher proposed tier / category floor) moves it. See
+    # brain.provenance.email_classification.
+    fields = P.claim_from(prov)
+    # INT-04: an owner-accepted ATTACHMENT is email-derived BY CONSTRUCTION —
+    # the sweep only ever produces one from a mail manifest — and the lane
+    # stamp saying so is host-derived and signed into the acceptance anchor.
+    # Keying this on the four provenance FIELDS alone made it a downgrade
+    # path: strip `provenance` from the sidecar (on the mount) before the
+    # accept and the same bytes ingested at `Internal` instead of MNPI.
+    if fields or str((prov or {}).get("lane") or "") == "attachment":
+        # R1 (2026-07-30 review, CRITICAL): only text the HOST parsed out of
+        # the archived original (`verified`, set by the .eml handler alone)
+        # may drive the LOWERING keyword match. A swept attachment's provenance
+        # is a VM CLAIM — it rides into the frontmatter but resolves MNPI.
+        host_verified = bool((prov or {}).get("verified"))
+        tier, _why = P.email_classification(
+            vault,
+            proposed=(prov or {}).get("classification"),
+            category=(prov or {}).get("category"),
+            verified_texts=((fields.get("subject", ""), fields.get("sender", ""),
+                             archive_path.name) if host_verified else ()),
+        )
+        meta["classification"] = tier
+        meta.update(P.frontmatter_keys(fields, verified=host_verified))
     return meta
 
 

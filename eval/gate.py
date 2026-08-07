@@ -65,6 +65,61 @@ DEFAULT_BOUND = -0.02   # -2pp
 DEFAULT_B = 10000
 
 
+def _pct_drift(a: float | None, b: float | None) -> float | None:
+    if a is None or b is None:
+        return None
+    if a == 0:
+        return None if b == 0 else float("inf")
+    return abs(b - a) / a
+
+
+def corpus_drift_check(sc: dict, allow_drift: bool) -> int | None:
+    """BL-01 (BR-06): refuse an undecidable comparison across corpus generations —
+    a score from one vault size/shape is never silently gated against another.
+    Returns an exit code (always 2, the existing ERROR/undecidable class) to abort
+    early, or None to proceed."""
+    cur_fp = ((sc.get("current_system") or {}).get("index_state") or {}).get("fingerprint")
+    new_fp = ((sc.get("new_system") or {}).get("index_state") or {}).get("fingerprint")
+
+    if cur_fp is None and new_fp is None:
+        print("WARNING: neither scorecard side carries a corpus fingerprint "
+              "(pre-BL-01 artifact) — gating without corpus-drift protection.")
+        return None
+    if cur_fp is None or new_fp is None:
+        print("ERROR: mixed fingerprint pair — one side carries a corpus fingerprint, "
+              "the other does not. Undecidable in the same way as a size mismatch; "
+              "re-capture both sides with the same harness version.")
+        return 2
+
+    cur_gs, new_gs = cur_fp.get("golden_set_sha256"), new_fp.get("golden_set_sha256")
+    if cur_gs and new_gs and cur_gs != new_gs:
+        print(f"ERROR: golden_set_sha256 mismatch (current={cur_gs[:12]}... vs "
+              f"new={new_gs[:12]}...) — the two runs were scored against different "
+              f"query sets. --allow-drift does not bypass this.")
+        return 2
+
+    chunks_drift = _pct_drift(cur_fp.get("chunks"), new_fp.get("chunks"))
+    if chunks_drift is not None and chunks_drift > 0.10:
+        print(f"ERROR: chunk-count drift {chunks_drift:.1%} exceeds 10% "
+              f"(current={cur_fp.get('chunks')}, new={new_fp.get('chunks')}) — a "
+              f"re-chunked corpus at the same note count is not comparable. "
+              f"--allow-drift does not bypass this.")
+        return 2
+
+    notes_drift = _pct_drift(cur_fp.get("notes"), new_fp.get("notes"))
+    if notes_drift is not None and notes_drift > 0.10:
+        if allow_drift:
+            print(f"WARNING: note-count drift {notes_drift:.1%} exceeds 10% "
+                  f"(current={cur_fp.get('notes')}, new={new_fp.get('notes')}) — "
+                  f"proceeding anyway (--allow-drift).")
+        else:
+            print(f"ERROR: note-count drift {notes_drift:.1%} exceeds 10% "
+                  f"(current={cur_fp.get('notes')}, new={new_fp.get('notes')}) — "
+                  f"undecidable comparison. Pass --allow-drift to proceed anyway.")
+            return 2
+    return None
+
+
 def _paired_deltas(pq: dict) -> tuple[list[str], np.ndarray]:
     cur, new = pq.get("current", {}), pq.get("new", {})
     ids = sorted(set(cur) & set(new))
@@ -150,9 +205,18 @@ def main() -> int:
     ap.add_argument("--target-power", type=float, default=0.8,
                     help="EF-04 (H20): target power for the pre-registered minimum-detectable-"
                          "effect report (informational — does not affect PASS/FAIL).")
+    ap.add_argument("--allow-drift", action="store_true",
+                    help="BL-01 (BR-06): bypass the corpus NOTE-COUNT drift refusal ONLY. "
+                         "Never bypasses chunk-count drift, a golden_set_sha256 mismatch, "
+                         "or a mixed fingerprinted/unfingerprinted pair — those always exit 2.")
     args = ap.parse_args()
 
     sc = json.loads(Path(args.scorecard).read_text(encoding="utf-8"))
+
+    drift_exit = corpus_drift_check(sc, args.allow_drift)
+    if drift_exit is not None:
+        return drift_exit
+
     pq_key = f"per_query_{args.metric}"
     if pq_key not in sc:
         print(f"ERROR: scorecard has no '{pq_key}'. Re-run harness_direct to emit it.")

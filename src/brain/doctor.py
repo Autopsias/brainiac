@@ -614,6 +614,65 @@ def check_desktop_plugin_store(
 
 
 # --------------------------------------------------------------------------
+# Surface 11b — which chief-of-staff bundle EXECUTES tonight (DEP-02).
+#
+# "Which version is deployed" was a question only a human could answer, by
+# knowing which of two surfaces to look at. Getting that wrong produced two
+# false freeze alarms (runs 37 and 55): a pin ahead of the deployment silently
+# freezes every gated phase, and a readback pointed at the non-executing
+# surface manufactures the opposite remediation with confidence. This makes the
+# answer one command, from the SAME lane-resolution the run manifest stamps
+# with (`brain.cos_deploy`) — never a second copy of the rules.
+# --------------------------------------------------------------------------
+
+def check_cos_deployed_skill() -> dict:
+    """Lane-aware: what the next COS nightly will load, or why we can't tell.
+
+    NEVER gates the exit code. Most installs have no chief-of-staff deployment
+    at all, and an unresolved lane there is the correct, healthy answer — a
+    gating status would turn every such host falsely DEGRADED (the 2026-07-20
+    field failure this project has already paid for once).
+    """
+    surface = "COS deployed skill (executing lane)"
+    try:
+        from . import cos_deploy
+    except Exception as exc:  # pragma: no cover - import guard only
+        return _row(surface, NOT_DETECTABLE, f"cos_deploy unavailable ({exc})")
+    try:
+        info = cos_deploy.deployed_skill()
+    except cos_deploy.LaneUnresolved as exc:
+        return _row(surface, NOT_DETECTABLE, str(exc))
+    except Exception as exc:
+        return _row(surface, NOT_DETECTABLE, f"readback failed ({exc})")
+
+    version = info.get("bundle_version") or "(unversioned)"
+    ext = info.get("extraction_rules_version") or "-"
+    detail = (f"{info['lane']} → {version} (extraction rules {ext}), "
+              f"sha {info['sha256'][:12]} — {info['path']}")
+    # The other surface is REPORTED, never counted. Naming it here is the whole
+    # point: it is what someone reads by mistake.
+    try:
+        store = cos_deploy.from_skill_store()
+        codex = cos_deploy.from_codex_automations()
+        support = cos_deploy.cowork_support(store, codex)
+    except Exception:
+        support = {"supported": True, "store_versions": []}
+    remediation = None
+    if not support["supported"]:
+        held = ", ".join(support.get("store_versions") or []) or "(no bundle)"
+        detail += (f"; the Claude Desktop skill store holds {held} and is "
+                   "RETIRED as a version source — it does not execute")
+        remediation = ("if you want that surface usable again, upload the "
+                       "current bundle in Claude Desktop (owner-only click); "
+                       "until then readbacks of it return UNSUPPORTED")
+    return _row(surface, CURRENT, detail, remediation=remediation,
+                raw={"lane": info["lane"], "version": info.get("bundle_version"),
+                     "extraction_rules_version": info.get("extraction_rules_version"),
+                     "sha256": info["sha256"], "path": info["path"],
+                     "cowork_surface_supported": support["supported"]})
+
+
+# --------------------------------------------------------------------------
 # Surface 8 — staged Cowork workspaces (tools/workspace_registry.py entries)
 # --------------------------------------------------------------------------
 
@@ -1143,6 +1202,44 @@ def check_vm_maintain_heartbeat(vault: Path) -> dict:
     return _row(surface, CURRENT, f"{len(state)} branch(es) tracked, none stale/repeatedly-failing")
 
 
+def check_audit_content_drift(vault: Path) -> dict:
+    """INT-02: notes whose bytes changed after the audit chain signed them.
+
+    HOST surface, and deliberately key-free: ``content_drift`` only re-hashes
+    files against hashes already in the log, so this row costs one vault read
+    and never resolves the signing key (``verify-audit`` does that separately).
+
+    Only UNEXPLAINED drift gates. Drift a human triaged into
+    ``.brain/audit-drift-dispositions.json`` is reported in the detail and
+    subtracted from the verdict — pinned to the bytes it was ruled on, so the
+    same file changing again comes straight back as unexplained."""
+    from . import audit as _audit
+    from . import config
+
+    surface = "Audit content drift (signed notes vs disk)"
+    log_path = config.index_dir(vault) / "audit_chain.jsonl"
+    if not log_path.is_file():
+        return _row(surface, NOT_DETECTABLE, f"no audit chain at {log_path}")
+    try:
+        summary = _audit.drift_summary(Path(vault), _audit.AuditChain(log_path))
+    except Exception as exc:  # noqa: BLE001 — an unreadable chain is a surface gap, not a crash
+        return _row(surface, UNKNOWN, f"could not check drift: {type(exc).__name__}: {exc}",
+                    remediation="brain verify-audit --check-content --json")
+    total, unexplained = summary["total"], summary["unexplained"]
+    explained = total - unexplained
+    if unexplained:
+        return _row(
+            surface, STALE,
+            f"{unexplained} signed note(s) changed after signing with no recorded "
+            f"disposition ({explained} triaged, {total} total)",
+            remediation="brain verify-audit --check-content --json  # then triage into "
+                        ".brain/audit-drift-dispositions.json or restore the note",
+            raw={"total": total, "unexplained": unexplained})
+    detail = ("no drift — every signed note matches its signed bytes" if not total
+              else f"0 unexplained ({explained} triaged historical drift record(s))")
+    return _row(surface, CURRENT, detail, raw={"total": total, "unexplained": 0})
+
+
 def check_query_capture(vault: Path) -> dict:
     """Host-only ADR-0008 S04 ledger liveness without reading query content.
 
@@ -1435,10 +1532,15 @@ def run_doctor(
             capture_vaults.append(resolved)
     for capture_vault in capture_vaults:
         rows.append(check_query_capture(capture_vault))
+        # INT-02: same host-only, per-vault surface — a signature-only
+        # verify-audit "ok" must not be the only thing a health readout sees.
+        rows.append(check_audit_content_drift(capture_vault))
 
     if registry_fetch is not None:
         rows.append(check_pypi_registry_drift(repo_root, ssot, fetch=registry_fetch))
     rows.append(check_mcpb_desktop_collision(app_support_dir))
+    # DEP-02: which COS bundle runs tonight, from the executing lane.
+    rows.append(check_cos_deployed_skill())
     # Surface 11 — always LAST, always manual-required, never gates.
     rows.extend(check_desktop_plugin_store(app_support_dir, ssot))
 

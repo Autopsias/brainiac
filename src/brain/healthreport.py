@@ -296,6 +296,28 @@ def _graph_hygiene_html(state: dict[str, Any], trend: list[dict[str, Any]], vaul
     return "".join(lines)
 
 
+def _curated_coverage_html(state: dict[str, Any]) -> str | None:
+    """CUR-01: how much of the vault carries REAL supersession frontmatter,
+    and — reported separately, never added to it — how many notes are sitting
+    in a propose-only version-link family the owner has not answered yet.
+    ``None`` when this vault has never run the fold."""
+    daily = state.get("daily")
+    cov = daily.get("curated_coverage") if isinstance(daily, dict) else None
+    if not isinstance(cov, dict):
+        return None
+    notes = cov.get("notes", 0)
+    linked = cov.get("linked", 0)
+    pct = f"{float(cov.get('ratio', 0.0)) * 100:.1f}%"
+    return (
+        f'<p><strong>{brief_mod._esc(pct)}</strong> curated coverage '
+        f'&middot; {brief_mod._esc(linked)} of {brief_mod._esc(notes)} note(s) '
+        f'carry supersession frontmatter</p>'
+        f'<p class="meta">{brief_mod._esc(cov.get("family_members_unresolved", 0))} '
+        f'note(s) in {brief_mod._esc(cov.get("proposals_awaiting_owner", 0))} '
+        f'proposed-but-unresolved version-link family/families — counted '
+        f'separately, never as covered.</p>')
+
+
 def _trend_table_html(trend: list[dict[str, Any]]) -> str:
     if not trend:
         return '<p class="empty">no history yet</p>'
@@ -340,6 +362,9 @@ def render_health_report_html(data: dict[str, Any]) -> str:
         data.get("state") or {}, data.get("trend") or [], Path(data.get("vault") or "."))
     if graph_hygiene_html is not None:
         sections.append(brief_mod._section("Graph hygiene", graph_hygiene_html))
+    coverage_html = _curated_coverage_html(data.get("state") or {})
+    if coverage_html is not None:
+        sections.append(brief_mod._section("Currency coverage", coverage_html))
     sections.append(brief_mod._section("Trend (recent runs)", _trend_table_html(data.get("trend") or [])))
 
     footer = (

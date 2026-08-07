@@ -46,6 +46,7 @@ def build_brief(
     snapshot_age_hours: float | None,
     max_recent: int = 5,
     maintain_state: dict[str, Any] | None = None,
+    cos_liveness: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the morning brief data structure.
 
@@ -97,6 +98,10 @@ def build_brief(
         "tripwire": tripwire,
         "drain_note": drain_note,
         "maintain_alert": maintain_alert,
+        # LIVENESS (not failure): an unanswered COS ingestion batch breaks
+        # nothing, it just silently re-kills the ingestion funnel behind the
+        # one-open-batch backpressure. It has to be VISIBLE somewhere daily.
+        "cos_liveness": cos_liveness or None,
     }
 
 
@@ -114,6 +119,28 @@ def format_brief(brief: dict[str, Any]) -> str:
         lines.append(f"  ✓ {dn}")
     elif brief.get("pending_before_drain", 0) == 0:
         lines.append("  ✓ no pending captures")
+
+    live = brief.get("cos_liveness") or {}
+    if live.get("alert"):
+        lines.append(f"  ⚠ {live['alert_text']}")
+    elif live.get("pending_behind_backpressure"):
+        lines.append(f"  {live['pending_behind_backpressure']} COS candidate(s) "
+                     f"waiting behind an open batch")
+    # B8: pattern auto-capture is deliberately suspended until the producer
+    # stamps category + extraction_rules_version (S07). Say what it costs, so
+    # the funnel going quiet is never mistaken for the funnel being idle.
+    if live.get("unstamped_batched"):
+        lines.append(f"  {live['unstamped_batched']} COS candidate(s) sent to the "
+                     f"owner batch for a missing category/ruleset stamp "
+                     f"(pattern auto-capture suspended until the producer stamps them)")
+    # INS-01: a nightly run the host validator scored INVALID/INCONCLUSIVE
+    # against its own artifacts. Same loudness as the two lines above.
+    if live.get("run_validity_text"):
+        lines.append(f"  ⚠ {live['run_validity_text']}")
+    # STA-01: candidates parked because the host cannot attribute them to a
+    # VALID run. Loud here for the same reason the line above is.
+    if live.get("quarantine_text"):
+        lines.append(f"  ⚠ {live['quarantine_text']}")
 
     snap = brief.get("snapshot_age")
     if snap:

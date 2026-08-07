@@ -85,7 +85,7 @@ brain search "welcome" --json
 - Your **notes** live in the vault (`~/brain/vault` above — plain Markdown, the
   source of truth). The **index** is a rebuildable cache in your app-data folder
   (`brain rebuild` recreates it any time).
-- Semantic search downloads its model (multilingual-e5-small, ~465 MB, one-time)
+- Semantic search downloads its model (bge-m3-int8, ~563 MB, one-time)
   on first use — or `brain warmup` up front.
 - Pointing `brain init` at a folder that **already has notes**? It won't reindex
   a non-empty vault — run `brain rebuild` once afterward or the first search is empty.

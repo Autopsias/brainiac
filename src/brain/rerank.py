@@ -306,6 +306,44 @@ OPEN_DEFAULT_RERANKER_ONNX = "onnx/model.onnx"
 OPEN_DEFAULT_RERANKER_MODEL_ID = "Alibaba-NLP/gte-multilingual-reranker-base"
 
 
+def _reranker_weights_cached(hf_repo: str, onnx_file: str) -> bool:
+    """Are this reranker's weights already in the local HF cache?
+
+    Offline-only probe: `local_files_only=True` never opens a socket, so this
+    is safe to call on every search. Any failure (not cached, no hub package,
+    unreadable cache) answers False — the caller degrades to identity.
+    """
+    try:
+        from huggingface_hub import snapshot_download
+
+        snapshot_download(
+            hf_repo,
+            allow_patterns=[onnx_file, onnx_file + "_data", "tokenizer*", "*.json"],
+            local_files_only=True,
+        )
+        return True
+    except Exception:
+        return False
+
+
+def warm_reranker_weights() -> dict[str, object]:
+    """Download the reranker weights — the ONE place allowed to use the network
+    for them. Called by `brain warmup` beside the embedder warm, so a user who
+    warms up still gets reranking; a user who does not gets the unreranked
+    order instead of a surprise download mid-query."""
+    repo = OPEN_DEFAULT_RERANKER_REPO
+    onnx_file = OPEN_DEFAULT_RERANKER_ONNX
+    if _reranker_weights_cached(repo, onnx_file):
+        return {"repo": repo, "downloaded": False, "cached": True}
+    from huggingface_hub import snapshot_download
+
+    snapshot_download(
+        repo,
+        allow_patterns=[onnx_file, onnx_file + "_data", "tokenizer*", "*.json"],
+    )
+    return {"repo": repo, "downloaded": True, "cached": True}
+
+
 class OnnxReranker:
     """Any HuggingFace ONNX cross-encoder reranker loaded DIRECTLY via ONNX
     Runtime — no fastembed-catalog dependency, no PyTorch at runtime.
@@ -334,14 +372,34 @@ class OnnxReranker:
         self._in_names: list[str] | None = None
 
     @staticmethod
-    def available() -> bool:
+    def available(*, hf_repo: str | None = None, onnx_file: str | None = None) -> bool:
+        """Usable RIGHT NOW, WITHOUT the network.
+
+        This used to answer "are onnxruntime and tokenizers importable?", which
+        made `get_reranker("auto")` hand back a reranker whose `_ensure()` then
+        went and DOWNLOADED the cross-encoder mid-search. Once BR-03 made
+        reranking default-on, that turned every first `brain search` on a cold
+        machine into a model download — on a path that has no business touching
+        the network, including `BRAIN_EMBEDDER=hash` (which asks for no model at
+        all) and the Cowork VM (which has no HF egress). Measured 2026-08-07:
+        the distribution-matrix "offline retrieval smoke (no network)" job
+        downloaded 6 files on both macOS and Windows.
+
+        So availability now also requires the weights to be in the local cache.
+        Absent, this returns False, `get_reranker("auto")` returns NoopReranker,
+        and RET-02's skippable contract degrades retrieval to the unreranked
+        order cleanly — no exception, no per-query warning, no network. The one
+        sanctioned way to fetch the weights is `brain warmup`.
+        """
         try:
             import onnxruntime  # noqa: F401
             import tokenizers  # noqa: F401
-
-            return True
         except Exception:
             return False
+        if os.environ.get("BRAIN_RERANKER_ONNX_DIR"):
+            return True
+        return _reranker_weights_cached(hf_repo or OPEN_DEFAULT_RERANKER_REPO,
+                                       onnx_file or OPEN_DEFAULT_RERANKER_ONNX)
 
     def _ensure(self):
         if self._sess is None:
@@ -361,6 +419,12 @@ class OnnxReranker:
                 else:
                     from huggingface_hub import snapshot_download
 
+                    # local_files_only: belt AND braces. `available()` already
+                    # refuses to hand out this reranker uncached, but a caller
+                    # can construct OnnxReranker directly (tests, an explicit
+                    # BRAIN_RERANKER_PREFER=onnx), and a search must never open
+                    # a socket. Uncached => raises => RET-02 degrades to the
+                    # unreranked order. `brain warmup` is the download path.
                     base = snapshot_download(
                         self._hf_repo,
                         allow_patterns=[
@@ -369,6 +433,7 @@ class OnnxReranker:
                             "tokenizer*",
                             "*.json",
                         ],
+                        local_files_only=True,
                     )
                     onnx_path = os.path.join(base, self._onnx_file)
                 so = ort.SessionOptions()
@@ -471,8 +536,13 @@ def get_reranker(prefer: str = "noop") -> Reranker:
     # replaces the CC-BY-NC jina-reranker-v2). Preferred over the fastembed path.
     if OnnxReranker.available():
         return OnnxReranker()
-    if GteReranker.available():
-        return GteReranker()
+    # NOT GteReranker here any more (0.20.1). Its `available()` answers "is
+    # fastembed importable?", so auto used to fall through to it whenever the
+    # open ONNX weights were uncached — and it would then download from
+    # fastembed's own catalogue mid-search, which is the very thing this
+    # release stops. It is also the CC-BY-NC jina path, which auto should
+    # never reach for on its own. Still selectable deliberately, with
+    # `BRAIN_RERANKER_PREFER=gte` or `get_reranker("gte")`.
     return NoopReranker()
 
 

@@ -7,6 +7,34 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.1] — 2026-08-07
+### Fixed
+- **A search no longer downloads the reranker.** `0.20.0` made reranking
+  default-on (BR-03), and `OnnxReranker.available()` answered only "are
+  onnxruntime and tokenizers importable?" — so `get_reranker("auto")` returned
+  a reranker whose loader then fetched the cross-encoder from the HuggingFace
+  Hub *during the query*. `BRAIN_EMBEDDER=hash`, which asks for no model at
+  all, did not prevent it, and the Cowork VM has no HF egress. Measured
+  2026-08-07: the distribution matrix's "offline retrieval smoke (no network)"
+  job downloaded 6 files on **both** macOS and Windows and failed.
+  Availability now means *usable offline* — it also requires the weights in the
+  local cache — and the loader passes `local_files_only=True`, so an uncached
+  machine degrades to the unreranked order through RET-02's existing skippable
+  contract instead of opening a socket. `auto` also stops falling through to
+  the legacy fastembed reranker, whose availability check is import-only and
+  which would download from its own catalogue (it is also the CC-BY-NC path;
+  still selectable deliberately with `BRAIN_RERANKER_PREFER=gte`).
+- **`brain warmup` now warms the reranker too**, since it is the one sanctioned
+  place those weights are fetched. Warming only the embedder would leave a user
+  permanently unreranked without ever saying why. A reranker that cannot be
+  fetched is reported in the result, never a failure of the embedder warm.
+- **The distribution-matrix smoke stops merging stderr into the JSON it
+  parses.** `2>&1` put the download's progress bar inside the payload, so the
+  step failed as `Expecting value: line 1 column 2` while the search had
+  actually succeeded — a signal naming the wrong culprit. stdout and stderr are
+  captured separately, stderr is printed as diagnostics, and the job now
+  asserts its own "no network" claim instead of assuming it.
+
 ## [0.20.0] — 2026-08-07
 ### Changed
 - **Minor bump, not a patch: the embedder swap below is BREAKING for any

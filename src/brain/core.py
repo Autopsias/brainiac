@@ -548,11 +548,29 @@ class BrainCore:
         t0 = time.monotonic()
         embedder.embed("warmup")  # triggers the real load/download if needed
         elapsed = time.monotonic() - t0
+        # The RERANKER too, since 0.20.1: reranking is default-on (BR-03), and
+        # a search is no longer allowed to download its weights mid-query — it
+        # degrades to the unreranked order instead. Warmup is now the one place
+        # those weights are fetched, so warming only the embedder would leave a
+        # user permanently unreranked without ever saying why.
+        from .rerank import warm_reranker_weights
+
+        rerank_info: dict[str, Any]
+        try:
+            progress_note("warmup: resolving the reranker...",
+                          json_mode=json_mode, verb="warmup")
+            rerank_info = dict(warm_reranker_weights())
+        except Exception as exc:
+            # Never fail the embedder warm because the optional precision
+            # booster could not be fetched — report it and move on.
+            rerank_info = {"downloaded": False, "cached": False,
+                           "error": f"{type(exc).__name__}: {exc}"}
         progress_note(f"warmup: ready in {elapsed:.1f}s", json_mode=json_mode, verb="warmup")
         return {
             "model_id": embedder.model_id,
             "already_cached": bool(was_cached),
             "elapsed_s": round(elapsed, 2),
+            "reranker": rerank_info,
         }
 
     def drafts_dir(self) -> Path:

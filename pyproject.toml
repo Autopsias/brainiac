@@ -101,7 +101,7 @@ quant-tools = ["onnx>=1.14"]
 # release pipeline's release-asset handshake gate, after it had already shipped).
 # Upgrade path: port the adapter off FastMCP (mcp.server.lowlevel, or the
 # separate `fastmcp` package) and lift the cap — a real migration, not a bump.
-mcp = ["mcp>=1.0,<2"]
+mcp = ["mcp>=1.0,<3"]
 # Timeout-bounded regex engine (mrab-regex) used by BrainIndex.grep's --regex
 # path (RET-04 hardening) as a ReDoS guard: regex.search(text, timeout=...)
 # genuinely bounds catastrophic backtracking, unlike stdlib `re`. Absent ->

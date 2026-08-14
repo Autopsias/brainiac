@@ -391,6 +391,23 @@ gates.
    (`invariants.link_coverage_exclusion`) and **counted separately** — "0
    unlinked" must never quietly mean "0 except the ones we skip".
 
+   **A vault's own output is not a source (ENF-06, 2026-08-14).** Audit
+   records, nightly logs, health alerts and eval runs re-ingested into `raw/`
+   arrive declaring their kind in their OWN leading frontmatter, which the
+   ingest wrapper then overwrites with `type: source` — after which nothing
+   tells them apart from a client document. One historical drop of that shape
+   put **264** of them into the reference vault, and the link-coverage metric
+   counted every one as a source waiting for a note to be written about it.
+   Both ends now read `invariants.OPERATIONAL_SOURCE_TYPES`: ingestion sets
+   such a file aside under `inbox/_operational/<type>/` as **skipped, never
+   quarantined** (nothing failed — it is simply not knowledge), and the metric
+   excludes it as `operational_artifact`, counted like every other exclusion.
+   The set is explicit and conservative: `report`, `review`, `analysis` and
+   `proposal` are NOT in it, because a human writes those about the business,
+   and neither are the Chief-of-Staff briefs — machine-written, but about the
+   business, so they stay reachable. `BRAIN_INGEST_ALLOW_OPERATIONAL=1` admits
+   one deliberately.
+
    **A duplicate is decided on CONTENT, never on a filename (ENF-03,
    2026-08-12).** `cross_tier_twins` compares one id shape and therefore
    reads 0 while renamed, re-extracted and re-versioned copies of the same

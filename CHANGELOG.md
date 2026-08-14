@@ -7,6 +7,28 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.10] — 2026-08-14
+### Fixed
+- **v0.20.9 was cut without running `tools/package_clients.py`, and two CI
+  gates caught it.** That script is the release step: it propagates the
+  `pyproject.toml` SSOT version into `packaging/npm/brainiac-install/package.json`
+  and `src/brain/_version.py` (ADR-0005 Ruling 1), and regenerates the
+  `src/brain/_assets/` mirrors from the repo-root originals (PYP-02). Bumping
+  the version by hand did the first half of one of those jobs and none of the
+  other.
+
+  Consequences, both caught before any artifact shipped:
+  - `npm-publish` refused the tag — *"tag v0.20.9 does not match package.json
+    0.20.8"*. Nothing was published to the registry; the guard did exactly
+    what its own post-mortem comment says it exists for.
+  - `Skill Mirror Sync` failed — the ENF-06 paragraph was written into
+    `src/brain/_assets/AGENTS.md`, which is a GENERATED mirror, instead of the
+    canonical repo-root `AGENTS.md`. The canonical file now carries it and the
+    mirror is regenerated from it.
+
+  No engine behaviour changes in this release. ENF-06 as shipped in 0.20.9 is
+  unaltered.
+
 ## [0.20.9] — 2026-08-14
 ### Fixed
 - **A vault's own output is not a source (ENF-06)** — audit records, nightly

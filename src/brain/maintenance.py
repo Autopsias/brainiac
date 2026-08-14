@@ -214,6 +214,12 @@ _STALE_CADENCE_MULTIPLIER = 2    # last_run older than this many cadences -> liv
 _CADENCE_DAYS = {
     "daily": 1, "health": 7, "integrity": 7, "graph_hygiene": 7, "digest": 7,
     "golden": 7, "graphify": 30,
+    # WAT-01: not in `_ALL_BRANCHES` — it runs inside the daily block rather
+    # than as its own date-gated branch — but it DOES write a state row, so
+    # naming its cadence here gives it ES-01 liveness escalation for free
+    # (last_run older than 2 cadences -> loud). That is the SECOND liveness
+    # gate; `invariants.liveness_finding` is the explicit, env-tunable one.
+    "corpus_invariants": 1,
 }
 
 
@@ -1641,6 +1647,33 @@ def _normalize_body_for_hash(body: str) -> str:
     return "\n".join(ln.rstrip() for ln in body.splitlines()).strip()
 
 
+def _body_bytes(body: str) -> int:
+    """The body's size in UTF-8 BYTES — the unit ``$BRAIN_FAMILY_MIN_BODY`` is
+    declared in and the unit this fold REPORTS. ``len(str)`` counts Unicode
+    scalars, so 400 CJK characters (1,200 bytes) read as 400 and were refused
+    below a 1,024-"byte" floor while 400 ASCII characters were the same number.
+    One semantics, at every site that consults the floor (ENF-01 round 2)."""
+    return len(body.encode("utf-8"))
+
+
+def _floor_bytes(body: str) -> int:
+    """The body's size AS THE DUPLICATE-IDENTITY TEST SEES IT — normalized
+    first, then measured in UTF-8 bytes.
+
+    The floor and the identity hash must measure the SAME string or the floor
+    is decorative. ``body_sha256`` hashes ``_normalize_body_for_hash(body)``,
+    which strips per-line trailing whitespace and surrounding blank lines; the
+    floor used to measure the raw bytes. So two copies of an 18-byte failed-OCR
+    stub padded with trailing spaces hashed identically AND measured 1,118
+    bytes each — above a 1,024-byte floor — and were auto-retired (reproduced,
+    adversarial review round 3, 2026-08-10). Whitespace padding is exactly what
+    failed OCR and PDF text extraction emit, so this was the live case, not a
+    contrived one.
+
+    Only whitespace is discounted: real content still counts every byte."""
+    return _body_bytes(_normalize_body_for_hash(body))
+
+
 def body_sha256(body: str) -> str:
     """sha256 of the BODY ONLY (post-frontmatter), normalized per
     ``_normalize_body_for_hash``. Frontmatter (ids, dates, classification)
@@ -1683,6 +1716,21 @@ def auto_dedup_tier1(core: Any) -> dict[str, Any]:
         list ``index.near_dup`` uses for its boilerplate caveat) — two
         generated periodic artifacts (``daily-*``, transcripts, ...) can be
         byte-identical by template design without being real duplicates;
+    (e0) BOTH bodies clear the ``$BRAIN_FAMILY_MIN_BODY`` floor (ENF-01,
+        2026-08-10). Byte-identity is only evidence of "same document" when
+        the bytes SAY something. A scanned image whose OCR extracted to the
+        122-byte ``[no text detected]`` stub is byte-identical to every other
+        such image, so this fold merged part 1 of a deck with part 2, and
+        nine distinct QR codes into one version family, on the reference
+        deployment. Same floor, same env var and same reasoning as the
+        RANKING-time family collapse in ``index.py`` (``FAMILY_MIN_BODY``,
+        ``_family_min_body``) — that guard already refuses to fold a family
+        on a sub-floor body, and the accessor is imported rather than
+        duplicated so the two sites can never drift apart. The floor is
+        checked FIRST because a sub-floor pair is not evidence of anything:
+        classifying it as a classification/trust mismatch would report a
+        judgment call where there is no candidate at all. The audited undo
+        for the links already written is ``core.unsupersede``.
     (e) their TRUST levels match (codex 2026-07-22): a note carrying
         ``status: draft`` or ``provenance.trust: untrusted`` (a drained VM/
         capture draft) must never automatically retire a trusted note —
@@ -1699,7 +1747,9 @@ def auto_dedup_tier1(core: Any) -> dict[str, Any]:
 
     Bounded to ``autodedup_max_per_run()`` retirements; anything past the cap
     is left untouched and counted in ``truncated`` for the caller to log."""
-    from .index import _boilerplate_patterns, _matches_boilerplate_pattern
+    from .core import SupersedeJournalUnreadable as _JournalUnreadable
+    from .core import SupersedeNotDurable as _NotDurable
+    from .index import _boilerplate_patterns, _family_min_body, _matches_boilerplate_pattern
 
     rows = core.index.conn.execute(
         "SELECT id, zone, type, classification, is_latest_version, superseded_by, "
@@ -1760,8 +1810,10 @@ def auto_dedup_tier1(core: Any) -> dict[str, Any]:
 
     boilerplate_patterns = _boilerplate_patterns()
     cap = autodedup_max_per_run()
+    floor = _family_min_body()
 
     retired: list[dict[str, str]] = []
+    skipped_short_body: list[dict[str, Any]] = []
     skipped_classification: list[dict[str, str]] = []
     skipped_recurring: list[dict[str, str]] = []
     skipped_trust: list[dict[str, str]] = []
@@ -1784,6 +1836,14 @@ def auto_dedup_tier1(core: Any) -> dict[str, Any]:
                     continue
                 if a["zone"] != b["zone"] or a["type"] != b["type"]:
                     continue  # out of scope — cross zone/type dedup, not tier-1
+                shortest = min(_floor_bytes(a["body"]), _floor_bytes(b["body"]))
+                if shortest < floor:
+                    # (e0) ENF-01: identical near-empty bodies are not evidence
+                    # of one document — they are evidence of one failed
+                    # extraction. Refuse before every judgment-shaped bucket.
+                    skipped_short_body.append(
+                        {"a": a["id"], "b": b["id"], "bytes": shortest, "floor": floor})
+                    continue
                 if a["classification"] != b["classification"]:
                     skipped_classification.append({"a": a["id"], "b": b["id"]})
                     continue
@@ -1805,6 +1865,13 @@ def auto_dedup_tier1(core: Any) -> dict[str, Any]:
                     core.supersede(
                         old["id"], canonical["id"],
                         reason="auto-dedup DDP-01 (sha256-identical, nightly self-organization)")
+                except (_JournalUnreadable, _NotDurable):
+                    # NOT one bad pair: an unparseable crash journal — or a
+                    # platform that cannot make one durable — refuses EVERY
+                    # supersede, so swallowing it here would report
+                    # `retired: []` ("nothing to merge") every night, forever.
+                    # Let it out; maintain records it instead of hiding it.
+                    raise
                 except Exception:  # noqa: BLE001 — one bad pair never aborts the fold
                     continue
                 retired.append({"old": old["id"], "new": canonical["id"]})
@@ -1812,11 +1879,13 @@ def auto_dedup_tier1(core: Any) -> dict[str, Any]:
 
     return {
         "retired": retired,
+        "skipped_short_body": skipped_short_body,
         "skipped_classification": skipped_classification,
         "skipped_recurring": skipped_recurring,
         "skipped_trust": skipped_trust,
         "truncated": truncated,
         "cap": cap,
+        "floor": floor,
     }
 
 
@@ -2344,6 +2413,21 @@ def collect_health_metrics(
     graph_hygiene = results.get("graph_hygiene") if isinstance(results.get("graph_hygiene"), dict) else {}
     autodedup = results.get("autodedup") if isinstance(results.get("autodedup"), dict) else {}
     kl_orphans = results.get("kl_orphans") if isinstance(results.get("kl_orphans"), dict) else {}
+    # WAT-01: the four corpus invariants + the fold's OWN liveness. The
+    # history record is a fixed dict literal, so a metric not named here
+    # never persists — every new invariant gets a key in this block.
+    from . import invariants as _inv
+
+    inv_metrics = results.get("corpus_invariants") if isinstance(
+        results.get("corpus_invariants"), dict) else {}
+    inv_values = _inv.metric_values(inv_metrics)
+    if inv_metrics:
+        inv_age: int | None = 0  # the fold ran THIS run
+    else:
+        try:
+            inv_age = _inv.invariants_age_days(core._load_maintain_state())
+        except Exception:  # noqa: BLE001 — an unreadable state file is a null point
+            inv_age = None
 
     return {
         "ts": ts or _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -2373,6 +2457,13 @@ def collect_health_metrics(
         # record from a run where it errored out entirely simply omits these
         # (None), same posture as the graph_hygiene fields above.
         "autodedup_retired": len(autodedup["retired"]) if "retired" in autodedup else None,
+        # ENF-01: the body-floor refusals. Present from the same run as the
+        # other autodedup keys so a floor that suddenly stops firing (or
+        # starts) is visible in the trend, not only in one run's report.
+        "autodedup_skipped_short_body": (
+            len(autodedup["skipped_short_body"])
+            if "skipped_short_body" in autodedup else None
+        ),
         "autodedup_skipped_classification": (
             len(autodedup["skipped_classification"])
             if "skipped_classification" in autodedup else None
@@ -2380,6 +2471,35 @@ def collect_health_metrics(
         "autodedup_skipped_recurring": (
             len(autodedup["skipped_recurring"]) if "skipped_recurring" in autodedup else None
         ),
+        # WAT-01 — the four corpus invariants (null on a run where the daily
+        # fold was not due/failed) plus `invariant_age_days`, the dead-man's
+        # switch metric: how long ago the fold last COMPLETED, present on
+        # EVERY record so a dead fold is visible in the trend itself.
+        "invariant_unlinked_sources": inv_values.get("unlinked_sources"),
+        "invariant_cross_tier_twins": inv_values.get("cross_tier_twins"),
+        # ENF-03: the CONTENT detector, both halves. The decided and the
+        # undecided count trend as separate series on purpose — a falling
+        # conflict count beside a rising candidate count is a detector losing
+        # its grip, and one merged number hides it.
+        "invariant_cross_tier_duplicates": inv_values.get("cross_tier_duplicates"),
+        "invariant_cross_tier_candidates": inv_values.get("cross_tier_candidates"),
+        # ENF-04 — the ingest guard. Two series, because they answer different
+        # questions: `unguarded` is the RATCHETED should-be-zero (the guard was
+        # supposed to run and couldn't), while `raises` is monotone activity —
+        # trended so a leg that stops firing is visible, never alerted on,
+        # because a min-ever floor over an append-only zone would fire on every
+        # firing of a working guard.
+        "invariant_unguarded_ingests": inv_values.get("unguarded_ingests"),
+        "invariant_ingest_guard_raises": (
+            (inv_metrics.get("unguarded_ingests") or {}).get("raised")
+            if isinstance(inv_metrics.get("unguarded_ingests"), dict) else None),
+        "invariant_subfloor_families": inv_values.get("subfloor_families"),
+        # Monthly-cadence (read from the reachability artifact, which is
+        # produced by a deliberate eval run) -> null on ~every record, the
+        # golden_score shape. MIRRORED into the never-rotated sparse sidecar
+        # below so it survives the 14-day history read window.
+        "invariant_unreachable_gold": inv_values.get("unreachable_gold"),
+        "invariant_age_days": inv_age,
     }
 
 
@@ -2515,7 +2635,11 @@ def append_health_record(
 # every hourly record once synthesis has run once — mirroring it would grow
 # the never-rotated sidecar unbounded (review finding [0]), and nothing
 # trend-compares it anyway (only ``golden_score`` has a sparse check).
-SPARSE_METRICS = ("golden_score",)
+# WAT-01 adds `invariant_unreachable_gold` for exactly the same reason: it is
+# read from a reachability artifact produced on a monthly-ish cadence, so it
+# is null on ~every hourly record and would fall out of the 14-day read
+# window between measurements.
+SPARSE_METRICS = ("golden_score", "invariant_unreachable_gold")
 
 
 def _append_sparse_metrics(sparse_path: Path, record: dict[str, Any]) -> None:
@@ -2847,6 +2971,19 @@ def degradation_findings(
         for b in esc["branches"]:
             text = f"maintain branch '{b['branch']}' escalated: {'; '.join(b['reasons'])}"
             pairs.append((f"branch-escalate:{b['branch']}", text))
+        # WAT-01 dead-man's switch, lane 3: a stale/missing corpus-invariants
+        # row and any recorded invariant regression become ordinary
+        # degradation findings, so they ride the existing notify-marker path
+        # that the SessionStart alerts hook already reads. This is deliberately
+        # keyed on the EXPECTED state row rather than on the rows that happen
+        # to be present — a fold that died cannot report its own death.
+        from . import invariants as _inv
+
+        live = _inv.liveness_finding(maintain_state, today)
+        if live:
+            pairs.append(live)
+        for r in _inv.state_regressions(maintain_state):
+            pairs.append((f"invariant:{r.get('metric')}", str(r.get("summary") or "")))
     return pairs
 
 

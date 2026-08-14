@@ -68,6 +68,14 @@ three honestly:
 1. **Is this still true?** Cross-check against the nearest existing note:
    ```bash
    brain --vault "$BRAIN_VAULT" search "<one-line gist>" --rerank --json
+
+> **Multilingual vaults — the variant contract (AGENTS.md §5 rule 3).** Before
+> the first vault search, read the derived census: `brain status --json` ->
+> `index.languages`. When `multilingual` is true, issue every search as the
+> question PLUS one `--variant "<the same question in that language>"` for each
+> other entry in `vault_languages` — you write the translation, the engine
+> fuses the result lists into one ranking. `multilingual: false`, one language,
+> or no census: a single query is correct — do not invent a variant.
    ```
    If a top hit looks like it covers the same ground, `brain get <id> --json`
    to read the full note and confirm before concluding contradiction or

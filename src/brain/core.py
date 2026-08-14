@@ -12,6 +12,9 @@ Ed25519 audit chain (CORE-03) and fails closed if no signing key resolves.
 """
 from __future__ import annotations
 
+import os
+import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +26,45 @@ from .audit import AuditChain, KeyUnavailable
 from .index import BrainIndex, Hit
 from .lock import WriterLockBusy, vault_writer_lock
 from .notes import note_from_text, safe_slug, sha256_text
+
+
+# -- RET-05 fan-out knobs (see BrainCore.search_multi) ----------------------
+# The OUTER pooling constant. NOT `index.RRF_K_FUSE` and NOT the inner
+# `RRF_K_EXACT` pin: the fan-out layer has never been measured (RET-11 closed
+# the inner single-query layer), so it keeps the value it has always pooled at
+# and s04 measures the alternatives as pre-registered arms.
+MULTI_RRF_K = 60
+# Variant cap. The SELECTION policy lives with the caller (s03's language
+# census supplies variants in descending prevalence); this only bounds how many
+# inner searches one call may fan out to, and the dropped tail is reported.
+MULTI_MAX_VARIANTS = 4
+# Correlated-vote guard band: "some variant ranked it this high" (rank-space
+# only — there is deliberately no score threshold anywhere in this guard).
+MULTI_GUARD_STRONG_RANK = 3
+
+
+def _env_switch(name: str, default: bool) -> bool:
+    """Kill-switch env contract, identical in shape to BRAIN_EXACT_LEG_ENABLED."""
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _env_positive_int(name: str, default: int) -> int:
+    """A positive int from the environment; anything else is loudly ignored."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value <= 0:
+        print(f"brain: ignoring {name}={raw!r} (want a positive integer); "
+              f"using {default}", file=sys.stderr)
+        return default
+    return value
 
 
 def _contained_in(target: Path, base: Path) -> bool:
@@ -43,6 +85,89 @@ def _contained_in(target: Path, base: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _fsync_dir_strict(d: Path) -> None:
+    """fsync a directory ENTRY and RAISE if it fails.
+
+    ``cos._fsync_dir`` swallows every ``OSError`` from both the open and the
+    fsync. That is the right call for a best-effort flush, and the wrong one
+    to build a durability DECISION on: ``supersede`` unlinks its crash journal
+    on the strength of "both notes are on disk", and a silently-failed fsync
+    means it isn't. One extra directory fsync is microseconds; a silent one is
+    a lost rollback record (adversarial review round 3, 2026-08-10)."""
+    if os.name == "nt":
+        return          # Windows has no directory descriptors to sync
+    dfd = os.open(d, getattr(os, "O_DIRECTORY", os.O_RDONLY))
+    try:
+        os.fsync(dfd)
+    finally:
+        os.close(dfd)
+
+
+def _write_atomic_durable(path: Path, data: bytes, *, mode: int) -> None:
+    """Replace ``path`` with ``data`` atomically and DURABLY, or raise.
+
+    Same shape as ``cos._write_atomic`` — unpredictable temp name,
+    ``O_CREAT|O_EXCL|O_NOFOLLOW`` (a pre-created symlink at the temp name is
+    how a predictable ``<target>.tmp`` gets an attacker's file overwritten),
+    regular-file check, short-write loop, ``fsync``, ``os.replace``, parent
+    fsync. It is a SEPARATE function on purpose, and the reason is layering,
+    not preference: a vault note write must not route through a
+    chief-of-staff helper. Pointing ``write_note`` at ``cos._write_atomic``
+    made every note write intercept a COS *test double*
+    (``test_cos_approved_queue.py`` monkeypatches that symbol to inject a
+    staging crash), so an unrelated COS test started crashing the drain. A
+    shared primitive whose substitutions are scoped to one subsystem is not
+    actually shared.
+
+    Unlike ``cos._fsync_dir``, the parent fsync RAISES on failure —
+    ``supersede`` unlinks its crash journal on the strength of "both notes are
+    on disk", and a silently-failed fsync means they are not."""
+    import secrets
+    import stat as _stat
+
+    tmp = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+    flags = (os.O_WRONLY | os.O_CREAT | os.O_EXCL
+             | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
+    fd = os.open(tmp, flags, 0o600)
+    closed = False
+    try:
+        if not _stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(f"refusing to write {tmp.name}: not a regular file")
+        view = memoryview(data)
+        while view:                       # os.write may write only part of it
+            n = os.write(fd, view)
+            if n <= 0:
+                raise OSError(f"write made no progress on {tmp.name} "
+                              f"({len(view)} bytes left)")
+            view = view[n:]
+        os.fsync(fd)
+        if mode != 0o600:
+            os.fchmod(fd, mode)           # on the FD — the name is never re-resolved
+        os.close(fd)
+        closed = True
+        os.replace(tmp, path)
+    except BaseException:
+        if not closed:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    _fsync_dir_strict(path.parent)
+
+
+def _write_note_durable(target: Path, content: str) -> None:
+    """Atomically replace ``target`` with ``content``, durably.
+
+    ``0o644``: a vault note is ordinary readable content, not host-private
+    state (the 0o600 default belongs to the COS queues and the crash journal)."""
+    _write_atomic_durable(target, content.encode("utf-8"), mode=0o644)
 
 
 def _stamp_draft_frontmatter(content: str, note_id: str, is_source: bool) -> str:
@@ -105,6 +230,71 @@ class SupersedePreconditionFailed(ValueError):
     against another (VER-02: an owner-accepted supersede proposal sits in the
     queue while the nightly folds keep running).
     """
+
+
+class SupersedeJournalUnreadable(RuntimeError):
+    """The crash journal for an unfinished ``supersede``/``unsupersede`` exists
+    but cannot be parsed, so the pre-transaction content of a half-written
+    version chain is not recoverable automatically.
+
+    Fail closed: the journal is PRESERVED and every supersession verb refuses
+    until a human repairs the two notes and removes it. Its own class because
+    the nightly dedup fold swallows a per-pair `Exception` and moves on, which
+    would turn a sticky, vault-wide refusal into a silent zero — the fold
+    re-raises this one instead of counting it as "nothing to merge".
+    """
+
+
+class SupersedeNotDurable(RuntimeError):
+    """This platform cannot prove the crash journal reached the disk, so the
+    supersession is refused before anything is signed.
+
+    The journal is the ONLY record of both notes' pre-transaction bytes, and
+    ``supersede`` writes two signed notes on the strength of it. Where the
+    write cannot be shown durable, the failure mode is a signed half-chain
+    with no rollback record — strictly worse than not superseding at all
+    (adversarial review round 4, 2026-08-10). Windows is the case that trips
+    it: no directory descriptor to fsync, and CPython's ``os.replace`` passes
+    ``MOVEFILE_REPLACE_EXISTING`` without ``MOVEFILE_WRITE_THROUGH``, so the
+    move is not guaranteed to reach disk before it returns. Refusing by name
+    is the fallback the review named; a durable Windows replace is a real fix
+    that needs a Windows host to test, and this refusal is what says so out
+    loud instead of pretending the guarantee holds.
+    """
+
+
+def _require_durable_replace(what: str) -> None:
+    """Raise :class:`SupersedeNotDurable` unless an atomic replace on this
+    platform can be PROVEN to have reached the disk."""
+    if os.name == "nt":
+        raise SupersedeNotDurable(
+            f"refusing to {what}: durability cannot be established on this "
+            f"platform (os.name={os.name!r}). Windows has no directory fsync "
+            f"and CPython's os.replace is not write-through, so a power loss "
+            f"can lose the crash journal that a signed half-chain would be "
+            f"rolled back from. Nothing was written.")
+
+
+def _mkdir_durable(d: Path) -> None:
+    """``mkdir(parents=True, exist_ok=True)``, with every directory entry it
+    actually CREATES fsynced into its own parent.
+
+    ``_write_atomic_durable`` fsyncs the file and the directory it lands in,
+    which is enough only when that directory already existed. On the FIRST
+    transaction after the journal store is created, the directory entry itself
+    is not durably anchored, so a power loss can take the whole journal with
+    it (adversarial review round 4). Fsyncing the ancestry costs microseconds
+    once."""
+    created: list[Path] = []
+    p = d
+    while not p.exists():
+        created.append(p)
+        if p.parent == p:
+            break
+        p = p.parent
+    d.mkdir(parents=True, exist_ok=True)
+    for made in reversed(created):        # shallowest first
+        _fsync_dir_strict(made.parent)
 
 
 class BrainCore:
@@ -222,8 +412,11 @@ class BrainCore:
     def search_multi(
         self, queries: "list[str]", k: int = 10, *, rerank: bool = False,
         rerank_top: int = 15, rrf_k: int = 60, per_query_k: int | None = None,
-        rerank_fused: bool = False, fused_pool: int = 20,
-    ) -> list[Hit]:
+        rerank_fused: bool | None = None, fused_pool: int = 20,
+        rerank_gate: bool | None = None, fanout_k: int | None = None,
+        max_variants: int | None = None, guard: bool | None = None,
+        return_trace: bool = False,
+    ) -> "list[Hit] | tuple[list[Hit], dict[str, Any]]":
         """Multi-query fan-out (RET-05) — the AGENTIC retrieval primitive.
 
         Run ``hybrid_search`` for EACH query variant and Reciprocal-Rank-Fuse the
@@ -242,16 +435,112 @@ class BrainCore:
         The caller supplies the variants (the agent/LLM generates them — brain
         stays model-agnostic and offline). A single-element list degrades exactly
         to ``hybrid_search``. UNFILTERED — the CLI applies the egress gate.
+
+        TWO CONSTANTS, DELIBERATELY DECOUPLED (2026-08-09). ``rrf_k`` is the
+        INNER per-variant constant and stays pinned at the production value: it
+        is ADR-0008's calibration key, so any other value silently drops the
+        exact leg from every variant search (``_exact_leg_enabled``). ``fanout_k``
+        (env ``$BRAIN_MULTI_RRF_K``) is the OUTER pooling constant used HERE and
+        nowhere else. They were one value until this session, which made the
+        outer layer impossible to vary without also moving the inner ranking —
+        and the outer one runs at 60, the exact constant RET-11 (d5b2c58) proved
+        discards answers one leg found first. Owner ruling 2026-08-09: the outer
+        layer is NEW territory (RET-11 closed the INNER single-query residual),
+        so the default is left where it has always been and s04 MEASURES it
+        rather than this session assuming ``RRF_K_FUSE``.
+
+        GUARDS (rank-space only — no score thresholds):
+        * degenerate variants are deduplicated after identity normalization, so
+          a variant that collapses onto another can never double-count;
+        * a variant that returns nothing contributes nothing (no threshold);
+        * variants past ``max_variants`` (env ``$BRAIN_MULTI_MAX_VARIANTS``) are
+          dropped from the TAIL — the caller supplies variants in descending
+          language prevalence (s03's census), so the dropped set is the
+          lowest-prevalence languages, deterministically, and it is reported in
+          the trace rather than silently truncated;
+        * ``$BRAIN_VARIANTS_ENABLED=0`` is the kill switch (mirrors
+          ``BRAIN_EXACT_LEG_ENABLED``): every variant past the first is ignored.
+
+        POOLED RERANK IS AUTO-ON FOR FAN-OUT, AND ONLY FOR FAN-OUT (owner
+        ruling 2026-08-12, ``_decisions/invariants-s11-ship-ruling.md``).
+        ``rerank_fused=None`` (the default) resolves to ON when 2 or more
+        distinct variants actually survive the guards above, and to OFF
+        otherwise — the single-query path is untouched and keeps the shipped
+        single-query rerank behaviour byte for byte. An explicit ``True``/
+        ``False`` always wins; absent that, ``$BRAIN_RERANK_FUSED_DISABLED=1``
+        is the global kill switch (same env contract as
+        ``BRAIN_RERANK_DISABLED`` / ``BRAIN_EXACT_LEG_ENABLED``; rollback needs
+        no rebuild, only a restart of the invoking process). EVIDENCE, STATED
+        HONESTLY: +0.0643 recall@10 over the SHIPPED configuration (p 0.0284,
+        6 wins / 1 loss / 50 ties) — **train-half only, NOT confirmed on a
+        held-out half**, which under ``refuse_held_out`` it never can be. The
+        famous +0.1667 is a different, mis-attributed comparison: 57 % of it is
+        the reranker the vault already ships. Cost: one extra cross-encoder
+        pass (~5-25 s) on fan-out calls only.
+
+        CORRELATED-VOTE GUARD (``guard``, env ``$BRAIN_MULTI_GUARD``, default
+        OFF). Variants are the SAME question re-expressed, so their votes are
+        correlated, not independent evidence: summing them lets a uniformly
+        mediocre document present in EVERY list out-accumulate a document one
+        variant ranked first — RET-11's breadth-over-strength defect, one layer
+        up. The guard is a rank-only partition: a document some variant placed
+        in its top ``MULTI_GUARD_STRONG_RANK`` outranks every document no
+        variant did; ordering WITHIN each band is untouched RRF. It ships OFF
+        because fixing it silently would change every one of s04's arms — it is
+        offered to s04 as an on/off arm, measured rather than assumed.
+
+        IDENTITY UNDER VARIANTS (ENG-02). ``create_safety: exists`` — and the
+        ADR-0008 rank-1 pin it stands for — are reserved for the ORIGINAL query
+        (``variants[0]``). A generated translation can exactly match an
+        UNRELATED note title; letting that claim ``exists`` would tell a capture
+        agent the note it is about to write already exists and suppress a real
+        note. A hit only a later variant surfaced still carries its retrieval
+        evidence, but its create-safety is capped at ``probable``.
+
+        Returns the fused hits, or ``(hits, trace)`` when ``return_trace`` —
+        the trace carries the per-variant orders, each variant's contribution to
+        the fused top-k, the dropped-variant sets, both constants, the guard
+        state, the pin and the pooled rerank decision. Its ids are PRE-EGRESS: a
+        caller that serialises it must project it onto the gated result first.
         """
         from dataclasses import replace
 
-        variants = [q for q in (queries or []) if q and q.strip()]
-        if not variants:
-            return []
-        if len(variants) == 1:
-            return self.hybrid_search(
-                variants[0], k=k, rerank=rerank, rerank_top=rerank_top, rrf_k=rrf_k
-            )
+        from .index import rerank_gate_enabled
+
+        asked = [q for q in (queries or []) if q and q.strip()]
+        # Degenerate-variant guard: identity normalization (NFC + casefold +
+        # whitespace collapse — the same normalizer the alias/title index uses)
+        # is what makes "  Arctic  Embed " and "arctic embed" ONE vote.
+        variants: list[str] = []
+        dropped_duplicate: list[str] = []
+        seen: set[str] = set()
+        for q in asked:
+            key = frontmatter.normalize_identity(q) or q.strip()
+            if key in seen:
+                dropped_duplicate.append(q)
+                continue
+            seen.add(key)
+            variants.append(q)
+        disabled = not _env_switch("BRAIN_VARIANTS_ENABLED", True)
+        dropped_disabled = variants[1:] if disabled else []
+        if disabled:
+            variants = variants[:1]
+        cap = max_variants if max_variants is not None else _env_positive_int(
+            "BRAIN_MULTI_MAX_VARIANTS", MULTI_MAX_VARIANTS)
+        dropped_over_cap = variants[cap:]
+        variants = variants[:cap]
+        fk = fanout_k if fanout_k is not None else _env_positive_int(
+            "BRAIN_MULTI_RRF_K", MULTI_RRF_K)
+        guard_on = guard if guard is not None else _env_switch("BRAIN_MULTI_GUARD", False)
+        # S11 ship ruling (2026-08-12): auto-on for real fan-out, never for a
+        # single query. Resolved AFTER the dedup/cap/kill-switch guards, so it
+        # keys on the variants that will actually be pooled — two variants that
+        # collapse to one under identity normalization are one query, and get
+        # the single-query behaviour they are.
+        rerank_fused_auto = rerank_fused is None
+        if rerank_fused_auto:
+            rerank_fused = (len(variants) > 1
+                            and not _env_switch("BRAIN_RERANK_FUSED_DISABLED", False))
         # Per-query depth is deliberately SHALLOW (≈ k, not a wide over-fetch).
         # RRF over wide per-query lists lets a noise doc present in BOTH lists at
         # low rank (e.g. PT@50 + EN@60) out-accumulate a gold present in only ONE
@@ -259,21 +548,112 @@ class BrainCore:
         # monolingual_pt fan-out recall 0.736→0.625. Keep each variant's
         # contribution to its genuine top hits. Tunable via per_query_k.
         pk = per_query_k or max(k, 20)
-        fused: dict[str, list] = {}  # id -> [fused_score, Hit]
-        for q in variants:
+        trace: dict[str, Any] = {
+            "variants": list(variants),
+            "variant_count": len(variants),
+            "dropped": {
+                "duplicate": dropped_duplicate,
+                "over_cap": dropped_over_cap,
+                "kill_switch": dropped_disabled,
+                "max_variants": cap,
+            },
+            "fanout_k": fk,
+            "inner_rrf_k": rrf_k,
+            "exact_leg_enabled": self.index._exact_leg_enabled(rrf_k),
+            "per_query_k": pk,
+            "guard": {"enabled": guard_on, "strong_rank": MULTI_GUARD_STRONG_RANK,
+                      "demoted": []},
+            "rerank_fused": bool(rerank_fused),
+            # "auto" = the S11 fan-out default decided it; "caller" = an explicit
+            # --rerank-fused/--no-rerank-fused. Without this, a kill-switched run
+            # and a caller opt-out are indistinguishable in the trace.
+            "rerank_fused_source": "auto" if rerank_fused_auto else "caller",
+            "rerank_gate": {"enabled": rerank_gate_enabled(rerank_gate),
+                            "skipped": False, "reason": "rerank_fused_off"},
+            "pin": {"id": None, "applied": False, "source": "original_query"},
+            "per_variant": [],
+            "contributions": {},
+        }
+
+        def _done(hits: list[Hit]) -> "list[Hit] | tuple[list[Hit], dict[str, Any]]":
+            return (hits, trace) if return_trace else hits
+
+        if not variants:
+            return _done([])
+        if len(variants) == 1:
+            return _done(self.hybrid_search(
+                variants[0], k=k, rerank=rerank, rerank_top=rerank_top, rrf_k=rrf_k,
+                rerank_gate=rerank_gate,
+            ))
+        fused: dict[str, list] = {}  # id -> [fused_score, Hit, best_rank, from_original]
+        original_top: Hit | None = None
+        for vi, q in enumerate(variants):
+            started = time.perf_counter()
             hits = self.hybrid_search(
-                q, k=pk, rerank=rerank, rerank_top=rerank_top, rrf_k=rrf_k
+                q, k=pk, rerank=rerank, rerank_top=rerank_top, rrf_k=rrf_k,
+                rerank_gate=rerank_gate,
             )
+            trace["per_variant"].append({
+                "index": vi, "query": q, "returned": len(hits),
+                "order": [h.id for h in hits],
+                "elapsed_ms": round((time.perf_counter() - started) * 1000, 1),
+            })
+            if vi == 0 and hits:
+                original_top = hits[0]
+            # A variant whose legs returned nothing contributes nothing — the
+            # loop below simply never runs for it. No threshold, no score space.
             for rank, h in enumerate(hits, start=1):
-                contrib = 1.0 / (rrf_k + rank)
+                # The OUTER pooling constant. Deliberately `fk`, never `rrf_k`:
+                # see the docstring — the inner constant is ADR-0008's pin.
+                contrib = 1.0 / (fk + rank)
+                trace["contributions"].setdefault(h.id, []).append(
+                    {"variant": vi, "rank": rank, "contribution": contrib})
                 cur = fused.get(h.id)
                 if cur is None:
-                    fused[h.id] = [contrib, h]
+                    fused[h.id] = [contrib, h, rank, vi == 0]
                 else:
                     cur[0] += contrib
-        ranked = sorted(fused.values(), key=lambda t: -t[0])
+                    cur[2] = min(cur[2], rank)
+                    cur[3] = cur[3] or vi == 0
+        # Stable sort: equal scores keep insertion order (first-variant-first),
+        # which is exactly the pre-decoupling behaviour when the guard is off.
+        entries = list(fused.values())
+        if guard_on:
+            before = [e[1].id for e in sorted(entries, key=lambda t: -t[0])]
+            ranked = sorted(entries, key=lambda t: (t[2] > MULTI_GUARD_STRONG_RANK, -t[0]))
+            after = [e[1].id for e in ranked]
+            trace["guard"]["demoted"] = [i for i, j in zip(before, after) if i != j]
+        else:
+            ranked = sorted(entries, key=lambda t: -t[0])
         # Stamp the fused score so any downstream re-sort preserves fan-out order.
-        fused_hits = [replace(h, score=s) for s, h in ranked]
+        # ENG-02: cap create-safety for a hit ONLY a generated variant found.
+        fused_hits = [
+            replace(h, score=s,
+                    create_safety=("probable" if not from_original
+                                   and h.create_safety == "exists" else h.create_safety))
+            for s, h, _best, from_original in ranked
+        ]
+
+        # ADR-0008 PIN, pooled (ENG-02). A unique full alias/title owner of the
+        # ORIGINAL query is pinned at rank 1 — that guarantee predates fan-out
+        # and adding a variant must not be able to demote an exact-identity
+        # answer. `create_safety == "exists"` IS that pin (unique owner + full
+        # identity evidence), and the cap above already restricted it to variant
+        # 0, so a translated title matching an unrelated note can never pin.
+        # The pin is expressed in the SCORE as well as the order, so it survives
+        # a {path: score} round-trip the same way the rerank re-stamp does.
+        pin_id = (original_top.id if original_top is not None
+                  and original_top.create_safety == "exists"
+                  and original_top.evidence in {"alias_hit", "exact_title_match"}
+                  else None)
+        trace["pin"]["id"] = pin_id
+        if pin_id is not None and fused_hits and fused_hits[0].id != pin_id:
+            for pos, hit in enumerate(fused_hits):
+                if hit.id == pin_id:
+                    top = fused_hits[0].score + 1.0 / (fk + 1)
+                    fused_hits.insert(0, replace(fused_hits.pop(pos), score=top))
+                    trace["pin"]["applied"] = True
+                    break
 
         # POST-FUSION RERANK (RET-05b) — fan-out maximises deep RECALL (golds the
         # single query missed surface at ranks 11-20), but answer generation reads
@@ -284,16 +664,36 @@ class BrainCore:
         # SC's whole-note embeddings (measured: answer-grounded eval, S10). The
         # rerank is SKIPPABLE (offline/no model -> identity, never an error).
         if rerank_fused and fused_hits:
-            fused_hits = self.index._apply_rerank(
-                variants[0], fused_hits, None, fused_pool
-            )
-            # _apply_rerank REORDERS but keeps each hit's (fused) score, so a
-            # downstream re-sort by score would undo the rerank. Re-stamp a strictly
-            # descending score that encodes the post-rerank RANK, so the cross-encoder
-            # order survives any {path: score} round-trip (e.g. the eval harness).
-            n = len(fused_hits)
-            fused_hits = [replace(h, score=float(n - i)) for i, h in enumerate(fused_hits)]
-        return fused_hits[:k]
+            # RK-02 one layer up: the gate reads the POOLED pin state, not a
+            # per-variant one. `create_safety == "exists"` is exactly ADR-0008's
+            # unique-full-owner pin, and the cap above already restricted it to
+            # the original query — so a translated title matching an unrelated
+            # note can never buy a skip.
+            pooled_pin = (fused_hits[0].create_safety == "exists"
+                          and fused_hits[0].evidence in {"alias_hit", "exact_title_match"})
+            gate_on = trace["rerank_gate"]["enabled"]
+            skip = pooled_pin and gate_on
+            trace["rerank_gate"] = {
+                "enabled": gate_on, "skipped": skip,
+                "reason": ("pooled_unique_identity_pin" if skip
+                           else "gate_disabled" if not gate_on
+                           else "no_pooled_unique_identity_pin"),
+            }
+            if not skip:
+                fused_hits = self.index._apply_rerank(
+                    variants[0], fused_hits, None, fused_pool
+                )
+                # _apply_rerank REORDERS but keeps each hit's (fused) score, so a
+                # downstream re-sort by score would undo the rerank. Re-stamp a strictly
+                # descending score that encodes the post-rerank RANK, so the cross-encoder
+                # order survives any {path: score} round-trip (e.g. the eval harness).
+                n = len(fused_hits)
+                fused_hits = [replace(h, score=float(n - i))
+                              for i, h in enumerate(fused_hits)]
+        final = fused_hits[:k]
+        keep = {h.id for h in final}
+        trace["contributions"] = {i: c for i, c in trace["contributions"].items() if i in keep}
+        return _done(final)
 
     def grep(self, pattern: str, *, k: int = 20, regex: bool = False) -> list[dict[str, Any]]:
         """Lexical-first scan over note bodies — no embedding (RET-04)."""
@@ -1160,6 +1560,17 @@ class BrainCore:
 
         HOST-broker only: refused on the VM leg BEFORE any signing-key
         resolution (the VM never holds the audit key).
+
+        DURABLE (ENF-01, adversarial review round 3, 2026-08-10). The file
+        write used to be a plain ``Path.write_text``: not atomic, and nothing
+        fsynced. ``supersede``/``unsupersede`` then unlinked their crash
+        journal — with a *directory* fsync — the moment both calls returned, so
+        a power loss could persist the journal's deletion while losing or
+        tearing a note write, leaving a signed one-sided chain with no
+        recovery record. ``_write_note_durable`` fsyncs the content and the
+        parent directory entry before returning, so "``write_note`` returned"
+        now means "these bytes survive a power loss" — which is the only thing
+        that makes clearing the journal afterwards safe.
         """
         self._require_host("write notes (sign + commit)")
         target = self.vault / rel_path
@@ -1180,7 +1591,7 @@ class BrainCore:
             raise  # fail closed — no unsigned writes
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            _write_note_durable(target, content)
         except Exception as exc:
             # The signed "write" entry is already in the chain; record the failure
             # so verify-audit shows the attempt did not complete.
@@ -1195,37 +1606,257 @@ class BrainCore:
         return {"written": str(target), "audit": entry}
 
     # -- supersession (TMP-02, ADR-0003 Ruling 2/8) — HOST-broker only ----
-    _SUPERSEDE_JOURNAL = "supersede-pending.json"
+    #: Journal schema version. Bumped when the REQUIRED key set changes, so a
+    #: journal written by a future/unknown build is refused rather than
+    #: half-understood. v1 is the first format carrying a checksum.
+    _SUPERSEDE_JOURNAL_V = 1
 
     def _supersede_journal_path(self) -> Path:
-        return config.brain_runtime_dir(self.vault) / self._SUPERSEDE_JOURNAL
+        """Host-private (ENF-01 round 3) — see ``config.supersede_journal_path``."""
+        return config.supersede_journal_path(self.vault)
+
+    @staticmethod
+    def _supersede_journal_checksum(journal: dict[str, Any]) -> str:
+        """sha256 over the journal's payload with ``checksum`` itself excluded.
+
+        Canonical (``sort_keys``, no spaces) so the digest depends on the
+        VALUES, not on dict ordering. This detects a torn or corrupted journal;
+        it is not a tamper control — the journal lives off the mount now, and
+        being unreachable is what makes it untamperable."""
+        import hashlib
+        import json
+
+        payload = {k: v for k, v in journal.items() if k != "checksum"}
+        return hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                       ensure_ascii=False).encode("utf-8")).hexdigest()
+
+    def _write_supersede_journal(self, journal: dict[str, Any]) -> None:
+        """Write the rollback record ONCE, atomically and durably, BEFORE
+        either note is touched.
+
+        It used to be written with ``Path.write_text`` and then REWRITTEN after
+        the first signed write to advance a ``stage`` field. Both halves were
+        wrong. ``write_text`` truncates in place, so a crash during the rewrite
+        leaves a truncated file where the only copy of both pre-transaction
+        images lived — after one note had already changed. And nothing fsynced,
+        so a journal that reached only the page cache is a journal a power loss
+        never had (adversarial review round 2, 2026-08-10: a probe with a
+        one-sided chain and a truncated journal returned
+        ``{'recovered': False, 'reason': 'unreadable journal, discarded'}``
+        while the half-chain stayed on disk).
+
+        The stage field is gone with the rewrite: the journal is unlinked only
+        after the LAST write returns, so its mere existence already means
+        "incomplete", and recovery restores whichever side actually moved. One
+        write, no second chance to corrupt it.
+
+        ``_write_atomic_durable`` (module level) does the O_EXCL + O_NOFOLLOW
+        staging, short-write loop, fsync, replace and STRICT parent fsync. It
+        used to be ``cos._write_atomic``; round 3 moved every note-and-journal
+        write off that symbol because a COS test double for it was intercepting
+        unrelated vault writes — see ``_write_atomic_durable``.
+
+        It carries a version stamp and a checksum (round 3): recovery REWRITES
+        both notes from what it reads here, so "readable JSON" is not a high
+        enough bar to act on — see ``_recover_pending_supersede``.
+
+        0o600: this file holds both notes' complete text, at whatever tier they
+        carry. It is owner-only, in an owner-only directory, off the mount.
+
+        Durability is CHECKED, not assumed (round 4). Where an atomic replace
+        cannot be proven to reach the disk, ``_require_durable_replace``
+        refuses the whole supersession by name before anything is signed, and
+        ``_mkdir_durable`` anchors a freshly created journal directory in its
+        own parent — otherwise the first transaction after creating the store
+        writes a durable file into a directory entry that isn't."""
+        import json
+
+        _require_durable_replace(f"journal a {journal.get('op')}")
+        record = {"v": self._SUPERSEDE_JOURNAL_V, **journal}
+        record["checksum"] = self._supersede_journal_checksum(record)
+        path = self._supersede_journal_path()
+        _mkdir_durable(path.parent)
+        config.secure_file_permissions(path.parent, 0o700)   # never raises
+        _write_atomic_durable(path, json.dumps(record).encode("utf-8"),
+                              mode=0o600)
+
+    def _clear_supersede_journal(self) -> None:
+        """Durably forget a FINISHED transaction. The unlink is fsynced for the
+        same reason the write is: a directory entry that never reached the disk
+        brings the journal back after a power loss, and recovery would then
+        "roll back" a supersede that actually completed — both sides differ
+        from their recorded ``*_before``, which is exactly the signature of an
+        interrupted one.
+
+        STRICTLY fsynced (round 3): ``cos._fsync_dir`` swallows the failure,
+        and an unreported one is precisely the case that resurrects the
+        journal."""
+        path = self._supersede_journal_path()
+        path.unlink(missing_ok=True)
+        _fsync_dir_strict(path.parent)
 
     def _recover_pending_supersede(self) -> dict[str, Any] | None:
-        """HOST-only. If a prior ``supersede`` was interrupted between its two
-        signed writes, roll the completed side back to its pre-transaction
-        content (itself a fresh signed write) and clear the journal — so a crash
-        mid-transaction can never leave a signed half-chain. Runs at the top of
-        every ``supersede`` call before any new write is attempted."""
+        """HOST-only. Roll an interrupted ``supersede``/``unsupersede`` back to
+        its pre-transaction state — BOTH sides — and clear the journal, so a
+        crash mid-transaction can never leave a signed half-chain. Runs at the
+        top of every ``supersede``/``unsupersede`` call before any new write.
+
+        The journal survives only when the transaction did NOT complete (it is
+        unlinked after the last write returns), so "a journal exists" is the
+        whole decision — no stage inference is needed and none is kept. The
+        earlier version restored only ``old_before`` on ``stage ==
+        "old_written"``, which was correct for a crash BETWEEN the two writes
+        and wrong for a crash AFTER the second: the second note kept its new
+        content while the first was rolled back, manufacturing exactly the
+        one-sided chain ``unsupersede`` exists to repair (HIGH, adversarial
+        review 2026-08-10 — crash injection after ``unsupersede``'s second
+        signed write left ``old.superseded_by="new"`` with
+        ``new.previous_version=None``).
+
+        Each side is restored only when its on-disk content actually differs
+        from the recorded ``*_before``, so recovery is idempotent and a
+        re-crashed recovery simply resumes.
+
+        **An unreadable journal FAILS CLOSED and is preserved.** It used to be
+        deleted and reported as ``recovered: False`` — throwing away the only
+        record of the pre-transaction bytes while the half-chain it described
+        stayed on disk, and then letting the next call proceed on top of it.
+        A journal this path cannot parse is the one case a human must see, so
+        it raises and leaves the file where it is.
+
+        **A PARTIAL journal is unreadable too** (round 3). It used to accept
+        any non-empty SUBSET of sides, restore only those, and then unlink the
+        file regardless — a probe with a journal carrying only ``old_rel`` /
+        ``old_before`` returned ``{"restored":["old"], "journal_exists":false,
+        "old_superseded_by":"new", "new_previous_version":null}``: it RECREATED
+        the one-sided chain this whole guard exists to prevent, and destroyed
+        the remaining evidence on the way out. Every field of both sides is
+        now required, typed, distinct, vault-contained, id-consistent with the
+        recorded pre-image, and covered by the checksum. Anything short of that
+        raises and the journal stays.
+
+        **The host-private path is the ONLY path read** (round 4). Recovery
+        used to fall back to the pre-2026-08-10 on-mount location when this one
+        held nothing, waiving the version stamp and checksum for it because the
+        old format had neither. That made ``<runtime>/supersede-pending.json``
+        — writable by the untrusted Cowork leg — a way to hand the host two
+        arbitrary note bodies at an arbitrary classification and have the
+        hourly ``maintain`` sign them. The migration was worth nothing (a
+        journal exists only for the seconds a supersession is in flight, and
+        none was pending anywhere) and cost a signed MNPI-to-Public downgrade,
+        so the fallback is deleted rather than hardened."""
         path = self._supersede_journal_path()
         if not path.exists():
             return None
         import json
 
+        def _unreadable(why: str) -> SupersedeJournalUnreadable:
+            return SupersedeJournalUnreadable(
+                f"supersede: the crash journal at {path} is unreadable ({why}) "
+                f"— it is the ONLY record of the pre-transaction content of a "
+                f"supersede/unsupersede that did not finish, so it has been "
+                f"PRESERVED and nothing was written. Inspect the two notes it "
+                f"names against the audit log, repair them by hand, then delete "
+                f"the journal to unblock supersession.")
+
         try:
             journal = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            path.unlink(missing_ok=True)
-            return {"recovered": False, "reason": "unreadable journal, discarded"}
-        result: dict[str, Any] = {"recovered": True, "stage": journal.get("stage")}
-        if journal.get("stage") == "old_written":
+        except (OSError, ValueError) as exc:
+            raise _unreadable(f"{type(exc).__name__}: {exc}") from exc
+        if not isinstance(journal, dict):
+            raise _unreadable(f"not an object: {type(journal).__name__}")
+        self._validate_supersede_journal(journal, unreadable=_unreadable)
+        op = str(journal["op"])
+        result: dict[str, Any] = {"recovered": True, "op": op, "restored": [],
+                                  "journal": str(path)}
+        for side in ("old", "new"):
+            rel, before = journal[f"{side}_rel"], journal[f"{side}_before"]
+            try:
+                current = (self.vault / rel).read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                current = None
+            if current == before:
+                continue  # this side never moved (or was already restored)
             self.write_note(
-                journal["old_rel"], journal["old_before"],
-                reason=f"supersede-rollback: {journal['old_id']} -> "
-                       f"{journal['new_id']} (interrupted mid-transaction)",
+                rel, before,
+                reason=f"{op}-rollback: {journal.get('old_id')} -> "
+                       f"{journal.get('new_id')} (interrupted mid-transaction, "
+                       f"restoring {side})",
             )
-            result["action"] = "rolled_back_old"
-        path.unlink(missing_ok=True)
+            result["restored"].append(side)
+        result["action"] = ("rolled_back_" + "_".join(result["restored"])
+                            if result["restored"] else "nothing_to_roll_back")
+        self._clear_supersede_journal()
         return result
+
+    def _validate_supersede_journal(
+        self, journal: dict[str, Any], *, unreadable: Any,
+    ) -> None:
+        """Raise unless ``journal`` describes a COMPLETE two-sided rollback.
+
+        Recovery rewrites signed notes from these bytes, so every one of them
+        is checked before a single write: the version stamp and checksum (a
+        torn or edited record), both ids present and distinct, both relative
+        paths present, distinct and resolving INSIDE the vault (a ``../``
+        would make rollback an arbitrary audited overwrite), both pre-images
+        present as strings, and each pre-image's own frontmatter ``id``
+        matching the id the journal claims for that side — the cheap check
+        that the two halves actually belong to the transaction named.
+
+        There is no waiver and no exempt caller (round 4): the legacy on-mount
+        reader that needed one is gone."""
+        if journal.get("v") != self._SUPERSEDE_JOURNAL_V:
+            raise unreadable(
+                f"schema version {journal.get('v')!r}, expected "
+                f"{self._SUPERSEDE_JOURNAL_V}")
+        want = self._supersede_journal_checksum(journal)
+        if journal.get("checksum") != want:
+            raise unreadable(
+                f"checksum mismatch (recorded {journal.get('checksum')!r}, "
+                f"computed {want!r}) — the record is torn or was edited")
+        if journal.get("op") not in ("supersede", "unsupersede"):
+            raise unreadable(f"unknown op {journal.get('op')!r}")
+        for key in ("old_id", "new_id", "old_rel", "new_rel",
+                    "old_before", "new_before"):
+            if not isinstance(journal.get(key), str) or not journal[key].strip():
+                raise unreadable(f"missing or non-string {key!r}")
+        if journal["old_id"] == journal["new_id"]:
+            raise unreadable("both sides name the same id")
+        if journal["old_rel"] == journal["new_rel"]:
+            raise unreadable("both sides name the same path")
+        for side in ("old", "new"):
+            rel = journal[f"{side}_rel"]
+            if not _contained_in(self.vault / rel, self.vault):
+                raise unreadable(f"{side}_rel {rel!r} escapes the vault")
+            meta, _ = frontmatter.parse_text(journal[f"{side}_before"])
+            got = str(meta.get("id") or "").strip()
+            if got != journal[f"{side}_id"]:
+                raise unreadable(
+                    f"{side}_before carries id {got!r}, but the journal names "
+                    f"{journal[f'{side}_id']!r}")
+
+    def recover_pending_supersede(self, *, dry_run: bool = False) -> dict[str, Any] | None:
+        """Public preflight: roll back an interrupted supersession, under the
+        same single-writer lock the write verbs take. ``None`` when nothing is
+        pending; raises :class:`SupersedeJournalUnreadable` when a journal
+        exists but cannot be acted on (fail closed, journal preserved).
+
+        Called once at the top of ``maintain`` — see that docstring for why
+        leaving it to ``supersede``'s own call site was not enough.
+
+        ``dry_run`` REPORTS a pending journal without writing anything: a
+        rollback is two signed note writes, which is exactly what --dry-run
+        promises not to do."""
+        self._require_host("recover a pending supersede journal (writes notes)")
+        path = self._supersede_journal_path()
+        if not path.exists():
+            return None
+        if dry_run:
+            return {"recovered": False, "pending": True, "journal": str(path),
+                    "action": "dry-run: not recovered"}
+        with vault_writer_lock(self.vault, verb="supersede-recover"):
+            return self._recover_pending_supersede()
 
     def supersede(self, old_id: str, new_id: str, *, reason: str = "",
                   expect: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1245,9 +1876,9 @@ class BrainCore:
           per the ADR ruling, classification is NEVER inherited implicitly
           across a supersession.
 
-        Atomicity: a pending-operation journal at
-        ``.brain/supersede-pending.json`` is written before either note write and
-        cleared after both succeed. A crash between the two signed writes leaves
+        Atomicity: a pending-operation journal (host-private, off the Cowork
+        mount — ``config.supersede_journal_path``) is written before either
+        note write and cleared after both are DURABLY committed. A crash between the two signed writes leaves
         a journal that the NEXT ``supersede`` call rolls back (restores the old
         note, then proceeds) before doing anything else — never a signed
         half-chain (HARDENED:codex).
@@ -1361,16 +1992,11 @@ class BrainCore:
         old_rel = old_path.relative_to(self.vault).as_posix()
         new_rel = new_path.relative_to(self.vault).as_posix()
 
-        journal_path = self._supersede_journal_path()
-        journal_path.parent.mkdir(parents=True, exist_ok=True)
-        import json
-
-        journal = {
-            "stage": "starting", "old_id": old_id, "new_id": new_id,
+        self._write_supersede_journal({
+            "op": "supersede", "old_id": old_id, "new_id": new_id,
             "old_rel": old_rel, "new_rel": new_rel,
             "old_before": old_before, "new_before": new_before,
-        }
-        journal_path.write_text(json.dumps(journal), encoding="utf-8")
+        })
 
         old_after = frontmatter.set_keys(old_before, {
             "superseded_by": new_id, "superseded_date": today, "is_latest_version": False,
@@ -1383,20 +2009,138 @@ class BrainCore:
             old_rel, old_after,
             reason=reason or f"supersede: {old_id} -> {new_id} (retiring {old_id})",
         )
-        journal["stage"] = "old_written"
-        journal_path.write_text(json.dumps(journal), encoding="utf-8")
-
         new_write = self.write_note(
             new_rel, new_after,
             reason=reason or f"supersede: {old_id} -> {new_id} (new head {new_id})",
         )
-        journal_path.unlink(missing_ok=True)
+        self._clear_supersede_journal()
 
         sync_res = self.sync(drain=False)
         return {
             "old_id": old_id, "new_id": new_id,
             "old_write": old_write, "new_write": new_write,
             "reindexed": {"added": sync_res.get("added", 0), "updated": sync_res.get("updated", 0)},
+        }
+
+    # -- the inverse: undoing a WRONG auto-link (ENF-01, 2026-08-10) --------
+    SUPERSESSION_KEYS_OLD = ("superseded_by", "superseded_date", "is_latest_version")
+    SUPERSESSION_KEYS_NEW = ("previous_version",)
+
+    def unsupersede(self, old_id: str, new_id: str, *, reason: str = "") -> dict[str, Any]:
+        """Undo ONE supersession link ``old_id -> new_id``, both sides, through
+        the audited ``write_note`` path. HOST-broker only.
+
+        This exists because DDP-01's nightly auto-dedup could create a link
+        nothing could undo. It auto-superseded on BODY identity, and an image
+        whose OCR extracted to a 122-byte ``[no text detected]`` stub is
+        byte-identical to every other such image — so part 1 of a deck retired
+        part 2, and nine distinct QR codes became one version family. ENF-01's
+        body floor stops NEW ones; those already written needed an audited
+        inverse, and `supersede` deliberately refuses to re-supersede an
+        already-superseded note, so there was no way back.
+
+        Refuses BEFORE any write unless ``old_id`` actually claims to be
+        retired in favour of ``new_id`` (``old.superseded_by == new_id``) —
+        that claim is the thing being undone, and without it the caller is
+        naming a link that does not exist.
+
+        The successor's side is repaired opportunistically rather than
+        demanded, because the chains most needing repair are the malformed
+        ones. On the reference vault two notes both declared
+        ``superseded_by: …-qr-qa`` while ``qr-qa`` named only one of them as
+        its ``previous_version``; requiring reciprocity would have left the
+        unreciprocated half permanently unfixable. So ``previous_version`` is
+        dropped from ``new_id`` only when it names ``old_id``, and otherwise
+        left alone and reported as ``new_previous_version_kept``.
+
+        Both notes come out in their PRE-link shape: the three retirement keys
+        are dropped from ``old_id`` (absence of ``is_latest_version`` reads as
+        "not retired" per AGENTS.md §2, so it is dropped rather than flipped to
+        true). ``new_id``'s own ``is_latest_version`` is left exactly as found
+        — it may be the head of an unrelated chain this call has no business
+        touching.
+
+        Same single-writer lock and same crash journal as ``supersede`` (a
+        crash between the two signed writes is rolled back by the same
+        ``_recover_pending_supersede``).
+        """
+        self._require_host("unsupersede notes (writes both sides of a version chain)")
+        with vault_writer_lock(self.vault, verb="unsupersede"):
+            return self._unsupersede_locked(old_id, new_id, reason=reason)
+
+    def _unsupersede_locked(self, old_id: str, new_id: str, *,
+                            reason: str = "") -> dict[str, Any]:
+        self._recover_pending_supersede()
+
+        if old_id == new_id:
+            raise ValueError("unsupersede: a note may not supersede itself")
+        old_row = self.index.get(old_id)
+        new_row = self.index.get(new_id)
+        if not old_row:
+            raise ValueError(f"unsupersede: old note not found: {old_id}")
+        if not new_row:
+            raise ValueError(f"unsupersede: new note not found: {new_id}")
+
+        old_path, new_path = Path(old_row["path"]), Path(new_row["path"])
+        old_before = old_path.read_text(encoding="utf-8")
+        new_before = new_path.read_text(encoding="utf-8")
+        old_meta, _ = frontmatter.parse_text(old_before)
+        new_meta, _ = frontmatter.parse_text(new_before)
+
+        # AGENTS.md §2 permits a bare id OR a `[[wikilink]]`, and `replaces` is
+        # a documented alias of `previous_version` — `notes._bitemporal_link`
+        # is the ONE normalization the index already applies to both. Comparing
+        # raw frontmatter here refused `superseded_by: [[new]]` outright and
+        # left a `replaces:` predecessor link standing after a "successful"
+        # repair (adversarial review 2026-08-10).
+        from .notes import _bitemporal_link
+
+        def _link(val: object) -> str:
+            # A bare-date id (`superseded_by: 2026-05-27`) is parsed by YAML as
+            # a date, not a string — those exist in the reference vault, so
+            # stringify before normalizing rather than silently reading "".
+            return _bitemporal_link(val if isinstance(val, str) or val is None
+                                    else str(val))
+
+        if _link(old_meta.get("superseded_by")) != new_id:
+            raise ValueError(
+                f"unsupersede: {old_id!r} is not superseded by {new_id!r} "
+                f"(found {old_meta.get('superseded_by')!r}) — nothing written")
+        #: whichever documented predecessor key(s) actually name old_id
+        back_keys = tuple(k for k in ("previous_version", "replaces")
+                          if _link(new_meta.get(k)) == old_id)
+        reciprocal = bool(back_keys)
+
+        old_rel = old_path.relative_to(self.vault).as_posix()
+        new_rel = new_path.relative_to(self.vault).as_posix()
+
+        self._write_supersede_journal({
+            "op": "unsupersede", "old_id": old_id, "new_id": new_id,
+            "old_rel": old_rel, "new_rel": new_rel,
+            "old_before": old_before, "new_before": new_before,
+        })
+
+        old_after = frontmatter.drop_keys(old_before, self.SUPERSESSION_KEYS_OLD)
+
+        why = reason or f"unsupersede: broke the {old_id} -> {new_id} link"
+        old_write = self.write_note(old_rel, old_after, reason=f"{why} (restoring {old_id})")
+        new_write = None
+        if reciprocal:
+            new_write = self.write_note(
+                new_rel, frontmatter.drop_keys(new_before, back_keys),
+                reason=f"{why} (clearing {new_id})")
+        self._clear_supersede_journal()
+
+        sync_res = self.sync(drain=False)
+        kept = next((str(new_meta.get(k)) for k in ("previous_version", "replaces")
+                     if not reciprocal and new_meta.get(k)), None)
+        return {
+            "old_id": old_id, "new_id": new_id,
+            "old_write": old_write, "new_write": new_write,
+            "cleared_keys": list(back_keys),
+            "new_previous_version_kept": kept,
+            "reindexed": {"added": sync_res.get("added", 0),
+                          "updated": sync_res.get("updated", 0)},
         }
 
     def verify_audit(self, *, check_content: bool = False) -> dict[str, Any]:
@@ -2971,6 +3715,9 @@ class BrainCore:
             # SP-01/SP-02: refresh the VM-readable spine-summary.md projection
             # every fold so the brief's LATE+RADAR section is never stale.
             ("spine_rendered", lambda: self.cos_spine_render(now=now)),
+            # BAK-01: same lane, same reason — a stale Internal-safe pointer
+            # set is worse than none, so it refreshes on every fold too.
+            ("grounding_pack", lambda: self.cos_grounding_pack(now=now)),
         ):
             try:
                 report[stage] = fn()
@@ -3088,6 +3835,16 @@ class BrainCore:
 
         self._require_host("render the commitment-spine summary")
         return spine_mod.render_spine_summary(self.vault, now)
+
+    def cos_grounding_pack(self, *, now: Any = None) -> dict[str, Any]:
+        """BAK-01: render the VM-readable grounding pack — Internal-safe
+        POINTERS to documents the VM leg's egress ceiling now hides from it
+        (owner ruling 2026-08-10). Same host-writes/VM-reads `shared/` lane as
+        `cos_spine_render` above; see `spine.render_grounding_pack`."""
+        from . import spine as spine_mod
+
+        self._require_host("render the grounding pack (reads at full tier)")
+        return spine_mod.render_grounding_pack(self, now)
 
     def _engine_feedback_dir(self) -> Path:
         return config.brain_runtime_dir(self.vault) / "engine-feedback"
@@ -3247,6 +4004,19 @@ class BrainCore:
         latest = info.get("latest")
         installed = info.get("installed")
 
+        # A FAILED record for a version this machine has SINCE REACHED is moot,
+        # and nothing else cleared it — the 0.20.4 `claude`-not-on-PATH failure
+        # of 2026-08-07 nagged in every session for six days after 0.20.6 was
+        # installed and the cause fixed. Cleared before the branches below, so
+        # it dies on the same run whatever the availability check says.
+        if (prev and prev.get("status") == "failed"
+                and brain_update.failure_is_moot(prev, installed)):
+            try:
+                brain_update.update_state_path(brainiac_home).unlink()
+            except FileNotFoundError:
+                pass
+            prev = None
+
         if not info.get("available"):
             # A previously-DEFERRED "available" nag that is no longer available
             # (applied manually, or superseded) gets cleared so the banner stops.
@@ -3340,7 +4110,18 @@ class BrainCore:
         re-invoking codex every hourly run. ``golden_runner`` is test-only
         dependency injection: a ``(probes_path) -> result dict`` callable
         standing in for ``self._run_golden_probe`` — production leaves it
-        ``None``."""
+        ``None``.
+
+        ENF-01 round 3 (2026-08-10): a pending supersede crash journal is
+        checked and recovered ONCE, here, before any branch runs. It used to be
+        reached only from inside ``core.supersede`` — i.e. only if some fold
+        actually got as far as calling it — and ``auto_dedup_tier1`` refuses a
+        sub-floor pair BEFORE that call. So an interrupted repair of the exact
+        failed-OCR family ENF-01 is about reported an ordinary
+        ``skipped_short_body`` and left the half-chain and its journal on disk
+        indefinitely (reproduced: ``{"retired":[], "skipped_short_body":1,
+        "journal_still_exists":true}``). A blocked journal is a vault-wide
+        refusal; it belongs at the top of the run, not behind a filter."""
         from . import maintenance as maint
         import datetime as _dt
         import os as _os
@@ -3395,6 +4176,36 @@ class BrainCore:
                     entry["consecutive_failures"] = int(prev.get("consecutive_failures", 0)) + 1
                     entry["error"] = error
                 state[branch] = entry
+
+            # -- pending supersede journal, FIRST (ENF-01 round 3) ----------
+            # Before candidate scanning and before every floor/filter branch:
+            # an unfinished supersede blocks all of them, and the fold that
+            # would otherwise have surfaced it filters the very family this
+            # guard exists for. Read-only under --dry-run.
+            try:
+                jres = self.recover_pending_supersede(dry_run=dry_run)
+                if jres:
+                    results["supersede_journal"] = jres
+                    if jres.get("restored"):
+                        auto_fixed.append(maint.auto_fixed_item(
+                            "supersede-journal", jres.get("journal", ""),
+                            f"rolled back an interrupted {jres.get('op')} "
+                            f"({', '.join(jres['restored'])} side(s) restored)"))
+                    elif jres.get("pending"):
+                        action_required.append(maint.action_required_item(
+                            "a supersede crash journal is pending",
+                            "--dry-run never writes, so it was reported not recovered",
+                            "re-run `brain maintain` without --dry-run",
+                            jres.get("journal", "")))
+            except SupersedeJournalUnreadable as exc:
+                blocked.append(maint.blocked_item(
+                    f"supersede crash journal unreadable: {exc}",
+                    "the two notes it names + the audit log",
+                    "a human repairing the pair and deleting the journal"))
+            except Exception as exc:  # noqa: BLE001 — never abort the run
+                blocked.append(maint.blocked_item(
+                    f"supersede journal preflight failed: {exc}",
+                    "index/write path", "next maintain run"))
 
             # -- unconditional daily work (sync/drain/publish/brief + recs) --
             if dry_run:
@@ -3590,6 +4401,8 @@ class BrainCore:
                         state["daily"] = {
                             **prev_daily,
                             "autodedup_retired": len(ddp_res["retired"]),
+                            "autodedup_skipped_short_body": len(
+                                ddp_res.get("skipped_short_body", [])),
                             "autodedup_skipped_classification": len(ddp_res["skipped_classification"]),
                             "autodedup_skipped_recurring": len(ddp_res["skipped_recurring"]),
                             "autodedup_skipped_trust": len(ddp_res["skipped_trust"]),
@@ -3697,6 +4510,60 @@ class BrainCore:
                         blocked.append(maint.blocked_item(
                             f"kl_orphans daily counter failed: {exc}",
                             "index read", "next maintain run"))
+
+                    # WAT-01: the corpus-invariants watchdog — four cheap
+                    # read-only counts (unlinked raw sources, cross-tier
+                    # name-twins, sub-floor supersession families, and the
+                    # READ-not-recomputed unreachable-gold count), measured
+                    # ~1.7s on the 2,581-note reference vault. Thresholds
+                    # RATCHET off the best value ever recorded rather than
+                    # trending a percentage, so the same rule alerts from a
+                    # 2,132 baseline and from a zero one (see
+                    # `brain.invariants`). It writes its own state row
+                    # (`corpus_invariants`) through `_mark`, which is what
+                    # gives the dead-man's switch — a stale or missing row —
+                    # something to key on from doctor/health-report and the
+                    # notification lane.
+                    try:
+                        from . import invariants as inv_mod
+
+                        inv_metrics = inv_mod.corpus_invariants(
+                            self.index.conn, Path(self.vault))
+                        inv_values = inv_mod.metric_values(inv_metrics)
+                        prev_inv = state.get(inv_mod.STATE_KEY) if isinstance(
+                            state.get(inv_mod.STATE_KEY), dict) else {}
+                        prev_floors = prev_inv.get("floors") if isinstance(
+                            prev_inv.get("floors"), dict) else {}
+                        inv_regressions = inv_mod.invariant_regressions(
+                            prev_floors, inv_values)
+                        results["corpus_invariants"] = inv_metrics
+                        # Stash BEFORE `_mark` so its `dict(prev)` copy carries
+                        # metrics/floors forward (same shape as graph_hygiene).
+                        state[inv_mod.STATE_KEY] = {
+                            **prev_inv,
+                            "metrics": inv_metrics,
+                            "floors": inv_mod.update_floors(prev_floors, inv_values),
+                            "regressions": inv_regressions,
+                        }
+                        if not dry_run and inv_regressions:
+                            self._append_hot_once(
+                                f"maintain:corpus-invariants:{d.isoformat()}",
+                                inv_mod.render_invariants_hot_entry(
+                                    inv_regressions, inv_metrics, d),
+                            )
+                        # BAK-04: the same derivation, sliced worst-first and
+                        # dropped where the weekly synthesis session reads it.
+                        # No new scheduled task — the lane rides this fold's
+                        # output and the existing Sunday session (AGENTS.md §6).
+                        if not dry_run:
+                            results["link_lane"] = inv_mod.write_link_lane(
+                                self.index.conn, Path(self.vault))
+                        _mark(inv_mod.STATE_KEY, True)
+                    except Exception as exc:
+                        blocked.append(maint.blocked_item(
+                            f"corpus-invariants watchdog failed: {exc}",
+                            "index read", "next maintain run"))
+                        _mark("corpus_invariants", False, f"{type(exc).__name__}: {exc}")
 
                     # CUT-02: duplicate-retention prune — safe only because
                     # every candidate is re-verified through the full

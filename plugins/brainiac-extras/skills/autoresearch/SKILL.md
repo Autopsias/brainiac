@@ -208,3 +208,13 @@ evidence a change helps."
   verified interface this loop drives
 - `overlay/README.md` — `overlay/keywords/` (optional probe-query
   corroboration, §1) and Ruling e's egress posture for anything overlay-derived
+
+## Retrieval contract
+
+> **Multilingual vaults — the variant contract (AGENTS.md §5 rule 3).** Before
+> the first vault search, read the derived census: `brain status --json` ->
+> `index.languages`. When `multilingual` is true, issue every search as the
+> question PLUS one `--variant "<the same question in that language>"` for each
+> other entry in `vault_languages` — you write the translation, the engine
+> fuses the result lists into one ranking. `multilingual: false`, one language,
+> or no census: a single query is correct — do not invent a variant.

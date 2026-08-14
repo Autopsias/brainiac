@@ -33,6 +33,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from .update import resolve_claude_bin
+
 CLIENTS = ("claude-code", "claude-desktop", "codex", "gemini")
 
 MARKETPLACE_NAME = "brainiac"
@@ -293,7 +295,7 @@ def _default_runner(cmd: list[str], **kwargs: Any) -> "subprocess.CompletedProce
 
 def claude_code_plugin_commands(marketplace_source: str = DEFAULT_MARKETPLACE_SOURCE,
                                  plugin: str = KERNEL_PLUGIN) -> list[list[str]]:
-    claude_bin = shutil.which("claude") or "claude"
+    claude_bin = resolve_claude_bin() or "claude"
     return [
         [claude_bin, "plugin", "marketplace", "add", marketplace_source],
         [claude_bin, "plugin", "install", f"{plugin}@{MARKETPLACE_NAME}"],
@@ -301,10 +303,10 @@ def claude_code_plugin_commands(marketplace_source: str = DEFAULT_MARKETPLACE_SO
 
 
 def claude_plugin_cli_available(run: Runner = _default_runner) -> bool:
-    if shutil.which("claude") is None:
+    if resolve_claude_bin() is None:
         return False
     try:
-        out = run([shutil.which("claude"), "plugin", "--help"])
+        out = run([resolve_claude_bin(), "plugin", "--help"])
     except Exception:  # noqa: BLE001 — any probe failure means "not available"
         return False
     text = ((out.stdout or "") + (out.stderr or "")).lower()
@@ -349,7 +351,7 @@ def run_claude_code_plugin_uninstall(
     claude_home: Optional[Path] = None,
 ) -> dict:
     claude_home = claude_home or (Path.home() / ".claude")
-    claude_bin = shutil.which("claude") or "claude"
+    claude_bin = resolve_claude_bin() or "claude"
     cmd = [claude_bin, "plugin", "uninstall", f"{plugin}@{MARKETPLACE_NAME}"]
     try:
         out = run(cmd)

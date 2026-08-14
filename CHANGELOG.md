@@ -7,6 +7,128 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.9] — 2026-08-14
+### Fixed
+- **A vault's own output is not a source (ENF-06)** — audit records, nightly
+  logs, health alerts and eval runs re-ingested into `raw/` were counted by
+  `unlinked_sources` as knowledge waiting for someone to write a note about
+  it. Measured on the reference vault: **264 of 998** unlinked sources were
+  the vault's own operational exhaust, and the weekly linking lane was
+  queueing them worst-first for a model to read and derive notes from.
+
+  They arrive declaring their kind in their OWN leading frontmatter — `type:
+  audit`, `type: log`, `type: graph-health-alert` — which the ingest wrapper
+  then overwrites with `type: source`, after which nothing distinguishes one
+  from a client document. That embedded type is now read at both ends from
+  one shared set (`invariants.OPERATIONAL_SOURCE_TYPES`), so the two can
+  never drift: ingestion sets such a file aside under
+  `inbox/_operational/<type>/` as **skipped, never quarantined** (nothing
+  failed — it is simply not knowledge), and the metric excludes it as
+  `operational_artifact`, counted like every other exclusion.
+
+  The set is explicit and conservative. `report`, `review`, `analysis` and
+  `proposal` stay in, because a human writes those about the business, and so
+  do the Chief-of-Staff briefs — machine-written, but about the business.
+  `BRAIN_INGEST_ALLOW_OPERATIONAL=1` admits one deliberately.
+
+  Reference vault: unlinked 998 → 734. The fold also got **faster**, 4.4s →
+  2.0s, because it now pulls an 8,000-character body prefix per row instead
+  of every full body, and one source there is 4.2MB.
+
+  Twelve regression tests, two probed by deliberate break. One of them exists
+  because the first implementation required the closing `---` inside a
+  600-character prefix and silently missed 262 of the 531 type-declaring
+  sources — the longest leading block in that corpus is 23,611 characters.
+
+## [0.20.8] — 2026-08-14
+### Fixed
+- **`brain alerts` no longer needs a vault it never used** — the host role
+  sweeps the workspace registry, but the CLI resolved `config.vault_root()`
+  unconditionally, so running it from any directory that is not a vault exited
+  3. Measured end-to-end: the newly-trusted Codex hook fired and reported
+  `cannot check — brain alerts failed`, because Codex runs hooks with no
+  `$BRAIN_VAULT` and a cwd that is not a vault. The resolve is now lenient.
+
+  The loud-when-blind contract is extended rather than weakened: an unresolved
+  vault is REPORTED in `unreachable` on both roles, so "no alerts" still cannot
+  mean "could not look". Three regression tests, two probed by deliberate
+  break.
+
+
+## [0.20.7] — 2026-08-14
+### Added
+- **`brain alerts` — the degradation digest, moved out of a Claude Code hook
+  and into the engine, so every harness can reach it.**
+
+  The SessionStart banner that reports a regressed corpus invariant, a failing
+  weekly synthesis, a queued owner decision or an engine-feedback backlog
+  existed ONLY as `~/.claude/hooks/brainiac-alerts.sh`. Codex, the Cowork VM
+  and the Desktop Code tab were blind to it **by construction, not by
+  capability**: the inputs are five plain files and every harness can read
+  files. Measured cost: a Cowork session working for days against a vault
+  whose `unlinked_sources` invariant had regressed, with no surface that could
+  say so.
+
+  `brain alerts [--json] [--one-line]` is that logic in the engine. Pure file
+  reads — no index, embedder, network or signing key — so it stays cheap
+  enough (~0.4s, the engine's import floor) to run at every session start of
+  every harness.
+
+  **`VM_ALLOWED`, and that is the point.** The notify markers, the owner inbox
+  and the engine-feedback backlog all live on the shared mount, so the Cowork
+  leg reads the same findings the host does. The two host-home sources it
+  cannot reach (`~/.brainiac/update-state.json`,
+  `~/.brain/synthesis-state.json`) are reported under `unreachable` rather
+  than skipped — "no alerts" must never be able to mean "could not look",
+  the same posture `doctor` already takes with its host-only surfaces.
+
+  Wiring, per what each harness can actually do (`docs/harness-wiring.md`):
+  Claude Code and **Codex** both register the same script from a `SessionStart`
+  hook (Codex uses the same `hooks.json` schema) — a hard guarantee. **Cowork
+  has no hook mechanism at all**, so AGENTS.md §9 carries the instruction and
+  the workspace `CLAUDE.md` BRAIN-CONTRACT block inlines it; that is a soft
+  guarantee and is documented as one.
+
+  The hook is now a thin caller that is LOUD when it cannot look: a missing
+  `brain`, or a failing `brain alerts`, reports vault health as UNKNOWN rather
+  than printing nothing. Nine tests, three probed by deliberate break.
+
+## [0.20.6] — 2026-08-08
+### Security
+- **Raise the `pypdf` FLOOR to >=6.15.0 in `pyproject.toml`** — 0.20.5 bumped
+  only `requirements.lock`, and that is not what protects an install.
+
+  The lock is CI/audit-only; no runtime install reads it. The shipped metadata
+  still said `pypdf>=4.0`, which the vulnerable 6.14.2 satisfies, so pip had no
+  reason to move it. Measured on the reference host immediately after 0.20.5
+  published: `brain update` took the engine 0.20.4 -> 0.20.5 and left pypdf at
+  6.14.2. The `supply-chain` gate went green in the same window. A green
+  dependency gate is not the same as a protected install, and that gap is the
+  whole content of this release.
+
+  CVE-2026-71852 / CVE-2026-71870 remain as described in 0.20.5: memory
+  exhaustion in PDF text extraction, reachable through the COS ingest lane,
+  which parses PDF email attachments — untrusted input on the host holding the
+  MNPI capture corpus.
+
+  The floor is raised in BOTH declarations (the core dependency list and the
+  `ingest` extra alias), and `tests/test_publish_public.py` now asserts that no
+  pypdf constraint admits 6.14.2 — proven to fail when the floor is reverted.
+
+### Also in this release
+- **COS: a stop halts action, never accounting** (`f843eb6`, authored in a
+  parallel session and already on `master` when this release was cut — recorded
+  here so the notes match what ships). Run 75 classified 287 threads but wrote a
+  three-row ingestion ledger: the v5.46 mismatch stop, which is meant to end
+  opening and mutating, was taken to end LEDGERING too, so ~107 in-scope threads
+  were neither held nor skipped but simply absent. v5.48 writes every remaining
+  in-scope thread out loud, E29(a) derives the denominator from the run's own
+  verdict ledger, E30 records `target_intended` and `target_produced` as two
+  fields per attempt, and `cos_run_begin` refuses an explicit `run_id` dated
+  other than today (run 74 was begun a day early and left 50 verified marks
+  unappendable).
+
+
 ## [0.20.5] — 2026-08-07
 ### Security
 - **pypdf 6.14.2 -> 6.15.0** (`CVE-2026-71852`, `CVE-2026-71870`). Both are

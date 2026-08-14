@@ -1646,6 +1646,10 @@ def write_run_manifest(vault, *, run_id: str | None = None,
         "skill_sha256": skill["sha256"],
         "bundle_version": skill["bundle_version"],
         "extraction_rules_version": skill["extraction_rules_version"],
+        # How many E-checks the bundle THAT RAN defines. Frozen here because it
+        # cannot be re-derived later: the file changes, and then the count the
+        # run owed is gone with the bytes (`cos_deploy.read_skill`).
+        "expected_echecks": skill.get("echecks"),
         "expected_artifacts": [
             f"_cos_nightly_{rid}.md",
             f"_cos_ingestion_ledger_{rid}.jsonl",
@@ -1669,14 +1673,35 @@ def write_run_manifest(vault, *, run_id: str | None = None,
         os.chmod(p, 0o400)  # nosemgrep: insecure-file-permissions -- read-only by design
     except OSError:
         pass
-    # The VM-readable pointer: the run needs to know which id to name its own
-    # artifacts after, and the host is the one that assigns it. Only the id and
-    # the start stamp — the versions stay host-side, where they are authority.
+    # THE RUN'S INSTRUCTION SHEET (MAN-01, 2026-08-09) — the VM-readable
+    # projection of the manifest, and the ONLY place the run may take its own
+    # identity from. It used to carry the id and the start stamp alone, so the
+    # run still DERIVED everything else — and derivation is what fails: on
+    # 2026-08-09 the host stamped run107 while the run named itself run106
+    # (an abandoned manifest whose frozen digest no longer matched the bundle
+    # it was executing), COMPOSED `_cos_brief_…md` where the manifest declared
+    # `_cos_nightly_…md`, and so never completed — not one host check executed
+    # on that night. Four host-owned facts, read literally, never composed:
+    #
+    #   run_id             the id every artifact is named after
+    #   expected_artifacts the names it must write, verbatim
+    #   skill_path/_sha256 the bundle it must be executing, so the run can
+    #                      prove it is not running under a stale manifest
+    #   lane               which deployment surface the host resolved
+    #
+    # The two VERSIONS stay host-side, deliberately and unchanged (STA-03): a
+    # VM-claimed version stamp is stripped at the trust boundary, so projecting
+    # it could only invite a claim that buys nothing. These four are
+    # INSTRUCTIONS the run obeys, not claims it makes back.
     cur = current_run_path(vault)
     cur.parent.mkdir(parents=True, exist_ok=True)
-    _write_atomic(cur, (json.dumps({"run_id": rid, "started": _ts(now)},
-                                   sort_keys=True) + "\n").encode("utf-8"),
-                  mode=MODE_VM_READABLE)
+    _write_atomic(cur, (json.dumps(
+        {"run_id": rid, "started": _ts(now),
+         "lane": manifest["lane"],
+         "skill_path": manifest["skill_path"],
+         "skill_sha256": manifest["skill_sha256"],
+         "expected_artifacts": manifest["expected_artifacts"]},
+        sort_keys=True) + "\n").encode("utf-8"), mode=MODE_VM_READABLE)
     return record
 
 

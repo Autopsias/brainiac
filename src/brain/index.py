@@ -234,6 +234,13 @@ class Hit:
                     # because the ranked list didn't show which was which).
     evidence: str = "weak_semantic"  # ADR-0008 strongest visible match reason.
     create_safety: str = "unknown"   # conservative create/no-create signal.
+    duplicates: list[str] = field(default_factory=list)
+    # HYG-01: ids this hit ABSORBED at ranking time — byte-identical, already
+    # owner-superseded copies of the same bytes that would otherwise have taken
+    # their own result slots. Provenance, never a second slot. Egress-safe by
+    # construction: a family is only formed from members carrying the SAME
+    # `classification`, so any tier that surfaces the canonical also surfaces
+    # every id listed here.
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -250,6 +257,7 @@ class Hit:
             "type": self.type,
             "evidence": self.evidence,
             "create_safety": self.create_safety,
+            **({"duplicates": list(self.duplicates)} if self.duplicates else {}),
         }
 
 
@@ -303,6 +311,144 @@ RRF_K_EXACT = 60
 # Rollback: `BRAIN_RRF_K=60` restores the pre-RET-11 ranking exactly.
 RRF_K_FUSE = 3
 
+# HYG-01 — DUPLICATE-FAMILY COLLAPSE.
+#
+# The same bytes are in the index twice (a plain copy and its date-stamped
+# re-ingest) and the two near-identical vectors split the dense signal, so
+# neither member clears the cutoff. Collapsing the family at SCORING time — the
+# canonical member inherits the family's BEST rank in each leg, the rest are
+# absorbed as provenance — gives one document one vote instead of two halves.
+# Index-only: no schema change, no reindex, and `BRAIN_FAMILY_COLLAPSE_DISABLED=1`
+# restores the pre-HYG-01 ranking exactly (same env contract as
+# BRAIN_EXACT_LEG_ENABLED / BRAIN_RERANK_DISABLED).
+#
+# TWO GUARDS, EACH MEASURED, EACH CATCHING WHAT THE OTHER MISSES. Measured on
+# the 2,579-note reference vault (snapshot generation 745, 2026-08-09): 21
+# sha256-identical body families, 50 members.
+#
+# (1) A MINIMUM BODY LENGTH. Eight of those 21 families — 19 members — are
+#     122-125 bytes of `## OCR (verbatim) / [no text detected] / ## Image
+#     metadata`: DIFFERENT images whose bodies agree only because extraction
+#     found no text. One such family has NINE members; another merges a deck's
+#     `…-1of2-scenarios-choice` with its `…-2of2-balanced-detail`, which are two
+#     PARTS of one document, not two copies of one. Seven more families
+#     (116-898 bytes) are generated ingestion manifests. Below a kilobyte,
+#     byte-identity is explained by the TEMPLATE, not by the document — the same
+#     reasoning as versionlink.MIN_FAMILY_STEM ("a stem shorter than this is not
+#     a distinguishing name"). Every real duplicate document on that vault is
+#     >= 6.3 KB, so the floor sits in a wide empty gap rather than on a
+#     boundary. Owner override: $BRAIN_FAMILY_MIN_BODY.
+#
+# (2) AN EXPLICIT SUPERSESSION LINK between two members. AGENTS.md §4 CUR-01 is
+#     verbatim that supersession beyond `…-vN` is "PROPOSED, never applied": a
+#     deduced NAME family reaches `core.supersede` only on an owner ACCEPT. A
+#     ranking-time merge of two name-similar documents asserts exactly that
+#     relationship WITHOUT the accept, so name and near-body similarity are
+#     DIAGNOSTIC ONLY here and keep riding the existing CUR-01 proposal path
+#     (brain.versionlink FAMILY_NAME, whose family_stem already tolerates the
+#     `<ingest-date>-` prefix). Requiring the link also supplies DDP-01 rule
+#     (e)'s trust guard for free and without a query-time file read: a drained
+#     untrusted draft cannot forge a `superseded_by` pointing AT it — declaring
+#     one in its own frontmatter only retires itself, which fails safe.
+#
+# WHY BYTE-IDENTITY IS ALSO WHAT KEEPS SUPERSESSION INTACT. Supersession
+# deliberately keeps a retired version AND its successor retrievable, so a
+# genuine revision must never be collapsed — and never is, because a genuine
+# revision is not byte-identical. What collapses is only the same bytes twice,
+# which is DDP-01's already-accepted identity, and even then the absorbed id is
+# reported on the surviving hit rather than dropped.
+#
+# THE FLOOR IS NOW SHARED, NOT MIRRORED (ENF-01, 2026-08-10). This module only
+# ever declined to COLLAPSE a sub-floor family at ranking time — the links it
+# was declining were being WRITTEN, nightly, by `maintenance.auto_dedup_tier1`
+# on the same byte-identity evidence, which is why eight such families exist on
+# the reference vault at all. That fold now imports `_family_min_body` from
+# here and refuses the same pairs before `core.supersede` (its rule (e0)), so
+# one env var moves both, and a floor raised for the ranker can never leave the
+# writer merging below it. `core.unsupersede` is the audited undo for the links
+# written before the floor existed.
+FAMILY_MIN_BODY = 1024
+
+
+def _family_min_body() -> int:
+    raw = os.environ.get("BRAIN_FAMILY_MIN_BODY", "").strip()
+    if raw:
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            pass
+    return FAMILY_MIN_BODY
+
+
+def _family_collapse_enabled() -> bool:
+    return os.environ.get(
+        "BRAIN_FAMILY_COLLAPSE_DISABLED", ""
+    ).strip().lower() not in {"1", "true", "yes", "on"}
+
+
+@dataclass
+class _FamilyCollapse:
+    """Which candidate rowids fold into which canonical member (HYG-01)."""
+
+    #: absorbed rowid -> canonical rowid (canonicals are NOT keys)
+    canonical_of: dict[int, int] = field(default_factory=dict)
+    #: canonical rowid -> the note ids it absorbed, for hit provenance
+    absorbed_ids: dict[int, list[str]] = field(default_factory=dict)
+    #: families seen but NOT collapsed (a guard declined them) — surfaced in
+    #: --explain so a narrow rule's effect is auditable instead of silent.
+    declined: int = 0
+
+    @property
+    def collapsed(self) -> int:
+        return len(self.absorbed_ids)
+
+    def fold(self, order: list[int]) -> list[int]:
+        """Rewrite one leg's ranked list so a family occupies ONE position —
+        the best rank any member held. Order is otherwise untouched."""
+        out: list[int] = []
+        seen: set[int] = set()
+        for rid in order:
+            canon = self.canonical_of.get(rid, rid)
+            if canon in seen:
+                continue
+            seen.add(canon)
+            out.append(canon)
+        return out
+
+    def fold_dense(
+        self,
+        order: list[int],
+        best_chunk_text: dict[int, str],
+        best_chunk_rowid: dict[int, int],
+        best_dense_score: dict[int, float],
+    ) -> tuple[list[int], dict[int, str], dict[int, int], dict[int, float]]:
+        """``fold`` plus the dense leg's per-note representative chunk.
+
+        The canonical inherits the representative of whichever member ranked
+        BEST — which is the whole point, since that member may be the only one
+        the dense leg surfaced at all. Safe to transplant: family membership is
+        byte-identity, so the absorbed member's best chunk is text the canonical
+        contains verbatim.
+        """
+        text, chunk, score = (
+            dict(best_chunk_text), dict(best_chunk_rowid), dict(best_dense_score))
+        out: list[int] = []
+        seen: set[int] = set()
+        for rid in order:
+            canon = self.canonical_of.get(rid, rid)
+            if canon in seen:
+                continue
+            seen.add(canon)
+            out.append(canon)
+            if canon == rid:
+                continue
+            for src, dst in ((best_chunk_text, text), (best_chunk_rowid, chunk),
+                             (best_dense_score, score)):
+                if rid in src:
+                    dst[canon] = src[rid]
+        return out, text, chunk, score
+
+
 EXACT_WEIGHT_UNIQUE_FULL = 2.25
 EXACT_WEIGHT_COLLIDING_FULL = 1.0
 EXACT_WEIGHT_PARTIAL_TITLE = 0.25
@@ -338,6 +484,12 @@ class _SearchTrace:
     # tell a gate skip apart from a missing model or a timeout).
     rerank_gate: dict[str, Any] = field(
         default_factory=lambda: {"enabled": True, "skipped": False, "reason": None}
+    )
+    # HYG-01: how many duplicate families this query collapsed, and how many it
+    # SAW but declined (a guard refused them). Counts only — the absorbed ids
+    # ride on the surviving hit, which the egress gate has already ruled on.
+    family_collapse: dict[str, Any] = field(
+        default_factory=lambda: {"enabled": True, "collapsed": 0, "declined": 0}
     )
     _records: dict[int, dict[str, Any]] = field(default_factory=dict)
     _id_by_rowid: dict[int, str] = field(default_factory=dict)
@@ -974,7 +1126,9 @@ class BrainIndex:
         self._title_phrase_match_cache.clear()
         self._literal_text_cache.clear()
         if self.db_path == Path(":memory:"):
-            return self._rebuild_impl(vault, json_mode=json_mode)
+            result = self._rebuild_impl(vault, json_mode=json_mode)
+            result["languages"] = self._refresh_language_census()
+            return result
 
         tmp_path, manifest_path = self._staging_paths()
         orig_db_path = self.db_path
@@ -1012,6 +1166,7 @@ class BrainIndex:
         for suffix in ("-wal", "-shm"):
             Path(str(orig_db_path) + suffix).unlink(missing_ok=True)
         result["db"] = str(self.db_path)
+        result["languages"] = self._refresh_language_census()
         return result
 
     def _discard_staging(self, tmp_path: Path, manifest_path: Path) -> None:
@@ -1484,6 +1639,7 @@ class BrainIndex:
             "embed_model": self.embedder.model_id,
             "embed_dim": self.embedder.dim,
             "vault_fingerprint": self.get_meta("vault_fingerprint"),
+            "languages": self._refresh_language_census(),
             "db": str(self.db_path),
         }
 
@@ -2147,6 +2303,158 @@ class BrainIndex:
             out[slot] = owner
         return out
 
+    def _collapse_duplicate_families(
+        self, lex: list[int], dense: list[int], exact: "_ExactLeg",
+    ) -> _FamilyCollapse:
+        """HYG-01 — group this query's candidates into duplicate FAMILIES.
+
+        See ``FAMILY_MIN_BODY`` above for the rule and the measurement behind
+        each guard. Cheap by ORDERING: every guard that can be decided from
+        metadata is decided first, so a body is only ever read for a group an
+        owner-accepted supersession link already joined AND that cleared
+        classification/zone/type/length — never for the candidate window.
+        """
+        out = _FamilyCollapse()
+        candidates = set(lex) | set(dense)
+        # ONE candidate is still enough: the family's other member is routinely
+        # outside the window (see the link-following comment below).
+        if not candidates or not _family_collapse_enabled():
+            return out
+        cols = ("SELECT rowid, id, path, classification, zone, type, "
+                # `length(body)` on TEXT counts Unicode SCALARS; the floor is
+                # declared in BYTES, so 400 CJK characters (1,200 UTF-8 bytes)
+                # measured 400 and were declined below a 1,024-byte floor while
+                # 400 ASCII characters measured the same. Cast to BLOB for the
+                # byte count the floor actually means (ENF-01 round 2).
+                "is_latest_version, superseded_by, "
+                "length(cast(body as blob)) FROM notes ")
+        rows: dict[int, dict[str, Any]] = {}
+
+        def _load(where: str, params: tuple) -> list[dict[str, Any]]:
+            fresh = []
+            for rid, nid, path, cls, zone, ntype, ilv, sup, blen in (
+                    self.conn.execute(cols + where, params)):  # nosec B608
+                rid = int(rid)
+                if rid in rows:
+                    continue
+                rows[rid] = {
+                    "id": str(nid or ""), "path": str(path or ""),
+                    "cls": str(cls or ""), "zone": str(zone or ""),
+                    "type": str(ntype or ""), "retired": bool(
+                        (sup or "") or str(ilv or "").strip().lower() == "false"),
+                    "sup": str(sup or ""), "len": int(blen or 0),
+                }
+                fresh.append(rows[rid])
+            return fresh
+
+        frontier = _load(
+            f"WHERE rowid IN ({','.join('?' * len(candidates))})", tuple(candidates))
+        # FOLLOW THE LINK OUT OF THE CANDIDATE WINDOW. The canonical copy is
+        # routinely NOT a candidate — that IS the defect (the probe pair's
+        # curated member was unreachable while its byte-twin ranked dense@9), so
+        # a join restricted to the window would find nothing to fix precisely
+        # when there is something to fix. Forward only (`superseded_by` -> that
+        # note's `id`, an indexed UNIQUE lookup, bounded hops): the reverse
+        # direction can only pull in a retired copy that was not surfacing
+        # anyway, so it buys nothing and costs a table scan per query.
+        for _ in range(8):
+            wanted = {r["sup"] for r in frontier if r["sup"]}
+            wanted -= {r["id"] for r in rows.values()}
+            if not wanted:
+                break
+            frontier = _load(
+                f"WHERE id IN ({','.join('?' * len(wanted))})", tuple(sorted(wanted)))
+        by_note_id = {r["id"]: rid for rid, r in rows.items() if r["id"]}
+        parent: dict[int, int] = {rid: rid for rid in rows}
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        for rid, r in rows.items():
+            other = by_note_id.get(r["sup"])
+            if other is not None and other != rid:
+                parent[find(rid)] = find(other)
+        groups: dict[int, list[int]] = {}
+        for rid in rows:
+            groups.setdefault(find(rid), []).append(rid)
+
+        # A body is fetched at most once per query, and only for a group that
+        # already cleared every metadata guard.
+        min_body = _family_min_body()
+        for members in groups.values():
+            if len(members) < 2:
+                continue
+            meta = [rows[rid] for rid in members]
+            if (len({m["cls"] for m in meta}) > 1
+                    or len({m["zone"] for m in meta}) > 1
+                    or len({m["type"] for m in meta}) > 1
+                    or min(m["len"] for m in meta) < min_body):
+                out.declined += 1
+                continue
+            # ADR-0008 is never collapsed through: an exact alias/title owner
+            # keeps its own slot, so identity and create-safety are untouched.
+            if any(rid in exact.tiers or rid in exact.owner_rowids
+                   for rid in members):
+                out.declined += 1
+                continue
+            # `body_sha256` is DDP-01's own definition of identity, imported
+            # rather than restated — one definition decides what a duplicate is
+            # in the nightly fold and at ranking time. Lazy: maintenance imports
+            # from this module.
+            # ponytail: bodies are re-read and re-hashed per query. Measured on
+            # the reference snapshot: 3-10 ms typical, 46 ms worst case (one
+            # 3.7 MB spreadsheet dump), against a search that costs 200 ms-6 s —
+            # and only linked groups ever get here, never the candidate window.
+            # Upgrade path if a vault outgrows it: persist the normalized body
+            # hash as a notes column, which is a schema bump and therefore a
+            # forced re-embed rebuild — deliberately out of scope here ("no
+            # reindex required").
+            from .maintenance import _floor_bytes, body_sha256
+
+            same: dict[str, list[int]] = {}
+            normalized: dict[str, int] = {}
+            for rid, body in self.conn.execute(
+                "SELECT rowid, body FROM notes "  # nosec B608
+                f"WHERE rowid IN ({','.join('?' * len(members))})", tuple(members)
+            ):
+                digest = body_sha256(body or "")
+                same.setdefault(digest, []).append(int(rid))
+                # NORMALIZED UTF-8 BYTES, like every other consultation of this
+                # floor — `len(norm)` counted Unicode scalars, so the SQL
+                # prefilter above (`length(cast(body as blob))`) admitted a
+                # 1,200-byte CJK family and this line then declined it at "400"
+                # (round 2). `_floor_bytes` is the ONE helper the writer
+                # (`auto_dedup_tier1`) and the watchdog
+                # (`invariants.subfloor_families`) also call, so the floor and
+                # the identity hash can never measure different strings again
+                # (round 3).
+                normalized[digest] = _floor_bytes(body or "")
+            collapsed_here = False
+            for digest, family in same.items():
+                # The raw-length prefilter above is a lower bound only
+                # (normalization can only shorten a body); this is the floor
+                # applied to what was actually hashed.
+                if len(family) < 2 or normalized.get(digest, 0) < min_body:
+                    continue
+                # Canonical: a LIVE member before a retired one (never surface
+                # the copy the vault itself retired), then the qrels'
+                # shallowest-path-wins convention, then the note id so the
+                # choice is deterministic.
+                canonical = min(family, key=lambda rid: (
+                    rows[rid]["retired"], rows[rid]["path"].count("/"),
+                    len(rows[rid]["path"]), rows[rid]["id"]))
+                absorbed = sorted(rid for rid in family if rid != canonical)
+                for rid in absorbed:
+                    out.canonical_of[rid] = canonical
+                out.absorbed_ids[canonical] = [rows[rid]["id"] for rid in absorbed]
+                collapsed_here = True
+            if not collapsed_here:
+                out.declined += 1  # linked and long, but not the same bytes
+        return out
+
     # Near-duplicate transcript suppression (PT-02, s05 — diagnosis cause #3).
     # OFF BY DEFAULT (`_DEFAULT_DEDUP_THRESHOLD = None`). The s05 CV sweep
     # (`eval/pt_dedup_sweep.py`, train+dev, H34) found the lever adds EXACTLY
@@ -2500,6 +2808,22 @@ class BrainIndex:
         exact = self._exact_leg(query, rrf_k)
         keyword_pattern = self._literal_keyword_pattern(query)
 
+        # HYG-01: one document, one vote. Families fold BEFORE the legs are
+        # scored, so the canonical inherits the family's best rank in each leg
+        # instead of the two copies splitting it between them.
+        collapse = self._collapse_duplicate_families(lex, dense, exact)
+        if collapse.canonical_of:
+            lex = collapse.fold(lex)
+            dense, best_chunk_text, best_chunk_rowid, best_dense_score = (
+                collapse.fold_dense(
+                    dense, best_chunk_text, best_chunk_rowid, best_dense_score))
+        if trace is not None:
+            trace.family_collapse = {
+                "enabled": _family_collapse_enabled(),
+                "collapsed": collapse.collapsed,
+                "declined": collapse.declined,
+            }
+
         in_lex = set(lex)
         in_dense = set(dense)
         in_exact = set(exact.ranked)
@@ -2694,6 +3018,7 @@ class BrainIndex:
                     is_latest_version=row.get("is_latest_version", ""),
                     date=rdate.get(rid, ""),
                     type=row.get("type", ""),
+                    duplicates=collapse.absorbed_ids.get(rid, []),
                 )
             )
 
@@ -3614,6 +3939,65 @@ class BrainIndex:
                             "zone": r[3], "path": r[4]})
         return out[:k]
 
+    # -- language census (CON-01) -----------------------------------------
+    def language_census(self, *, refresh: bool = False, detail: bool = False) -> dict[str, Any]:
+        """Which languages this vault holds — DERIVED, never declared.
+
+        Read path (``refresh=False``, ``detail=False``): returns the block
+        cached in ``meta`` by the last sync/rebuild, stamped ``stale`` when the
+        index content or the profile set has moved since. It never computes on
+        a read — ``stats()`` feeds ``brain status``, the morning brief and the
+        weekly digest, and none of them should pay a whole-corpus scan.
+
+        Compute path: classify every indexed body through
+        :mod:`brain.language` and cache the result. ``detail=True`` adds
+        ``by_note`` and is never cached (a triage/translation pass wants it;
+        status does not).
+        """
+        from . import language as lang_mod
+
+        profiles = lang_mod.load_profiles()
+        fingerprint = self.get_meta("vault_fingerprint") or ""
+        profiles_fp = lang_mod.profiles_fingerprint(profiles)
+        if not refresh and not detail:
+            raw = self.get_meta("language_census")
+            block = None
+            if raw:
+                try:
+                    block = json.loads(raw)
+                except ValueError:
+                    block = None
+            if isinstance(block, dict):
+                block["stale"] = (
+                    block.get("vault_fingerprint") != fingerprint
+                    or block.get("profiles_fingerprint") != profiles_fp
+                )
+                return block
+            return {
+                "status": "not-computed",
+                "hint": "the census is derived at index time — run `brain sync` or `brain rebuild`",
+            }
+        rows = self.conn.execute("SELECT id, body FROM notes").fetchall()
+        block = lang_mod.census(
+            ((r[0], r[1] or "") for r in rows), profiles=profiles, detail=detail)
+        block["vault_fingerprint"] = fingerprint
+        block["stale"] = False
+        if not detail:
+            try:
+                self._set_meta("language_census", json.dumps(block, ensure_ascii=False))
+                self.conn.commit()
+            except sqlite3.Error:
+                pass  # read-only snapshot: the value is still returned, just not cached
+        return block
+
+    def _refresh_language_census(self) -> dict[str, Any]:
+        """Recompute + cache the census after an index write. Never fatal — a
+        census failure must not fail a sync or a rebuild."""
+        try:
+            return self.language_census(refresh=True)
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+
     def stats(self) -> dict[str, Any]:
         c = self.conn
         notes = int(c.execute("SELECT COUNT(*) FROM notes").fetchone()[0])
@@ -3621,6 +4005,7 @@ class BrainIndex:
         return {
             "notes": notes,
             "chunks": chunks,
+            "languages": self.language_census(),
             "schema_version": self.get_meta("schema_version"),
             "vector_backend": self.get_meta("vector_backend"),
             "embed_model": self.get_meta("embed_model"),

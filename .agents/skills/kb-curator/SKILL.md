@@ -194,3 +194,13 @@ the overlay, not here.
 - `brain --help` — canonical verb reference
 - `AGENTS.md` §5 — classification egress gate; §8 — `tools/validate.py`
 - `src/brain/maintenance.py` — `check` / `health` / `curate` / `integrity` / `promote-scan` / `maintain` implementations
+
+## Retrieval contract
+
+> **Multilingual vaults — the variant contract (AGENTS.md §5 rule 3).** Before
+> the first vault search, read the derived census: `brain status --json` ->
+> `index.languages`. When `multilingual` is true, issue every search as the
+> question PLUS one `--variant "<the same question in that language>"` for each
+> other entry in `vault_languages` — you write the translation, the engine
+> fuses the result lists into one ranking. `multilingual: false`, one language,
+> or no census: a single query is correct — do not invent a variant.

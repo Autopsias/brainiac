@@ -30,7 +30,9 @@ REPO = HERE.parent
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(HERE))
 
-from pt_capacity_fixture import QUESTIONS  # noqa: E402
+# DIA-01 (S04, 2026-08-09): questions are now read from each fixture's own
+# fixture.json (written by pt_capacity_fixture.py --lang {pt,es}) instead of
+# a hardcoded PT-only import, so this one probe scores either language.
 
 
 def _rank_of(answer_id: str, ordered_ids: list[str]) -> int | None:
@@ -60,7 +62,7 @@ def _note_bodies(vault: Path) -> dict[str, str]:
     return out
 
 
-def dense_probe(vault: Path, prefer: str) -> dict:
+def dense_probe(vault: Path, prefer: str, questions: list[tuple[str, str, str]]) -> dict:
     from brain.embed import get_embedder
 
     emb = get_embedder(prefer)
@@ -69,7 +71,7 @@ def dense_probe(vault: Path, prefer: str) -> dict:
     doc_vecs = emb.embed_batch([bodies[i] for i in ids], is_query=False)
     per_query = []
     ranks: list[int | None] = []
-    for qid, text, answer in QUESTIONS:
+    for qid, text, answer in questions:
         qv = emb.embed(text, is_query=True)
         sims = sorted(
             ((sum(a * b for a, b in zip(qv, dv)), nid) for nid, dv in zip(ids, doc_vecs)),
@@ -87,7 +89,7 @@ def dense_probe(vault: Path, prefer: str) -> dict:
             "metrics": _score(ranks), "per_query": per_query}
 
 
-def hybrid_probe(vault: Path, index_dir: Path, prefer: str) -> dict:
+def hybrid_probe(vault: Path, index_dir: Path, prefer: str, questions: list[tuple[str, str, str]]) -> dict:
     os.environ["BRAIN_INDEX_DIR"] = str(index_dir)
     from brain import config
     from brain.embed import get_embedder
@@ -105,7 +107,7 @@ def hybrid_probe(vault: Path, index_dir: Path, prefer: str) -> dict:
     build_ms = round((time.perf_counter() - t0) * 1000, 1)
     per_query = []
     ranks: list[int | None] = []
-    for qid, text, answer in QUESTIONS:
+    for qid, text, answer in questions:
         hits = index.hybrid_search(text, k=22, rerank=False)
         ordered, seen = [], set()
         for h in hits:
@@ -135,14 +137,16 @@ def main() -> int:
                          "negative control that proves this fixture can fail")
     args = ap.parse_args()
     fx = Path(args.fixture).resolve()
-    result = {"probe": "s05-gate0-pt-capacity.v1",
+    fixture_spec = json.loads((fx / "fixture.json").read_text(encoding="utf-8"))
+    questions = [(q["id"], q["text"], q["answer_id"]) for q in fixture_spec["questions"]]
+    result = {"probe": fixture_spec.get("fixture", "s05-gate0-pt-capacity.v1"),
               "embedder_preference": args.embedder,
-              "fixture": json.loads((fx / "fixture.json").read_text(encoding="utf-8")),
+              "fixture": fixture_spec,
               "arms": {}}
-    for arm in ("pt", "en"):
+    for arm in fixture_spec["arms"]:
         result["arms"][arm] = {
-            "dense": dense_probe(fx / arm, args.embedder),
-            "hybrid": hybrid_probe(fx / arm, fx / f"index-{arm}", args.embedder),
+            "dense": dense_probe(fx / arm, args.embedder, questions),
+            "hybrid": hybrid_probe(fx / arm, fx / f"index-{arm}", args.embedder, questions),
         }
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)

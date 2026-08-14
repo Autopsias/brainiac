@@ -904,7 +904,887 @@ metadata:
   # re-measured, and THE PIN MOVES WITH THIS BUMP for the v5.44 reason
   # unchanged: the executing lane loads `.agents/skills/chief-of-staff/SKILL.md`
   # out of this repo, so the mirror sync IS the deployment.
-  kernel_version: "chief-of-staff v5.48"
+  # v5.49 (EXT-07, 2026-08-08) — THE BODY PASS BECOMES AN OBLIGATION, AND THE
+  # THREE THINGS THE HOST ALREADY CHECKS GET WRITTEN DOWN HERE. One root cause,
+  # three symptoms, all the same shape: an instrument was built host-side and
+  # never written back into the file the run executes.
+  #   (1) Rule 1½'s open was CONDITIONAL — "opened *when the list preview
+  #       carries no quotable span*" — which is circular, because whether a
+  #       quotable span exists is what the open answers. Run 100 (2026-08-08):
+  #       112 in scope, 1 body opened, 101 rows `held_reason: "no-substance"`
+  #       with `body_opened: false`, and nothing blocking (cap 20 untouched,
+  #       zero `over-cap`/`browser-not-visible`/`no-body-access-on-lane`, E30
+  #       target identity clean, and the single body it DID open yielded 3,261
+  #       characters of clean message text on that same `iab` lane). The open is
+  #       now owed to every in-scope `IsRead: true` thread until the cap binds,
+  #       and `no-substance` may only be written on `body_opened: true`.
+  #   (2) `body_open_cap`/`body_open_actual`/`body_budget` were REQUIRED by
+  #       `cos_runverify.check_body_open_count` and named NOWHERE in this file.
+  #       Runs 61-68 emitted them because a run invented them; runs 69-100
+  #       stopped, and that check has returned DEGRADED every night since. They
+  #       are now metrics-row fields on the same terms as the ING-05 four.
+  #   (3) The PRE snapshot's filename was `<pre.json>` here and
+  #       `cos_contract_pre_<run-id>.json` in the engine, so it drifted three
+  #       times in nine days and run 100 is STILL unscored — `completion` never
+  #       goes true, so not one host check executes on that night, `body_pass`
+  #       included. The name is now stated.
+  # `extraction_rules_version` STAYS `ext-4`, deliberately and load-bearingly:
+  # rule 2's four kinds, the quote requirement, the substance bar and the body
+  # budget are all untouched — this changes only whether the read the run was
+  # already permitted AND required to take is actually taken, and what the
+  # record must say about it. Bumping it would have made the pending lift
+  # measurement a measurement of `ext-5` against an `ext-1` baseline, which is
+  # the comparison that item exists to make honest. Calibration is RE-STAMPED
+  # (kit step 1, BLOCKING), never re-measured, and THE PIN MOVES WITH THIS BUMP:
+  # the executing lane loads `.agents/skills/chief-of-staff/SKILL.md` out of
+  # this repo, so the mirror sync IS the deployment.
+  # v5.50 (2026-08-09) — THE RE-TARGET THAT WASN'T. Run 101 recorded two
+  # `target-identity-mismatch` holds on the body pass and correctly stopped
+  # every remaining mutation leg. Reconstructing the run from the Codex
+  # rollout transcript showed what the ledgers could not:
+  #   (1) In BOTH mismatches the reading-pane URL after the click still
+  #       carried the PREVIOUSLY-OPENED conversation, and NEITHER intended
+  #       conversation id appears in the pane's URL at any point in the whole
+  #       body pass. So this is not a wrong-neighbour click and it is not URL
+  #       lag — the click was a NO-OP on selection. Same signature as run 73's
+  #       three failed opens, which this file already records.
+  #   (2) The ONE bounded re-target failed because it repeated the identical
+  #       action: re-query, re-read the id, click the SAME point of the SAME
+  #       row. Doctrine's own wording ("re-query the list, resolve by convid,
+  #       open once more") prescribed exactly that, so nothing in the loop
+  #       could ever converge. A retry that changes nothing is not a retry.
+  #   (3) What DID converge: moving the click from the row's vertical centre
+  #       (Playwright's `locator.click()` centre; then `rect.y + height/2`) to
+  #       the sender line ~20px below the row's top edge. All four of run
+  #       101's target failures predate that change; every open after it
+  #       landed.
+  # The fix is three sentences of doctrine — the re-target must DIFFER, the
+  # rect may be read in the same evaluation as the id (so the working shape
+  # is not read as an E30(d) breach) and the row must be fully in view, and a
+  # mismatch row records `target_produced_pre` so "never moved" and "moved to
+  # the wrong row" stop looking identical in the ledger. NO new E-check, no
+  # new held_reason, no new metrics field, no change to any mutation
+  # authority: E30 gains sub-clauses (d)-extension and (e), and the `- **E<n>**`
+  # count the host derives is unchanged at 30.
+  # `extraction_rules_version` STAYS `ext-4`: no Phase-1.5 read-tier rule, no
+  # Phase-1.6 substance criterion and no body budget is touched — this is the
+  # mechanics of landing a click, nothing about what a body means. Bumping it
+  # would turn the pending lift measurement into a comparison of two
+  # different extractors. Calibration is RE-STAMPED (kit step 1, BLOCKING),
+  # never re-measured, and THE PIN MOVES WITH THIS BUMP: the executing lane
+  # loads `.agents/skills/chief-of-staff/SKILL.md` out of this repo, so the
+  # mirror sync IS the deployment.
+  # v5.51 (2026-08-09) — THE CATEGORY WRITE IS A TOUCH, AND THE BODY PASS DREW
+  # ITS QUEUE BACKWARDS. Two defects, both from run 102, both about an action
+  # taken on the wrong row rather than about what a row means:
+  #   (1) THE SAP THREAD. Run 102 applied `Held · deadline` to a thread that
+  #       was UNREAD before the write and UNREAD immediately after it, and READ
+  #       at the final census — `unread_before: true`,
+  #       `unread_immediate_after: true`, `unread_final_after: false` on its
+  #       own action-ledger row. The native lane cannot write a category
+  #       without SELECTING the row, Outlook treats that selection as an open,
+  #       and the flip is ASYNCHRONOUS, so the immediate re-read says nothing.
+  #       The run then refused to mark it unread again, which is correct —
+  #       `unread-touch` is a Layer-2 hard deny in both directions and a
+  #       "repair" would be a second forbidden mutation. One defect, three
+  #       failed checks: E1, E12, E27. The read-state invariant already
+  #       existed (E22(a4)/E26/E29 all cite it) but it was written about
+  #       OBSERVING — select, open, hover — and a category write was never
+  #       named as one of those touches. It is now, and the conservative
+  #       branch is the one taken: an unread row that needs a hold category
+  #       does NOT get one on a lane whose primitive requires selecting it. It
+  #       is DEFERRED, ledgered `held_reason:
+  #       "unread-native-category-deferred"`, counted in the run report, and
+  #       carried to REQUIRED ACTIONS with its ready-to-apply payload. An
+  #       uncategorized unread row is a smaller failure than a silently-read
+  #       one, and a deferral nobody counts is how this comes back.
+  #   (2) THE DRAW ORDER. E29 failed on "P3-before-P0 ordering", and the
+  #       ledger says exactly that: run 102's first three body opens were P3
+  #       `act` rows, the next three were P1, and the first P0 came SEVENTH.
+  #       Run 102's cap happened not to starve anything (3 P0 + 14 P1 + 3 P3 =
+  #       its 20 opens), so the harm was LATENT — but the night BEFORE it was
+  #       realized: run 101 spent all 20 of its opens on P3 while every one of
+  #       its 3 P0 and 14 P1 in-scope threads finished `over-cap`, and this
+  #       validator scored that night VALID_DEGRADED 11/11. With a cap of 20
+  #       against a hundred-odd in-scope rows the draw order IS which mail gets
+  #       read, and the first `hidden` reading ENDS the pass, so a wrong order
+  #       loses the P0s first. This is not cosmetic. The order (P0 → P1 → the rest) was already in
+  #       rule 1½, but only as a parenthetical inside the CAP bullet, where it
+  #       reads as an overflow tiebreak rather than as the standing draw. It
+  #       is now its own clause, every opened row carries `body_open_seq` so
+  #       the order is RECOUNTABLE rather than asserted, and E29 gains the
+  #       matching teeth — including the field-free half (no `over-cap` row
+  #       may outrank an opened row), which scores run 102 without needing a
+  #       field run 102 never had.
+  # NO new E-check (the count the host derives stays 30), no new mutation
+  # primitive, no new sender class, no new authority-matrix row — a deferral
+  # is the ABSENCE of an action, and the two host checks added
+  # (`cos_runverify.check_unread_touch`, `check_body_order`) are read-only.
+  # `extraction_rules_version` STAYS `ext-4`: no Phase-1.5 read-tier rule, no
+  # Phase-1.6 substance criterion and no body budget moves — this is which row
+  # an action lands on and in what order bodies are drawn, not what a body
+  # means. Bumping it would turn the pending lift measurement into a
+  # comparison of two different extractors. Calibration is RE-STAMPED (kit
+  # step 1, BLOCKING), never re-measured, and THE PIN MOVES WITH THIS BUMP:
+  # the executing lane loads `.agents/skills/chief-of-staff/SKILL.md` out of
+  # this repo, so the mirror sync IS the deployment.
+  # v5.52 (2026-08-09) — A GUARD STOP HALTS ACTION, NEVER ACCOUNTING (NOW IN
+  # THE OUTCOME CONTRACT TOO), AND THE ELECTED LANE IS PINNED FOR THE REST OF
+  # THIS CAMPAIGN. Both from run 103, which was SAFETY-CLEAN — one identity
+  # mismatch caught at attempt 2 on the `iab` lane, mutations correctly
+  # stopped, zero new Sent item ids, metrics row appended, the unread row
+  # deferred under v5.51, and the draw taking every P1 before P3 — and which
+  # FAILED anyway, on accounting:
+  #   (1) THE NINE. The mutation stop left nine enumerated conversations with
+  #       no disposition, because writing a `Held · *` category IS a mutation
+  #       and the stop had ended those. The run wrote them `unaccounted` and
+  #       `OC-a-unaccounted` failed the night. v5.48 had ALREADY ruled this
+  #       for the ingestion ledger — "the stop ends OPENING and MUTATING, it
+  #       does not end LEDGERING" — and the outcome contract simply never got
+  #       the same clause, so the same defect came back one leg over. The
+  #       vocabulary gains a SIXTH bucket, `stopped_by_guard`: accounted,
+  #       counted, listed, and on the rendered contract line, so it cannot
+  #       vanish the way `ingestion_candidates` did at run 41. It is refused
+  #       unless the POST record carries a `guard_stop` from a CLOSED guard
+  #       vocabulary naming an ENUMERATED convid, AND the checker finds that
+  #       guard word on a run-scoped ledger row of the run's own
+  #       (`OC-guard-stop-unrecorded` / `OC-guard-stop-uncorroborated`).
+  #       `OC-a` is NOT weakened: a row unaccounted for any other reason fails
+  #       exactly as before, and the negative control is fixture-pinned.
+  #       E30(b) keeps the no-mutation-after-the-stop rule; this is books.
+  #   (2) THE LANE. v5.50's sender-line re-target was proven on the CHROME
+  #       PLUGIN (run 101: 20/20 first-attempt opens; run 102: 20/20). Run 103
+  #       elected `iab` and hit the mismatch there. Electing per-night on
+  #       capability means every mechanic is proven twice and a night can land
+  #       on the unproven surface. `overlay/cos/browser-lane.md` `pin:` — OWNER
+  #       configuration, ABSENT/`none`/unrecognised ⇒ no pin, lifted without a
+  #       version bump — makes the evidence lane the run lane. The checker
+  #       reads the pin OUT OF THE OVERLAY, never from the run, so a fallback
+  #       is `OC-lane-pin-not-honoured` with the elected lane on the record and
+  #       never a silent lane change; preflight now takes `--ledgers` so it is
+  #       caught at 19:05 rather than 21:30.
+  # Also shipped, and deliberately OUTSIDE the run: `tools/cos_lane_rehearsal.py`,
+  # a read-only daytime rehearsal that opens N already-read rows by stable
+  # convid on the elected lane and asserts reading-pane identity per open. It
+  # takes no run id, stamps no manifest, writes no `cos-ops/` ledger and
+  # appends to no corpus — run 103's regression was answerable in ninety
+  # seconds in the afternoon, and instead it cost a night. It NEVER opens an
+  # unread row: the screen is fail-closed on the list's unread affordance, and
+  # a list where that affordance is not observable yields ZERO eligible rows.
+  # NO new E-check (the count the host derives stays 30), no new mutation
+  # primitive, no new sender class, no new metrics field, no new
+  # authority-matrix row, and no new held_reason.
+  # `extraction_rules_version` STAYS `ext-4`: no Phase-1.5 read-tier rule, no
+  # Phase-1.6 substance criterion and no body budget moves — this is how a
+  # stopped run keeps its books and which browser it drives, not what a body
+  # means. Bumping it would turn the pending lift measurement into a
+  # comparison of two different extractors. Calibration is RE-STAMPED (kit
+  # step 1, BLOCKING), never re-measured, and THE PIN MOVES WITH THIS BUMP:
+  # the executing lane loads `.agents/skills/chief-of-staff/SKILL.md` out of
+  # this repo, so the mirror sync IS the deployment.
+  # v5.53 (2026-08-09) — A GUARD THAT WORKED IS NOT A FAILING RUN. Owner
+  # ruling, made on run 104: **the safety property is "no wrong action ever
+  # happens", not "no mismatch ever occurs".** Run 104 was the cleanest night
+  # this campaign has had — the pinned lane honoured, 20 contiguous P0→P1
+  # opens, zero mutation, zero unaccounted rows, the outcome contract PASS with
+  # 14 rows correctly bucketed `stopped_by_guard` — and it scored 28/30,
+  # failing E30 and E19 for the guard DOING ITS JOB:
+  #   (1) E30 FAILED ON A RECOVERED MISMATCH. Attempt 1 on one row produced the
+  #       previously-opened conversation's id; the guard caught it, attempt 2
+  #       re-scrolled and clicked a different point and landed exactly, and
+  #       every mutation leg stopped and stayed stopped. Clause (a) still
+  #       recorded "a real mismatch" and failed the night. On a virtualized
+  #       ~300-row list the measured rate is roughly ONE OPEN IN TWENTY, so a
+  #       bar of zero mismatches demands luck: it is unreachable by effort, and
+  #       the only way to score it is to have a quiet night. E30 now fails an
+  #       UNGUARDED mismatch — one that MUTATED anything, went UNDETECTED, or
+  #       was NOT RECOVERED (clause (f)). Recovery is PROVEN from the fields
+  #       (a)/(e) already oblige, never asserted, and a recovered mismatch is
+  #       still COUNTED and REPORTED (`recovered mismatches: N`) so a rising
+  #       rate is visible instead of absorbed. Because this LOOSENS a bar the
+  #       run grades itself against, it is RECOUNTED host-side from the action
+  #       ledger by `cos_runverify.check_target_identity` — a claim of recovery
+  #       is the one thing this check may not accept on the run's word.
+  #   (2) E19 GETS v5.52's TREATMENT, one leg over. Fourteen rows the stop had
+  #       frozen could not receive their priority/hold projection, because
+  #       writing a chip or a `Held · *` category IS a mutation and the stop had
+  #       ended those. That is fail-closed ACTION working; failing the check for
+  #       it is fail-closed BOOKKEEPING, which v5.52 already ruled a defect for
+  #       the outcome contract. Clause (h) accounts exactly the run's
+  #       `stopped_by_guard` set — already refused unless a `guard_stop` record
+  #       names an enumerated convid AND the checker corroborates that guard
+  #       word on the run's own ledgers — so it needs no new evidence and
+  #       cannot be self-granted. A projection-missing row NOT in that
+  #       corroborated set FAILS exactly as before.
+  # NO new E-check (the count the host derives stays 30), no new mutation
+  # primitive, no new sender class, no new held_reason, no new outcome bucket,
+  # and no operational rule relaxed anywhere: the first mismatch still ends
+  # every mutation leg for the run, a surviving mismatch is still ledgered
+  # `target-identity-mismatch` with `body_opened: false`, and the ONE bounded
+  # re-target is still one and still has to differ. Only the CHECKS' bar moved.
+  # `extraction_rules_version` STAYS `ext-4`: no Phase-1.5 read-tier rule, no
+  # Phase-1.6 substance criterion and no body budget moves — this is what
+  # counts as a failing night, not what a body means. Bumping it would turn the
+  # pending lift measurement into a comparison of two different extractors.
+  # Calibration is RE-STAMPED (kit step 1, BLOCKING), never re-measured, and
+  # THE PIN MOVES WITH THIS BUMP: the executing lane loads
+  # `.agents/skills/chief-of-staff/SKILL.md` out of this repo, so the mirror
+  # sync IS the deployment.
+  # v5.54 (2026-08-09) — A QUEUE THAT RE-DRAWS ITS OWN HEAD IS NOT A QUEUE.
+  # Third occurrence of one defect (runs 100, 103, 104): run 104 re-evaluated
+  # the IDENTICAL twenty conversations run 102 had evaluated nine hours
+  # earlier, while the twenty carrying the OLDEST `last_reeval` on disk were
+  # still held and chipped, and 234 held-and-chipped conversations had NEVER
+  # been stamped at all — every one of which E26(a) says comes FIRST.
+  #   THE DEFECT IS THE POPULATION, NOT THE COMPARATOR. E26(a) has demanded an
+  #   oldest-first draw since v5.5 and named only the ORDER; which conversations
+  #   the order ranges over was left to the reader. Read off the `last_reeval`
+  #   stamps — the natural reading — the set is SELF-REFERENTIAL: only a thread
+  #   already evaluated has a stamp to find, so a never-stamped thread can never
+  #   enter it, rule 1's epoch-0 clause becomes unreachable (it sorts a value
+  #   that is never present), and the queue ping-pongs forever. The arithmetic
+  #   is exact: runs 103 and 104 both reported the denominator `33`, and
+  #   `|run100 ∪ run102|` = `|run102 ∪ run103|` = 33 — the same 33 conversations
+  #   the phase had already touched, both times. Six runs, 120 stamp events,
+  #   53 distinct conversations, 287 held and chipped.
+  #   THE FIX IS AN ENUMERATION, STATED SO IT CAN BE RECOUNTED. Phase 1.5f rule
+  #   2 now names the population (this run's OWN hold-ledger census, every
+  #   `Held · *` category, plus the threads drawn), the full sort (all
+  #   never-stamped first at epoch 0, then oldest stamp, ties by `received` then
+  #   `conversation_id`), and obliges the run to STATE the denominator it drew
+  #   from — `cycling_population` + `cycling_population_source` on every row,
+  #   `<drawn>/<cycling_population>` on the E26 line. E26 gains clause (j) with
+  #   the teeth: a stamped thread drawn while an unstamped one waits is a FAIL,
+  #   and a denominator that is absent, inconsistent, or does not survive a
+  #   recount is a FAIL.
+  #   AND THE HOST RECOUNTS IT, because this is a bar the run grades ITSELF on
+  #   and has passed three times while failing: `cos_runverify
+  #   .check_chip_reeval_draw` rebuilds the population from the hold ledger, the
+  #   stamp of record from the EARLIER runs' chip ledgers (run number, never
+  #   file date — three runs share 2026-08-09), and fails the batch that is not
+  #   that population's head. It reads no prose. Where the hold ledger is not a
+  #   census (runs 100/101 wrote 1 and 20 rows), it DEGRADES rather than
+  #   inventing a second census — the OUTCOME CONTRACT is what catches an
+  #   under-reported hold ledger.
+  # NO new E-check (the count the host derives stays 30), no new mutation
+  # primitive, no new sender class, no new held_reason, no new outcome bucket,
+  # and no operational rule relaxed: the blast-radius floor, the shared cap, the
+  # shadow-first ramp and the unstamped-held-row rule all bind unchanged. This
+  # changes WHICH threads the phase looks at, never what it may do to one.
+  # `extraction_rules_version` STAYS `ext-4`: no Phase-1.5 read-tier rule, no
+  # Phase-1.6 substance criterion and no body budget moves — this is which mail
+  # gets re-triaged, not what a body means. Calibration is RE-STAMPED (kit step
+  # 1, BLOCKING), never re-measured, and THE PIN MOVES WITH THIS BUMP: the
+  # executing lane loads `.agents/skills/chief-of-staff/SKILL.md` out of this
+  # repo, so the mirror sync IS the deployment.
+  # v5.55 (2026-08-09) — STOP CLICKING VIRTUALIZED ROWS; NAVIGATE INSTEAD.
+  # Sixth occurrence of ONE defect (runs 73, 75, 101, 103, 104, 105), and the
+  # first fix that removes it rather than guarding it. Run 105 named the
+  # mechanism in its own report: "rows were being acted on while only present in
+  # Outlook's overscan buffer, so the locator auto-scroll recycled the node
+  # between verification and click" — the row is verified, then the virtualized
+  # list re-uses that DOM node for a different conversation before the click
+  # lands, and the click still returns success. Run 105 opened 3 bodies against
+  # a cap of 20 with 2 unrecovered mismatches.
+  #   EVERY FIX SO FAR GUARDED THE RACE. v5.46 asserted identity after the
+  #   click, v5.48 made each attempt its own row, v5.50 made the re-target
+  #   differ and added `target_produced_pre`, v5.53 stopped failing a run for a
+  #   mismatch the guard caught. Each was correct and none of them stopped the
+  #   click from being able to land on the wrong conversation.
+  #   THE PRIMITIVE CHANGES: Phase 1.6's body open RESOLVES the conversation's
+  #   own URL, NAVIGATES to it, asserts identity, and extracts. A navigation
+  #   touches no row, so there is no node to recycle and no coordinate to go
+  #   stale — target-identity mismatch stops being possible by construction
+  #   rather than being caught after the fact.
+  #   THE URL IS DERIVED, NEVER CAPTURED:
+  #   `<origin>/mail/<folder>/id/<encodeURIComponent(conversation_id)>`.
+  #   Measured against every real link this project has recorded — 14 in run
+  #   103's `_cos_held_deep_links_…json` and 20 on run 104's ingestion rows, 34
+  #   of 34 — and the reading-pane identity read the guard already performs
+  #   (`location.href` split on `/id/`, URL-decoded) is exactly its inverse. So
+  #   nothing new has to be captured, `deep_link_status` gates nothing, and a
+  #   run that captured no links can still navigate: it needs the
+  #   `conversation_id` it already enumerated. The FOLDER segment is read off
+  #   the tab's own current URL, never hardcoded to `inbox`.
+  #   THE ASSERT GAINS A SECOND SIGNAL, AND IT MUST. Under a CLICK the
+  #   reading-pane URL is what the app PRODUCED — that is why run 73 could use
+  #   it as evidence. Under a NAVIGATION it is the input WE supplied, and a page
+  #   that silently failed to open the conversation still shows the URL we
+  #   typed: reading it back alone is the vacuous-pass shape one layer down. So
+  #   an open LANDS only when the URL agrees AND OWA's own list names that same
+  #   single conversation as its selected row. URL-only agreement is
+  #   `unconfirmed`, is never counted as an open, and never promotes.
+  #   THE GUARD DOES NOT GO AWAY — it should simply stop firing. A navigation
+  #   that does not produce the intended id is a mismatch exactly as a click was:
+  #   ledgered with both identity fields and `target_produced_pre`, marked
+  #   detected, every mutation leg stopped, one bounded re-target. That re-target
+  #   is the CLICK PATH, which is why the click path is KEPT rather than deleted
+  #   — it is the maximally different action E30(e) asks for, and re-navigating
+  #   to the same URL would be run 101's defect one primitive over.
+  #   WHAT IS UNPROVEN, SAID PLAINLY. Every one of the 34 recorded URLs was read
+  #   OFF the address bar AFTER a click; that navigating TO one renders the body,
+  #   what it costs, and whether OWA reloads the SPA or changes route in-app are
+  #   NOT established from artifacts and were NOT proven in a browser. The
+  #   rehearsal proves them, in daylight, at 20 rows, before a night is spent:
+  #   `python3 tools/cos_lane_rehearsal.py --deep-link --rows 20`, which reports
+  #   `full_reloads` and `unconfirmed` beside the existing summary.
+  #   THE READ-STATE INVARIANT IS UNCHANGED AND STRUCTURAL. Whether navigating
+  #   to an UNREAD conversation marks it read could NOT be established without a
+  #   browser, and the safe reading is that it does — opening a message in the
+  #   reading pane is what flips it, and the URL is only OWA's route for that.
+  #   So the deep-link path draws from the SAME fail-closed screen the click path
+  #   does (rows PROVEN already read by the positive "Mark as unread" present /
+  #   "Mark as read" absent signal); an unread row is refused before a URL is
+  #   ever built, not after.
+  #   ONE HOST-SIDE CONSEQUENCE, FOUND IN THE CODE RATHER THAN GUESSED. The
+  #   visibility hold binds its tab with `--exact-url`, matched by string
+  #   equality, and a deep-link pass changes `location.href` on EVERY open — so
+  #   from the first navigation `_pick` raises, the hold loop swallows it, and
+  #   the hold silently stops re-asserting visibility while still reporting
+  #   `status: holding`. A hidden OWA tab renders zero rows (measured
+  #   2026-08-01), so that failure is invisible and total. `cos_hold_visible.py`
+  #   gains `--tab-id` (Chrome's own stable tab id, which navigation does not
+  #   change) and the deep-link pass MUST bind with it, never `--exact-url`.
+  # NO new E-check (the count the host derives stays 30), no new mutation
+  # primitive, no new sender class and no new outcome bucket. ONE new
+  # `held_reason` — `target-identity-unconfirmed`, the deep-link primitive's own
+  # not-opened outcome — because the alternative is logging it as some other
+  # reason, and a limit shipped without its outcome word is a defect this
+  # project has already measured. `target-identity-mismatch` joins the managed
+  # set in the same edit: it has been written since v5.46 and was never listed.
+  # No operational rule relaxed: the cap of 20, the P0→P1→rest draw order,
+  # `body_open_seq`, the 4000/6000 body budget, the read-state invariant, the
+  # corpus obligation, the mutation stop and the rule-8 ledger row shape all
+  # bind unchanged. This changes HOW a body is opened, never which bodies may be
+  # opened or what one is worth. `extraction_rules_version` STAYS `ext-4`: no
+  # Phase-1.5 read-tier rule, no Phase-1.6 substance criterion and no body
+  # budget moves — the primitive is not an extraction rule. Calibration is
+  # RE-STAMPED (kit step 1, BLOCKING), never re-measured, and THE PIN MOVES WITH
+  # THIS BUMP: the executing lane loads `.agents/skills/chief-of-staff/SKILL.md`
+  # out of this repo, so the mirror sync IS the deployment.
+  # v5.56 (2026-08-09) — WAIT FOR THE OPEN; SAMPLE ENOUGH ROWS TO MEAN IT.
+  # Two measured corrections to v5.55's deep-link primitive, both found by
+  # rehearsing it against the real mailbox rather than reasoning about it.
+  #   ONE — A FIXED SETTLE IS THE WRONG MECHANISM FOR A PAGE LOAD. v5.55 slept
+  #   a constant after the navigation and then asserted. At the default that
+  #   sleep was too short: `--deep-link --rows 2` returned one mismatch,
+  #   recovered by the click fallback, and the mismatch was the assert reading
+  #   while the page was still routing — not a navigation defect. At `--settle
+  #   6` it was mostly waste: 12 opens took 83s wall clock, 72s of it sleeping.
+  #   THE OPEN IS NOW WAITED FOR, ON THE THING THAT MATTERS. Poll until ALL of:
+  #   the document has finished loading (`readyState === 'complete'`), the URL
+  #   carries the intended conversation id, and OWA's own list marks that same
+  #   single conversation selected — the two halves of the v5.55 assert, plus
+  #   the condition under which reading either of them means anything. THEN
+  #   wait for the reading pane to STOP GROWING, because identity and body do
+  #   not arrive together: measured on one live navigation, 2026-08-09, polled
+  #   every 0.5s — 0.62s document complete with NOTHING selected and 0 rows;
+  #   1.54s identity holds with **28 characters** of body; 2.78s body 3953;
+  #   4.32s body 4020 and unchanged for the next 15s. Returning at the first
+  #   `ready` would have reported a landed open with an empty body, and Phase
+  #   1.6 EXTRACTS immediately after this wait — so the run would have banked
+  #   nothing from a thread it opened correctly.
+  #   EXPIRY CHANGES NO OUTCOME, and the two waits expire SEPARATELY: identity
+  #   never holding is `ready_timed_out` (a lane fault), the text never
+  #   settling is `body_settle_timed_out` (an extraction fault), and one word
+  #   for both would hide either. On either expiry the row is classified from
+  #   what was actually read — URL agreeing with no corroboration is still
+  #   `target-identity-unconfirmed`, a URL that never agreed is still
+  #   `target-identity-mismatch`. A timeout NEVER becomes a pass, and no open
+  #   is ever counted from a page that was still loading. `--settle` survives
+  #   as the TIMEOUT (default 20s ≈ 4x the ~4.5s measured cost of one open),
+  #   never as an unconditional sleep; the CLICK path keeps its own 1.2s settle
+  #   because a click produces no page load to wait on.
+  #   TWO — A CLEAN VERDICT OVER FEWER ROWS THAN ASKED FOR IS A FALSE
+  #   ALL-CLEAR. OWA's list is VIRTUALIZED and renders about a dozen rows at a
+  #   time (measured: 12 of 290), so the rehearsal's target pool was capped at
+  #   a dozen whatever `--rows` said. `--deep-link --rows 20` therefore opened
+  #   12, reported `contract_problems: []` and printed CLEAN — over a sample
+  #   that could never have met its own promotion bar of 20. The rehearsal now
+  #   SCROLLS the list until it has the rows it was asked for (bounded, and
+  #   stopping on two scrolls that render no new conversation), and when it
+  #   still cannot, the VERDICT says `SHORT SAMPLE` and the exit code is 2 —
+  #   the same "does not promote" code as `UNCORROBORATED`. Measured after the
+  #   fix: one scroll took the eligible pool from 12 to 22.
+  #   THE READ-STATE INVARIANT IS UNTOUCHED. Scrolling only changes which rows
+  #   the screen gets to SEE; the screen itself is unchanged, applied per
+  #   rendered view, still fails closed, and still opens nothing that is not
+  #   PROVEN already read. A scroll dispatches no click and sets no location.
+  # NO new E-check (the count the host derives stays 30), no new mutation
+  # primitive, no new sender class, no new held_reason and no new outcome
+  # bucket — `target-identity-unconfirmed` and `target-identity-mismatch` are
+  # exactly the two outcomes an expired wait still resolves to. No operational
+  # rule relaxed: the cap of 20, the P0→P1→rest draw order, `body_open_seq`,
+  # the 4000/6000 body budget, the read-state invariant, the corpus obligation,
+  # the mutation stop and the rule-8 ledger row shape all bind unchanged. This
+  # changes WHEN the assert is taken and HOW MANY rows a daylight rehearsal
+  # measures, never what may be opened or what a body is worth.
+  # `extraction_rules_version` STAYS `ext-4`: no Phase-1.5 read-tier rule, no
+  # Phase-1.6 substance criterion and no body budget moves — a wait is not an
+  # extraction rule. Calibration is RE-STAMPED (kit step 1, BLOCKING), never
+  # re-measured, and THE PIN MOVES WITH THIS BUMP: the executing lane loads
+  # `.agents/skills/chief-of-staff/SKILL.md` out of this repo, so the mirror
+  # sync IS the deployment.
+  # v5.57 (2026-08-09) — AN ABSENT ROW IS NOT A NEGATIVE ANSWER. One measured
+  # gap in v5.55's two-signal assert, found by rehearsing it 20 rows deep
+  # against the real mailbox — twice, on the same conversation both times.
+  #   THE SHAPE. The navigation LANDED: the URL carried the intended
+  #   conversation and the reading pane rendered 536 characters of body. OWA
+  #   then re-rendered THIRTEEN list rows that did not include the conversation
+  #   it had just opened, so every rendered row read `aria-selected="false"`,
+  #   and the corroborating half of the assert had no row to read at all. A
+  #   targeted probe confirmed it: the conversation IS an Inbox row, it is
+  #   simply not rendered after the reload. **OWA cannot mark a row it is not
+  #   rendering** — that signal is UNAVAILABLE, not negative, and a `selected`
+  #   of null was carrying both meanings at once.
+  #   THE FIX IS TO RECOVER THE SIGNAL, NEVER TO RELAX THE ASSERT. When the URL
+  #   agrees and the opened conversation is absent from the rendered list, the
+  #   leg SCROLLS the list until that row renders — bounded at six steps,
+  #   reusing the same scroll the v5.56 sample collector already uses — and then
+  #   reads the SAME assert off the row itself. All three outcomes stay exactly
+  #   as strict: the row renders and IS marked selected ⇒ the open counts; the
+  #   row renders and is NOT marked (the list has the affordance and zero rows
+  #   are selected) ⇒ a genuine `target-identity-mismatch`, and it still fails;
+  #   the row never renders inside the bound ⇒ still
+  #   `target-identity-unconfirmed`, `body_opened: false`, nothing extracted.
+  #   **Recovery that cannot find the row NEVER degrades into "assume it is
+  #   fine".** The negative reading fires only where it is honest — a list
+  #   exposing no `aria-selected` affordance at all, or several rows selected,
+  #   stays unconfirmed, the same fail-closed shape as the read-state screen
+  #   refusing to infer "read" from a missing unread marker.
+  #   THE PATH IS RECORDED, so a rising recovery rate is VISIBLE rather than
+  #   absorbed into one "landed" count — v5.53's discipline for recovered
+  #   mismatches, one leg over. Every corroborated open carries
+  #   `corroborated_via` (`direct` | `recovery`) and a recovered one carries
+  #   `recovery_steps`; a `recovery` claim naming no step count is an unscorable
+  #   record. `first_attempt_ok` still counts a recovered row: the OPEN landed
+  #   first time and only the CORROBORATION needed a scroll.
+  #   The scroll dispatches no click, sets no location and can open nothing —
+  #   the read-state invariant and the unread-touch deny are untouched.
+  #   PROVEN IN DAYLIGHT, ON THE LIVE MAILBOX, BEFORE ANY NIGHT SPENT ON IT
+  #   (`--deep-link --rows 20`, read-only, rows PROVEN already read): **20 rows
+  #   attempted, 20 landed on the FIRST attempt, 0 mismatches, 0 unconfirmed,
+  #   `contract_problems: []`, all 20 bodies rendered** — twice, back to back.
+  #   Exactly ONE of the 20 needed the recovery and it took a SINGLE scroll
+  #   step, in both runs and in the four before them; it is the same
+  #   conversation v5.56 had to hold as `unconfirmed`.
+  #   TWO THINGS THE SAME AFTERNOON'S RUNS FORCED, both in this bundle because
+  #   without them the primitive cannot be measured honestly at all:
+  #   (a) ONE CONVERSATION OWA WILL NOT OPEN MUST NOT COST THE REST OF THE PASS.
+  #   Some conversations are not deep-linkable; OWA answers by dropping the tab
+  #   to `<origin>/mail/` — folder and id gone. Since the URL is DERIVED from
+  #   the tab's folder and the folder is never guessed (v5.55), every later row
+  #   then fail-closed on `not-on-a-mail-folder-url`: one bad conversation cost
+  #   seven and eight rows of two separate 20-row passes. The refusal is right;
+  #   losing the pass is not. A leg that has lost its folder segment RE-ANCHORS
+  #   on the base it observed on that same tab earlier in this run
+  #   (`nav_base: "remembered"`), and a leg with no remembered base says so and
+  #   stops. Composing a folder from a constant, or assuming `inbox`, stays
+  #   banned. (b) A DAYLIGHT SAMPLE IS DRAWN FROM THE TOP OF THE FOLDER: the
+  #   pool used to be read from wherever the list was left scrolled, so three
+  #   runs of one command sampled three different row sets. Pool scan and
+  #   recovery search both re-anchor to the top and the run reports it
+  #   (`list.from_top`). Neither touches the read-state screen.
+  # NO new E-check (the count the host derives stays 30), no new mutation
+  # primitive, no new sender class, no new held_reason and no new outcome
+  # bucket — `target-identity-mismatch` and `target-identity-unconfirmed` are
+  # exactly the two the recovered reading still resolves to. No operational rule
+  # relaxed: the cap of 20, the P0→P1→rest draw order, `body_open_seq`, the
+  # 4000/6000 body budget, the read-state invariant, the corpus obligation, the
+  # mutation stop and the rule-8 ledger row shape all bind unchanged. This
+  # changes WHERE the assert looks for its second signal, never what may be
+  # opened or what counts as corroboration.
+  # `extraction_rules_version` STAYS `ext-4`: no Phase-1.5 read-tier rule, no
+  # Phase-1.6 substance criterion and no body budget moves — recovering a
+  # signal is not an extraction rule. Calibration is RE-STAMPED (kit step 1,
+  # BLOCKING), never re-measured, and THE PIN MOVES WITH THIS BUMP: the
+  # executing lane loads `.agents/skills/chief-of-staff/SKILL.md` out of this
+  # repo, so the mirror sync IS the deployment.
+  # v5.58 (MAN-01, 2026-08-09) — THE MANIFEST STOPS BEING A RECORD OF THE RUN
+  # AND BECOMES ITS INSTRUCTION SHEET. Seven live runs, 100-106, each failed a
+  # DIFFERENT clause, and the pattern under them is one thing: the run
+  # RE-DERIVED its own obligations from this prose while the host CHECKED them
+  # as code, so every night the two disagreed about something new.
+  #   Run 106 alone disagreed about three at once. The host had stamped
+  #   `2026-08-09-run107`; the run named itself `run106` — a SUPERSEDED
+  #   manifest, frozen 18:08 against a v5.57 build that was corrected at 18:14
+  #   (both builds said `v5.57`, so only the DIGEST could ever have caught it).
+  #   The owner's pin said `chrome-plugin`; the run elected `iab`, recorded
+  #   `pin_honoured: false` and archived anyway. The manifest declared
+  #   `_cos_nightly_2026-08-09-run106.md`; the run wrote `_cos_brief_…md` and
+  #   `_cos_run_report_…md`, so `completion` returned "1 of 4
+  #   manifest-declared artifact(s) not written yet" and NOT ONE host check
+  #   ever executed on the night. Its own self-eval was a truthful 20/30 that
+  #   nobody could read. Same class as run 100's drifted PRE filename nine days
+  #   earlier, which v5.49 fixed ONE NAME AT A TIME — this fixes the mechanism.
+  #   Operationally that same run was fine: 2 archives verified into Archive
+  #   with undo rows, 70/70 held links identity-verified, 15 bodies, zero sends.
+  #   THE RULE (Phase 0, MAN-01, above step 0): the run READS
+  #   `shared/current-run.json` — the host's VM-readable projection of the
+  #   frozen manifest — and OBEYS four fields. `run_id` is taken, never chosen
+  #   (and passed WHOLE: run 106 asked the validator about `106` and was told
+  #   "no host run manifest" while the manifest sat on disk). Every declared
+  #   artifact name is copied VERBATIM; a name the run needs and the sheet does
+  #   not declare is a defect to REPORT, never a name to invent. The lane is
+  #   the owner's pin, and the pin check is the preflight's `--ledgers` exit
+  #   code, not a judgement call. `skill_sha256` is COMPARED against the bundle
+  #   actually executing, and a mismatch STOPS the run. No sheet ⇒ no run.
+  #   THE ENGINE SIDE, so the sheet can carry that: `cos-run-begin` now
+  #   projects `lane`, `skill_path`, `skill_sha256` and `expected_artifacts`
+  #   into `current-run.json` (it carried only the id and a timestamp, which is
+  #   precisely why everything else was being derived), and FREEZES
+  #   `expected_echecks` into the manifest — the count was re-derived from the
+  #   deployed file at validation time, which has ALWAYS changed by then, so
+  #   `check_self_eval` scored `degraded` on every run 101-106 and a run
+  #   reporting ZERO of its 30 checks scored the same as one reporting all 30.
+  #   The two producer VERSIONS stay host-side, unchanged (STA-03).
+  #   AND THE SILENCE THAT HID ALL OF IT: a run that works all night and never
+  #   completes gets no verdict, and `alert` reads verdicts — so runs 74, 75
+  #   and 100 sit unscored to this day and nothing anywhere said so.
+  #   `cos_runverify.stalled_runs` now names them on the same carrier as every
+  #   other COS alert, scanned by DATE rather than by a 5-run window (this
+  #   deployment fired six runs on 2026-08-09 alone, so a count window could
+  #   never have fired at all).
+  #   DEPLOYMENT INTERLOCK — READ BEFORE ASSUMING THE SHEET IS FULL. The
+  #   engine that PROJECTS the four fields is committed here but the live
+  #   install (brainiac 0.20.6) still writes `run_id` + `started` alone, so
+  #   MAN-01 carries an ENGINE-CAPABILITY CONDITION in the same shape rule 6
+  #   and the corpus rule already use: no `expected_artifacts` in the sheet ⇒
+  #   rules 1 and 3 bind unchanged, rules 2 and 4 degrade to the four names
+  #   stated in this file plus "digest not verifiable on this engine", and the
+  #   run says so. A PARTIAL sheet is never an ABSENT one. Doctrine and engine
+  #   therefore never disagree on the executing lane, whichever ships first.
+  # NO new E-check (the count the host derives stays 30 — MAN-01's teeth are
+  # host-side by design: an identity the run derives is exactly the thing its
+  # own self-report cannot audit), no new mutation primitive, no new sender
+  # class, no new held_reason, no new outcome bucket and no new metrics field.
+  # NOTHING RELAXED: zero-send, the mutation stop, the read-state invariant,
+  # the identity assert, the cap of 20, the P0→P1→rest draw, the corpus
+  # obligation and every authority-matrix row bind exactly as in v5.57. This
+  # removes DERIVATION of the run's own identity, and removes nothing else.
+  # `extraction_rules_version` STAYS `ext-4`: no Phase-1.5 read-tier rule, no
+  # Phase-1.6 substance criterion and no body budget moves — being told your
+  # own run id is not an extraction rule. Calibration is RE-STAMPED (kit step
+  # 1, BLOCKING), never re-measured, and THE PIN MOVES WITH THIS BUMP: the
+  # executing lane loads `.agents/skills/chief-of-staff/SKILL.md` out of this
+  # repo, so the mirror sync IS the deployment.
+  # v5.59 (REP-01/VOC-01, 2026-08-10) — THE FIXES A RUN MAKES BY HAND ARE
+  # DOCTRINE, OR THEY COME BACK. MAN-01 held on its first night: run 108 took
+  # its id, filenames, lane and digest from the sheet, and all four of the
+  # failure classes it targets stayed gone. What run 108 DID fail was a bug a
+  # previous run had already found and fixed in flight — and thrown away.
+  #   RUN 105 hit the `ingestion_held` counter error, worked out the correct
+  #   rule mid-run ("must include both explicit held and no-substance rows"),
+  #   repaired the counter, and printed "1 repair round". Nothing else records
+  #   it. Run 108 reproduced the identical error three nights later: row 96,
+  #   ledger 115. Run 64 had it before either of them, at 11 of 116.
+  #   THE RULE ITSELF WAS THE HOLE. E29(c) said the counters "EQUAL tonight's
+  #   ledger row counts per `disposition`", which reads as a membership test
+  #   over remembered words — and the words drift. `ingestion_held` is now
+  #   IN-SCOPE MINUS CANDIDATES, so `in_scope = candidates + held` is
+  #   arithmetic and no row can be accounted nowhere (run 106 lost 15 rows
+  #   that way by disposing them `no-new-substance`).
+  #   AND THE GATE THAT SHOULD HAVE CAUGHT RUN 108 COULD NOT: `--append`
+  #   re-counts the row against the ledger, but returned silently when the
+  #   ledger was absent — and run 108 appended at 23:26:32 and wrote its
+  #   ledger at 23:32:47. The ledger comes first; a row claiming in-scope work
+  #   is now refused until the file it was counted from exists.
+  #   VOC-01 — THE MANAGED SET IS CLOSED AND CHECKED. E29(b) has required a
+  #   `held_reason` "from the managed set" since v5.36 and NOTHING verified
+  #   membership, so every run coined its own words (61, 65, 68, 73, 101, 103,
+  #   106, 108 — and invented DISPOSITIONS on 73, 75 and 106). These words ARE
+  #   the counters and ARE the row selectors, so an invented one reads as
+  #   ABSENCE: run 108 wrote its 19 substance verdicts as
+  #   `no-substance-or-already-represented` and `check_body_pass` — the v5.49
+  #   clause built for exactly those rows — reported "no `no-substance`
+  #   verdict in this run's ingestion ledger" and PASSED.
+  #   `cos_runverify.check_ledger_vocabulary` now FAILs a word outside the set.
+  #   REP-01 — A REPAIR ROUND IS ITEMISED. `## 🔧 Repairs`, one line per
+  #   repair (artifact · field · before → after · why), and the header's count
+  #   is RECOUNTED from that list. Runs 75 and 106 printed "0 repair rounds"
+  #   in the header of a page whose body describes counter repairs; run 104
+  #   printed "1 placement repair" and no artifact says what was placed. A
+  #   repair may touch a counter, a report or a snapshot and NEVER a ledger
+  #   row (run 105 rewrote four rows; run 108 renumbered `body_open_seq` into
+  #   a contiguous 1-19, after which `check_body_order` scored the repair
+  #   instead of the run), and a repair to a contract input obliges re-running
+  #   the checker — runs 74, 105, 106 and 108 each said, in as many words,
+  #   that it was not re-run.
+  #   FIFTH IDENTITY FIELD (MAN-01 completion). `scan_provenance.run_id` is
+  #   the sheet's `run_id` VERBATIM; this file still said `"<N>"`. Run 108
+  #   obeyed MAN-01, stamped `2026-08-09-run108` everywhere, passed its own
+  #   contract invocation — and the host replay with the bare `108` raised
+  #   `Malformed: scan_provenance.run_id must match --run-id`, scoring a
+  #   genuine PASS as `contract: FAIL` and blinding `run_scoped_rows` to all
+  #   423 of the run's ledger rows. `tools/cos_contract.py` now normalizes any
+  #   spelling to the run NUMBER; a foreign DATE is still caught by
+  #   `check_artifact_naming`.
+  # NO new E-check (the count the host derives stays 30 — every one of these
+  # teeth is host-side by design: a counter the run derived and a repair the
+  # run performed are precisely what its own self-report cannot audit), no new
+  # mutation primitive, no new sender class, NO new held_reason (the point is
+  # that the set is closed), no new outcome bucket and no new metrics field.
+  # NOTHING RELAXED: zero-send, the mutation stop, the read-state invariant,
+  # the identity assert, the cap of 20, the P0→P1→rest draw, the corpus
+  # obligation and every authority-matrix row bind exactly as in v5.58.
+  # `extraction_rules_version` STAYS `ext-4`: no Phase-1.5 read-tier rule, no
+  # Phase-1.6 substance criterion and no body budget moves — spelling a
+  # counter correctly is not an extraction rule. Calibration is RE-STAMPED
+  # (kit step 1, BLOCKING), never re-measured, and THE PIN MOVES WITH THIS
+  # BUMP: the executing lane loads `.agents/skills/chief-of-staff/SKILL.md`
+  # out of this repo, so the mirror sync IS the deployment.
+  # v5.60 (DED-01/TAX-02/INS-02, 2026-08-10) — THE PHASE INVENTED A NOVELTY
+  # TEST AND USED IT TO DISCARD REAL FINDINGS; AND THE NIGHT STILL CANNOT BE
+  # TOLD APART FROM ITS INSTRUMENT. Two closed investigations, applied.
+  #   ITEM A — ZERO CANDIDATES ON AN OPEN LANE, and it was never the material.
+  #   Replaying the capture corpus for runs 103/105/106/108: 56 body reads over
+  #   35 distinct conversations, of which **21 plainly meet rule 2** — a
+  #   decision, a commitment, a stated counterparty position or a key number,
+  #   each with a quotable span. All four runs staged **0**. Twelve of the
+  #   remaining conversations are `never` categories and correctly yield
+  #   nothing; two are borderline. So the bar is right and the material is
+  #   there; what the runs did was REPLACE rule 2's substance test with a
+  #   NOVELTY test spelled in words that appear ZERO times in this file —
+  #   `no-new-substance`, `no-substance-or-already-represented`, "no novel
+  #   durable". **Doctrine has no drop path for a dedup hit and never had
+  #   one:** rule 5(b) yields `merge_candidate: <id>` INSTEAD OF a fresh
+  #   `create`. Dedup picks the KIND of proposal; it never suppresses one.
+  #   Rule 5 now says so in its own closing paragraph, `dedup_check` is a
+  #   closed three-word set, and the host FAILs anything else — run 106 wrote
+  #   its novelty verdict into that very slot.
+  #   RULE 1¾ WAS NOT BEING APPLIED AT ALL, which is the second, independent
+  #   loss on the same phase. Runs 103/106/108 wrote ZERO `never-category`
+  #   rows; run 103 stamped `category: null` on all 118 rows with the overlay
+  #   taxonomy present and parseable; runs 105/106/108 stamped
+  #   `internal-coordination` on exactly 100 of 115 rows each. Consequence:
+  #   `never` material was OPENED — 11 of run 103's 19 opens and 3 of run
+  #   108's — spending a budget the cap owed to actionable mail. A `never`
+  #   category now costs ZERO opens by rule and by host check, and the stamp
+  #   itself has teeth: an active taxonomy with an all-`null` ledger FAILs, an
+  #   id the overlay does not define FAILs, a `never`-stamped row not excluded
+  #   FAILs, and one category over 75% of a night's in-scope rows FAILs
+  #   (measured: every taxonomy-APPLYING night sits at 0.20-0.33 — runs
+  #   57/59/63/64 — and every blanket-default night at 0.81-0.90).
+  #   AND AN EMPTY SHELL IS NOT A BODY. Run 108 banked two 42-character bodies
+  #   and gave both a post-read `no-substance` verdict. 42 characters is the
+  #   bare `<origin>/mail/` shell v5.57 already names: a FAILED OPEN.
+  #   ITEM B — IDENTITY RECOVERY PASSES IN DAYLIGHT AND FAILS AT NIGHT, and it
+  #   does not close from artifacts. What IS established: the deep-link
+  #   derivation is correct (OWA's own URL is byte-identical to the derived
+  #   one); page-1 membership predicts nothing (4/4 on, 4/4 off); 26 of 26
+  #   neutral daylight opens landed at the night's own cadence; and run 108's
+  #   own probe log records **17 navigation identity mismatches, 16 recovered
+  #   by the changed-click retarget** — an ~84% first-attempt failure daylight
+  #   cannot reproduce. Run 106 is UNSCOREABLE for want of `open_method` and
+  #   `open_url`. One transient failure mode WAS caught in daylight and is a
+  #   live candidate: a navigation wedged Chrome's JS bridge for ~2 minutes,
+  #   and a run whose identity read times out in that window records a
+  #   `target-identity-mismatch` — an instrument failure scored as a lane
+  #   failure. THE LOAD-BEARING INSIGHT: v5.57 made the rehearsal re-anchor to
+  #   the TOP of the folder for reproducibility while a night draws by PRIORITY
+  #   across ~115 rows, so **the rehearsal and the night have never sampled the
+  #   same population** — which is how four successive fixes each scored 20/20
+  #   in daylight while the night kept failing. So the next run records, per
+  #   attempt and even when the attempt FAILS: `open_method`/`open_url`,
+  #   `eval_ms` and a DISTINCT `host-eval-timeout` outcome, `ready_state` /
+  #   `rendered_rows` / `body_chars` / `url_has_id` at the moment identity is
+  #   judged, the `hour` and `display_state`, the visibility hold's status READ
+  #   FROM ITS FILE — and the IN-RUN CONTROL, the same fixed daylight burst
+  #   re-run inside the night on the same lane. The control is the single field
+  #   that decides Item B: control fails too ⇒ the lane; control passes while
+  #   the priority draw fails ⇒ the draw. It is obligatory, not optional.
+  #   AND THE MISLABEL IS CORRECTED. Run 105's "108 mismatches" are 108 rows
+  #   carrying `target_attempt: 0` — never opened. A pass-ended cascade wearing
+  #   a reason that asserts a mismatch happened on each of them. The v5.48 stop
+  #   clause told it to write exactly that; it now writes
+  #   `pass-ended-by-identity-stop`, and a mismatch reason on a row whose own
+  #   `target_attempt` is 0 is a FAIL.
+  # NO new E-check (the count the host derives stays 30 — every tooth here
+  # hangs off E29 and E30), no new mutation primitive, no new sender class, no
+  # new outcome bucket and no new metrics field. TWO new managed held_reasons
+  # (`pass-ended-by-identity-stop`, `host-eval-timeout`) — named HERE first,
+  # exactly as E29(b) requires of a real case the set has no word for.
+  # NOTHING RELAXED: zero-send, the mutation stop, the read-state invariant,
+  # the identity assert, the cap of 20, the P0→P1→rest draw, MAN-01, REP-01,
+  # the corpus obligation and every authority-matrix row bind exactly as in
+  # v5.59. `extraction_rules_version` STAYS `ext-4`: rule 2's four kinds, its
+  # quote requirement, its bar and the body budget are untouched to the word —
+  # what changed is that dedup may no longer overrule it and that a `never`
+  # thread is excluded before extraction rather than after, both of which were
+  # already the written rule. Category evidence accrued under `ext-4` stays
+  # valid. Calibration is RE-STAMPED (kit step 1, BLOCKING), never
+  # re-measured, and THE PIN MOVES WITH THIS BUMP: the executing lane loads
+  # `.agents/skills/chief-of-staff/SKILL.md` out of this repo, so the mirror
+  # sync IS the deployment.
+  # v5.61 (ROUTE-01, 2026-08-10) — THE RUN OPENS ITS OWN TAB, AND ITS OWN TAB
+  # COULD NOT REACH A FOLDER URL. v5.60 left the night one step short of
+  # firing, and the step was never written down anywhere: a deep link is
+  # derived from `<origin>/mail/<folder>` and **a fresh run-owned tab has no
+  # `<folder>`**, so every open fail-closed on `not-on-a-mail-folder-url`
+  # before the first row — run 109's dead night arriving through a second
+  # door. Measured live, four ways, none of it inferred: a tab at
+  # `<origin>/mail/` IS ALREADY SHOWING THE INBOX (13 rows, tree node
+  # `aria-selected="true"`) — the folder is known to the APP and missing only
+  # from the URL; `location.href = '<origin>/mail/inbox'` DOES NOT NAVIGATE AT
+  # ALL (14s, URL unmoved, `readyState` never leaving `complete`), so there is
+  # no redirect to outwait and no retry that reaches it; selecting the folder
+  # in-app writes a segment for `Notes` (`<origin>/mail/notes`, 746 ms, no
+  # `beforeunload` — an in-app route change) but for `Inbox` writes
+  # `<origin>/mail/` — **the default folder's list route has no segment by
+  # design**; and the segment lives in the ITEM route, where ONE click on an
+  # already-read row produced `<origin>/mail/inbox/id/<encoded id>` in 0.81s,
+  # byte-identical to the derived link — which also settles the account-index
+  # question for this tenant: no `/mail/0/…`. So the fix is not to guess the
+  # folder, it is to MAKE THE APP SAY IT and read what it said: one seeding
+  # click on a row already PROVEN READ, with `could-not-acquire-a-folder-route`
+  # as the named refusal when it produces nothing. On a NIGHT that seed is the
+  # FIRST ROW OF THE RULE-1½ DRAW, ledgered `open_method: "click"` with
+  # `body_open_seq: 1` — never an extra open, because an out-of-draw seed
+  # would break both recounts E29 owes (the cap, and the non-decreasing
+  # P0→P1→rest order). In the REHEARSAL it comes from outside the sampled set,
+  # which has no draw to preserve. No folder-name table and no tree-label→segment mapping —
+  # both would be a guess wearing a lookup's clothes.
+  #   AND A SECOND, INDEPENDENT LOSS ON THE SAME LANE, measured the same day:
+  #   THE PASS AND THE HOLD MUST NAME THE SAME TAB. The hold binds by
+  #   `--tab-id`; the pass picked its own by URL substring, and with the
+  #   owner's OWA tab open beside the run's it picked the other one. The pass
+  #   then drove a tab nothing kept visible while the hold re-activated its
+  #   own, and the two fought over the window's single active tab: **20 rows
+  #   attempted, 19 `unconfirmed`, 19 `ready_timeouts`, 0 landed** — on a lane
+  #   that scored 20/20 four minutes later with nothing changed but the tab.
+  #   `cos_lane_rehearsal.py` now takes `--tab-id`, and the pass, the hold and
+  #   E30(g)'s in-run control all name one id.
+  #   AND A THIRD, WHICH IS AN INSTRUMENT FAULT AND COST THIS SESSION AN HOUR:
+  #   A SECOND CHROME MAKES EVERY REFUSAL A LIE. Starting the `chrome-devtools`
+  #   MCP launches its OWN Chrome under `chrome-devtools-mcp/chrome-profile`
+  #   with no OWA session, and from that moment `tell application "Google
+  #   Chrome"` answers from ITS single `about:blank` page — fronting the
+  #   owner's Chrome by pid does not move the routing back. Every tool then
+  #   refuses `no-owa-tab`, which reads as "the owner closed Outlook" and sends
+  #   the reader to the wrong place entirely. `cos_hold_visible` now counts the
+  #   running browsers and names the rival profile in that refusal. **The
+  #   `chrome-devtools` MCP is unusable for this lane by construction** — its
+  #   browser has no signed-in mailbox and the owner's Chrome exposes no CDP
+  #   port — so page structure and routing are measured IN-PAGE, and starting
+  #   it during a COS run is a lane outage.
+  #   PROVEN AT THE BAR, not asserted: `--deep-link --rows 20 --tab-id <id>`
+  #   against a FRESH run-owned tab at `<origin>/mail/` with the hold active —
+  #   **20 rows attempted, 20 landed on the FIRST attempt, 0 mismatches, 0
+  #   `unconfirmed`, `contract_problems: []`**, `folder_route.acquired_via:
+  #   "click"`, all 20 bodies rendered (519-22,876 characters), hold
+  #   `visible_fraction: 1.0` with 0 assert failures.
+  # NO new E-check (the count the host derives stays 30 — the seeding open is
+  # an ordinary read-path open and is scored by E29/E30 exactly like any
+  # other), no new mutation primitive, no new sender class, NO new
+  # held_reason, no new outcome bucket and no new metrics field.
+  # NOTHING RELAXED: zero-send, the mutation stop, the read-state invariant
+  # (the seeding click is screened by it like every other open, and an unread
+  # row can never be the seed), the identity assert, the cap of 20, the
+  # P0→P1→rest draw, MAN-01, REP-01, the corpus obligation and every
+  # authority-matrix row bind exactly as in v5.60. `extraction_rules_version`
+  # STAYS `ext-4`: no Phase-1.5 read-tier rule, no Phase-1.6 substance
+  # criterion and no body budget moves — how a tab reaches a URL is not an
+  # extraction rule. Calibration is RE-STAMPED (kit step 1, BLOCKING), never
+  # re-measured, and THE PIN MOVES WITH THIS BUMP: the executing lane loads
+  # `.agents/skills/chief-of-staff/SKILL.md` out of this repo, so the mirror
+  # sync IS the deployment.
+  # v5.62 (NAV-01/AUTH-01/REP-02, 2026-08-10) — THE REFUSAL IS NOT A MISMATCH,
+  # AND THE FALLBACK COULD NEVER REACH ITS ROW. v5.60's obligatory in-run
+  # control did exactly the job it was built for and the answer came back
+  # unambiguous on run 111: the SAME lane, the SAME tab, the SAME night scored
+  # **12/12 first attempt, 0 mismatches** on the control while the PRIORITY
+  # draw hit **4 refusals** — every one `open_method: navigate`,
+  # `target_attempt: 1`, `url_has_id: false`, `body_chars: 42`,
+  # `ready_state: complete` (3× P0, 1× P1) — and then wrote **111 rows** of
+  # `pass-ended-by-identity-stop` behind them. Control clean + draw failing ⇒
+  # the DRAW, not the lane, and the mechanism is now named: **OWA
+  # deterministically REFUSES a cold navigation to certain conversations**,
+  # answering with the bare `<origin>/mail/` shell. The daylight investigation
+  # had already falsified every rival explanation — the derived URL is
+  # byte-identical to the one OWA itself produces on a click, page-1 membership
+  # predicts nothing (4/4 and 4/4), and 26 of 26 neutral daylight opens landed
+  # at the night's own cadence. Priority rows are the OLDEST mail in the folder,
+  # and old/deep conversations are the refused class.
+  #   WHAT WAS ACTUALLY BROKEN, in three parts:
+  #   (1) THE OUTCOME WORD. A shell landing was scored
+  #   `target-identity-mismatch` — the dangerous kind, the one that ends the
+  #   line — when NOTHING WAS OPENED: no conversation id on the page, 42
+  #   characters, the reading pane never moved. It is now `navigation-refused`,
+  #   recognised from FOUR page facts v5.60 already obliges on every attempt
+  #   (navigate · no produced id · `url_has_id: false` · shell-length body), so
+  #   the host RECOUNTS the split instead of believing a word the run chose. A
+  #   landing on the WRONG id is still `target-identity-mismatch` with
+  #   everything that implies — the produced-id check still decides every open.
+  #   (2) THE FALLBACK COULD NOT REACH THE ROW. The bounded re-target has been
+  #   the CLICK since v5.55 and it NEVER FIRED on run 111: a refusal leaves the
+  #   tab on the shell with ~12 rows re-rendered from the TOP of a 304-row
+  #   folder, and the four refused conversations were received 7/16, 7/20, 7/24
+  #   and 8/1 — not rendered, nothing to click, every attempt dead at 1. The
+  #   re-target now SCROLLS the virtualized list until the row renders (bounded
+  #   24 steps, REUSING the v5.57 recovery's read-only scroll — one scroll
+  #   machine, never a second) and then takes v5.50's click mechanics unchanged.
+  #   It records `retarget_scrolls`; a row the fallback cannot OPEN — never
+  #   rendered inside the bound, or rendered while the v5.50 containment guard
+  #   refused every candidate point — is held BY NAME as
+  #   `navigation-refused-row-unreachable`, counted, never silent. The
+  #   containment refusal is NOT softened to recover a row: a coordinate click
+  #   that cannot prove containment is how run 61 filtered the list by clicking
+  #   a category chip.
+  #   (The same unrendered-row defect was found in the ROUTE-01 SEEDING click
+  #   while proving this, and takes the same shared scroll.)
+  #   (3) A REFUSAL MUST NOT END THE READ PASS. Justified from the safety model
+  #   and nothing softer: the stop defends "no wrong action ever happens"
+  #   (E30(f)), a mismatch triggers it because a WRONG CONVERSATION IS OPEN and
+  #   the next mutation would land on it — and a refusal has no conversation
+  #   open at all for anything to land on. So a refusal holds its own thread and
+  #   the draw carries on. The mutation stop for TRUE mismatches is untouched,
+  #   `host-eval-timeout` still ends the pass, and a fallback that lands on the
+  #   wrong id is a mismatch from that moment.
+  #   AND TWO SMALL REPAIRS FROM THE SAME NIGHT:
+  #   AUTH-01 — A STALE BANNER IS NOT A SIGNED-OUT MAILBOX. Run 111's first
+  #   attempt safe-stopped on a Microsoft sign-in page and declared Outlook
+  #   signed out. It was not: a stale "session expired" banner sat over a fully
+  #   live mailbox, and the rerun enumerated **304/304** minutes later with no
+  #   re-authentication. Authentication is judged from the DOM state that
+  #   depends on it — the list RENDERS ROWS, or the folder tree resolves —
+  #   never from a banner, an interstitial or a URL. A banner over a live
+  #   mailbox is REPORTED AS A BANNER. Fail-closed is unchanged for a mailbox
+  #   that genuinely does not render.
+  #   REP-02 — A CORRECTED RERUN CAN ACCOUNT FOR ITS PREDECESSOR'S ROW. Run
+  #   111's rerun could not replace the earlier abort row (append-only by
+  #   design — correct) and the verifier scored the night INVALID partly on
+  #   that conflict. Ledgers stay UNEDITABLE: the rerun APPENDS its own row
+  #   carrying `supersedes_run_ts`, the verifier scores the LATEST row while
+  #   reporting the history, and the reconcile join counts a superseded row
+  #   once. Teeth both directions — an undeclared second row is a FAIL, and so
+  #   is a `supersedes_run_ts` naming a `run_ts` that key never carried.
+  #   AND ONE INSTRUMENT FAULT FOUND IN FLIGHT, which is why any of this can
+  #   bite: `cos_runverify._declares` anchored its version regex at the START of
+  #   the string (`^v?\d+\.\d+`), so it read False for every row spelling its
+  #   bundle `"chief-of-staff v5.60"` — 234 rows, i.e. runs 110 and 111, the
+  #   very bundles that owed v5.60's per-attempt instrumentation and its
+  #   OBLIGATORY in-run control. Both gates were unfireable on the one form runs
+  #   actually write. Fixed and probed in BOTH spellings.
+  # NO new E-check (the count the host derives stays 30 — the teeth are E30(i),
+  # E29(b)'s closed set and E10's rerun clause), no new mutation primitive, no
+  # new sender class, no new outcome bucket and no new metrics field. ONE new
+  # managed held_reason (`navigation-refused-row-unreachable`) — named HERE
+  # first, exactly as E29(b) requires of a real case the set has no word for —
+  # and ONE new OPTIONAL metrics key (`supersedes_run_ts`), written only by a
+  # rerun and required of nothing else.
+  # NOTHING RELAXED: zero-send, the mutation stop for TRUE mismatches, the
+  # read-state invariant (the scroll dispatches no click and sets no location,
+  # and the screen is applied per rendered view exactly as before), the identity
+  # assert, the cap of 20, the P0→P1→rest draw, MAN-01, REP-01, the corpus
+  # obligation and every authority-matrix row bind exactly as in v5.61.
+  # `extraction_rules_version` STAYS `ext-4`: no Phase-1.5 read-tier rule, no
+  # Phase-1.6 substance criterion and no body budget moves — how a tab reaches a
+  # conversation, and how a run accounts for its own rows, are not extraction
+  # rules. Calibration is RE-STAMPED (kit step 1, BLOCKING), never re-measured,
+  # and THE PIN MOVES WITH THIS BUMP: the executing lane loads
+  # `.agents/skills/chief-of-staff/SKILL.md` out of this repo, so the mirror
+  # sync IS the deployment.
+  kernel_version: "chief-of-staff v5.62"
   # LRN-01/HARDENED:claude-1 — the NARROW graduation key. Own namespace
   # (`ext-<n>`), deliberately NOT the v5.x bundle sequence. Bump ONLY on a
   # real Phase-1.5 classification or Phase-1.6 extraction rule change; see
@@ -978,6 +1858,96 @@ prompting, so this run holds at most **two** legs and removes the third.
 
 ## Phase 0 — Overlay, memory, calibration, transport pre-flight
 
+**MAN-01 (v5.58) — THE HOST'S RUN MANIFEST IS THIS RUN'S INSTRUCTION SHEET.
+READ IT FIRST, BEFORE STEP 0 BELOW AND BEFORE ANY OTHER WORK.**
+
+```
+cat "${BRAIN_COS_OPS_DIR:-$BRAIN_VAULT/.brain/cos}/shared/current-run.json"
+```
+
+That file is the VM-readable projection of the manifest the host FROZE at
+`brain cos-run-begin`. It is the third and last `.brain/` file this run reads
+(E9 lists all three), and every field in it is an **INSTRUCTION**, never a
+starting point for a derivation of your own:
+
+1. **`run_id` — TAKEN, NEVER CHOSEN.** Export it once (`RUN="<run_id>"`) and
+   name every artifact, every ledger, every `--run-id` argument and every
+   corpus call after it. Do not compose an id from the clock, do not read one
+   off a filename, do not carry one over from a previous session's notes, and
+   do not scan the manifests directory and pick. **Pass it WHOLE** —
+   `2026-08-09-run106`, not `106`: the contract checker accepts the bare
+   number, the run validator does not, and run 106 reported *"Host run verifier
+   returned INCONCLUSIVE: no host run manifest"* about a manifest that was on
+   disk the entire time.
+2. **`expected_artifacts` — THE NAMES YOU OWE, COPIED VERBATIM.** For every
+   file the sheet names, write THAT name: do not compose it, do not abbreviate
+   it, and do not split its content across two files of your own naming. The
+   run legitimately writes many artifacts the sheet does NOT name — the
+   ledgers, the brief, the companion, the calendar — and those keep the names
+   this file already gives them (§ Cross-references); they are not in question
+   here. The defect is the OTHER direction: **a declared name you cannot
+   produce, or a declared file you have no content for, is a DEFECT TO REPORT
+   in the 🚧 BLOCKED block — never something to satisfy under a different
+   name.** In particular the run
+   report is `_cos_nightly_<run-id>.md` and the PRE snapshot is
+   `cos_contract_pre_<run-id>.json`; **anything else is not a rename, it is a
+   run that never happened.** Measured, twice in two days: run 100 wrote
+   `_cos_pre_…json`, run 106 wrote `_cos_brief_…md` / `_cos_run_report_…md`
+   instead of `_cos_nightly_…md`, and in BOTH cases the host validator returned
+   *"N of 4 manifest-declared artifact(s) not written yet"* forever — **not one
+   host check ever executed on either night**, self-eval, body pass, target
+   identity and outcome contract included. Run 106's own report was a truthful
+   20/30 nobody could read.
+3. **The LANE is the owner's, not this run's.** Read `pin:` from
+   `overlay/cos/browser-lane.md` (§ Phase 1, OWNER LANE PIN) and elect the
+   pinned toolset. **You may not elect a different lane because another one
+   probed better.** If the pin cannot be honoured, it is the named failure
+   `OC-lane-pin-not-honoured` — never a silent switch. **The gate is
+   mechanical and it is already installed: the PRE-FLIGHT call passes
+   `--ledgers`, and ANY non-zero exit stops the mutation lane** (§ Phase 1).
+   Run 106 elected `iab` against `pin: chrome-plugin`, recorded
+   `pin_honoured: false`, and archived anyway.
+4. **`skill_sha256` — PROVE YOU ARE THE BUNDLE THIS SHEET WAS FROZEN FOR.**
+   `shasum -a 256 "<skill_path>"` and compare. **Not equal ⇒ STOP** and report
+   it: the manifest was frozen for other bytes, so its versions, its declared
+   artifacts and its E-check count all belong to a different run. This is not
+   theoretical — run 106's manifest was stamped 18:08 against one v5.57 build,
+   the file was corrected at 18:14, the host re-stamped run107 at 18:20, and
+   the run then executed the CORRECTED bundle under the SUPERSEDED manifest.
+   **A version STRING cannot catch that** (both builds said `v5.57`); only the
+   digest can. Where the lane genuinely cannot read `skill_path` (a Cowork
+   session executing an uploaded bundle), say *"digest not verifiable on this
+   lane"* in the run report and continue — an inability to check is not a
+   mismatch, and a mismatch is not a warning.
+
+**ENGINE-CAPABILITY CONDITION — the same probe idiom rule 6 and the corpus rule
+use.** Does the sheet carry `expected_artifacts`? **NO ⇒ the deployed engine
+predates MAN-01** (it wrote `run_id` + `started` alone, and that is what is
+live at the time of writing). Then: **rules 1 and 3 bind UNCHANGED** — the id
+is still taken, never chosen, and the lane is still the owner's pin. **Rules 2
+and 4 degrade honestly and the run report SAYS SO:** the four names this run
+owes are the ones stated here — `_cos_nightly_<run-id>.md`,
+`_cos_ingestion_ledger_<run-id>.jsonl`, `cos_contract_pre_<run-id>.json`,
+`_cos_metrics.jsonl` — and the bundle digest reads *"not verifiable on this
+engine"*. **A PARTIAL SHEET IS NOT AN ABSENT ONE:** a sheet carrying a
+`run_id` is a sheet, and never triggers the stop below. Never improvise a sheet
+of your own.
+
+**NO SHEET, NO RUN.** Absent, unreadable, or carrying no `run_id` ⇒ **STOP
+before any mailbox action** and report *"no host run manifest for tonight —
+`brain cos-run-begin` was never run"*. Do NOT invent an id and proceed: an
+invented id has no manifest, so its candidates are quarantined, its artifacts
+are never scored, and the night is unattributable (run 102 ran that way and has
+no manifest to this day). This is a HOST omission with a one-line host fix, and
+naming it is worth more than a night of unscoreable work.
+
+**WHAT THIS RUN STILL DECIDES FOR ITSELF:** everything the sheet does not name
+— which threads are in scope, every classification and priority judgment, which
+bodies to open within the cap and in what order, what to stage, what to draft,
+what to hold, what to write in the brief, and every safety refusal. MAN-01
+removes DERIVATION of the run's own identity, and removes nothing else. Every
+existing guard, gate and E-check binds exactly as before.
+
 0. **Overlay load (every run — the personalization slot):**
    `OVERLAY="${BRAIN_OVERLAY_DIR:-$BRAIN_VAULT/overlay}"`; read whichever of
    `brand/ people/ keywords/` exist (each file: `overlay_type:` frontmatter +
@@ -992,8 +1962,12 @@ prompting, so this run holds at most **two** legs and removes the third.
    - **Degradation (mirrors the voice kernel): a missing category, a missing `overlay/`, or a template-only scaffold ⇒ run neutral for that category and say so in the brief footer** — *"No overlay/<cat>/ found — running neutral; fill `<vault>/overlay/` to personalize (overlay/README.md)."* Never block, never invent.
 0b. **Priority-map load (v2 — the read-tier's who-matters input).** Read the
    HOST-generated priority map at `$BRAIN_COS_OPS_DIR/shared/priority-map.md`
-   (default `<brain-vault>/.brain/cos/shared/priority-map.md`). This file is the ONLY
-   `.brain/` path this skill ever reads: it is the VM-readable projection the
+   (default `<brain-vault>/.brain/cos/shared/priority-map.md`). It is one of the
+   FOUR `.brain/` paths this skill ever reads — the others being
+   `shared/calibration-pin.json` (v5.17, guard 4), `shared/current-run.json`
+   (v5.58, MAN-01) and `shared/grounding-pack.md` (BAK-01, 2026-08-11), all in
+   the same zone and all listed in E9; nothing else
+   under `.brain/` is read and `host/` is never touched. It is the VM-readable projection the
    host broker publishes (`brain cos-priority-map`, host-only — the VM NEVER
    generates or writes it; it is produced from the full-vault filtered
    projection, so Confidential/Restricted people are already in it). It lists
@@ -1025,10 +1999,11 @@ prompting, so this run holds at most **two** legs and removes the third.
      verified reply draft and 4 verified chips and the date's rows all read
      zero. **The SCHEMA lives here (below) so the field list has one home; the
      WRITE lives in step 4¾. Never both.**
-   - Metrics row schema: `{date, run, run_ts, degraded, mail_triaged, marked, archived, captured, drafts_created, drafts_engaged_prev, held_drafted, held_non_drafted, actions_open, meetings, cards, feedback_received, inbox_count, chips_p0, chips_p1, chips_p2, chips_p0_bound, oldest_chip_age_days, chips_added, chips_cleared, would_archive_count, any_sender_shadow_night, any_sender_shadow_count, any_sender_shadow_mature, any_sender_shadow_contradicted, mutation_lane, mutation_toolset, lane_probe_errors, run_profile, outcome_contract, ingestion_in_scope, ingestion_candidates, ingestion_held, attachment_lane}` — **the 4 ingestion/attachment fields** (v5.36, ING-05) are the Phase-1.6 run-obligation counters, all four NEVER absent: **`ingestion_in_scope`** (threads meeting Phase-1.6 rule-1 scope tonight), **`ingestion_candidates`** (rows staged via `cos-propose`), **`ingestion_held`** (in-scope threads ledgered `held`/`no-substance` with a `held_reason`) — each COUNTED FROM tonight's `_cos_ingestion_ledger_<date>-run<N>.jsonl`, never from memory (Disposition 4¾(e)) — and **`attachment_lane`**, one word for the INGEST lane's state (`downloads-mounted` | `blocked-no-downloads-mount` | `not-exercised`). `ingestion_candidates` was being emitted until run 41 and then simply stopped, and nobody noticed for 15 runs, because no rule ever required it; the attachment lane has been blocked-by-construction since 2026-07-17 and no run footer ever said so. **`run_profile`/`outcome_contract`** (v5.28) are the run's declared profile (`full` | `label-only`, never absent) and the block `tools/cos_contract.py` returned at Disposition step 4⅝, copied VERBATIM — the row records what the checker returned and never a hand-composed verdict (§ OUTCOME CONTRACT, self-eval E28). **`run`** (v5.27) is the run number, NEVER omitted: a row that does not name its run is unattributable, cannot be joined to that run's ledgers, and silently stands in for every OTHER run of the same date (measured: three zero rows for 2026-07-25 while an unrowed run 34 held the night's only verified draft). **`held_drafted`/`held_non_drafted`** (v5.27) split tonight's hold-reason writes into the rows parked on an unsent COS draft (`Held · drafted`) and every other hold category; they are MUTUALLY EXCLUSIVE by construction — exactly one hold category per conversation — and together equal the run's total held rows. The **3** lane fields are the v5.12 lane-recording fields (**`mutation_lane`**: the lane the liveness preflight elected — `rest` | `native-ui` | `none` when neither proved live, NEVER omitted; **`mutation_toolset`**: the browser toolset that proved it, per the same-toolset discipline; **`lane_probe_errors`**: a list of each failed probe attempt's verbatim error, both retry attempts included, `[]` on a clean election) — these three are what the LANE-CHANGE BANNER reads as "the previous run's recorded lane", so a run that omits them blinds the next run's downgrade detection; the 13 before them are the v5.1/FRM-02 inbox-zero metrics: **`inbox_count`** (post-run Inbox row count); **`chips_p0`/`chips_p1`/`chips_p2`** (open chips per level right now, from a server re-read, never the client-cached count); **`chips_p0_bound`** (the standing queue-shape bound, `5` — recorded every run so a future revision of the bound is traceable in the historical series, not just live in prose); **`oldest_chip_age_days`** (age of the single oldest OPEN chip, any level, computed from its `assignment` chip-ledger timestamp); **`chips_added`/`chips_cleared`** (tonight's Phase-1.5d ledger tallies — the drain-rate-vs-add-rate pair); **`would_archive_count`** (tonight's Phase-1.5 rule-4 `Would archive (N)` total — noise-lane shadow + needs-review-held rows, unchanged meaning from v3.0); **`any_sender_shadow_night`** (a simple run counter: 1 on the first night `any_sender_lane: shadow` is set, incrementing each night it stays set — resets to 0 if the key goes absent/OFF, since an OFF night contributes no evidence); **`any_sender_shadow_count`/`_mature`/`_contradicted`** (tonight's Phase-1.5b rows written, and the running MATURE/contradicted tallies per Phase 1.5b's promotion-evidence definition — pending rows are `any_sender_shadow_count − any_sender_shadow_mature − any_sender_shadow_contradicted`, never computed as a fourth stored field to avoid a reconciliation drift between two counts of the same thing).
+   - Metrics row schema: `{date, run, run_ts, degraded, mail_triaged, marked, archived, captured, drafts_created, drafts_engaged_prev, held_drafted, held_non_drafted, actions_open, meetings, cards, feedback_received, inbox_count, chips_p0, chips_p1, chips_p2, chips_p0_bound, oldest_chip_age_days, chips_added, chips_cleared, would_archive_count, any_sender_shadow_night, any_sender_shadow_count, any_sender_shadow_mature, any_sender_shadow_contradicted, mutation_lane, mutation_toolset, lane_probe_errors, run_profile, outcome_contract, ingestion_in_scope, ingestion_candidates, ingestion_held, attachment_lane, body_open_cap, body_open_actual, body_budget}` — **the 4 ingestion/attachment fields** (v5.36, ING-05) are the Phase-1.6 run-obligation counters, all four NEVER absent: **`ingestion_in_scope`** (threads meeting Phase-1.6 rule-1 scope tonight), **`ingestion_candidates`** (rows staged via `cos-propose`), **`ingestion_held`** (**(v5.59) EVERY in-scope ledger row that is NOT `disposition: "candidate"`** — not a membership test over a remembered set of words, so `ingestion_in_scope = ingestion_candidates + ingestion_held` is ARITHMETIC and no row can be accounted nowhere; three runs got this wrong in the other spelling — run 64 counted 11 of 116, run 105 caught itself and repaired the counter BY HAND mid-run, run 108 then reproduced run 105's error exactly at 96 of 115, and run 106 lost 15 rows out of every total at once by disposing them `no-new-substance`) — each COUNTED FROM tonight's `_cos_ingestion_ledger_<date>-run<N>.jsonl`, never from memory (Disposition 4¾(e)) — and **`attachment_lane`**, one word for the INGEST lane's state (`downloads-mounted` | `blocked-no-downloads-mount` | `not-exercised`). `ingestion_candidates` was being emitted until run 41 and then simply stopped, and nobody noticed for 15 runs, because no rule ever required it; the attachment lane has been blocked-by-construction since 2026-07-17 and no run footer ever said so. **(v5.49, EXT-07) THE THREE BODY-PASS FIELDS JOIN THEM, AND FOR THE SAME REASON:** **`body_open_cap`** (the cap in force tonight — 20 unless this file changes it), **`body_open_actual`** (bodies opened, COUNTED FROM tonight's ingestion ledger's `body_opened: true` rows, never from memory) and **`body_budget`** (the budget the opens were read to — `"4000 extracted characters"` or `"6000 raw page fallback"`, or both when a night used each; two nights read to different budgets are two different instruments and a lift compared across them is not a comparison). Runs 61-68 emitted `body_open_cap`/`body_open_actual` because a run happened to invent them; runs 69-100 stopped, and the host check built for them (`cos_runverify.check_body_open_count`) has returned DEGRADED on every night since — the identical vanishing-counter shape as run 41's, because these three were checked host-side and never REQUIRED here. **`run_profile`/`outcome_contract`** (v5.28) are the run's declared profile (`full` | `label-only`, never absent) and the block `tools/cos_contract.py` returned at Disposition step 4⅝, copied VERBATIM — the row records what the checker returned and never a hand-composed verdict (§ OUTCOME CONTRACT, self-eval E28). **`run`** (v5.27) is the run number, NEVER omitted: a row that does not name its run is unattributable, cannot be joined to that run's ledgers, and silently stands in for every OTHER run of the same date (measured: three zero rows for 2026-07-25 while an unrowed run 34 held the night's only verified draft). **`held_drafted`/`held_non_drafted`** (v5.27) split tonight's hold-reason writes into the rows parked on an unsent COS draft (`Held · drafted`) and every other hold category; they are MUTUALLY EXCLUSIVE by construction — exactly one hold category per conversation — and together equal the run's total held rows. The **3** lane fields are the v5.12 lane-recording fields (**`mutation_lane`**: the lane the liveness preflight elected — `rest` | `native-ui` | `none` when neither proved live, NEVER omitted; **`mutation_toolset`**: the browser toolset that proved it, per the same-toolset discipline; **`lane_probe_errors`**: a list of each failed probe attempt's verbatim error, both retry attempts included, `[]` on a clean election) — these three are what the LANE-CHANGE BANNER reads as "the previous run's recorded lane", so a run that omits them blinds the next run's downgrade detection; the 13 before them are the v5.1/FRM-02 inbox-zero metrics: **`inbox_count`** (post-run Inbox row count); **`chips_p0`/`chips_p1`/`chips_p2`** (open chips per level right now, from a server re-read, never the client-cached count); **`chips_p0_bound`** (the standing queue-shape bound, `5` — recorded every run so a future revision of the bound is traceable in the historical series, not just live in prose); **`oldest_chip_age_days`** (age of the single oldest OPEN chip, any level, computed from its `assignment` chip-ledger timestamp); **`chips_added`/`chips_cleared`** (tonight's Phase-1.5d ledger tallies — the drain-rate-vs-add-rate pair); **`would_archive_count`** (tonight's Phase-1.5 rule-4 `Would archive (N)` total — noise-lane shadow + needs-review-held rows, unchanged meaning from v3.0); **`any_sender_shadow_night`** (a simple run counter: 1 on the first night `any_sender_lane: shadow` is set, incrementing each night it stays set — resets to 0 if the key goes absent/OFF, since an OFF night contributes no evidence); **`any_sender_shadow_count`/`_mature`/`_contradicted`** (tonight's Phase-1.5b rows written, and the running MATURE/contradicted tallies per Phase 1.5b's promotion-evidence definition — pending rows are `any_sender_shadow_count − any_sender_shadow_mature − any_sender_shadow_contradicted`, never computed as a fourth stored field to avoid a reconciliation drift between two counts of the same thing).
 3. **Transport pre-flight — Chrome MCP gates email AND calendar (v5.3, TRN-01: two DISTINCT failure modes, handled differently).** Pair per the mail-triage skill's pairing ritual (if that skill is installed in this workspace), then run its Outlook auth check. The pairing check and the auth check fail for different reasons and are NOT interchangeable:
    - **Mode (a) — NOT PAIRED (TRANSIENT, retry hard).** `list_connected_browsers` returns `[]`, or the tab-context/tabs call is unreachable. This is cold-start Chrome-extension pairing lag, not a real outage — field-observed 2026-07-19: a run's `list_connected_browsers` returned `[]` on ~6 consecutive polls before the browser connected. A single 120 s retry (the pre-v5.3 rule) bailed to DEGRADED while a working browser was moments away — the fix is a PERSISTENT poll, not a longer single wait: retry the pairing check roughly every 30 s for up to ~6 minutes (~12 attempts) before declaring this leg degraded. A pairing success at ANY attempt inside the budget proceeds straight into Phase 1 (never re-run earlier attempts). Only exhausting the full ~12-attempt budget still unpaired escalates to DEGRADED MODE below.
    - **Mode (b) — PAIRED BUT SIGNED OUT / MFA CHALLENGE (GENUINE, fail fast).** The browser IS connected (pairing succeeded) but the Outlook auth check itself fails — a signed-out signal or an MFA challenge. This is NOT transient: re-authentication needs the owner in the loop, and no amount of polling logs them back in. Do NOT burn the mode-(a) retry budget here — on the FIRST auth-check failure, stop immediately and escalate straight to DEGRADED MODE for the mail+calendar legs.
+     - **(v5.62, AUTH-01) A STALE BANNER IS NOT A SIGNED-OUT MAILBOX — JUDGE AUTH FROM THE MAILBOX, NEVER FROM A NOTICE ON TOP OF IT.** *Measured, run 111 (2026-08-10):* the first attempt met a Microsoft sign-in page, concluded Outlook was signed out, wrote a durable `preflight-abort` artifact and ended the night. **It was not signed out.** A stale "session expired" banner was sitting over a fully live mailbox, and the rerun minutes later enumerated **304 of 304 conversations** on the same browser with no re-authentication whatever. So the auth verdict is read from **the DOM state that actually depends on being authenticated: the message list RENDERS ROWS, or the folder tree resolves its nodes.** A banner, an interstitial, a `login.microsoftonline.com` URL, a "Sign in" title — each is a SIGNAL TO CHECK, never the finding itself. **A banner over a live mailbox is REPORTED AS A BANNER** (`lane_probe_errors`, and the companion says so), and the run proceeds. **FAIL-CLOSED IS UNCHANGED FOR THE REAL CASE:** a mailbox that genuinely does not render — no rows and no resolvable folder tree after the list has been given the same bounded wait every other read gets — is mode (b), fail fast, exactly as above. What changed is only WHERE the answer is read from; nothing here polls a genuine sign-out, and nothing here drives an interactive sign-in. *Why this is a rule and not judgement:* the cheap reading is the one on top of the page, it is the one a screenshot shows, and it cost a night that was fully able to run.
    - **Either mode exhausted → DEGRADED MODE**: skip Phases 1–2, build the brain-only brief (Phases 3-grounding-side, 4, 5) with a top banner naming exactly what was skipped and why — name the mode (not-paired vs signed-out) and, for mode (a), the attempt count/elapsed time — and route the outage to the 🚧 BLOCKED block (retry: next nightly run / the owner runs the pipeline interactively). **Fire the mail-leg degrade notification (TRN-02, step 3a below) on entry to DEGRADED MODE from either mode.**
 3a. **Mail-leg degrade notification (v5.3, TRN-02 — fail LOUD, never a silent no-op).** On ANY mail-leg degrade from step 3 (mode-(a) budget exhausted, or mode-(b) fail-fast): the durable channel is the companion WARNING + BLOCKED banner above (already mandatory) — this step ADDS a best-effort, actionable macOS GUI ping on top, so a day's outage is never *only* discoverable by opening the brief. Actionable text names the cause and the remedy, e.g. `"COS mail leg degraded — extension not paired after ~6min; bring Chrome (Claude extension) up and it catches the next run, or run interactively."` / `"COS mail leg degraded — Outlook signed out; sign back in to Outlook web and it catches the next run, or run interactively."` Mirrors the host's OBS-02 `fire_notification` contract (`src/brain/maintenance.py`): `osascript -e 'display notification "<text>" with title "COS mail leg"'`, best-effort and non-blocking — never raises, never slows or fails the run over a notification failure — returning `"skipped (non-macOS)"` off Darwin; the unattended Cowork VM leg is Linux, so this step degrades to log-only there by construction, exactly as the companion WARNING already guarantees, while an interactive host (macOS) run also gets the GUI ping. **Dedup per-cause-per-day:** claim a create-exclusive marker at `cos-ops/_notify-markers/<mode-a|mode-b>-<TARGET DAY>` before firing — `exists` ⇒ already surfaced today, skip the ping (the WARNING/banner still land every run) — bounding the owner to at most one ping per cause per day, never a repeat storm across a night's retries.
 4. **Calendar source rule (absolute):** the ONLY calendar source is **Outlook web via Chrome MCP** on the allowlisted hosts. Never read any other calendar connector or import feed. Chrome down = calendar BLOCKED, honestly bannered.
@@ -1350,19 +2325,80 @@ it drove is the row it meant. **The conversation list is VIRTUALIZED: its DOM
 nodes are RECYCLED as the list scrolls, re-renders, or reloads, so a node
 handle, a row index, or a screen coordinate captured before an action may
 address a DIFFERENT conversation by the time that action fires** — and the
-click still returns success. Three parts, and they bind to every per-row
-action on every lane (open, checkbox select, context menu, ribbon command):
+click still returns success. Every part below binds to every per-row action on
+every lane (open, checkbox select, context menu, ribbon command):
 - **RESOLVE LATE.** Never act on a node handle, row index or coordinate
   captured before this action. Immediately before each one, RE-RESOLVE the
   row by its stable `data-convid` and read that id back off the element being
   acted on. A row that cannot yield its id is not actionable.
+  **(v5.50) A RECT READ IN THE SAME EVALUATION AS THE ID IS NOT A STALE
+  COORDINATE.** What this bans is a coordinate captured BEFORE the identity
+  assertion — not the geometry read out of the very element whose
+  `data-convid` was just read. ONE DOM evaluation returns the id and the
+  bounding rect together, and the click fires from that rect with no
+  intervening scroll, navigation or await. A lane whose click primitive takes
+  viewport coordinates has no other shape available, and this one preserves
+  the guarantee: the rect and the id came off the same node at the same
+  instant. **Still banned: a rect from an earlier evaluation, a rect read
+  before a scroll, and a rect whose row is not fully inside the VISIBLE list
+  viewport** — a row that virtualization has rendered into the DOM but left
+  below the fold has a rect the click cannot reach, and a click dispatched
+  there lands on whatever occupies those pixels. A row that cannot be brought
+  fully into view is ledgered, never clicked blind.
+- **(v5.55) THE BODY OPEN NO LONGER CLICKS A ROW AT ALL — IT NAVIGATES.** The
+  two clauses above guard a race the CLICK creates: a virtualized node is
+  verified and then recycled before the action fires. Phase 1.6's body pass now
+  resolves the conversation's own URL and navigates to it (rule 1½, EXT-08), so
+  no node is resolved and none can go stale. **The clauses still bind
+  everything else** — every selection, context menu and ribbon command is still
+  a click on a row, and the ONE bounded re-target of a failed navigation is
+  itself a click. Where a clause below says "the click", read "the action".
 - **ASSERT AFTER.** Immediately after the action, re-read the identity from
-  the surface the action PRODUCED — for an open, the READING-PANE URL, which
-  on this surface carries the opened conversation's id (run 73 proved it: the
-  URL is what showed the click had not moved); for a selection, the selected
+  the surface the action PRODUCED — for a CLICKED open, the READING-PANE URL,
+  which on this surface carries the opened conversation's id (run 73 proved it:
+  the URL is what showed the click had not moved); for a selection, the selected
   set's convids — and assert it equals the intended id. **A surface that
   cannot yield an id is a MISMATCH, never a pass**: this is the vacuous-pass
   shape, one layer down.
+  **(v5.55) A NAVIGATED OPEN NEEDS A SECOND SIGNAL, AND THE URL IS NOT IT.**
+  The whole reason the reading-pane URL is evidence after a CLICK is that the
+  APP produced it. After a NAVIGATION the run supplied it, so reading it back
+  proves the address bar echoes and nothing more — a page that silently failed
+  to open the conversation still shows the URL that was typed. **So a navigated
+  open asserts BOTH: the URL carries the intended id, AND the conversation list
+  names that same single row `aria-selected="true"`** — the app-produced signal
+  this file has verified opens with since v5.47's click policy, re-queried from
+  the row itself and never from a cached handle. The URL agreeing with NO
+  corroboration is neither a pass nor a mismatch: it is
+  `held_reason: "target-identity-unconfirmed"`, `body_opened: false`, nothing
+  extracted, no corpus row joined. Reading only the half of the assert we
+  ourselves wrote is exactly the vacuous-pass shape the clause above names.
+  **(v5.57) AN ABSENT ROW IS NOT A NEGATIVE ANSWER — RECOVER THE SIGNAL, DO NOT
+  RELAX THE ASSERT.** OWA re-renders about a dozen rows after a navigation and
+  is NOT guaranteed to include the conversation it just opened: measured twice
+  on 2026-08-09, the same conversation both times, a landed open with 536
+  characters of body came back with all thirteen rendered rows reading
+  `aria-selected="false"` — because the opened one was not among them. **The app
+  cannot mark a row it is not rendering**, so that null is an UNAVAILABLE
+  signal, not a negative one. When the URL agrees and the opened conversation is
+  ABSENT from the rendered list, SCROLL the list until that row renders —
+  bounded (six steps), and it is the same read-only scroll the sample collector
+  uses: no click, no navigation, nothing opened — then read the SAME assert off
+  the row itself. **All three outcomes stay exactly as strict:** the row renders
+  and IS marked selected ⇒ the open counts; the row renders and is NOT marked
+  (the list exposes the affordance and zero rows are selected) ⇒ a genuine
+  `target-identity-mismatch` that still fails; the row never renders inside the
+  bound ⇒ still `target-identity-unconfirmed` with nothing extracted. **A
+  recovery that cannot find the row never becomes "assume it is fine."** The
+  negative reading is taken only where it is honest — a list exposing no
+  `aria-selected` affordance at all, or several rows selected, stays
+  unconfirmed. **Record which path corroborated the open**: every corroborated
+  row carries `corroborated_via` (`direct` | `recovery`) and a recovered one
+  carries `recovery_steps`, so a rising recovery rate is visible instead of
+  absorbed into one landed count (v5.53's discipline, one leg over); a
+  `recovery` claim naming no step count is an unscorable record. A recovered row
+  is still a first-attempt open — the OPEN landed first time and only the
+  CORROBORATION needed the scroll.
 - **(v5.48) RECORD THE PAIR AS TWO FIELDS, PER ATTEMPT.** Every per-row action
   writes **`target_intended`** and **`target_produced`** as two separate
   ledger fields, each an id read at its own moment — never one field, never
@@ -1376,6 +2412,16 @@ action on every lane (open, checkbox select, context menu, ribbon command):
   the action-to-produced chain at all. **The guard worked; only its record was
   ambiguous** — and a guard whose evidence cannot be replayed is worth exactly
   as much as no guard the first time someone doubts it.
+  **(v5.50) A MISMATCH ROW ALSO CARRIES `target_produced_pre`** — the id the
+  produced surface carried immediately BEFORE the action. One extra field,
+  and it separates the two failure shapes that one reason word cannot:
+  `target_produced_pre == target_produced` means **the action never moved the
+  surface at all**, while a different value means it moved to the WRONG
+  conversation. Those are different defects with different repairs, and
+  telling them apart after run 101 cost a full rollout-transcript
+  reconstruction — every mismatch this project has measured (run 73's three,
+  run 101's two) turned out to be the never-moved shape, which nothing in the
+  ledger said.
 - **A MISMATCH STOPS THE LINE.** The first mismatch ends every MUTATION leg
   for the run — zero further archive/categorize attempts, the failure named
   in the companion and the brief's BLOCKED block. For a READ, ONE bounded
@@ -1385,13 +2431,142 @@ action on every lane (open, checkbox select, context menu, ribbon command):
   A row whose identity was never asserted is NEVER joined to a corpus row;
   an already-appended corpus row for that convid is marked invalid in the
   rule-8 ledger join, never deleted — the corpus is append-only.
+  **(v5.62) A REFUSED NAVIGATION DOES NOT STOP THE LINE — AND THE REASON IS THE
+  SAFETY MODEL, NOT CONVENIENCE.** The property this stop defends is *"no
+  wrong action ever happens"* (E30(f), owner ruling 2026-08-09). A mismatch
+  triggers it because a wrong conversation is OPEN and the next mutation would
+  land on it. **A refusal opens nothing:** the tab is on the bare
+  `<origin>/mail/` shell, no conversation id exists on the page, `body_chars`
+  is at or below 42, and `target_produced_pre` is whatever the pane already
+  held — the pane never moved. There is no wrong conversation for a mutation to
+  land on, because there is no conversation at all. So a refusal holds ITS OWN
+  thread (recovered by the click fallback, or
+  `navigation-refused-row-unreachable`) and **the draw carries on to the next
+  row**; it never cascades the rest of the night into
+  `pass-ended-by-identity-stop`. *Measured, run 111:* four refusals ended the
+  pass and **111 in-scope threads were written out behind a stop nothing had
+  triggered** — a whole night's reading lost to a guard firing on the absence
+  of an open. **NOTHING ELSE MOVES.** A true mismatch still ends every mutation
+  leg AND the opening, exactly as above; a `host-eval-timeout` still ends the
+  pass (a wedged bridge learned nothing, and carrying on blind past it is not a
+  pass either); the one bounded re-target is still one and still has to DIFFER;
+  and a refusal that the fallback answers with the WRONG id is a mismatch from
+  that moment, with the stop and everything else. The host recounts the split
+  from the page facts rather than the run's word (E30(i)).
+- **(v5.50) THE ONE BOUNDED RE-TARGET MUST BE A DIFFERENT ACTION (measured
+  run 101, 2026-08-08).** A retry that repeats the attempt that just failed is
+  not a retry. Run 101's re-target re-queried the list, re-read the id, and
+  then clicked **the same point of the same row** — and failed identically,
+  both times it fired. Before the re-click: **bring the row fully into the
+  visible list viewport, re-read its rect AND its id in one evaluation, and
+  click a DIFFERENT deterministic point on it — the sender line near the row's
+  top edge (about 20px below `rect.y`), never the row's vertical centre.**
+  Measured: every failing click in run 101 was a vertical-centre click
+  (Playwright's `locator.click()` targets the element centre; the first
+  coordinate click used `rect.y + rect.height/2`), all four of the run's
+  target failures happened before the click point moved, and every open after
+  it moved landed. The centre of an OWA conversation row is preview text and
+  hover-action chrome — it is not reliably that row's selection surface.
+  **The click point is a LANE DETAIL and it will drift when OWA changes.**
+  What does not drift is the rule above it: the re-target changes something
+  about the action, and the row says what it changed.
+  **(v5.55) FOR A NAVIGATED OPEN THE RE-TARGET IS THE CLICK PATH — AND THAT IS
+  WHY THE CLICK PATH IS KEPT.** Re-navigating to the same URL is run 101's
+  defect one primitive over: it repeats the attempt that just failed and cannot
+  fail differently. So a mismatched navigation re-targets by CLICKING the row
+  under the v5.50 rules above (fully in view, rect and id in one evaluation,
+  sender line), and its row carries `open_method: "click"`, its `point`, and a
+  `retarget_changed` naming the fallback. **Every per-row action row now carries
+  `open_method`** (`navigate` | `click`) and a navigated one carries `open_url`;
+  a row from before v5.55 with neither field reads as `click`. The host
+  recounts "the re-target DIFFERED" from whichever field the primitive actually
+  used — `point` for a click, `open_url` for a navigation — so a re-navigation
+  to one URL is caught exactly as a re-click of one point is
+  (`cos_runverify.check_target_identity`).
+- **(v5.60, INS-02) INSTRUMENT THE ATTEMPT, NOT THE SUCCESS — EVERY FIELD
+  BELOW IS WRITTEN EVEN WHEN THE ATTEMPT FAILS.** *Why this is a rule and not
+  a nice-to-have:* the deep-link open now fails at night and passes in
+  daylight, and after five nights the artifacts still cannot say why.
+  Established, and not in dispute: **the derivation is correct** (clicking a
+  failing row and reading the URL OWA itself produces returns a string
+  byte-identical to the derived deep link); **page-1 membership predicts
+  nothing** (4/4 on page 1 landed, 4/4 off it landed); **26 of 26 neutral
+  daylight opens landed at the night's own back-to-back cadence**; and run
+  108's own `lane_probe_errors` records *"17 navigation identity mismatches
+  detected; 16 recovered by the one changed click retarget"* — an **~84%
+  first-attempt failure rate daylight cannot reproduce at all**. Run 106 is
+  UNSCOREABLE against any of this, for the single reason that it recorded
+  neither `open_method` nor `open_url` on any of its twenty opens. And ONE
+  transient failure mode WAS caught in daylight and is a live candidate for
+  what the night is hitting: **a navigation wedged Chrome's `execute
+  javascript` bridge for about two minutes** — every host-side read timed out,
+  then it recovered on its own — and a run whose identity read times out
+  inside that window records a `target-identity-mismatch`. **That is an
+  instrument failure scored as a lane failure, and no artifact this project
+  holds can tell the two apart.** So, per ATTEMPT:
+  - **`open_method` and `open_url` on EVERY attempt**, not only the one that
+    landed. A failed attempt with no method and no URL is exactly run 106.
+  - **`eval_ms` — the wall-clock duration of the host-side evaluation that
+    judged identity** — and a DISTINCT outcome when that evaluation **TIMES
+    OUT rather than returns**: the attempt row carries `eval_timed_out: true`
+    and the thread is ledgered `held_reason: "host-eval-timeout"` (rule 1½),
+    **never `target-identity-mismatch`**. A wedged bridge learned nothing about
+    the conversation; recording it as a mismatch asserts something the run
+    cannot know, and it is the difference between "OWA would not open this
+    thread" and "the host could not ask".
+  - **`ready_state`, `rendered_rows`, `body_chars`, and `url_has_id`** — all
+    four read AT THE MOMENT IDENTITY IS JUDGED, not before and not after. They
+    are what separates "the page never loaded", "the list rendered nothing",
+    "the body never arrived" and "the URL lost its `/id/` segment", every one
+    of which currently arrives as the same word.
+  - **`hour` (local, 0-23) and `display_state`** (`awake` | `display-off` |
+    `asleep` | `unknown`). The night fires at an hour daylight never tests, on
+    a machine whose screen state daylight never has.
+  - **`hold_status`, READ FROM THE HOLD'S OWN `--status-file`**, never assumed
+    from launch, and stamped `hold_status_source: "status-file"` so the read is
+    a fact rather than a claim. v5.55 already measured the failure this
+    forecloses: a hold that has lost its tab **keeps reporting `status:
+    holding`** while it silently stops re-asserting visibility.
+  - **AND THE IN-RUN CONTROL, WHICH IS THE ONE THAT DECIDES THIS.** v5.57 made
+    the rehearsal re-anchor to the **top of the folder** for reproducibility,
+    while a night draws by **priority across ~115 rows**: **the rehearsal and
+    the night have never sampled the same population.** That is how four
+    successive fixes each scored 20/20 in daylight while the night kept
+    failing. So the night runs the SAME fixed daylight burst against itself, on
+    the SAME lane, in the SAME tab, at the end of the body pass:
+
+    ```
+    python3 tools/cos_lane_rehearsal.py --deep-link --rows 12 \
+        --out <ops>/_cos_lane_control_<run_id>.json
+    ```
+
+    **This is OBLIGATORY, not optional** (E30(g)). Its twelve opens are
+    read-only rehearsal opens on rows the rehearsal's own read-state screen
+    proved already read: they stage nothing, extract nothing, join no corpus
+    row, write no rule-8 row, and **do not count against the 20-open cap** —
+    the run reports them separately and `body_open_actual` never includes them.
+    **Read the answer straight off it: if the control ALSO fails, it is the
+    LANE; if the control PASSES while the priority draw fails, it is the
+    DRAW.** No other field this run records can distinguish those two, and
+    every night without it is another night that cannot be scored.
 - **(v5.48) A STOP HALTS ACTION, NEVER ACCOUNTING.** The stop above ends
   OPENING and MUTATING. It does **not** end LEDGERING, and the run still owes
   Phase 1.6 rule 8 exactly one row per in-scope thread. **Every remaining
   in-scope thread is written out with `body_opened: false` and the
-  `held_reason` that actually applies** — `target-identity-mismatch` for the
-  threads the stop covers, the ordinary managed reason for anything held for
-  its own sake. *Measured failure, run 75 (2026-08-07):* the run classified
+  `held_reason` that actually applies** — **(v5.60)
+  `pass-ended-by-identity-stop` for the threads the stop merely COVERS**, the
+  ordinary managed reason for anything held for
+  its own sake. **(v5.60) THE CASCADE IS NOT A MISMATCH, AND UNTIL NOW THIS
+  CLAUSE SAID IT WAS.** `target-identity-mismatch` asserts that an open was
+  attempted on that conversation and produced the wrong id; a thread the pass
+  never reached asserts nothing of the kind. *Measured, run 105 (2026-08-09):*
+  **108 rows carry `target-identity-mismatch` and every one of them carries
+  `target_attempt: 0` and `target_produced: null`** — never opened. Read as
+  written, that night looks like 108 identity failures; it is one stop and 108
+  threads that were written out behind it. **A row whose own `target_attempt`
+  is 0 may not carry a mismatch reason**, and the host FAILs it (E30(h)) —
+  scored off the run's OWN field, so it is not a bar applied to a bundle that
+  never named one. *Measured failure, run 75 (2026-08-07):* the run classified
   the FULL mailbox — 287 verdict rows, **110 `act`, 136 `read`, 41 `noise`** —
   so Phase-1.6 scope was well over a hundred threads, and then wrote an
   ingestion ledger of **THREE rows**: one opened body and two
@@ -1402,6 +2577,15 @@ action on every lane (open, checkbox select, context menu, ribbon command):
   and ledgers completely is a good night with a short body pass; a run that
   stops early and ledgers three rows has silently shrunk its own denominator,
   which is the vacuous-pass shape this file refuses everywhere else.
+  **(v5.52) THE SAME CLAUSE BINDS THE OUTCOME CONTRACT, one leg over.** A
+  `Held · *` category write is itself a mutation, so the rows this stop covers
+  cannot be DISPOSED either — and they still owe a terminal bucket. That bucket
+  is `stopped_by_guard` (§ OUTCOME CONTRACT), ACCOUNTED and COUNTED, and it
+  obliges the POST record's `guard_stop` record with the ledger row above as
+  its corroboration. *Measured failure, run 103 (2026-08-09):* a safety-clean
+  night — the guard caught the mismatch at attempt 2, every mutation leg
+  stopped, zero new Sent item ids — that FAILED anyway, on nine rows written
+  `unaccounted` instead of disposed.
 *Why a PRE-action assertion when the verified-batch protocol already
 re-queries afterwards:* it does, and that is exactly how run 72's damage was
 found — the post-run identity diff showed 20 conversations moved where 7 were
@@ -1432,6 +2616,39 @@ needed. Codex exposes three — its own **in-app browser (`iab`)**, the **Chrome
 Plugin** (drives the owner's real Chrome), and the **`chrome-devtools` MCP**
 (an ISOLATED automation profile at a fixed `--user-data-dir`). Elect in this
 order and record the elected one as `mutation_toolset`:
+
+**OWNER LANE PIN — READ IT FIRST (v5.52, `overlay/cos/browser-lane.md`).**
+Before applying the order below, read `pin:` from that overlay file. **ABSENT
+file, absent key, `none`, or any unrecognised value ⇒ NO PIN and the order
+below stands unchanged.** A recognised value (`iab` | `chrome-plugin`) means
+**attempt the PINNED toolset FIRST and elect it**; the preference order is
+bypassed while the pin is in force, and its qualification requirements (proven
+auth, the zero-mutation capability qualification, the shipped scanner) are NOT
+— a pin changes which lane is tried first, never what a lane must prove.
+
+*Why the pin exists (measured, runs 101-103):* electing per-night on capability
+means every lane mechanic has to be proven TWICE. v5.50's sender-line re-target
+was proven on the **Chrome Plugin** — run 101 opened 20/20 first attempt, run
+102 20/20 — and run 103 then elected `iab`, met an identity mismatch at attempt
+two, and correctly stopped every mutation leg. A whole night was spent
+re-discovering, on the unproven surface, a defect the proven surface had
+already fixed. A pin makes the evidence lane the run lane.
+
+**A PIN THAT CANNOT BE HONOURED IS A NAMED, LEDGERED FAILURE — NEVER A SILENT
+FALLBACK.** If the pinned lane cannot be elected, the run: records
+`lane-pin-not-honoured` plus the verbatim probe error in `lane_probe_errors`,
+records the lane it ACTUALLY ran as `mutation_toolset` (so the standing
+LANE-CHANGE BANNER fires on it), and says so in the brief banner. The
+outcome-contract checker reads the pin **out of the overlay itself, never from
+the run** — a pin the run could declare for itself is a pin a silent fallback
+can drop — and renders `OC-lane-pin-not-honoured` with the elected lane, the
+pin, and whether it held in the block's `lane` object. That object is the
+run's report of which lane it ran and that a pin was in force; no new metrics
+field is added for it.
+
+**The pin is OWNER CONFIGURATION and is lifted without a version bump:** set
+`pin: none` or delete the file, effective the next run. Schema and
+absent-semantics: `overlay/template/cos/browser-lane.md`.
 
 1. **`iab` — Codex's own browser. PREFERRED (v5.19).** It is ISOLATED: it
    shares no profile with the owner's Chrome, no extension pairing, and no
@@ -1679,7 +2896,7 @@ new count schema both PRE and POST carry the same-run provenance:
 ```json
 {
   "browser_election": {"attempted": ["iab", "chrome-plugin"], "elected": "chrome-plugin"},
-  "scan_provenance": {"run_id": "<N>", "toolset": "chrome-plugin", "folder": "Inbox", "identity_field": "conversation_id"}
+  "scan_provenance": {"run_id": "<the manifest sheet's run_id, verbatim>", "toolset": "chrome-plugin", "folder": "Inbox", "identity_field": "conversation_id"}
 }
 ```
 
@@ -1688,6 +2905,25 @@ qualification fails. The POST record repeats `scan_provenance` with the same
 run id and elected toolset. `tools/cos_contract.py` refuses a new-schema
 snapshot without this proof, a stale run id, a lane mismatch, or a Chrome-only
 election.
+
+**(v5.59) `scan_provenance.run_id` IS THE SHEET'S `run_id`, VERBATIM — the
+FIFTH identity field MAN-01 governs.** This template said `"<N>"` while MAN-01
+told the run to take its identity from `shared/current-run.json`, whose
+`run_id` is the full `<date>-run<N>`; the run and the doctrine were reading
+two different fields, and the two were only equal by habit. Copy the sheet's
+value, exactly as the run id, the artifact filenames, the lane and the digest
+are copied — one identity, one source, no re-spelling anywhere. **The CHECKER
+normalizes any spelling to the run NUMBER**, so `108`, `run108` and
+`2026-08-09-run108` are one run to `--run-id`, to `scan_provenance.run_id` and
+to every ledger row's `run` field alike. Measured, run 108: it obeyed MAN-01,
+stamped `2026-08-09-run108` everywhere, and passed its own contract
+invocation — while the HOST validator, which replays the same checker with the
+bare number, got `Malformed: pre: scan_provenance.run_id must match --run-id`
+and scored a genuine PASS as `contract: FAIL`. The same difference blinded
+`run_scoped_rows` to all 423 of that run's ledger rows, which is
+`OC-a-unaccounted` arriving from a spelling rather than from missing work.
+A run that writes under a foreign DATE is still caught, by the check built for
+it (`cos_runverify.check_artifact_naming`).
 
 **NO GLOBAL MAILBOX-IDLE GATE (v5.32, run-48 repair).** Unread-count and
 Drafts-count changes are NOT PRE fields and never terminate or restart PRE
@@ -1717,7 +2953,17 @@ incomplete while it is being collected:
 4. Once one lane produces complete evidence, freeze it: set `enumerated_at`,
    serialize PRE, and run the deterministic preflight below. Later mailbox
    movement is handled by the PRE/POST set formulas, not by restarting the
-   run.
+   run. **(v5.49) THE PRE SNAPSHOT HAS EXACTLY ONE NAME:
+   `cos-ops/cos_contract_pre_<run-id>.json`** (POST is
+   `cos-ops/cos_contract_post_<run-id>.json`) — the host FREEZES that name into
+   the run manifest at `cos-run-begin` and both the completion check and the
+   contract re-execution read it literally. Until now this file said only
+   `<pre.json>`, so the name drifted three times in nine days
+   (`cos_contract_pre_` runs 40-69 → `_cos_contract_pre_` run 75 → `_cos_pre_`
+   run 100) and **the consequence is not cosmetic: a run whose PRE snapshot is
+   under any other name never becomes COMPLETE, so `brain`'s host validator
+   returns PENDING forever and NOT ONE of its checks ever executes on that
+   night** — run 100 is unscored to this day, `body_pass` included.
 
 Immediately after serializing PRE and before any mailbox mutation, run:
 
@@ -1907,7 +3153,51 @@ conversation-ID join for drafts this run created.
      checked after a successful clear, which nearly recorded a verified write
      as failed; the row showed it gone and stayed gone on the delayed re-read.
      A verdict taken from menu state is invalid.
-   - **PREFER THE RIBBON PATH OVER THE PER-ROW CONTEXT MENU FOR CHIP WRITES (v5.21):** select the row(s) by checkbox and use the ribbon Categorize control. Measured 2026-07-26 on the `iab` lane, the per-row right-click category menu failed 3 of 3 human clears — two menus never rendered, one timed out — while the ribbon path is the run-5-proven primitive. The right-click menu remains correct for MOVE/Archive; it is the CATEGORY menu specifically that is unreliable. **Marks are worked to completion the same way archives are** — no "ran out of runway" holds; the only rows a run may end with unmarked are individual verification-failed-twice rows (or a batch remainder per the protocol below).
+   - **PREFER THE RIBBON PATH OVER THE PER-ROW CONTEXT MENU FOR CHIP WRITES (v5.21):** select the row(s) by checkbox and use the ribbon Categorize control. Measured 2026-07-26 on the `iab` lane, the per-row right-click category menu failed 3 of 3 human clears — two menus never rendered, one timed out — while the ribbon path is the run-5-proven primitive. The right-click menu remains correct for MOVE/Archive; it is the CATEGORY menu specifically that is unreliable. **Marks are worked to completion the same way archives are** — no "ran out of runway" holds; the only rows a run may end with unmarked are individual verification-failed-twice rows, a batch remainder per the protocol below, or — v5.51 — an UNREAD row deferred under the clause immediately following.
+   - **(v5.51) A NATIVE CATEGORY WRITE IS A TOUCH — AN UNREAD ROW IS NEVER
+     CATEGORIZED THROUGH ONE.** The read-state invariant (E22(a4)/E26/E29) has
+     always said *no unread row is selected, opened, or hovered into a reading
+     pane*, and every phase that quoted it was talking about OBSERVING. A
+     category write was never named as one of those touches, and it is one:
+     **on the native lane a category cannot be applied without SELECTING the
+     row** — checkbox-then-ribbon or the per-row context menu, it makes no
+     difference — and Outlook treats that selection as an open. So:
+     - **A category is written to an UNREAD row ONLY on a primitive that does
+       not touch the row: `rest-categorize`.** Every other primitive
+       (`dom-categorize`, a per-row context menu, any selection-then-ribbon
+       path) is FORBIDDEN on a row screened unread, whatever category it would
+       have applied and however useful that chip would have been.
+     - **`IsRead` IS SCREENED FIRST, FROM THE LIST, BEFORE THE WRITE** — the
+       same v5.13 ORDERING INVARIANT the body pass inherits, applied one leg
+       over. Every `categorize` ledger row carries **`unread_before`**, read
+       from the list's unread affordance immediately before the write; a
+       categorize row with no `unread_before` cannot be recounted and is a
+       FAIL (E1). **A POST-WRITE RE-READ PROVES NOTHING AND IS NOT THE
+       SCREEN:** run 102 read `unread_immediate_after: true` on the very row
+       that was `unread_final_after: false` an hour later — the flip is
+       asynchronous, so the only honest moment to look is BEFORE.
+     - **THE CONSERVATIVE BRANCH: DEFER, DO NOT WRITE.** An unread row that
+       earned a hold category on a lane that cannot write one safely is
+       **DEFERRED** — no category, no selection, no second attempt on another
+       primitive. It is ledgered as a held mutation row exactly like any other
+       (`verification: "held"`) with `held_reason:
+       "unread-native-category-deferred"` and its ready-to-apply payload in
+       REQUIRED ACTIONS, and the run report states the DEFERRED COUNT beside
+       the marked count. An uncategorized unread row is a smaller failure than
+       a silently-read one; a deferral nobody counts is how the write creeps
+       back.
+     - **AND IT IS NEVER REPAIRED BY MARKING THE ROW UNREAD AGAIN.**
+       `unread-touch` is a Layer-2 hard deny in BOTH directions — marking read
+       and marking unread are the same forbidden EXECUTION — so a run that
+       discovers it flipped a row REPORTS it (⚠ Integrity + REQUIRED ACTIONS)
+       and stops; a "repair" would be a second forbidden mutation on the
+       owner's mailbox. Run 102 got this half right and it is written down so
+       the next run does not have to re-derive it.
+     *Measured, run 102 (2026-08-09):* `Held · deadline` applied via
+     `dom-categorize` to a thread whose own ledger row reads `unread_before:
+     true`, `unread_immediate_after: true`, `unread_final_after: false`. One
+     defect, three failed checks — E1, E12 and E27 — because the invariant was
+     stated everywhere and the action that broke it was named nowhere.
 3. **export-and-capture** — INGEST rows: attachments/body notes → `<brain-vault>/inbox/` → verify (exists, size > 0, fresh mtime) → archive source. Requires the downloads mount per the triage pre-flight — **and (v5.38, ING-06) the run must POINT THE BROWSER AT THAT DIRECTORY before it triggers anything, then PROVE the file arrived there.** A mount that exists is not a destination: until v5.38 this leg triggered an in-browser download and merely hoped it landed somewhere the host sweeper reads, which is why the manifests stop at 2026-07-17. On the elected browser lane, set the download directory to `$BRAIN_COS_DOWNLOADS_DIR` for THIS session before the first trigger (Chrome/CDP: `Browser.setDownloadBehavior` with `behavior: "allow"` and `downloadPath` set to that directory — the automation profile runs with full CDP access, so this needs no owner configuration and never touches the owner's own browser or its download folder). **Cannot set it ⇒ the lane is BLOCKED exactly as an absent mount** — do NOT trigger a download that would land in a directory the sweeper does not read. After each trigger, verify the file exists IN that directory (exists, size > 0, fresh mtime) before writing its manifest line; a manifest line whose file never appeared there is a `download_status: "landed-elsewhere"` row and a FAIL, never a silent success. *Why the teeth:* with the mount now configured, "mount present" would otherwise read as healthy on every night while every file went to the browser's default folder — the same vacuous-pass shape as the Phase 1.6 freeze, one layer down. **Downloads mount ABSENT ⇒ BLOCKED:** do NOT trigger the browser download and do NOT write a basename-only ingest manifest. The host sweeper no longer reads shared `~/Downloads`; it is disabled unless the owner separately configures a dedicated host-only staging directory via `$BRAIN_COS_DOWNLOADS_DIR`. A VM-written filename is not proof that the VM caused a host download. Keep the source email in Inbox, add a ready-to-run capture action to REQUIRED ACTIONS, and ledger `capture blocked — downloads mount absent`. Mount present ⇒ the direct verify-then-archive path above applies unchanged. **(v5.36, ING-05) A BLOCKED attachment lane is REPORTED, not merely declined:** the run records `attachment_lane: "blocked-no-downloads-mount"` in tonight's metrics row AND raises the 🚧 BLOCKED block naming it — the mount's absence is a standing capability gap, so the report fires on EVERY such night, not only on nights an INGEST row happened to be identified. `not-exercised` is reserved for a night with no INGEST row at all AND a mount present; it is never a substitute for the blocked value. *Why:* the last ingest manifest is 2026-07-17 — the browser lanes adopted from 2026-07-26 have no downloads mount, so this lane was blocked-by-construction for 13 days and every run footer stayed silent, because E5/E15 only bind CONDITIONALLY on INGEST rows that exist (E29(d)). **(v5.37, DOC-02) EVERY MANIFEST LINE CARRIES THE SAME STAMPS A CANDIDATE DOES — the attachment lane is the SECOND evidence lane, not a lesser one.** Each `drop/ingest-manifest/manifest-<date>.jsonl` line adds, beside the filename/size/ts fields it already carries: **`category`** (the rule-1¾ stamp, resolved on the **`attachment` lane** — a category rule scoped to `lane=text` is simply not consulted here, and the lane's own `propose` default applies; **omitted entirely** when the overlay taxonomy is absent, unparseable, or matched no defined rule — never a placeholder), **`extraction_rules_version`** and **`pattern`/`bundle_version`** (verbatim from this file's frontmatter — copy the FIELD, never infer from prose. **This lane is deliberately NOT slimmed by v5.39/STA-03:** the host derives a CANDIDATE's version stamps from the run manifest, but nothing derives a MANIFEST LINE's — `ingest_sweep` still reads `extraction_rules_version`/`bundle_version` off the line itself — so the attachment lane keeps copying them and a line missing them is still a FAIL), the **`provenance` object `{sender, sent, conversation_id, subject}`** for the message the file came from (from the typed fields triage already holds — no new mail reads; a manifest line takes the object form, unlike a candidate's flat dotted frontmatter keys), and the optional report-only version signals (`version_marker` / `version_family` / `thread_continuity`). **A `never`-category attachment is never downloaded and never manifested** — same rule-1¾ discipline as the text lane, zero rows, and the host refuses it independently with a logged defect if the run misfires. **`provenance.verified` is NEVER written here either** (host-earned only). All of it is a CLAIM: the host re-validates the category against the owner's taxonomy on the attachment lane, derives the tier from the material itself, and quarantines the file for the owner's batch verdict — an accepted file moves to `vault/inbox/`, a rejected one never does.
 4. **approved-archive** — archive-bucket rows per the standing approval, executed under the **verified-batch mutation protocol** below (verification = the row ABSENT from the re-queried Inbox list); every row into the ledger with its verification result.
 5. **draft-replies** — response-warranted ACTION rows, in the owner's voice via the workspace **`voice` skill**: invoke it in **DRAFT** mode per reply and **CHECK** mode as the post-draft Voice Check; log the Voice Check note in the companion. If no voice skill is installed (or its overlay is empty), draft in a neutral professional register and say so in the brief footer — same degradation contract as the voice kernel. Brain-grounded with `[owner: confirm …]` placeholders where the brain is silent, comms-policy pass for external recipients, idempotent against the Drafts inventory, Drafts-folder verification at end. Cap 10. **Stale asks still get a draft (v2.1):** an ACT row whose ask is older than ~7 days is never skipped as "premise moved" — draft the shorter **acknowledge-late + current-position** form (2–4 sentences: acknowledge the delay, state the owner's current position or the honest "here's where this stands now", offer the next step), same voice-skill DRAFT/CHECK path, counted inside the cap. Age alone is never a logged skip reason.
@@ -1916,7 +3206,7 @@ conversation-ID join for drafts this run created.
 
 **Verified-batch mutation protocol (v2.1 — execution WITH verification, never wholesale holds).** Applies to every browser-driven mailbox mutation leg (apply-marks, approved-archive):
 - Execute in **small batches (default 5 rows)**. After each batch, **verify by re-querying the Outlook list**: an archive verifies as the row's ABSENCE from the Inbox list; a mark verifies as the category chip on the row. Only then start the next batch.
-- **Ledger every row with its verification result** (`verified-archived` / `verified-marked` / `verified-failed` / `held`; v2.4/v2.5: `response-confirmed` for rest-move and rest-categorize rows). **(v5.7) Every mutation ledger row — standing-approval, auto-archive, DIG-01/RTG-01 dispositions, chip writes — also carries `mutation_lane` + `key_scheme`; a pre-v5.7 row with neither field reads as `rest`/`message-id`. This is the ONE row-shape contract the undo spec dispatches on — never a second source of truth.**
+- **Ledger every row with its verification result** (`verified-archived` / `verified-marked` / `verified-failed` / `held`; v2.4/v2.5: `response-confirmed` for rest-move and rest-categorize rows). **(v5.7) Every mutation ledger row — standing-approval, auto-archive, DIG-01/RTG-01 dispositions, chip writes — also carries `mutation_lane` + `key_scheme`; a pre-v5.7 row with neither field reads as `rest`/`message-id`. This is the ONE row-shape contract the undo spec dispatches on — never a second source of truth.** **(v5.51) Every `categorize` row — executed or deferred — additionally carries `unread_before` (the list's unread affordance, read immediately BEFORE the write); the deferred rows carry `verification: "held"` + `held_reason: "unread-native-category-deferred"`.**
 - **On a batch whose verification fails:** retry that batch ONCE. **Two consecutive verified-failed batches ⇒ hold ONLY the remaining (not-yet-attempted) rows** — each held row lands in REQUIRED ACTIONS with its ready-to-apply payload. Rows already verified in earlier batches stay executed — never retroactively doubted, never re-held.
 - **Sender-scoped archive recipe — two HARD rules (v2.2, production near-misses):**
   - **(a) SCOPE BEFORE QUERY.** Set the search scope (Current folder = Inbox)
@@ -2980,6 +4270,48 @@ Phase 1.5d).**
    auto-archive and Phase 1.5e; no separate cap is introduced) — so the
    FULL chipped set cycles through over several runs, never all reevaluated
    in one night, and never unbounded.
+   - **(v5.54) THE CYCLING SET IS ENUMERATED FROM THE HELD/CHIPPED CENSUS,
+     NEVER FROM THE STAMPS.** The population is **every conversation THIS
+     RUN'S OWN Phase-1.5 pass is holding under a `Held · *` category** —
+     across ALL hold categories, not just `Held · chip` — plus any thread
+     this phase itself draws. That is the same set the run writes to
+     `_cos_hold_ledger_<date>-run<N>.jsonl`, which is what the host recounts
+     against; the phase reads it from the pass it has already done, never by
+     waiting on a file it has not flushed yet. **Enumerating the
+     candidates from the `last_reeval` stamps instead is the defect, and it
+     is self-referential:** only a thread that has ALREADY been evaluated
+     has a stamp to find, so a never-stamped thread can never enter the
+     list, rule 1's epoch-0 clause becomes unreachable — it describes how to
+     sort a value that is never present — and the queue re-draws its own
+     head forever. *Measured, runs 100/103/104 (2026-08-08..09):* run 104
+     re-evaluated the IDENTICAL twenty conversations run 102 had evaluated
+     nine hours earlier and run 103 re-drew run 100's twenty; both reported
+     the denominator **33**, which is exactly `|run100 ∪ run102|` =
+     `|run102 ∪ run103|` — the same 33 conversations the phase had already
+     touched — while **234 held-and-chipped conversations had never been
+     stamped at all** and owned every slot in those batches. Six runs, 120
+     stamp events, **53** distinct conversations, and the aged backlog
+     RTG-01 exists to drain untouched.
+   - **THE ORDER, RESTATED SO IT CAN BE RECOUNTED.** Sort that population:
+     every never-stamped thread FIRST — all of them, at epoch 0, ahead of
+     any dated stamp — then ascending `last_reeval`, ties broken by oldest
+     `received` then `conversation_id` ascending (rule 1's cold-start
+     tiebreak, which governs ties everywhere, not only on a cold start). A
+     conversation's stamp of record is the **LATEST** `last_reeval` any
+     EARLIER run's chip ledger wrote for it. A `held` row keeps its stamp
+     UNSET (v5.13), so an unscreened chip returns to the front of the queue
+     rather than being retired from it.
+   - **THE DENOMINATOR IS STATED, AND IT IS RECOUNTABLE.** Every Phase-1.5f
+     ledger row carries **`cycling_population`** — the integer size of the
+     population it drew from — and **`cycling_population_source`**, a short
+     literal naming the derivation (e.g. `hold-ledger census + this batch`);
+     the E26 self-eval line reads `<drawn>/<cycling_population>`. **A
+     denominator that cannot be recomputed from THIS VAULT'S OWN ledgers is
+     a FAIL:** `33` was reported on three runs, in prose the run wrote about
+     itself, and nothing host-side could disagree with it. The host recounts
+     exactly this — `cos_runverify.check_chip_reeval_draw` reads the hold
+     ledger, the chip ledger and the earlier runs' stamps, and never the
+     run's prose.
 3. **Recently-window-reconciled threads are skipped here (no double work).**
    A conversation Phase 1.5d already reconciled THIS run (inside its own
    36h window) is excluded from this phase's batch for the same run — one
@@ -3121,8 +4453,22 @@ ever answers — exactly the failure Codex X1 flagged).
      actually TAKEN.** An in-scope thread whose **`IsRead: true`** — screened
      FIRST, from the LIST, **BEFORE any open**, per the v5.13 ORDERING
      INVARIANT (Phase 1.5b), which this pass inherits unchanged — **IS opened
-     in this run's own tab to extract the evidence quote** when the list
-     preview carries no quotable span. **P0/P1 `read` threads are INCLUDED**:
+     in this run's own tab to extract the evidence quote**.
+     **(v5.49, EXT-07) THE OPEN IS AN OBLIGATION, NOT A TRIGGER — THE PREVIEW
+     NEVER DECIDES SUBSTANCE.** Until now this sentence read "…is opened *when
+     the list preview carries no quotable span*", and that condition is
+     circular: whether a thread holds a quotable span is exactly what the open
+     exists to answer, so a run could settle it from ~200 characters of preview
+     and never open anything. Measured, run 100 (2026-08-08): **112 in scope, 1
+     body opened, and 101 rows carrying `held_reason: "no-substance"` with
+     `body_opened: false`** — a post-read verdict written without the read, on a
+     night where nothing blocked the pass (cap 20 never approached, zero
+     `over-cap`, zero `browser-not-visible`, zero `no-body-access-on-lane`, E30
+     target identity clean, and the one body that WAS opened yielded 3,261
+     characters of clean message text on that same lane). So: **every in-scope
+     thread screened `IsRead: true` IS opened, in the ordering below, until the
+     cap binds.** The preview is evidence a quote may be lifted from; it is
+     never grounds for concluding there is none. **P0/P1 `read` threads are INCLUDED**:
      rule 1 put them in scope and the whole scope rule exists to reach them.
      **(v5.42, EXT-06) Being read FIRST is the only thing tier buys a thread
      here** — it decides reading ORDER and nothing downstream; what a body is
@@ -3131,8 +4477,349 @@ ever answers — exactly the failure Codex X1 flagged).
      since v5.36, but nothing ever authorized Phase 1.6 to take it, so run 59
      held **62 of 70** in-scope threads at `preview-insufficient` — nine
      findings in ten stuck behind a read that was already legal.
+     - **(v5.55, EXT-08) HOW A BODY IS OPENED: NAVIGATE TO THE CONVERSATION'S
+       OWN URL — DO NOT CLICK ITS ROW.** Six runs met one defect (73, 75, 101,
+       103, 104, 105) and every fix so far GUARDED it. Run 105 named the
+       mechanism in its own report: *"rows were being acted on while only
+       present in Outlook's overscan buffer, so the locator auto-scroll recycled
+       the node between verification and click."* The row is verified, the list
+       re-uses that DOM node for a different conversation, the click lands on
+       the wrong one and still returns success. **A navigation touches no row,
+       so there is no node to recycle** — and landing on the wrong conversation
+       stops being possible by construction rather than being caught afterwards.
+       The four steps, per thread, in this order:
+       1. **RESOLVE the deep link — derive it, never look it up.** It is
+          `<origin>/mail/<folder>/id/<encodeURIComponent(conversation_id)>`.
+          Measured against every real link this project has recorded (14 in run
+          103's `_cos_held_deep_links_…json`, 20 more on run 104's ingestion
+          rows — 34 of 34), and the identity read the guard already performs
+          (`location.href` split on `/id/`, URL-decoded) is exactly its
+          inverse. **So nothing has to have been captured first:** a run needs
+          only the `conversation_id` it already enumerated, and a
+          `deep_link_status` of `not-captured` gates NOTHING. **Read the FOLDER
+          segment off the tab's own current URL** rather than hardcoding
+          `inbox`: every recorded sample is an inbox link because this pass
+          reads the Inbox, and a lane parked elsewhere would otherwise build a
+          URL for a folder it is not in. A tab that is not on a `/mail/<folder>`
+          URL yields no link — ledger it, invent nothing.
+       2. **NAVIGATE.** `tools/cos_lane_rehearsal.py --emit-js nav --convid
+          '<cid>'` is the exact evaluation, shared with the rehearsal so the
+          night runs what daylight proved.
+       2½. **(v5.56) WAIT FOR THE OPEN — DO NOT SLEEP ON IT.** A navigation is
+          a full page load and a fixed settle answers nothing about one: too
+          short on a slow morning (measured 2026-08-09 — a 2-row rehearsal at
+          the v5.55 default returned ONE MISMATCH, recovered by the click
+          fallback, and it was the assert reading while the page was still
+          routing, not a navigation defect), pure waste on a fast one (12 opens,
+          83s wall clock, 72s of it sleeping). **Poll until all three hold: the
+          document has finished loading, the URL carries the intended
+          conversation id, and OWA's list marks that same single conversation
+          selected.** Those are step 3's two signals plus the condition under
+          which reading either of them means anything. **THEN wait for the
+          reading pane to STOP GROWING** — identity and body do NOT arrive
+          together, and step 4 extracts immediately after this wait. Measured on
+          one live navigation, polled every 0.5s: 0.62s document complete with
+          nothing selected and zero rows; **1.54s identity holds with 28
+          characters of body**; 2.78s body 3953; 4.32s body 4020, unchanged for
+          the next 15s. Returning at the first agreement banks an EMPTY BODY
+          from a thread that opened correctly.
+          **BOUND IT, AND LET EXPIRY CHANGE NOTHING.** 20s (≈ 4x the ~4.5s
+          measured cost of one open). On expiry, classify the row from what was
+          actually read — the URL agreeing with no corroboration is still
+          `target-identity-unconfirmed`, a URL that never agreed is still
+          `target-identity-mismatch` — and record WHICH wait expired:
+          `ready_timed_out` when identity never held (a lane fault),
+          `body_settle_timed_out` when it held and the text never settled (an
+          extraction fault). One word for both hides either. **A timeout is
+          never a pass, and no open is ever counted from a page that was still
+          loading.**
+       3. **ASSERT — and the URL is NOT enough on its own.** Under a CLICK the
+          reading-pane URL is what the app PRODUCED, which is why run 73 could
+          use it as evidence. Under a NAVIGATION **it is the input we
+          supplied**, and a page that silently failed to open the conversation
+          still shows the URL we typed — reading it back alone is this file's
+          vacuous-pass shape one layer down. So the assert is BOTH: the URL
+          carries the intended id **AND** OWA's own list names that same single
+          conversation as its selected row (`--emit-js after --convid '<cid>'`,
+          which returns both plus `selected_attr_seen`, `body_chars`, whether
+          the page reloaded, and — v5.56 — the `ready` predicate step 2½ polls
+          on; omit `--convid` and `ready` is always false). **URL-only
+          agreement is `unconfirmed`** — the thread is
+          ledgered `body_opened: false`, `held_reason:
+          "target-identity-unconfirmed"`, nothing is extracted from it and no
+          corpus row is joined to it. It is NOT a mismatch (nothing says the
+          wrong conversation opened) and it is NOT an open.
+       4. **EXTRACT** — rule 2 onward, unchanged, on the budget below.
+          **(v5.60) AN EMPTY SHELL IS NOT A BODY — IT IS A FAILED OPEN.**
+          Extracted text at or below the **bare-folder shell length (42
+          characters)** — the empty `<origin>/mail/` page v5.57 already names,
+          folder and id gone — is not a short message, it is the open having
+          silently failed. The row is `body_opened: false`, **no corpus row is
+          joined to it**, and it
+          is never given a post-read verdict. **(v5.62) ITS REASON IS NO LONGER
+          `target-identity-mismatch`** — see NAVIGATION REFUSED below: a shell
+          landing opened NO conversation, so it is answered by the click
+          fallback, and only if that fallback cannot reach the row does the
+          thread hold, as `navigation-refused-row-unreachable`. **A
+          `no-substance` verdict over a
+          42-character extraction is a substance judgment about a page that
+          contains no message at all** (measured: run 108 appended two
+          42-character bodies to its corpus and judged both `no-substance`).
+          Every opened row records its `body_chars` (rule 8) so this is
+          recountable rather than asserted, and the host FAILs an opened row at
+          or below the shell length (E29(b)).
+       **THE GUARD DOES NOT GO AWAY; IT SHOULD SIMPLY STOP FIRING.** A
+       navigation whose produced id is NOT the intended one is a MISMATCH
+       exactly as a click's was, and every obligation above binds it unchanged:
+       both identity fields recorded per attempt, `target_produced_pre` on the
+       mismatch row, `identity_verified: false`, the row ledgered
+       `held_reason: "target-identity-mismatch"` with `body_opened: false`, and
+       **the first mismatch still ends every mutation leg for the run.** The row
+       additionally carries `open_method: "navigate"` and `open_url`.
+       **THE ONE BOUNDED RE-TARGET IS THE CLICK PATH — which is why the click
+       path is KEPT, not deleted.** Re-navigating to the same URL is run 101's
+       defect one primitive over (a retry that repeats the attempt that just
+       failed is not a retry), so the re-target falls back to the v5.50 click:
+       bring the row fully into the visible viewport, re-read its rect and id in
+       ONE evaluation, click the sender line. That row carries `open_method:
+       "click"`, its `point`, and a `retarget_changed` naming the fallback. A
+       second mismatch ends that thread exactly as before.
+       **(v5.62, NAV-01) NAVIGATION REFUSED IS NOT IDENTITY MISMATCH, AND THE
+       FALLBACK MUST BE ABLE TO REACH THE ROW.** OWA answers a deep link to
+       certain conversations by dropping the tab to the bare `<origin>/mail/`
+       shell — folder and id gone, 42 characters, `readyState: complete`, no
+       conversation open at all. That is a **REFUSED NAVIGATION**, and it is a
+       different fact from the guard catching a wrong conversation: **nothing
+       was opened, nothing was touched, and the reading pane never moved.** It
+       is recognised from the page and never from a word the run chooses — all
+       four together: `open_method: "navigate"`, **NO produced id**,
+       `url_has_id: false`, and `body_chars` at or below the 42-character
+       shell, each read at the moment identity is judged (the v5.60 fields,
+       already owed on every attempt). **The moment the page yields ANY
+       conversation id, something opened**, and if it is not the intended one
+       that is a `target-identity-mismatch` with every obligation it carries —
+       the produced-id check still decides every open, and this splits nothing
+       off from it.
+       **THE ANSWER TO A REFUSAL IS THE CLICK PATH, AND THE CLICK PATH MUST
+       FIRST SCROLL THE ROW INTO THE LIST.** *Measured, run 111 (2026-08-10),
+       with the E30(g) in-run control CLEAN on the SAME lane and the SAME tab
+       the same night — 12/12, first attempt, 0 mismatches:* the priority draw
+       met four refusals and **every one died at `target_attempt: 1`**. The
+       bounded re-target has been the click since v5.55, and it never fired,
+       because a refusal leaves the tab on the shell with about a dozen rows
+       re-rendered from the TOP of the folder while a PRIORITY row is the
+       OLDEST mail in it — 7/16, 7/20, 7/24 and 8/1 against a 304-row Inbox.
+       There was no row to click. **A fallback that cannot reach its row is not
+       a fallback; it is a second refusal wearing the first one's cause.** So
+       the re-target SCROLLS the virtualized list until the intended row
+       renders — **bounded (40 steps — calibrated live on those same four rows, which needed 22, 24, 10 and more than 24), and it is the SAME read-only scroll the
+       v5.57 recovery and the sample collector use, never a second one**: no
+       click, no navigation, nothing opened, and the read-state screen is
+       untouched — then takes the v5.50 click mechanics unchanged (row fully in
+       the visible viewport, rect and id re-read in ONE evaluation, containment
+       proven before the click, sender line). The row records what the
+       re-target DID: `open_method: "click"`, its `point`, `retarget_changed`,
+       and **`retarget_scrolls`** — a re-target that needed seventeen scroll
+       steps and one that needed none are not the same lane, and one
+       `landed-on-retarget` count hides the difference.
+       **AND IF THE ROW STILL WILL NOT RENDER, THE THREAD IS HELD BY NAME:**
+       `held_reason: "navigation-refused-row-unreachable"`, `body_opened:
+       false`, no corpus row, no post-read verdict — **counted, never silent,
+       and never softened into a landing.** It is the ONE refusal shape that
+       costs the run a body; a refusal the fallback reached is an ordinary open
+       and is ledgered as one.
+       **WHICH LANE USES WHICH.** Deep-link navigation is the primitive on ANY
+       lane that can set its own tab's location — the **Chrome Plugin** and
+       `chrome-devtools` MCP both can, and the pinned lane uses it. A lane that
+       cannot navigate (no address bar, no scriptable location) falls back to
+       the CLICK path as its primitive, with v5.50's re-target unchanged; it
+       records `open_method: "click"` on attempt 1 and says in
+       `lane_probe_errors` why it could not navigate. **The fallback is a
+       documented lane capability, never a silent downgrade.**
+       **BIND THE VISIBILITY HOLD BY TAB ID, NEVER `--exact-url`.** This pass
+       changes `location.href` on every open, and `--exact-url` is matched by
+       string equality — from the first navigation the hold cannot find its tab,
+       swallows the error, and **silently stops re-asserting visibility while
+       still reporting `status: holding`.** A hidden OWA tab renders zero rows
+       (measured 2026-08-01), so that failure is invisible and total. Pass
+       `--tab-id <id>` instead (Chrome's own stable tab id, which navigation
+       does not change); the rehearsal reports it as `tab.tab_id`.
+       **(v5.61) AND BIND THE PASS ITSELF TO THAT SAME ID — A HOLD ALONE IS NOT
+       ENOUGH.** The hold holds ONE tab; the pass picks its own, and with the
+       owner's OWA tab open beside the run's a URL-substring pick has no way to
+       prefer the right one. When it picks the other, the pass drives a tab
+       nothing is keeping visible while the hold keeps re-activating its own —
+       the two fight over the window's single active tab. **Measured 2026-08-10,
+       and it wears a lane failure's face exactly:** 20 rows attempted, **19
+       `unconfirmed`, 19 `ready_timeouts`, 0 landed**, on a lane that scored
+       20/20 four minutes later with nothing changed but the tab. So
+       `cos_lane_rehearsal.py` takes `--tab-id` too, and **the pass, the hold
+       and the in-run control (E30(g)) all name the SAME id**. A run that names
+       it in one place and not the others has not bound its lane, it has
+       narrowed the odds.
+       **(v5.61, ROUTE-01) MAKE THE APP PRODUCE THE FOLDER ROUTE BEFORE THE
+       FIRST DEEP LINK — A FRESH RUN-OWNED TAB HAS NO FOLDER SEGMENT, AND THAT
+       IS OWA'S DESIGN.** A deep link is derived as
+       `<origin>/mail/<folder>/id/<encodeURIComponent(id)>` and **the folder is
+       never guessed** (v5.55). But the run OPENS ITS OWN TAB, and a tab opened
+       at `<origin>/mail/` has no `<folder>` to derive from — so under v5.60
+       every deep-link open fail-closed on `not-on-a-mail-folder-url` before the
+       first row, which is the same dead night as run 109 arriving by a second
+       door. **Measured on the live mailbox 2026-08-10, four ways, so none of
+       this is inferred:**
+         - a tab at `<origin>/mail/` **IS ALREADY SHOWING THE INBOX** — 13 rows
+           rendered, `readyState: complete`, and the folder tree's own Inbox node
+           carrying `aria-selected="true"`. The folder is known to the APP and
+           absent only from the URL, so this is not a tab in a bad state;
+         - **`location.href = '<origin>/mail/inbox'` DOES NOT NAVIGATE AT ALL.**
+           Not a redirect to outwait: polled every second for 14s the URL never
+           moved, `readyState` never left `complete`, the row count never left
+           13. No retry reaches this;
+         - **selecting the folder in-app does not help for the folder that
+           matters.** Clicking the tree's `Notes` node moved the URL to
+           `<origin>/mail/notes` in 746 ms with no `beforeunload` (an in-app
+           route change — the list survives it), but clicking `Inbox` moved the
+           URL **back to `<origin>/mail/`**. The DEFAULT folder's list route
+           carries no segment by design;
+         - **the segment lives in the ITEM route.** ONE click on an
+           already-read row produced `<origin>/mail/inbox/id/<encoded id>` in
+           **0.81s**, and the derived link reproduced that URL EXACTLY — which
+           is also this tenant's answer to the account-index question: no
+           `/mail/0/…` segment exists here.
+       So the run makes the app SAY the folder and then reads what it said:
+       **one seeding click, on a row the read-state screen has already proven
+       READ, and the base is taken off the URL OWA wrote** (`acquire_base` in
+       `tools/cos_lane_rehearsal.py`; the report carries `folder_route.base` and
+       `folder_route.acquired_via` = `click` when it was seeded, `tab-url` when
+       the tab already had one). The click is the seeding primitive because it
+       is the ONE open that needs no base — that is the whole bootstrap. It is
+       never an unread row: the read-state invariant binds the seeding open
+       exactly as it binds every other.
+       **WHICH ROW SEEDS IT DIFFERS BETWEEN THE NIGHT AND THE REHEARSAL, AND
+       THE DIFFERENCE IS LOAD-BEARING.** On a NIGHT the seed is **the FIRST ROW
+       OF THE RULE-1½ DRAW** — the top-priority thread the pass was going to
+       open first anyway — taken by click, ledgered `open_method: "click"` with
+       `body_open_seq: 1` like any other open. It is NOT an extra open: an
+       out-of-draw seeding open would spend one of the twenty on a row nobody
+       chose and would break both recounts E29 owes — the cap
+       (`body_open_actual`) and the P0→P1→rest order (clause (i), which
+       requires a NON-DECREASING group rank and would see a seed drawn from
+       anywhere as an inversion). In the REHEARSAL the seed comes from OUTSIDE
+       the sampled set (one extra proven-read row), because that tool is a LANE
+       TEST with no priority draw to preserve, and a seed inside its set would
+       be left open and score `already-open-skipped` instead of being measured.
+       Same primitive, same read-state screen, different row — for the reason
+       each context actually has. **NOTHING HERE RELAXES "THE FOLDER IS
+       NEVER GUESSED" — it is the opposite:** no folder-name table, no
+       tree-label→segment mapping, nothing that a custom folder or a non-English
+       UI could silently break. **A seeding click that produces no route is a
+       NAMED REFUSAL, never an invented `inbox`:**
+       `could-not-acquire-a-folder-route`, and the pass opens nothing.
+       **PROVE IT IN DAYLIGHT BEFORE SPENDING A NIGHT — AND IT NOW IS PROVEN.**
+       v5.55 could not say from artifacts whether navigating to one of these
+       URLs renders the body, what it costs, or whether OWA reloads the SPA:
+       every one of the 34 recorded links was read OFF the address bar AFTER a
+       click. `python3 tools/cos_lane_rehearsal.py --deep-link --rows 20`
+       answered all three on the live mailbox on 2026-08-09, read-only, on rows
+       PROVEN already read: **20 rows attempted, 18 landed on the first attempt,
+       0 mismatches, 1 `unconfirmed`, `contract_problems: []`** — and **every
+       one of the 18 landed opens rendered a body** (`bodies_rendered: 18`, 532
+       to 22,740 characters). Every open is a FULL PAGE RELOAD (19 of 19
+       navigations), which is what makes the wait in rule 1½ step 2½ load-bearing
+       and why the pass may never cache a list handle across an open. Cost, from
+       the same run: identity holds at a **0.87s median**, the whole open at a
+       **2.54s median**. **The one `unconfirmed` row is why this does NOT
+       promote the lane pin:** its URL agreed and its body rendered, and OWA
+       never marked any row selected in the full 20s — the app declined to
+       corroborate, which is exactly the outcome the second signal exists to
+       catch, and a rehearsal that reports it is working.
+       **AND ITS CAUSE IS KNOWN, SO DO NOT RE-DIAGNOSE IT: the corroborating
+       signal only exists for a conversation the list is RENDERING.** That row
+       reproduced across two runs, and a targeted probe found the reason — after
+       the navigation the virtualized list re-rendered 13 rows and the opened
+       conversation was NOT among them, so every row read `aria-selected="false"`
+       and there was nothing for OWA to mark. Its body had rendered (536
+       characters). OWA usually does bring the opened conversation into the list
+       (18 of 20 on the same run), but it is not guaranteed to, and when it does
+       not the second signal is UNAVAILABLE rather than negative. **v5.56
+       changed nothing on the strength of that diagnosis** — the row stayed
+       `unconfirmed`, `body_opened: false`, nothing extracted, no corpus row
+       joined — because recovering it owes its own daylight proof and is never a
+       quiet relaxation of the assert on a night. **That change is v5.57, and it
+       was proven the same way** (`--deep-link --rows 20`, live, read-only,
+       2026-08-09): scroll the absent row back into the list and read the SAME
+       assert off it. Measured: **20 rows attempted, 20 landed on the first
+       attempt, 0 mismatches, 0 unconfirmed, `contract_problems: []`, all 20
+       bodies rendered**, twice back to back — and exactly ONE of the twenty
+       needed the recovery, found in a SINGLE scroll step
+       (`corroborated_after_recovery: 1`, `recovery_scrolls` max 1). It is
+       the same conversation that would not corroborate on 2026-08-09's first
+       run, so the row v5.56 had to hold is the row v5.57 recovers.
+       **THE REHEARSAL MUST SAMPLE THE ROWS IT WAS ASKED FOR (v5.56).** OWA's
+       list is VIRTUALIZED and renders about a dozen rows at a time (measured:
+       12 of 290), so a target pool read from ONE view is capped at a dozen
+       whatever `--rows` said — `--rows 20` opened 12 and printed CLEAN, over a
+       sample that could never have met the 20-row bar. The rehearsal now
+       SCROLLS for its pool (one scroll took it from 12 eligible to 22), and a
+       run that still falls short reports `SHORT SAMPLE` and exits 2 rather than
+       a clean verdict. **A pass measured over fewer rows than requested is a
+       false all-clear, not a smaller pass.** Scrolling changes only which rows
+       the read-state screen gets to SEE: the screen is unchanged, still applied
+       per rendered view, still fails closed, and a scroll dispatches no click
+       and sets no location — nothing it does can open a row.
+       **(v5.57) ONE CONVERSATION OWA WILL NOT OPEN MUST NOT COST THE REST OF
+       THE PASS.** Measured across three live runs on 2026-08-09: some
+       conversations are simply not deep-linkable, and OWA answers by dropping
+       the tab to `<origin>/mail/` — folder and id gone, an empty 42-character
+       shell. Because the conversation URL is DERIVED from the tab's own folder
+       and the folder is NEVER guessed (v5.55), every remaining row then
+       fail-closed on `not-on-a-mail-folder-url`: **one unopenable conversation
+       cost seven and eight rows of two separate 20-row passes.** The refusal is
+       right; losing the pass is not. **The folder is not unknown — it is the one
+       this pass has been reading** — so a leg whose tab has lost its folder
+       segment RE-ANCHORS on the base it observed on that same tab earlier in
+       this run and carries on, marking the row `nav_base: "remembered"`. Still
+       banned: composing a folder from a constant, or assuming `inbox`. A leg
+       that has no remembered base has nothing to re-anchor ON: it says so and
+       stops, rather than opening rows one at a time against a URL it cannot
+       build. The unopenable conversation itself is unchanged — it never yields
+       an id, so it is `target-identity-mismatch` with `body_opened: false`.
+       **(v5.57) A DAYLIGHT SAMPLE IS DRAWN FROM THE TOP OF THE FOLDER.** The
+       rehearsal's pool used to be read from wherever the list was left
+       scrolled, so three runs of one command sampled three different row sets —
+       one of them from a list parked at scrollTop 7656, deep in the folder,
+       which is where two of the runs met rows OWA would not open. Both the pool
+       scan and the v5.57 recovery search now re-anchor to the list's TOP first,
+       and the run REPORTS it (`list.from_top`). This is reproducibility, not a
+       widened screen: the read-state screen is untouched, still per rendered
+       view, still fail-closed, and re-anchoring dispatches no click and sets no
+       location.
+     - **(v5.51) THE DRAW ORDER IS THE POINT, AND IT IS RECOUNTABLE.** With a
+       cap of 20 against a hundred-odd in-scope rows, the order the pass draws
+       in IS which of the owner's mail gets read — so it is a standing rule of
+       this pass, not an overflow tiebreak buried in the cap bullet below where
+       it lived until now. **Opens are drawn P0 first, then P1, then every
+       other in-scope thread (`act` at any tier), newest-first inside each
+       group. No thread is opened while an unopened in-scope thread of a HIGHER
+       group remains, and the cap therefore bites the LOWEST group first.**
+       Every row carrying `body_opened: true` also carries **`body_open_seq`** —
+       1..N in the order the bodies were actually opened (rule 8) — so the draw
+       is a fact the next reader can recount from the ledger, exactly as
+       `body_opened` made the cap recountable. Teeth: E29(b).
+       *Measured, two consecutive nights.* **Run 102 (2026-08-09):** 113 in
+       scope, 20 opened, the first three opens P3 `act` and the first P0 the
+       SEVENTH — its cap happened not to starve anything (3 P0 + 14 P1 + 3 P3
+       filled the 20), so the harm was LATENT, and it is only latent while
+       nothing interrupts the pass: the first `hidden` reading ENDS the pass,
+       and an out-of-order draw loses the P0s first. **Run 101 (2026-08-08):**
+       the same defect, realized — ALL TWENTY opens went to P3 threads while
+       every one of its 3 P0 and 14 P1 in-scope threads finished `over-cap`,
+       and that night scored `VALID_DEGRADED` 11/11 host-side. The rule was
+       already written; it was written in the wrong place, as a parenthetical
+       about what happens when the cap binds, and nothing could recount it.
      - **CAP: 20 opens per run.** Opens are ordered by tier (P0, then P1, then
-       `act`), then newest-first inside a tier. A thread that would be the
+       `act`), then newest-first inside a tier — the v5.51 draw rule above,
+       restated here because it is what decides WHICH thread is the 21st. A thread that would be the
        21st is **not opened**: it is a ledger row with `held_reason:
        "over-cap"`, and the count is auditable from the ledger itself — every
        row carries `body_opened: true|false` (rule 8), so "the cap held" is a
@@ -3278,11 +4965,21 @@ ever answers — exactly the failure Codex X1 flagged).
          --exact-url "<your tab's own location.href>"
          --heartbeat-file <run-scoped path> --max-idle 90
          --stop-file <run-scoped path> --status-file <run-scoped path> &`, then
-         drop the stop-file the moment the pass ends. **`--exact-url` is not
-         optional when you drove your own tab** (v5.20): the owner's OWA tab is
-         open too, a substring match cannot tell them apart — `/mail/inbox` is a
+         drop the stop-file the moment the pass ends. **NAMING YOUR OWN TAB IS
+         NOT OPTIONAL when you drove it** (v5.20): the owner's OWA tab is open
+         too, a substring match cannot tell them apart — `/mail/inbox` is a
          prefix of the owner's `/mail/inbox/id/…` — and raising the owner's tab
-         leaves yours exactly as hidden as before. **(v5.41, OPS-01) THE BUDGET
+         leaves yours exactly as hidden as before.
+         **(v5.55) NAME IT BY `--tab-id <id>`, NOT `--exact-url`, WHENEVER THE
+         PASS NAVIGATES** — which under the deep-link primitive (rule 1½,
+         EXT-08) is every open. `--exact-url` is matched by STRING EQUALITY, so
+         the first navigation makes the hold unable to find its own tab; the
+         loop swallows that error and **silently stops re-asserting visibility
+         while still reporting `status: holding`**, which on a page whose hidden
+         state renders zero rows is invisible and total. Chrome's tab id does
+         not change when the page navigates. `cos_lane_rehearsal.py` reports it
+         as `tab.tab_id`. `--exact-url` remains correct for a pass that does not
+         navigate. **(v5.41, OPS-01) THE BUDGET
          IS A CEILING, NEVER A PLAN — TOUCH THE HEARTBEAT ON EVERY OPEN AND GIVE
          THE SCREEN BACK BETWEEN BURSTS.** Run 63 budgeted 3000 s, released
          correctly on its stop-file at 891.5 s, and *still* held the owner's
@@ -3361,8 +5058,71 @@ ever answers — exactly the failure Codex X1 flagged).
      `disposition: "held"` and a `held_reason` from the managed set —
      `unread-read-state-invariant` | `no-body-access-on-lane` |
      `preview-insufficient` | `over-cap` | `no-substance` |
-     `browser-not-visible` — **never an
-     omission**. (**v5.42:** rule 6 adds a seventh managed reason,
+     `browser-not-visible` | `target-identity-mismatch` |
+     `target-identity-unconfirmed` | `pass-ended-by-identity-stop` |
+     `host-eval-timeout` | `navigation-refused-row-unreachable` — **never an
+     omission**. Five are the guard's: `target-identity-mismatch` has
+     been written since v5.46 and was simply never listed here,
+     **(v5.55) `target-identity-unconfirmed`** is the deep-link primitive's —
+     the URL carried the intended id and the app never corroborated it, so
+     nothing may be extracted and nothing says the wrong conversation opened
+     either. **(v5.60) `pass-ended-by-identity-stop`** is the CASCADE's — the
+     pass ended on a mismatch and this thread was written out without ever
+     being attempted (`target_attempt: 0`), which is a different fact from a
+     mismatch and must not wear a mismatch's word (see the stop clause under
+     A MISMATCH STOPS THE LINE) — and **`host-eval-timeout`** is the
+     INSTRUMENT's: the host-side evaluation that judges identity did not
+     return within its bound rather than returning a wrong answer, so nothing
+     was learned about the conversation at all. **(v5.62)
+     `navigation-refused-row-unreachable`** is the REFUSAL's: OWA answered the
+     deep link with the bare shell — no conversation opened, the pane never
+     moved — and the click fallback could not scroll that row into the
+     virtualized list to click it either. Naming it is the point: a limit
+     shipped without its outcome word
+     gets logged as some other reason, and this file has measured that
+     (v5.51's `over-cap` recount) — and measured it again on run 111, where the
+     refusals were logged as identity mismatches and ended the night.
+     - **(v5.62, VOC-01 extended) THE SET IS CLOSED — ELEVEN WORDS AND NO
+       TWELFTH.** A `held_reason` or a `disposition` outside these sets is an
+       **automatic FAIL**, and that expressly includes any value that FUSES two
+       members (`no-substance-or-already-represented` is `no-substance` welded
+       to a rule-5 outcome that has no drop path at all;
+       `inconclusive-vm-tier-clamp` is `inconclusive` welded to its cause).
+       A fused word is not a more precise variant — to every counter and every
+       row selector it reads as **absence**. **A run that needs a word the set
+       lacks REPORTS THAT IT LACKS ONE; it never coins one**: name the case in
+       ACTION REQUIRED addressed to this file, ledger the closest honest
+       managed word, and the next bundle adds the word — which is exactly how
+       the two words above arrived. The host enforces membership on both slots
+       (`cos_runverify.check_ledger_vocabulary`, v5.59) and — v5.60 — on
+       `dedup_check`'s three words as well; **this clause and that check are
+       one mechanism, not two**, and the repair for a disagreement is always
+       the WORD, never the check (E29(b)).
+     - **(v5.49, EXT-07) THE SET SPLITS IN TWO, AND THERE IS NO THIRD STATE.**
+       `no-substance` is the ONLY member that asserts a read, so it **MAY ONLY
+       be written on a row carrying `body_opened: true`**. Every other member is
+       a NOT-OPENED reason and they are EXHAUSTIVE: a thread was screened unread
+       (`unread-read-state-invariant`), or its lane could not show a body
+       (`no-body-access-on-lane`), or the page could not be made visible
+       (`browser-not-visible`), or the cap bound (`over-cap`), or it is unread
+       and the preview was all there ever was (`preview-insufficient`), or the
+       owner's taxonomy said never (`never-category`, rule 1¾), or — v5.55 —
+       the guard stopped it (`target-identity-mismatch`) or the open could not
+       be corroborated (`target-identity-unconfirmed`), or — v5.60 — the pass
+       had already ended and this thread was never attempted
+       (`pass-ended-by-identity-stop`) or the host-side evaluation timed out
+       instead of answering (`host-eval-timeout`), or — v5.62 — OWA refused the
+       navigation and the click fallback could not reach the row
+       (`navigation-refused-row-unreachable`). **An in-scope,
+       already-READ thread that was not opened and matches none of those is a
+       DEFECT, not a disposition** — the pass owed it an open and did not take
+       it. Write the row it deserves and say so in the run report; never reach
+       for the one word that means "I read it".
+       *Why this is spelled out:* the host has checked exactly this since
+       2026-08-02 (`cos_runverify.check_body_pass`), and it fires — run 64 (58
+       rows), run 65 (58), run 100 (101) — but the rule it enforces was only
+       ever written host-side, so the run executing this file was never told.
+     (**v5.42:** rule 6 adds a seventh managed reason,
      `over-candidate-cap`, which is deliberately NOT in this list — it names a
      thread whose body was read and DID hold substance the batch cap could not
      fit, so it is a staging outcome, not a reading failure. **v5.43 removed
@@ -3391,6 +5151,19 @@ ever answers — exactly the failure Codex X1 flagged).
      `category: <id>`. A `never` thread that produced a `cos-propose` drop is a
      doctrine breach (E29(e)) — and the host refuses it independently and logs
      a defect, because doctrine alone is not a gate.
+     - **(v5.60) A `never` CATEGORY COSTS ZERO OPENS — THE EXCLUSION HAPPENS ON
+       THE RULE-1½ DRAW, BEFORE THE BODY IS OPENED.** This rule runs BEFORE the
+       body pass, on what triage already holds, precisely so the open never
+       happens: the row is written `body_opened: false`, `held_reason:
+       "never-category"`, and it is not drawn at all. **A `never` thread that
+       was OPENED is a FAIL even when it is ledgered correctly afterwards** —
+       it spent one of the twenty opens the cap owed to actionable material,
+       and a post-hoc exclusion recovers the doctrine while keeping the cost.
+       *Measured 2026-08-10:* **11 of run 103's 19 opens and 3 of run 108's 19
+       went to `never`-category threads**, which were then folded into the same
+       `no-substance` bucket as everything else. Teeth: E29(e) —
+       `body_opened: true` beside `held_reason: "never-category"` is an
+       automatic FAIL, recounted host-side from the ledger.
    - **`always` ⇒ auto-ELIGIBLE, and NEVER evidence-exempt.** Rule 2 stands
      untouched: **no source quote ⇒ no candidate**. An `always` thread with no
      quotable span is a `held` row exactly as any other. The taxonomy can raise
@@ -3416,6 +5189,40 @@ ever answers — exactly the failure Codex X1 flagged).
      `number` → `key-number`. The ids are overlay DATA, not kernel constants:
      if the owner's file does not define one, that candidate carries no
      category rather than a manufactured one.
+   - **(v5.60, TAX-02) THE STAMP HAS TEETH, BECAUSE THIS RULE WAS SIMPLY NOT
+     BEING APPLIED.** Measured 2026-08-10 against the owner's live, present and
+     parseable `overlay/cos/ingest.md`: **runs 103, 106 and 108 wrote ZERO
+     `never-category` rows**; **run 103 stamped `category: null` on all 118 of
+     its rows** — running as though the feature were OFF while the taxonomy sat
+     on disk; and **runs 105/106/108 stamped `internal-coordination` on exactly
+     100 of 115 rows each**, a blanket default rather than a per-thread
+     judgment. Four host checks now score the stamp from the ledger against the
+     owner's own parsed taxonomy (`cos_runverify.check_category_stamp`, E29(e)):
+     - **AN ACTIVE TAXONOMY AND AN ALL-`null` LEDGER IS A FAIL.** `null` is
+       legal ONLY when the overlay is absent or unparseable — which is a fact
+       about the vault the host can read for itself, so "the feature was off"
+       is checkable and is no longer something a run can simply behave as
+       though it were (run 103).
+     - **AN ID THE PARSED OVERLAY DOES NOT DEFINE IS A FAIL** — the producer
+       rule above, recounted rather than trusted.
+     - **A `never`-STAMPED ROW THAT WAS NOT EXCLUDED IS A FAIL**, and so is a
+       row ledgered `never-category` whose stamped category the taxonomy does
+       not call `never`. The two slots must agree in both directions or the
+       exclusion is decorative (runs 101, 102, 106 and 108 each carry rows
+       stamped `system-notification` — a `never` category — and ledgered under
+       some other reason).
+     - **ONE CATEGORY OVER 75% OF A NIGHT'S IN-SCOPE ROWS IS A FAIL** on any
+       night with more in-scope rows than the open cap (21+). **The bar is
+       calibrated, not guessed:** every night that demonstrably APPLIED the
+       taxonomy sits at a dominant share of **0.20-0.33** (runs 57, 59, 63,
+       64), and every blanket-default night at **0.81-0.90** (runs 100, 101,
+       102, 104, 105, 106, 108) — 0.75 sits in the middle of a gap half the
+       scale wide. **If an honest night ever trips it, the repair is the
+       TAXONOMY, not the check:** a category that really does describe three
+       quarters of the mail is one category doing the work of several, and the
+       owner's own `ingest.md` already flags `internal-coordination` as the
+       first line to split. The dominant share is reported on every verdict,
+       pass included, so the drift is visible before it is a failure.
 **THE PRIORITY INVARIANT (v5.42, EXT-06) — PRIORITY DECIDES WHAT GETS READ,
 NEVER WHAT COUNTS ONCE READ.** Tier has exactly two jobs and they are both
 upstream of rule 2: it sets SCOPE (rule 1) and it sets the ORDER opens happen
@@ -3499,6 +5306,42 @@ exemplar, and the candidate cap's unstated tie-break). *END OF INVARIANT.*
      (same owner+topic+due substance already a brain note) ⇒ propose
      `merge_candidate: <existing-note-id>` instead of a fresh `create` —
      the owner's batch answer then reads as "merge" not "add".
+   - **(v5.60, DED-01) DEDUP NEVER DROPS A CANDIDATE — IT ONLY CHANGES ITS
+     KIND.** There is no drop path in this rule, and there never was. A
+     near-duplicate hit yields `merge_candidate: <existing-note-id>` **instead
+     of** a fresh `create` (5(b)); an inconclusive probe yields `dedup_check:
+     inconclusive` and the candidate is **still staged**. **No dedup outcome
+     whatsoever produces zero candidates from a thread rule 2 qualified.** The
+     owner's batch answer reads "merge" rather than "add", and that is the
+     entire consequence. **`dedup_check` IS A CLOSED THREE-WORD SET —
+     `clean` | `inconclusive` | `not-run`** — `not-run` being the honest value
+     on a row that never reached this rule at all (an unopened body, a capped
+     thread, a `never` category). Like rule 8's dispositions these words ARE
+     what the checks key on, so the host FAILs anything else
+     (`cos_runverify.check_ledger_vocabulary`, E29(b)).
+     *Measured, and this paragraph exists because of it (2026-08-10, replayed
+     from the capture corpus for runs 103/105/106/108):* **56 body reads over
+     35 distinct conversations, and all four runs staged 0** — while **21 of
+     those 35 carry a decision, a commitment, a stated counterparty position or
+     a key number with a quotable span**: an approved event budget and its
+     headcount, a supplier renewal with a monthly price and a realised saving,
+     a priority table of eight initiatives each with a euro figure and the
+     owner's own written go/no-go, a carve-out perimeter confirmed in-thread, a
+     named tax-ruling decision, two supplier PoC outcomes with measured
+     baselines, a critical-path change registered for a SteerCo. Twelve of the
+     other conversations are `never` categories and correctly yield nothing;
+     two are borderline. **The material was there and the bar was right.** What
+     the runs did was replace rule 2's SUBSTANCE test with a NOVELTY test
+     spelled in words that appear **zero times in this file** —
+     `no-new-substance`, `no-substance-or-already-represented`,
+     `already-represented`, "no novel durable" — and run 106 wrote its novelty
+     verdict into the `dedup_check` slot itself (*"brain lexical probes; no
+     novel durable candidate staged"*), run 108 into every one of its 115 rows.
+     By fusing rule 2 and rule 5 into one unmanaged word, a judgment made with
+     **no `proposal_id`, no `content_sha256` and no record of what it was
+     compared against** silently acquired the authority to discard material
+     rule 2 requires be staged. **A thread whose substance is already in the
+     brain is a MERGE, not a silence.**
 6. **Staging — `cos-propose`, NEVER `draft-capture` (Codex-verify-r3).** Each
    surviving candidate becomes one `brain --role vm cos-propose --content
    "<markdown>"` call, frontmatter shaped like an ordinary `brain/` note
@@ -3656,11 +5499,18 @@ exemplar, and the candidate cap's unstated tie-break). *END OF INVARIANT.*
    ING-05).** Phase 1.6 writes exactly **ONE row per in-scope thread**
    (rule 1) to `cos-ops/_cos_ingestion_ledger_<TARGET DAY>-run<N>.jsonl`:
    `{run, conversation_id, tier, verdict, disposition:
-   "candidate"|"held"|"no-substance", held_reason (REQUIRED on every
-   non-`candidate` row, from the managed set — rule 1½'s six
+   "candidate"|"held"|"no-substance" (**(v5.59) THOSE THREE WORDS AND NO
+   OTHER** — plus the `zero-eligible` marker row, and the host now FAILS
+   anything else: run 73 wrote `unaccounted`, run 106 wrote
+   `no-new-substance` on 15 rows and they left every total at once, run 75
+   wrote rows with no disposition at all), held_reason (REQUIRED on every
+   non-`candidate` row, from the managed set — rule 1½'s eleven
    (`unread-read-state-invariant` | `no-body-access-on-lane` |
    `preview-insufficient` | `over-cap` | `no-substance` |
-   `browser-not-visible`) plus rule 1¾'s
+   `browser-not-visible` | `target-identity-mismatch` |
+   `target-identity-unconfirmed` | **(v5.60)**
+   `pass-ended-by-identity-stop` | `host-eval-timeout` | **(v5.62)**
+   `navigation-refused-row-unreachable`) plus rule 1¾'s
    `never-category` and — v5.42, EXT-06 — rule 6's `over-candidate-cap`, the
    one reason that asserts the body DID hold substance, **DORMANT since v5.43
    removed the staging cap: legal only on a run that declared one**), category (the rule-1¾ stamp, or `null` when the
@@ -3668,7 +5518,15 @@ exemplar, and the candidate cap's unstated tie-break). *END OF INVARIANT.*
    read_lane (the elected observation lane), body_opened (v5.39: `true` on
    every row whose body this run opened under rule 1½'s read-mail pass,
    `false` otherwise — REQUIRED on every row, so the 20-open cap is
-   recountable from the ledger instead of asserted), proposal_id (the
+   recountable from the ledger instead of asserted), body_open_seq (v5.51:
+   `1..N` in the order the bodies were actually opened — REQUIRED on every
+   `body_opened: true` row and ABSENT on every other, so rule 1½'s
+   P0→P1→the-rest draw is recountable instead of asserted; contiguous from 1,
+   no gaps and no repeats. **The FIELD is the witness, never the file's line
+   order** — this ledger carries one row per in-scope thread and runs write it
+   in ENUMERATION order, interleaving opened and unopened rows, so a ledger
+   without the stamp cannot be read as evidence of its own draw in either
+   direction), proposal_id (the
    `cos-propose` drop id, on `candidate` rows), content_sha256 (v5.39:
    **REQUIRED on every `candidate` row** — the `sha256` the SAME
    `cos-propose --json` call returned beside that id. **COPY IT, NEVER COMPUTE
@@ -3677,7 +5535,17 @@ exemplar, and the candidate cap's unstated tie-break). *END OF INVARIANT.*
    tampering rather than as a mistake. An engine whose `cos-propose --json`
    returns no `sha256` predates the join entirely — the same engines rule 6's
    probe puts on the legacy branch — and there the key is simply ABSENT:
-   nothing to copy, and nothing on that engine reads it), dedup_check, ts}`.
+   nothing to copy, and nothing on that engine reads it), dedup_check
+   (**(v5.60) `clean` | `inconclusive` | `not-run` AND NO OTHER**, rule 5's
+   closed set — run 106 wrote a novelty verdict into this slot and run 108 wrote
+   one into all 115 of its rows), **(v5.60) target_attempt** (how many opens
+   were actually attempted on this thread — `0` when the pass never reached it,
+   so a cascade row and a real failure stop looking identical; a mismatch reason
+   on a `target_attempt: 0` row is a FAIL, E30(h)), **(v5.60) body_chars**
+   (REQUIRED on every `body_opened: true` row — the number of characters the
+   extraction actually yielded, so rule 1½ step 4's empty-shell rule is
+   recountable: at or below 42 the open FAILED and the row may not claim it),
+   ts}`.
    **(v5.39, STA-03) THIS LEDGER IS THE CATEGORY'S SOURCE OF RECORD, not a
    report about one.** The host joins a claimed candidate back to the run that
    produced it by `proposal_id` AND full `content_sha256`, across every run
@@ -3950,13 +5818,17 @@ strip always has at least tonight's numbers even with no 7-day history yet.
 4⅝. **OUTCOME CONTRACT — RUN THE CHECKER, RECORD WHAT IT RETURNS (v5.31, OC-01/OC-02/ZS-02).** Before the metrics row: load the PRE-run enumeration record already serialized and preflighted before Phase 1 (the convid set + `enumerated_at` + the pre-run hold snapshot + both PRE count units + bounded Sent proof), THIS RUN's ledgers, and a FRESH post-run re-enumeration of the Inbox with both POST count units and the matching Sent proof, then run `tools/cos_contract.py` and carry the `outcome_contract` block it returns — verdict, reasons, counts, `capability_liveness`, `zero_send_proof`, `verdict_source` — into the metrics row and the brief banner VERBATIM. **The verdict is COMPUTED, never composed:** a hand-written `verdict: "PASS"` is precisely the failure this step exists to close, and the metrics row records what the checker returned and never a hand-composed verdict. Full doctrine — the enumerated set, the two run profiles, the five buckets, both guards, the provenance checks and the CLI contract — is the **§ OUTCOME CONTRACT (v5.31)** section below.
 
 4¾. **METRICS ROW — LEDGER-JOINED, PER-RUN (v5.27, final write-phase act, immediately after the outcome-contract step 4⅝).** Append **exactly one** row to `cos-ops/_cos_metrics.jsonl` for THIS RUN, in the Phase-0 schema, carrying `run`, via `python3 tools/cos_reconcile_metrics.py --append <row.json> <vault>/cos-ops`. The helper is idempotent for an identical same `(date, run)` key and refuses a conflicting row instead of overwriting history. Three rules, and they are the whole fix for the under-reporting defect measured on 2026-07-21 and 2026-07-25:
+   - **(v5.62, REP-02) A CORRECTED RERUN APPENDS A ROW THAT SAYS WHAT IT REPLACES — the ledger is NEVER edited.** *Measured, run 111 (2026-08-10):* the first attempt safe-stopped on a stale sign-in banner (AUTH-01 above) and appended a row reading `mail_triaged: 0`, `ingestion_in_scope: 0`. The corrected rerun, under the SAME manifest and the SAME run id, enumerated 304/304 and wrote a 118-row ledger — and could not append its row at all, because the append guard correctly refused a conflicting row for that key. The guard was right and the run was right, and between them the night's real counters ended up in a side file no verifier reads, with the run scored INVALID partly on the conflict. **The rule: a rerun under the same manifest appends its OWN row carrying `supersedes_run_ts: "<the earlier row's run_ts>"`** — REP-01's shape one artifact over, repairs LOGGED and never edited in place. `--append` refuses a second row for a key that declares nothing, refuses a `supersedes_run_ts` naming a `run_ts` that key does not carry, and refuses a row that supersedes itself; **the verifier scores the LATEST row for the run and reports the history it sits on** (`cos_runverify.metrics_rows` / `check_metrics_row`), and the reconcile join skips a superseded row so a rerun's counters are never summed twice. **Nothing here makes a ledger editable, and this is not a licence to re-run:** the superseding row is subject to every gate the first one was — the ledger-before-row order, the recount, the host stamps — and the rerun still owes its `## 🔧 Repairs` line naming what it corrected and why (REP-01).
    - **(a) COUNT FROM THE LEDGERS, NEVER FROM MEMORY.** Every mutation counter is derived by reading back the files this run actually wrote, not from the run's recollection of what it did: **`drafts_created`** = rows in THIS RUN's `_cos_drafts_ledger_*` whose status is a VERIFIED creation (`draft-saved-verified` / `draft-created` with Drafts-folder verification). **A re-verification of an EARLIER run's draft is NOT a creation** — a `same-night-draft-verification` / `existing-draft-visible` row counts ZERO, and the run that CREATED the draft is the one that reports it. **`marked`** = verified chip-write rows (`verified-marked` / `category-set-verification: verified` / `response-confirmed`); **`archived`** = verified archive rows (`verified-archived` / `response-confirmed` / a verification receipt). Write-ahead, `pending`, `held` and `verified-failed` rows never count — the same verified-only rule E5 already applies.
    - **(b) EVERY RUN THAT MUTATES APPENDS ITS OWN ROW — a sibling run's row is not yours.** A degraded/no-op run appends a zero row; a mutating run appends its counts. **A run that mutated and appended nothing is the defect itself:** on 2026-07-25 run 34 wrote a verified reply draft and 4 verified chips and appended no row, so the date read `drafts_created: 0` across runs 35/36/37; on 2026-07-21 a 00:58 degraded row reading `archived: 0` stood for a day whose ledger holds 181 verified archives.
    - **(c) TARGET-DAY LEDGER JOIN, then REPAIR.** Before writing, sum `drafts_created`/`marked`/`archived` across every EXISTING metrics row for TARGET DAY, and count the verified rows across every TARGET-DAY ledger (`_cos_drafts_ledger_*`, `_cos_chip_ledger_*`, `_cos_archive_ledger_*` — the `<date>` and `<date>-run<N>` variants both). Ledger total > reported total ⇒ a prior run of today mutated without reporting: append ONE backfill row per unreported run carrying `reconciliation: true`, `reconciles_run: <N>`, that run's ledgered counts, and `run_ts` from its ledger — then name the shortfall in the brief and the companion. **A ledgered verified draft and a zero counter must never coexist silently.** The join covers TODAY only; historical rows are evidence and are never rewritten.
    - **(d) (v5.28) THE ROW CARRIES THE COMPUTED VERDICT.** `run_profile` names the profile this run declared (`full` | `label-only`, never absent) and `outcome_contract` is the block step 4⅝'s checker returned, copied verbatim — never re-typed, never edited to read `PASS`, never omitted because the verdict was FAILED. A row whose `outcome_contract.verdict` the checker does not reproduce from the same inputs is E28's failure case, not a formatting nit.
-   - **(e) (v5.36) THE INGESTION COUNTERS ARE LEDGER-DERIVED, AND THE ATTACHMENT LANE IS NAMED.** `ingestion_in_scope` / `ingestion_candidates` / `ingestion_held` are counted by reading back tonight's `_cos_ingestion_ledger_<date>-run<N>.jsonl` (rows by `disposition`; a lone `zero-eligible` marker row counts 0/0/0) — the same "count from the ledgers, never from memory" rule as (a), applied to the one phase that had no ledger at all. `attachment_lane` names the INGEST lane's state per Phase 1.5 leg 3. **All four are REQUIRED: `tools/cos_reconcile_metrics.py --append` REFUSES a row that omits any of them**, naming the missing field, and its reconcile pass flags an ingestion-ledger candidate total the row does not cover exactly as it does for drafts/marks/archives — so this counter cannot quietly stop being emitted the way it did at run 41.
+   - **(e) (v5.36) THE INGESTION COUNTERS ARE LEDGER-DERIVED, AND THE ATTACHMENT LANE IS NAMED.** `ingestion_in_scope` / `ingestion_candidates` / `ingestion_held` are counted by reading back tonight's `_cos_ingestion_ledger_<date>-run<N>.jsonl` — `ingestion_in_scope` is every row that is not the `zero-eligible` marker, `ingestion_candidates` is the `disposition: "candidate"` rows, and **`ingestion_held` is IN-SCOPE MINUS CANDIDATES** (a lone `zero-eligible` marker row counts 0/0/0). **(v5.59) THE LEDGER IS WRITTEN FIRST AND THE ROW IS COUNTED FROM IT — THAT ORDER IS THE RULE, not a habit.** `tools/cos_reconcile_metrics.py --append` re-counts the row against that file and REFUSES a disagreement (it has since v5.36); what it could not do was refuse a row whose ledger did not exist yet, and that is the hole run 108 fell through — metrics row appended 23:26:32, ingestion ledger written 23:32:47, six minutes later, so the one gate built for exactly that row's error had nothing to compare against and `ingestion_held: 96` went in against a ledger of 115. A row reporting `ingestion_in_scope > 0` is now refused until its ledger is on disk. A run that has nothing to report still appends normally — the zero case is the observation guard's business, not this one's — the same "count from the ledgers, never from memory" rule as (a), applied to the one phase that had no ledger at all. `attachment_lane` names the INGEST lane's state per Phase 1.5 leg 3. **All four are REQUIRED: `tools/cos_reconcile_metrics.py --append` REFUSES a row that omits any of them**, naming the missing field, and its reconcile pass flags an ingestion-ledger candidate total the row does not cover exactly as it does for drafts/marks/archives — so this counter cannot quietly stop being emitted the way it did at run 41. **(v5.49, EXT-07) SEVEN, NOT FOUR — `body_open_cap`, `body_open_actual` and `body_budget` are required on the same terms and refused on the same terms.** `body_open_actual` is COUNTED, like the other three: it is the number of tonight's ingestion-ledger rows carrying `body_opened: true`, so the host's recount of it (`check_body_open_count`) can only disagree with a run that wrote a number it did not earn.
 
 5. **Self-eval (E-checks)** — below. Any FAIL → repair → re-run the FULL set; max 2 repair rounds; persistent fail → ACTION REQUIRED with check id + evidence. Never report success with a failing check.
+   - **(v5.59, REP-01) A REPAIR ROUND IS ITEMISED, AND THE COUNT IS RECOUNTED FROM THE LIST.** Every repair this run makes to its own artifacts gets ONE line under a `## 🔧 Repairs` heading in the run report: **the artifact · the field · before → after · why**. The header's `R repair rounds` then EQUALS the number of lines beneath it, and the host recounts that (`cos_runverify.check_repairs`) exactly as it recounts every other counter against its ledger. *Why this is a rule and not manners:* a repair is the run discovering a defect in flight, and the number alone carries none of that discovery — **run 105 worked out the correct `ingestion_held` rule mid-run, repaired the counter, printed "1 repair round", and run 108 reproduced the identical error three nights later**; run 104 printed "1 placement repair" and no artifact anywhere says what was placed; runs 75 and 106 printed "**0 repair rounds**" in the header of a page whose own body describes counter repairs. The line is what makes the fix reachable — and a repair that recurs is a doctrine gap, so **name it in ACTION REQUIRED as well, addressed to this file, not just to tonight's artifact.**
+   - **A REPAIR MAY TOUCH A COUNTER, A REPORT, OR A SNAPSHOT — NEVER A LEDGER ROW** (E29(c)). A ledger records what happened; rewriting it makes the checks score the repair instead of the run. Measured: run 105 rewrote four rows' `disposition`/`held_reason`, and run 108 renumbered `body_open_seq` into a contiguous 1-19, after which `check_body_order` passed on a sequence the run had not drawn.
+   - **A REPAIR TO A CONTRACT INPUT OBLIGES RE-RUNNING THE CHECKER**, and the block of record is the post-repair one. Runs 74, 105, 106 and 108 each repaired inputs and each said, in as many words, that the deterministic checker was not re-run — so the recorded verdict describes the artifacts as they were BEFORE the repair, which is a verdict about a thing that no longer exists.
    **THE AUDIT IS ITSELF BOUND BY E9 (v5.14 — measured 2026-07-25, runs 35 AND 36).**
    Gathering evidence for a check is NOT an exemption from the read scope: the
    self-eval may read only what the run was already allowed to read. Reaching
@@ -4060,17 +5932,57 @@ For `label-only`, `archives` and `drafts` are `false`, while `chip_clears`
 remains `true`. Candidate records, including rejected candidates with an
 `exclusion_reason`, remain mandatory exactly as specified below.
 
-Every enumerated convid lands in **exactly one of FIVE buckets**: `archived` |
-`held_non_drafted` | `held_drafted` | `chipped` | `unaccounted`. WHICH buckets
-count as ACCOUNTED is **PROFILE-DEPENDENT, and this is load-bearing**:
+Every enumerated convid lands in **exactly one of SIX buckets**: `archived` |
+`held_non_drafted` | `held_drafted` | `chipped` | `stopped_by_guard` |
+`unaccounted`. WHICH buckets count as ACCOUNTED is **PROFILE-DEPENDENT, and
+this is load-bearing**:
 
 | profile | accounted buckets | notes |
 |---|---|---|
-| `full` | `archived` \| `held_non_drafted` \| `held_drafted` | a bare P-chip is **NOT** accounted — v5.26 requires a Held label on anything not archived |
-| `label-only` | `chipped` \| `held_non_drafted` \| `held_drafted` | any `archived` row is a **scope violation** |
+| `full` | `archived` \| `held_non_drafted` \| `held_drafted` \| `stopped_by_guard` | a bare P-chip is **NOT** accounted — v5.26 requires a Held label on anything not archived |
+| `label-only` | `chipped` \| `held_non_drafted` \| `held_drafted` \| `stopped_by_guard` | any `archived` row is a **scope violation** |
 
 Omitting `chipped` from the vocabulary makes every midday run FAILED by
 construction, reintroducing the very defect the profile split prevents.
+
+**`stopped_by_guard` — A STOP HALTS ACTION, NEVER ACCOUNTING (v5.52; the same
+clause as the Phase-1.6 ledgering rule v5.48 states for the ingestion ledger,
+carried one leg over).** A safety guard that fires ends OPENING and MUTATING.
+Writing a `Held · *` category IS a mutation, so a run stopped mid-pass
+CANNOT dispose of the rows it had not reached — and it still owes a terminal
+bucket for every one of them. That bucket is `stopped_by_guard`: *"no
+disposition was written on this row because writing one was forbidden."* It is
+ACCOUNTED, it is COUNTED (`counts.stopped_by_guard`), it is LISTED
+(`stopped_by_guard_convids`), and it appears on the rendered contract line —
+the same treatment `ingestion_candidates` did not have when it silently stopped
+being emitted at run 41 and nobody noticed for fifteen runs. *Measured failure,
+run 103 (2026-08-09):* the identity guard fired at the first body open, every
+mutation leg correctly stopped, zero new Sent item ids, the draw took every P1
+before P3 — and nine enumerated conversations were written `unaccounted`, so
+`OC-a` failed the whole night. **Fail-closed ACTION is the design; fail-closed
+BOOKKEEPING is a defect.**
+
+**The bucket is not a free pass, and it is refused unless the stop is RECORDED
+and CORROBORATED.** Using it obliges the POST record to carry:
+
+```json
+{"guard_stop": {"guard": "target-identity-mismatch",
+                "convid": "<the enumerated convid the guard fired on>",
+                "at": "<ISO-8601>"}}
+```
+
+`guard` comes from a **CLOSED vocabulary** — today exactly
+`target-identity-mismatch` — and `convid` must be in the enumerated set: a run
+may not name its own excuse. The checker then CORROBORATES the claim against
+THIS RUN's own ledgers, never against the record: it requires a run-scoped row
+whose `held_reason` (ingestion ledger, E30(c)) or `action` (action ledger)
+is that same guard word. A declared stop nobody ledgered renders
+`OC-guard-stop-uncorroborated`; a missing, mis-worded or unenumerated record
+renders `OC-guard-stop-unrecorded`; and **a row unaccounted for any reason
+OTHER than a recorded, corroborated stop still renders `OC-a-unaccounted`
+exactly as before — clause (a) is not weakened.** The no-mutation-AFTER-the-stop
+rule stays where it already lives, E30(b); this clause governs the books, not
+the authority.
 
 **PROFILE SCOPING BINDS BOTH GUARDS BELOW.** A guard may only be evaluated for
 a capability that is IN SCOPE for the declared `run_profile`. Under
@@ -4129,8 +6041,10 @@ truncated re-enumeration would otherwise buy a clean PASS with a
 - `inbox_conversation_count_before` not exactly equal to `len(enumerated)`;
 - a **bucket sum** that does not equal `len(enumerated)`;
 - a **RESIDENCY mismatch** — the rows still in the Inbox at run end are
-  `held_non_drafted + held_drafted + chipped + unaccounted +
-  len(arrived_during_run)` and THAT must equal
+  `held_non_drafted + held_drafted + chipped + stopped_by_guard + unaccounted +
+  len(arrived_during_run)` (a guard-stopped row was never archived, so it is
+  still resident and is counted exactly as an unaccounted one was) and THAT
+  must equal
   `inbox_conversation_count_after` (archived rows LEFT the inbox, so comparing
   `len(post_run)` against `inbox_conversation_count_after` would fail every
   productive run);
@@ -4157,13 +6071,18 @@ never a hand-composed verdict**, and the brief banner carries the same
 `OUTCOME CONTRACT: PASS|FAILED` line on every run.
 
 ```
+python3 tools/cos_contract.py --pre <pre.json> --ledgers <dir> \
+    --run-id <id> --profile <full|label-only> --preflight
 python3 tools/cos_contract.py --pre <pre.json> --post <post.json> \
     --ledgers <dir> --run-id <id> --profile <full|label-only> --out <block.json>
 ```
 
 `--run-id` is **REQUIRED** and scopes the ledger scan to THIS run's rows —
 without it, historical ledgers in the same directory contaminate the verdict.
-Exit **0 = PASS**, **1 = FAILED**, **2 = malformed input**.
+Exit **0 = PASS**, **1 = FAILED**, **2 = malformed input**. **(v5.52) The
+PRE-FLIGHT call also passes `--ledgers`**, which is how it reads the owner's
+lane pin: a run that elected the wrong lane is then refused at 19:05 instead of
+discovering at 21:30 that the whole night ran on the unpinned surface.
 
 **Why deterministic code and not a self-check:** agents assert completion while
 environment state disagrees in **45-78%** of failing trajectories and LLM
@@ -4175,7 +6094,7 @@ is proven able to FAIL before it is trusted (known-positive fixtures:
 
 ## Self-eval (E-checks) — run on THIS run's artefacts
 
-- **E1** · Action-ledger audit: state-file + ledger contain ONLY allowed verbs (select, open-read, categorize, archive, download, compose-draft) — zero send, zero delete, zero unread-touch; missing/incomplete ledger is a FAIL. **Batch semantics (v2.1):** archive/mark rows are ledgered per the verified-batch protocol — each row carries `verified-archived`/`verified-marked`/`verified-failed`/`held`; a batch-verification failure holds only the REMAINING rows (each with payload), never rows already verified — a wholesale hold of verifiable rows is itself a FAIL — `read` · **action_required**.
+- **E1** · Action-ledger audit: state-file + ledger contain ONLY allowed verbs (select, open-read, categorize, archive, download, compose-draft) — zero send, zero delete, zero unread-touch; missing/incomplete ledger is a FAIL. **Batch semantics (v2.1):** archive/mark rows are ledgered per the verified-batch protocol — each row carries `verified-archived`/`verified-marked`/`verified-failed`/`held`; a batch-verification failure holds only the REMAINING rows (each with payload), never rows already verified — a wholesale hold of verifiable rows is itself a FAIL. **(v5.51) THE CATEGORY WRITE IS ONE OF THE TOUCHES — this is where "zero unread-touch" is recounted rather than asserted:** every `categorize` row carries **`unread_before`**, read from the LIST immediately before the write (a categorize row with no `unread_before` cannot be recounted and is a FAIL, the same "the instrument cannot fail" shape as an unstamped `body_opened`); **a `categorize` row carrying `unread_before: true` on ANY primitive other than `rest-categorize` is an unread-touch and an automatic FAIL, not a repair-and-continue** — the native lane must select the row to write a chip and Outlook reads that as an open, so the write IS the touch whatever the row's read state says afterwards (run 102's own row: `unread_before: true`, `unread_immediate_after: true`, `unread_final_after: false` — the immediate re-read is not evidence, the flip is asynchronous); **and the conservative branch is COUNTED, never silent:** each such row is instead a held mutation row (`verification: "held"`, `held_reason: "unread-native-category-deferred"`) with its payload in REQUIRED ACTIONS, and the run report states the deferred count — a deferral with no ledger row, or a deferred count absent from the report, is the same FAIL as a silent hold. **A run that DID flip a row reports it and stops; a `mark-unread` repair is itself a Layer-2 EXECUTION deny and an automatic FAIL** (E12) — `read` · **action_required**.
 - **E2** · Brief exists with sections 2–10 (degraded: banner + non-skipped; Sunday: SELF-REVIEW + WEEKLY RETRO present or logged skip) AND companion exists, AND the brief + every `_cos_materials/*.html` carries the image-containment CSP meta with `img-src 'self' data:` and no remote `<img src="http(s)://…">` (missing CSP or remote img = FAIL) — `script` · repair.
 - **E3** · Every response-warranted row has a drafts-ledger entry (verified-in-Drafts) or a logged skip reason — **(v5.27)** response-warranted = the ACT bucket **plus** the READ rows carrying `Held · ask` / `Held · deadline` per leg 5's targeting extension; a row skipped for cap, idempotency (a draft already on the convid), or a comms-policy hold is a logged skip, not a silent omission — `script` · repair.
 - **E4** · Every TARGET-DAY calendar event appears as battlecard or compact row, or a logged skip; calendar-BLOCKED runs report N/A — `script` · repair.
@@ -4183,8 +6102,8 @@ is proven able to FAIL before it is trusted (known-positive fixtures:
 - **E6** · Every brain-sourced fact in the brief carries a brain **note id** + a resolvable `brain --role vm get <id>` reference (and a `file://` link whose target exists) — `grep` · repair.
 - **E7** · Degraded honesty: any skipped phase ⇒ banner names it AND a 🚧 BLOCKED block exists; no silent omission — `read` · **action_required**.
 - **E8** · Idempotency: same-night re-run no-ops — drafts keyed on Drafts inventory + conversation; archives keyed on state file; brief/companion overwrite-same-content; metrics/opex append keyed on date — `script` · repair.
-- **E9** · Every finding that should become a real note was `brain --role vm draft-capture`'d (a draft exists in the capture-inbox), and every `cos-ops/` write this run is listed in the companion ledger — no orphan writes; **no write targeted `.brain/` or any path outside `cos-ops/` + `inbox/` + the engine's VM-writable drops (`$BRAIN_COS_OPS_DIR/drop/verdict-drop/` (shadow-ledger + behaviour-r<N> observation rows) and `drop/proposal-drop/` via `cos-propose` — the LATTER covers both `cos-propose --kind correction` and every ING-01 ingestion candidate, and NEVER `draft-capture` for an ingestion candidate); basename-only `drop/ingest-manifest/` writes are forbidden; the only `.brain/` reads are the VM-readable `$BRAIN_COS_OPS_DIR/shared/priority-map.md` and (v5.17) `shared/calibration-pin.json`, both inside the documented host-writes/VM-reads `shared/` zone; `host/` is never touched — **including by the SELF-EVAL itself (v5.14): gathering evidence for an E-check is not an exemption, and a host-only read is NON-REPAIRABLE (it consumes no repair rounds — record once, mark persistent, carry to ACTION REQUIRED). Measured runs 35+36: both burned both repair rounds re-running all 27 checks against a breach no re-run could clear.**` — `grep` · repair (except a host-only read, which is record-only).
-- **E10** · Calibration footer present AND **(v5.27) a metrics row for THIS RUN exists** in `cos-ops/_cos_metrics.jsonl` — per-RUN, not merely per-DATE: the row carries `run` matching this run, and a run that appended none FAILs even when a sibling run wrote a row for TARGET DAY (the pre-v5.27 per-date wording is exactly what let run 34 mutate unreported on 2026-07-25). **(v5.27) LEDGER JOIN — the counters are checked against the ledgers, not merely present:** `drafts_created`/`marked`/`archived` equal THIS RUN's verified ledger rows per Disposition 4¾(a) (a `same-night-draft-verification`/`existing-draft-visible` row counted as a creation is a FAIL), AND the sum across every TARGET-DAY row equals the verified rows across every TARGET-DAY ledger. **A verified draft, mark, or archive ledgered for TARGET DAY that no metrics row accounts for is a FAIL** — repaired by the 4¾(c) `reconciliation: true` backfill, never by lowering the ledger count or by re-reporting a prior run's draft as tonight's. Measured: 2026-07-25 (1 ledgered `draft-saved-verified` + 9 verified marks vs `drafts_created: 0`/`marked: 0` on all three rows) and 2026-07-21 (181 ledgered verified archives + 26 verified marks vs `archived: 0`/`marked: 0`), both while the runs self-reported 27/27. **(v5.12)** that row carries `mutation_lane` (`rest`/`native-ui`/`none` — never absent, never null, on EVERY run including a fully-held one), `mutation_toolset`, and `lane_probe_errors`. **(v5.12.1)** The two-attempt obligation is NARROW: `lane_probe_errors` must hold **two** attempts for a lane ONLY when that lane was PROBED, its probe ERRORED, and NO lane was elected (`mutation_lane: "none"`) — that is the false-hold case the retry exists to prevent, and one attempt there is a FAIL. It does NOT bind on a run that successfully ELECTED a lane, and it does NOT bind on a STRUCTURALLY-UNAVAILABLE lane (no such capability on this browser surface), which is recorded once as `unavailable: <why>` — requiring a retry against a surface that does not exist fails a correct run (measured: run 33, `native-ui` elected on a clean proof, marked FAIL for not re-probing a REST lane this runtime never had). A row that omits the lane fields entirely remains a FAIL on every run, elected or held — `script` · repair.
+- **E9** · Every finding that should become a real note was `brain --role vm draft-capture`'d (a draft exists in the capture-inbox), and every `cos-ops/` write this run is listed in the companion ledger — no orphan writes; **no write targeted `.brain/` or any path outside `cos-ops/` + `inbox/` + the engine's VM-writable drops (`$BRAIN_COS_OPS_DIR/drop/verdict-drop/` (shadow-ledger + behaviour-r<N> observation rows) and `drop/proposal-drop/` via `cos-propose` — the LATTER covers both `cos-propose --kind correction` and every ING-01 ingestion candidate, and NEVER `draft-capture` for an ingestion candidate); basename-only `drop/ingest-manifest/` writes are forbidden; the only `.brain/` reads are the VM-readable `$BRAIN_COS_OPS_DIR/shared/priority-map.md`, (v5.17) `shared/calibration-pin.json`, (v5.58, MAN-01) `shared/current-run.json` — the run's instruction sheet, which every artifact name in this ledger derives from — and (BAK-01, 2026-08-11) `shared/grounding-pack.md`, the host-rendered Internal-safe projection of the documents the 2026-08-10 cross-tier ruling raised out of this leg's reach: WITHOUT this read the raise simply removes 36 documents from grounding, since `.brain/` is excluded from indexing and `brain search` can therefore never return the pack — all four inside the documented host-writes/VM-reads `shared/` zone; `host/` is never touched — **including by the SELF-EVAL itself (v5.14): gathering evidence for an E-check is not an exemption, and a host-only read is NON-REPAIRABLE (it consumes no repair rounds — record once, mark persistent, carry to ACTION REQUIRED). Measured runs 35+36: both burned both repair rounds re-running all 27 checks against a breach no re-run could clear.**` — `grep` · repair (except a host-only read, which is record-only).
+- **E10** · Calibration footer present AND **(v5.27) a metrics row for THIS RUN exists** in `cos-ops/_cos_metrics.jsonl` — per-RUN, not merely per-DATE: the row carries `run` matching this run, and a run that appended none FAILs even when a sibling run wrote a row for TARGET DAY (the pre-v5.27 per-date wording is exactly what let run 34 mutate unreported on 2026-07-25). **(v5.27) LEDGER JOIN — the counters are checked against the ledgers, not merely present:** `drafts_created`/`marked`/`archived` equal THIS RUN's verified ledger rows per Disposition 4¾(a) (a `same-night-draft-verification`/`existing-draft-visible` row counted as a creation is a FAIL), AND the sum across every TARGET-DAY row equals the verified rows across every TARGET-DAY ledger. **A verified draft, mark, or archive ledgered for TARGET DAY that no metrics row accounts for is a FAIL** — repaired by the 4¾(c) `reconciliation: true` backfill, never by lowering the ledger count or by re-reporting a prior run's draft as tonight's. Measured: 2026-07-25 (1 ledgered `draft-saved-verified` + 9 verified marks vs `drafts_created: 0`/`marked: 0` on all three rows) and 2026-07-21 (181 ledgered verified archives + 26 verified marks vs `archived: 0`/`marked: 0`), both while the runs self-reported 27/27. **(v5.12)** that row carries `mutation_lane` (`rest`/`native-ui`/`none` — never absent, never null, on EVERY run including a fully-held one), `mutation_toolset`, and `lane_probe_errors`. **(v5.12.1)** The two-attempt obligation is NARROW: `lane_probe_errors` must hold **two** attempts for a lane ONLY when that lane was PROBED, its probe ERRORED, and NO lane was elected (`mutation_lane: "none"`) — that is the false-hold case the retry exists to prevent, and one attempt there is a FAIL. It does NOT bind on a run that successfully ELECTED a lane, and it does NOT bind on a STRUCTURALLY-UNAVAILABLE lane (no such capability on this browser surface), which is recorded once as `unavailable: <why>` — requiring a retry against a surface that does not exist fails a correct run (measured: run 33, `native-ui` elected on a clean proof, marked FAIL for not re-probing a REST lane this runtime never had). A row that omits the lane fields entirely remains a FAIL on every run, elected or held. **(v5.62, REP-02) AND A RERUN'S TWO ROWS ARE ONE CHAIN, NOT TWO ANSWERS:** `_cos_metrics.jsonl` is append-only and stays that way, so a corrected rerun under the SAME manifest appends its own row carrying `supersedes_run_ts` naming the earlier row's `run_ts` — **the row of record is the LATEST row for the run**, the superseded one stays in place and is reported, and the reconcile join counts it once. **A second row for one `(date, run)` that declares no `supersedes_run_ts`, or names a `run_ts` that key does not carry, is a FAIL** — two silent rows for one run leave every counter with two answers and no rule for choosing (measured run 111: a retracted `mail_triaged: 0` abort row standing as the record while the corrected 304/304 rerun's row could not be appended at all) — `script` · repair.
 - **E11** · Unattended-egress containment (EXFIL-04/06): on the cron path this run made **zero** live web-egress calls while private context was loaded (EXTERNAL SIGNAL / SUPERVISED FOLLOW-ONS are queued prompts, not fetched results); **every** Chrome navigation targeted an allowlisted mail host; no reply draft to an off-thread recipient; no queued prompt contains an `overlay/keywords/` internal term. (`brain --role vm` reads and draft-captures are local, not egress.) Any live web call, off-allowlist nav, off-thread draft, or leaked internal term is a FAIL; a missing ledger is a FAIL. **An owner risk-acceptance (Phase 0.5 step 5) covers capability PRESENCE only — a live web fetch/search call on the unattended path is a FAIL even with a valid acceptance on file.** Interactive path: supervised sweeps allowed, report `N/A (interactive)` — `read` · **action_required**.
 - **E12** · Trifecta preflight & outbound gate (AUT-02/03): the Phase 0.5 preflight ran and the companion carries the `Trifecta legs: …` proof line in either valid form — `preflight=PASS|HALT` or `preflight=PASS-WITH-ACCEPTANCE` (which additionally requires the Banner standing notice and an existing valid `cos-ops/_cos_risk_acceptance.md`) — silence = FAIL; the removed leg (E) made zero capability use; and no state-changing outbound was executed — any such action appears HELD, never done. **The two layers of Phase 0.5 step 5c apply here:** a valid acceptance covering a capability's PRESENCE (e.g. `calendar-connector-present-unattended`, which includes visible calendar-write tools) makes `PASS-WITH-ACCEPTANCE` the CORRECT verdict — presence-under-acceptance is never a FAIL and never forces a HALT; but any EXECUTION of a Layer-2 hard deny (mail send/delete/unread-touch, any calendar write, off-allowlist nav, off-thread-recipient draft) is a FAIL regardless of any acceptance record — `read` · **action_required**.
 - **E13** · Harness OpEx metering: the companion's `💵 Harness OpEx (this run)` line is present and non-empty; AND exactly ONE `cos-ops/_harness_opex.jsonl` record was appended for today — OR the line reads `not metered — <reason>` and no record was appended; **(v5.12)** AND the record's `model` names the model that ACTUALLY executed this run whenever the harness exposes it (the scheduled automation's configured model id is an exposure — read it from the automation config rather than logging a blank). `model: "none"` / `(none)` is reserved for a run in which no model executed, and is a FAIL on a model-driven run — a session that reasoned, browsed, and wrote a brief demonstrably had a model. Measured failure 2026-07-25 run 32: logged `model: none` while the automation ran `gpt-5.6-terra` at high effort, leaving cost tracking permanently blank — `script` · repair (never fabricate TOKEN counts; the model id is not a token count).
@@ -4195,7 +6114,7 @@ is proven able to FAIL before it is trusted (known-positive fixtures:
 
 - **E18** · Review-gate integrity (v4.4): IF Phase 4.6 registered or reviewed anything tonight — every reviewed version carries `findings.json` + a ledger entry appended tonight; every `record` was accepted (anchors verbatim) or its rejection is routed to ⚠ with validator output; zero web-egress calls occurred during reviews; every file write of the phase resolved inside `cos-ops/review_gate/`; brief component 7½ present (or `(none)`). Nothing registered AND nothing reviewed ⇒ explicit N/A — `script` · repair.
 
-- **E19** · Chip-projection integrity (v4.6): (a) if the chip gate is CLOSED (`chips_confirmed: true` absent from `overlay/cos/priorities.md`), ZERO P-chip applications occurred this run and the rollout-status banner line reads "awaiting name confirmation"; (b) if OPEN, every Phase-1.5 `act` conversation carries exactly ONE priority chip, applied message-level (every message of the conversation in Inbox), and no non-`act` conversation gained one; (c) every chip write's ledger entry asserts the ENTIRE post-write server-read set — the P-chip present AND the non-managed category subset unchanged (a bare `[P-chip]` overwrite, or a write verified only from the client view, is a FAIL; **v5.7: on the native-ui lane the full-set read is the Categories dialog or equivalent full-set surface — row-chip visibility alone is a FAIL at the same severity**); (d) the mutation lease was honored — a present, unexpired, foreign lease ⇒ zero mailbox mutations in the ledger + the holder named in the banner; an expired or malformed lease is reported; (e) the zero-mutation liveness preflight ran before Phase 1.5 (or the run failed closed with the OUTAGE banner and zero mutation attempts); (f) the rollout-status line is present on every run until steady state; **(g) (v5.27) hold-reason integrity:** every conversation the archive lanes declined carries EXACTLY ONE category from the closed 9-entry vocabulary (a variant outside it, or a row wearing two, is a FAIL), `Held · drafted` was written ONLY where the v5.11 both-signals identification held (a single-signal draft labelled `Held · drafted` is a FAIL — it is the owner's and gets `Held · draft`), no `Held · *` category was read as a screen or left behind on an archived row, and tonight's `held_drafted` + `held_non_drafted` equal the run's total held rows with ZERO overlap — a row counted in both, or a total that misses a written hold category, is a FAIL — `script` · **action_required**.
+- **E19** · Chip-projection integrity (v4.6): (a) if the chip gate is CLOSED (`chips_confirmed: true` absent from `overlay/cos/priorities.md`), ZERO P-chip applications occurred this run and the rollout-status banner line reads "awaiting name confirmation"; (b) if OPEN, every Phase-1.5 `act` conversation carries exactly ONE priority chip, applied message-level (every message of the conversation in Inbox), and no non-`act` conversation gained one; (c) every chip write's ledger entry asserts the ENTIRE post-write server-read set — the P-chip present AND the non-managed category subset unchanged (a bare `[P-chip]` overwrite, or a write verified only from the client view, is a FAIL; **v5.7: on the native-ui lane the full-set read is the Categories dialog or equivalent full-set surface — row-chip visibility alone is a FAIL at the same severity**); (d) the mutation lease was honored — a present, unexpired, foreign lease ⇒ zero mailbox mutations in the ledger + the holder named in the banner; an expired or malformed lease is reported; (e) the zero-mutation liveness preflight ran before Phase 1.5 (or the run failed closed with the OUTAGE banner and zero mutation attempts); (f) the rollout-status line is present on every run until steady state; **(g) (v5.27) hold-reason integrity:** every conversation the archive lanes declined carries EXACTLY ONE category from the closed 9-entry vocabulary (a variant outside it, or a row wearing two, is a FAIL), `Held · drafted` was written ONLY where the v5.11 both-signals identification held (a single-signal draft labelled `Held · drafted` is a FAIL — it is the owner's and gets `Held · draft`), no `Held · *` category was read as a screen or left behind on an archived row, and tonight's `held_drafted` + `held_non_drafted` equal the run's total held rows with ZERO overlap — a row counted in both, or a total that misses a written hold category, is a FAIL; **(h) (v5.53) A GUARD-STOPPED ROW IS ACCOUNTED, NEVER AN E19 FAILURE (owner ruling 2026-08-09) —** a row that received no priority/hold projection *because a safety guard had already stopped mutation* is not a defect of this check: applying a P-chip and writing a `Held · *` category are BOTH mutations, so the stop forbade the very write (b)/(g) look for, and failing the run for the missing write is fail-closed BOOKKEEPING punishing fail-closed ACTION — the identical defect v5.52 removed from the OUTCOME CONTRACT, carried one leg over exactly as v5.48's ledgering clause was. The accounted set is EXACTLY this run's `stopped_by_guard` set (§ OUTCOME CONTRACT), which is already refused unless the POST record carries a `guard_stop` from the CLOSED guard vocabulary naming an ENUMERATED convid AND the checker corroborates that guard word on a run-scoped ledger row of the run's own — so this clause introduces no new evidence, and a run cannot self-grant it. **A row missing its projection for ANY OTHER reason is a FAIL exactly as before** (and is separately `OC-a-unaccounted` at the contract). *Measured, run 104 (2026-08-09):* 14 rows the identity guard froze, all 14 in the corroborated `stopped_by_guard` set, `unaccounted: 0`, contract PASS — and E19 FAILED anyway, for a projection the run was forbidden to write — `script` · **action_required**.
 
 - **E20** · Lifecycle reconciliation integrity (v4.7): (a) every chip clear this run carries the CLOSED trigger `owner_reply_is_latest_no_open_items` verbatim in its ledger entry — a clear ledgered with `thread_closed`/`meeting_passed`/`handled_by_others` alone (no `owner_reply_is_latest_no_open_items`) is a FAIL, those triggers may only de-escalate; (b) every re-level's journal shows the `add-new` step before its matching `remove-old` step (add-before-remove ordering) — a re-level missing the add-new step, or ordered remove-then-add, is a FAIL; (c) brief component 7¾ (CHIP LEDGER) is present (or `(none)`) and its added+re-leveled+cleared counts equal the reconciliation pass's own tally; (d) a clear-then-reply-within-3-days contradiction, if any occurred, is named in component 7¾ — `script` · **action_required**.
 
@@ -4207,16 +6126,16 @@ is proven able to FAIL before it is trusted (known-positive fixtures:
 - **E24** · Mail-leg transport-preflight reliability contract (v5.3, TRN-01/TRN-02): **(a)** Phase 0 step 3 names BOTH failure modes distinctly — mode (a) NOT PAIRED and mode (b) PAIRED BUT SIGNED OUT/MFA — a mail-leg degrade whose banner does not name which mode fired is a FAIL; **(b)** mode (a) exhausted its persistent poll budget (roughly every 30 s for up to ~6 minutes, ~12 attempts) before degrading — a mode-(a) degrade logged after fewer attempts than the stated budget (i.e. a reversion to the old single-120s-retry behavior) is a FAIL; **(c)** mode (b) degraded on the FIRST auth-check failure with no retry-budget burn — a mode-(b) degrade that consumed the mode-(a) polling budget before escalating is a FAIL; **(d)** every mail-leg degrade this run (either mode) has a matching entry in `cos-ops/_notify-markers/<mode-a|mode-b>-<TARGET DAY>` (created this run, or already `exists` from an earlier degrade today) — a degrade with no marker claim attempted is a FAIL; **(e)** no Graph/EWS/MS365-connector path was proposed or used for the mail leg — the only sanctioned mail lane remains the signed-in OWA browser tab — a mail-leg workaround naming any other transport is an automatic FAIL, not a repair-and-continue. Zero mail-leg degrades tonight ⇒ **N/A**, not skipped-silently — `script` · repair.
 - **E25** · Recurring-digest supersession integrity (v5.4, DIG-01): **(a)** every stream disposed under Phase 1.5e had **≥2** Inbox instances sharing the SAME normalized subject from the SAME recurring-automated sender — a disposed stream with only 1 instance, or instances that do not share a normalized subject, is a FAIL; **(b)** the single LATEST instance per stream (by `receivedDateTime`) was NEVER archived and NEVER declassified — an archived-or-declassified latest row is a FAIL, not a repair-and-continue; **(c)** every PRIOR instance archived under this phase has BOTH a declassify write (full category-set preserved, managed chip removed, server-read-verified) AND a matching action-ledger entry carrying the FULL undo-capable field set, written BEFORE the move — a prior instance archived without its chip removed, or with an incomplete ledger entry, is a FAIL; **(d)** zero P0/P1 rows were touched by this phase, at any confidence — an executed disposition on a P0/P1 row is an automatic FAIL; **(e)** zero disposition occurred for instances that did NOT share a normalized subject, or where the digest-vs-per-item nature was uncertain — a per-item stream (distinct ids surviving normalization) collapsed to keep-latest is an automatic FAIL, never a repair-and-continue; **(f)** `recurring_digest_supersession` in `overlay/cos/auto-archive.md` was honored — ABSENT or `true` allowed dispositions this run, `false` produced ZERO — a disposition under `false`, or zero dispositions despite eligible streams present and the key absent/true, is a FAIL; **(g)** every disposed row counted against the SAME per-run cap as Phase 1.5's auto-archive — a disposition that exceeded the shared cap is a FAIL — `script` · **action_required**.
 
-- **E26** · Full-inbox chip re-evaluation integrity (v5.5, RTG-01): **(a)** every thread re-evaluated this run belongs to the bounded batch — the per-run cap shared with Phase 1.5's auto-archive was never exceeded by this phase's dispositions, and the batch was drawn OLDEST-`last_reeval`-first (never-reeval'd threads first) — a batch drawn out of order, or a disposition count exceeding the shared cap, is a FAIL; **(v5.47) the ordering was computed from THIS VAULT'S OWN chip ledgers, never sought in the mailbox, and an all-absent (COLD START) set was broken by oldest-`received` then `conversation_id` and RUN — a phase that reported `evaluated: 0` because no "ordering surface" was available on the elected lane is an automatic FAIL, not a held phase (measured run 74: the drain had never once been drawn, and 179 `Held · uncertain` rows had accumulated behind it);** **(b)** a thread Phase 1.5d already reconciled THIS run (inside its own 36h window) was NEVER also re-evaluated by this phase in the same run — a double-touched conversation is a FAIL; **(c)** every RESOLVED verdict carries documented resolution evidence (an owner reply after the ask, a passed deadline, an approval-granted notification, or a superseding thread) — a RESOLVED verdict backed only by "no reply seen" / silence is a FAIL; **(d)** zero threads with an UNCERTAIN resolution were archived or declassified — an uncertain thread's only allowed write is a `last_reeval` stamp; an uncertain thread that lost its chip or moved to Archive is a FAIL; **(e)** zero threads carrying an unsent OWNER draft (DRAFT-PROTECTED; v5.11 — an expired-class COS draft, ledger match + machine signature + >14d unsent, confers no protection) were archived or declassified, regardless of the resolution guess — a draft-protected thread touched by a declassify/archive write is a FAIL, and a discarded draft that was NOT expired-class by BOTH signals is an automatic FAIL; **(f)** every P0/P1 thread disposed as RESOLVED carries EXPLICIT documented resolution, never silence alone — a P0/P1 archived on an inferred-from-silence basis is an automatic FAIL, not a repair-and-continue; **(g)** `chip_reeval` in `overlay/cos/auto-archive.md` was honored exactly — ABSENT or an unrecognized value produced ZERO mutations from this phase (verdicts computed, `last_reeval` bookkeeping only), `shadow` produced ZERO mutations and wrote every verdict to the distinct `chip-reeval-shadow-r<round>.jsonl` ledger, and `live` executed on the audited path — a mutation under ABSENT/unrecognized/`shadow`, or zero execution under a properly-promoted `live`, is a FAIL, fixture-pinned BOTH ways; **(v5.8 run-obligation)** under `shadow`/`live` with a mail-live read and a non-empty cycling batch, ZERO verdicts written is ALSO a FAIL — "shadow not exercised" is valid only with the key absent/OFF, no live mail read, or an explicitly-reported empty batch; **(v5.13 lane portability)** the phase runs on the ELECTED lane via Phase 1.5b's lane-portable screen table — "the screens are REST-shaped and this lane has no REST" is an automatic FAIL, not an excuse; every verdict row carries `screen_lane`, a chip whose signal was unreadable is ledgered `disposition: "held"` with a `held_reason` AND keeps `last_reeval` UNSTAMPED (a held chip that was stamped, and so silently retired from the cycling queue without ever being screened, is a FAIL); the same read-state invariant as E22(a4) binds here — no unread row is selected, opened, or hovered into a reading pane by this observation phase; **(h)** every RESOLVED disposition's archive carries the FULL undo-capable field set (identical shape to Phase 1.5/1.5e's execution mechanics), written BEFORE the move, and counts against the shared per-run cap — an archived RESOLVED row missing a ledger field, or ordered move-before-ledger, is a FAIL; **(i)** every UNDER-CHIPPED/OVER-CHIPPED verdict resulted in a re-level (a managed-chip add/remove write, chip ledger 7¾) and NEVER an archive — a re-level verdict that archived the thread instead of re-leveling its chip is a FAIL — `script` · **action_required**.
+- **E26** · Full-inbox chip re-evaluation integrity (v5.5, RTG-01): **(a)** every thread re-evaluated this run belongs to the bounded batch — the per-run cap shared with Phase 1.5's auto-archive was never exceeded by this phase's dispositions, and the batch was drawn OLDEST-`last_reeval`-first (never-reeval'd threads first) — a batch drawn out of order, or a disposition count exceeding the shared cap, is a FAIL; **(v5.47) the ordering was computed from THIS VAULT'S OWN chip ledgers, never sought in the mailbox, and an all-absent (COLD START) set was broken by oldest-`received` then `conversation_id` and RUN — a phase that reported `evaluated: 0` because no "ordering surface" was available on the elected lane is an automatic FAIL, not a held phase (measured run 74: the drain had never once been drawn, and 179 `Held · uncertain` rows had accumulated behind it);** **(b)** a thread Phase 1.5d already reconciled THIS run (inside its own 36h window) was NEVER also re-evaluated by this phase in the same run — a double-touched conversation is a FAIL; **(c)** every RESOLVED verdict carries documented resolution evidence (an owner reply after the ask, a passed deadline, an approval-granted notification, or a superseding thread) — a RESOLVED verdict backed only by "no reply seen" / silence is a FAIL; **(d)** zero threads with an UNCERTAIN resolution were archived or declassified — an uncertain thread's only allowed write is a `last_reeval` stamp; an uncertain thread that lost its chip or moved to Archive is a FAIL; **(e)** zero threads carrying an unsent OWNER draft (DRAFT-PROTECTED; v5.11 — an expired-class COS draft, ledger match + machine signature + >14d unsent, confers no protection) were archived or declassified, regardless of the resolution guess — a draft-protected thread touched by a declassify/archive write is a FAIL, and a discarded draft that was NOT expired-class by BOTH signals is an automatic FAIL; **(f)** every P0/P1 thread disposed as RESOLVED carries EXPLICIT documented resolution, never silence alone — a P0/P1 archived on an inferred-from-silence basis is an automatic FAIL, not a repair-and-continue; **(g)** `chip_reeval` in `overlay/cos/auto-archive.md` was honored exactly — ABSENT or an unrecognized value produced ZERO mutations from this phase (verdicts computed, `last_reeval` bookkeeping only), `shadow` produced ZERO mutations and wrote every verdict to the distinct `chip-reeval-shadow-r<round>.jsonl` ledger, and `live` executed on the audited path — a mutation under ABSENT/unrecognized/`shadow`, or zero execution under a properly-promoted `live`, is a FAIL, fixture-pinned BOTH ways; **(v5.8 run-obligation)** under `shadow`/`live` with a mail-live read and a non-empty cycling batch, ZERO verdicts written is ALSO a FAIL — "shadow not exercised" is valid only with the key absent/OFF, no live mail read, or an explicitly-reported empty batch; **(v5.13 lane portability)** the phase runs on the ELECTED lane via Phase 1.5b's lane-portable screen table — "the screens are REST-shaped and this lane has no REST" is an automatic FAIL, not an excuse; every verdict row carries `screen_lane`, a chip whose signal was unreadable is ledgered `disposition: "held"` with a `held_reason` AND keeps `last_reeval` UNSTAMPED (a held chip that was stamped, and so silently retired from the cycling queue without ever being screened, is a FAIL); the same read-state invariant as E22(a4) binds here — no unread row is selected, opened, or hovered into a reading pane by this observation phase; **(h)** every RESOLVED disposition's archive carries the FULL undo-capable field set (identical shape to Phase 1.5/1.5e's execution mechanics), written BEFORE the move, and counts against the shared per-run cap — an archived RESOLVED row missing a ledger field, or ordered move-before-ledger, is a FAIL; **(i)** every UNDER-CHIPPED/OVER-CHIPPED verdict resulted in a re-level (a managed-chip add/remove write, chip ledger 7¾) and NEVER an archive — a re-level verdict that archived the thread instead of re-leveling its chip is a FAIL; **(j) (v5.54) THE CYCLING SET IS ENUMERATED FROM THE HELD/CHIPPED CENSUS, AND ITS DENOMINATOR IS RECOUNTED.** Clause (a) has required an oldest-`last_reeval`-first draw since v5.5 and never once got one, because the ORDER was the only thing it named: the POPULATION the order applies to was left to the reader, and reading it off the `last_reeval` stamps — the natural reading, and the wrong one — yields a set containing only threads the phase has already evaluated, which is why the same batches keep coming back. So: the population is **every conversation in THIS RUN'S OWN hold ledger** (any `Held · *` category) plus the threads this phase draws, **never the set of conversations carrying a stamp**. While ANY never-stamped conversation remains in that population, EVERY slot in the batch belongs to a never-stamped thread — a batch holding an already-stamped thread while an unstamped one waits is a FAIL; when the unstamped threads number FEWER than the slots, all of them are drawn and the remainder goes to the OLDEST stamps (ties inclusive, since a whole cohort shares one stamp). Every row carries `cycling_population` and `cycling_population_source`, the E26 line reads `<drawn>/<cycling_population>`, and a stated denominator that is ABSENT, differs row to row, or does not survive the host's recount is a FAIL. **Measured, three occurrences:** run 100 first, then run 103 re-drew run 100's twenty and run 104 re-drew run 102's twenty verbatim nine hours later — both reporting `33` while **234** held-and-chipped conversations had never been stamped at all. **Because this is a bar the run grades ITSELF on, the host RECOUNTS it: `cos_runverify.check_chip_reeval_draw` reads this run's hold ledger, its chip ledger and the EARLIER runs' stamps, and never the run's prose** — `script` · **action_required**.
 
 - **E27** · Mail-triage invocation tiering integrity (v5.6): **(a)** exactly ONE tier applied this run and the companion/banner names which (`delegated` | `standalone` | `degraded`) — a run with no tier record is a FAIL; **(b)** tier = `delegated` only when a triage skill was actually invoked (Skill tool call, or its installed SKILL.md read and followed) — a `delegated` record with no invocation evidence is a FAIL; **(c)** tier = `standalone` was entered ONLY when no triage skill was installed AND the ZERO-MUTATION LIVENESS PREFLIGHT succeeded THIS run — the probe result used for the tier decision IS the same probe Phase 1 already runs and logs before Phase 1.5/any mutation, never a second bespoke probe invented for this gate; a `standalone` record with no logged liveness-preflight PASS, or backed by any probe not already documented elsewhere in this run's artefacts, is a FAIL; **(d)** under `standalone`, this run's E1/E5/E8 state-file reconciliation resolved against COS's OWN ledgers (`cos-ops/_cos_archive_ledger_<date>.jsonl`, `cos-ops/_cos_chip_ledger_<date>.jsonl`, the Phase 1.5 verdict ledger) as the standalone state of record — a `standalone` run whose E1/E5/E8 pass cites an external triage-skill state file, or finds none at all, is a FAIL; **(e)** under `standalone`, every explicitly-restated safety rule held with ZERO weakening relative to the `delegated` tier — Inbox-only, never-unread, never-delete, never-send, the P0/P1/P2 taxonomy, capture-verify-before-archive, rule 11, rule 12, the mutation lease, the liveness preflight, the verified-batch protocol, the undo ledger's full field set, the seven v3.0 guard conditions, the chip gate, and every blast-radius floor — all evaluated by the SAME checks that already gate `delegated` runs (E1/E11/E12/E14/E15/E17/E19); a `standalone` run that skipped, loosened, or produced a materially different result on any of those checks than a `delegated` run would is a FAIL; **(f)** tier = `degraded` correctly made ZERO marks/archives — any mutation ledgered under a `degraded` tier is an automatic FAIL, not a repair-and-continue — `read` · **action_required**.
 
 - **E28** · Outcome-contract integrity (v5.31, OC-01/OC-02/ZS-02): the `outcome_contract` block EXISTS in THIS RUN's metrics row AND its recorded `verdict` EQUALS what `tools/cos_contract.py` computes from the SAME three inputs (the preflighted enumeration + bounded Sent baseline, THIS RUN's ledgers, and the post-run Inbox + bounded Sent proof) — **evaluation is not optional**: a run that skipped the PRE preflight or final checker, wrote no block, omitted `zero_send_proof`, or wrote a verdict the checker does not reproduce FAILs even at 27/27 on every other check. The assertion is over the **ENUMERATED SET**, never a live inbox count, and zero-send is over the shared recent Sent window, never the lifetime folder count. `run_profile` is present and is the profile the checker was actually run under — a mismatch is a FAIL. **A FAILED verdict is REPORTED, never repaired away:** it stands in the metrics row, the brief header and the ⚠ block; re-running the checker against a friendlier input set (a re-typed re-enumeration, a dropped candidate record, a widened `--run-id`) is itself a FAIL — `script` · **action_required**.
 
-- **E29** · Ingestion + attachment RUN-OBLIGATION (v5.36, ING-05 — the vacuous-pass direction, the same teeth E22(a2)/E26 already gave their phases): **(a)** if the mail leg was read-LIVE this run AND ≥1 thread meets Phase-1.6 rule-1 scope (`act`, or `read` at P0/P1), tonight's `cos-ops/_cos_ingestion_ledger_<date>-run<N>.jsonl` EXISTS and carries exactly one row per in-scope thread — **a silent Phase 1.6 is an automatic FAIL, never "not exercised"** — and **(v5.48) a run that STOPPED EARLY still owes the full row set: the denominator is the in-scope count derived from THIS RUN'S verdict ledger, not the number of threads the pass got to before it stopped. Ledger rows materially fewer than that count is a FAIL even when every row present is correct (measured run 75: 110 `act` + 136 `read` verdicts, 3 ingestion rows)**, and a run whose report does not mention the phase at all is precisely the failure this check exists for; zero in-scope threads requires the explicit `zero-eligible` marker row instead, and its absence is the same FAIL. **E16 does NOT cover this: E16 is purely CONDITIONAL over candidates that were staged, so zero candidates passes it vacuously — measured runs 41–56, twelve nights, 17 in-scope P0/P1 threads a night, `E16: PASS` on every one.** **(b)** every non-`candidate` row carries a `held_reason` from the managed set (Phase 1.6 rule 1½'s six, plus rule 1¾'s `never-category` and rule 6's `over-candidate-cap`) AND a `read_lane` — *"the elected lane has no body access"* is a LEDGERED HOLD, never an omission (the E22(a3) lane-portability direction); a ledger of all-held rows is a PASS on (a) and a FAIL on nothing, a MISSING ledger is the failure. **(v5.40, EXT-04) A STARVED LANE IS NAMED, NEVER GROUND OUT:** a run that could not obtain a VISIBLE page for the body pass ledgers `browser-not-visible` on every otherwise-eligible READ row and carries `body_opened: false` on all of them — **a ledger mixing `browser-not-visible` rows with `body_opened: true` rows is a FAIL**, because it means the pass kept clicking a page it had already recorded as unrenderable, and the resulting candidate rate then reads as an extraction result when it is a lane outage (measured: run 61 staged 1 of 107 on a lane that could reach 6% of the mailbox). **(v5.39, EXT-01) THE READ-MAIL CAP IS RECOUNTED, NEVER ASSERTED:** every row carries `body_opened`, the count of `body_opened: true` rows does not exceed THE CAP THIS RUN DECLARED — **20 unless an operator override raised it, in which case the run report states the raised number and that number is what is recounted against** (v5.40: the standing 20 was hard-coded here, so a MEASUREMENT run given a raised cap would fail its own check for using the cap it was handed — an instrument that fails a correct run is the same defect as one that cannot fail an incorrect one) — and no row carries BOTH `body_opened: true` and `held_reason: "over-cap"` — a cap reported as held but not recountable from the ledger is the same "the instrument cannot fail" shape as a silent phase. **`preview-insufficient` on a row the list showed as READ is a FAIL** (that thread was openable — it is `over-cap`, `no-substance`, `no-body-access-on-lane`, or — v5.40 — `browser-not-visible`), and **`body_opened: true` on a row held `unread-read-state-invariant` is an automatic FAIL, mutation-free extraction notwithstanding**: it means the run opened the owner's unread mail. **(v5.43, EXT-06b) THE STAGING CAP IS GONE, AND IT CANNOT RETURN BY ACCIDENT:** the run report states the staging-cap state it ran under in words — **`uncapped` (the standing v5.43 ruling) or the number a cap declared** — because a candidate rate from a capped night and one from an uncapped night are two different instruments, and comparing them silently is exactly how "median 700 characters of real body" became a measurement. **Under `uncapped`, ANY row carrying `held_reason: "over-candidate-cap"` is a FAIL** — the reason asserts a bound that does not exist, and a dormant vocabulary firing anyway is how a removed cap comes back unnoticed. **THE STAGED COUNT LEADS, so a volume spike is loud:** `ingestion_candidates` is on tonight's metrics row (c) and the staged count opens the brief's ingestion line (component 5) — with no cap, staged volume is the only early warning left if the bar ever drifts from the zero-false-positive precision S14 measured, so a count buried behind an opened batch is a FAIL. **A REPORTED COUNT IS NOT A CAP:** a run that stages fewer candidates than it judged worth staging — for any self-imposed volume reason whatsoever — is an automatic FAIL, not a prudent night. **(v5.42, EXT-06) IF A CAP IS EVER DECLARED AGAIN it is recounted the same way as the read cap:** a row held `over-candidate-cap` carries `disposition: "held"` — writing it as `no-substance` asserts the exact opposite of what the reason means and is a FAIL — such rows appear ONLY on a run whose `candidate` row count actually REACHED the declared cap (overflow ledgered while the batch still had room is a FAIL, because something other than the cap did the dropping), and a run whose candidates EQUAL its cap states its `over-candidate-cap` count in the report, including when that count is zero. A full batch beside a silent overflow count is the shape S14 measured: run 63 staged exactly 8 against an 8/night cap, and two blind readers would have kept 9 of its 60 `no-substance` rows. **THE BODY BUDGET IS STATED, NOT INFERRED:** the run report names the budget it read to (rule 1½: 4000 characters of extracted message text, or the 6000-character raw-page fallback) — a night whose candidate rate is compared against another night's without both budgets on the record is comparing two different instruments, which is how "median 700 characters of real body" was ever written down as a measurement. **(c)** tonight's metrics row carries `ingestion_in_scope`, `ingestion_candidates`, `ingestion_held` and `attachment_lane` — a missing field is a FAIL (E22(d) shape) — and the three counters EQUAL tonight's ledger row counts per `disposition`; a counter that disagrees with the ledger is repaired at the counter, never by editing the ledger. **(d)** if the downloads mount is absent, `attachment_lane` reads `blocked-no-downloads-mount`, the 🚧 BLOCKED block names it, and REQUIRED ACTIONS carries the ready-to-run capture action — an attachment lane blocked-by-construction and reported nowhere is a FAIL (measured: last ingest manifest 2026-07-17, 13 silent days). **(e) (v5.37, DOC-02) CATEGORY DISCIPLINE — the non-vacuous half E16 cannot cover** (E16 is CONDITIONAL over candidates that were staged; a `never` category's whole point is that none were): **ZERO candidates and ZERO manifest lines were produced from a `never` category** — one is a doctrine breach and an automatic FAIL, not a repair-and-continue, whatever the host's independent refusal did afterwards; every ledger row carries `category` (the rule-1¾ stamp, or `null` when the overlay taxonomy is absent/unparseable — a placeholder string in that slot is a FAIL); and every `never`-category row is ledgered `disposition: "no-substance"` with `held_reason: "never-category"` so the exclusion is COUNTED, never silent — a thread dropped for its category with no ledger row is the same failure as a silent phase. **(f) (v5.37) THE BATCH PREVIEW RENDERED:** brief component 5 shows the staged material grouped by kind (`ingestion` · `attachment` · `supersede`) then by category, with one evidence line per item, every group present (`(none)` when empty), and a group this leg cannot see NAMED rather than omitted — a flat id list, a missing group, or an unwrapped source quote is a FAIL — `script` · **action_required**.
-- **E30** · Target identity (v5.46, measured runs 72/73): **(a)** every executed per-row action — open, checkbox select, context menu, ribbon command — carries `target_intended` AND `target_produced` as TWO SEPARATE FIELDS, each read at its own moment, and the two are EQUAL; a row recording only the intended id, or an action whose produced surface yielded no id, is a FAIL (an unreadable surface is a mismatch, never a pass); **(v5.48) each ATTEMPT is its own row, keyed by attempt number — a mismatch row whose `target_produced` carries the id of the LATER successful retry rather than the id it actually produced is a FAIL, because the action-to-produced chain is then unauditable (measured run 75)**; **(b)** a run that hit a mismatch executed ZERO mutations after it and its report names the mismatch in the BLOCKED block — a mutation ledgered after a recorded mismatch is an automatic FAIL, not a repair-and-continue; **(c)** every read-path mismatch that survived its ONE bounded re-target is ledgered `held_reason: "target-identity-mismatch"` with `body_opened: false`, and no corpus row is joined to it — a `body_opened: true` row carrying that reason, or a corpus join on an unasserted convid, is a FAIL; **(d)** identity is asserted from a LATE re-resolution — a run whose evidence shows it acted on a node handle, row index or coordinate captured before the action is a FAIL even when the ids happened to match, because a virtualized list makes that a coincidence rather than a guarantee — `script` · **action_required**.
+- **E29** · Ingestion + attachment RUN-OBLIGATION (v5.36, ING-05 — the vacuous-pass direction, the same teeth E22(a2)/E26 already gave their phases): **(a)** if the mail leg was read-LIVE this run AND ≥1 thread meets Phase-1.6 rule-1 scope (`act`, or `read` at P0/P1), tonight's `cos-ops/_cos_ingestion_ledger_<date>-run<N>.jsonl` EXISTS and carries exactly one row per in-scope thread — **a silent Phase 1.6 is an automatic FAIL, never "not exercised"** — and **(v5.48) a run that STOPPED EARLY still owes the full row set: the denominator is the in-scope count derived from THIS RUN'S verdict ledger, not the number of threads the pass got to before it stopped. Ledger rows materially fewer than that count is a FAIL even when every row present is correct (measured run 75: 110 `act` + 136 `read` verdicts, 3 ingestion rows)**, and a run whose report does not mention the phase at all is precisely the failure this check exists for; zero in-scope threads requires the explicit `zero-eligible` marker row instead, and its absence is the same FAIL. **E16 does NOT cover this: E16 is purely CONDITIONAL over candidates that were staged, so zero candidates passes it vacuously — measured runs 41–56, twelve nights, 17 in-scope P0/P1 threads a night, `E16: PASS` on every one.** **(b)** every non-`candidate` row carries a `held_reason` from the managed set (Phase 1.6 rule 1½'s eleven, plus rule 1¾'s `never-category` and rule 6's `over-candidate-cap`) AND a `read_lane` — **(v5.59) AND THE SET IS CLOSED, AND THE HOST NOW CHECKS IT (`cos_runverify.check_ledger_vocabulary`).** This clause has said "from the managed set" since v5.36 and NOTHING ever verified membership, so every run coined its own words: `browser-control-failure` (61), `dedup-prior-proposal` (65), `corpus-closed-before-capture` (68), the entire Phase-1.5 `Held · uncertain` vocabulary (73), `body-read-no-distinct-durable-claim` + `target-not-found-timeout` + `capture-blocked-download-path` (101), `unread-native-category-deferred` (103), `no-substance-or-already-represented` (106, 108) — plus invented DISPOSITIONS (`unaccounted` on 73, `no-new-substance` on 106) and rows with no disposition at all (75). **That is not cosmetic, because these words ARE the counters and ARE the row selectors every other Phase-1.6 check scores** — an invented one does not read as a variant, it reads as ABSENCE. Measured twice on one night: run 106's 15 `no-new-substance` rows left `ingestion_held` and were accounted nowhere, and run 108 wrote its 19 substance verdicts as `no-substance-or-already-represented`, whereupon `check_body_pass` — the v5.49 clause built for precisely those rows — reported "no `no-substance` verdict in this run's ingestion ledger" and PASSED. **A word outside the set is a FAIL, and the repair is the WORD, never the check**: run 105 hand-normalized four ledger rows mid-run because no gate caught the drift where it was written, and a ledger edit is exactly what (c) forbids. If a real case has no word, that is a doctrine gap — name it here first, then use it — *"the elected lane has no body access"* is a LEDGERED HOLD, never an omission (the E22(a3) lane-portability direction); a ledger of all-held rows is a PASS on (a) and a FAIL on nothing, a MISSING ledger is the failure. **(v5.60) AND THE SAME CLOSURE NOW BINDS `dedup_check`, WHICH IS WHERE THE INVENTED VERDICT ACTUALLY LIVED: `clean` | `inconclusive` | `not-run` and no other** (rule 5's closing paragraph). Run 106 wrote *"brain lexical probes; no novel durable candidate staged"* into that slot on 15 rows, run 108 wrote *"no novel durable candidate staged"* into all 115 of its rows, and run 61 wrote `inconclusive-vm-tier-clamp` — a fused word again, `inconclusive` welded to its cause. **A FUSED VALUE IS A FAIL IN EVERY ONE OF THE THREE SLOTS**, because to a counter and to a row selector a fusion reads as absence and not as a variant; and dedup has **no drop path at all**, so a `dedup_check` value that reports a DROP is asserting an authority rule 5 does not grant. **(v5.60) AN EMPTY SHELL IS NOT A BODY:** a `body_opened: true` row whose `body_chars` is at or below the 42-character bare-folder shell (rule 1½ step 4) is a FAIL — the open failed and the row claims it landed (measured: run 108 banked two 42-character bodies and gave both a post-read `no-substance` verdict). **(v5.40, EXT-04) A STARVED LANE IS NAMED, NEVER GROUND OUT:** a run that could not obtain a VISIBLE page for the body pass ledgers `browser-not-visible` on every otherwise-eligible READ row and carries `body_opened: false` on all of them — **a ledger mixing `browser-not-visible` rows with `body_opened: true` rows is a FAIL**, because it means the pass kept clicking a page it had already recorded as unrenderable, and the resulting candidate rate then reads as an extraction result when it is a lane outage (measured: run 61 staged 1 of 107 on a lane that could reach 6% of the mailbox). **(v5.39, EXT-01) THE READ-MAIL CAP IS RECOUNTED, NEVER ASSERTED:** every row carries `body_opened`, the count of `body_opened: true` rows does not exceed THE CAP THIS RUN DECLARED — **20 unless an operator override raised it, in which case the run report states the raised number and that number is what is recounted against** (v5.40: the standing 20 was hard-coded here, so a MEASUREMENT run given a raised cap would fail its own check for using the cap it was handed — an instrument that fails a correct run is the same defect as one that cannot fail an incorrect one) — and no row carries BOTH `body_opened: true` and `held_reason: "over-cap"` — a cap reported as held but not recountable from the ledger is the same "the instrument cannot fail" shape as a silent phase. **(v5.51) AND THE CAP IS ONLY HALF OF IT — THE DRAW ORDER IS RECOUNTED THE SAME WAY.** Rule 1½ draws P0, then P1, then every other in-scope thread, and with 20 opens against a hundred-odd rows that order IS which mail gets read. Two assertions, and the second needs no new field so it scores a run of any bundle: **(i)** every `body_opened: true` row carries **`body_open_seq`**, contiguous `1..N` with no gap and no repeat, and the sequence is NON-DECREASING in group rank (P0 = 0, P1 = 1, everything else = 2) — an open at a lower rank followed by an open at a higher one is a FAIL, and a ledger carrying the stamp on SOME opened rows and not others is a FAIL on its own — a partly-stamped sequence witnesses nothing. **A ledger written before v5.51 carries no stamp and its LINE ORDER IS NOT A SUBSTITUTE** (rule 8's rows are written in ENUMERATION order, opened and unopened interleaved — checked on run 63, whose opened rows are scattered the length of its file): the host reports the observed line order and DEGRADES rather than retro-failing a run against a field its own bundle never named. **A v5.51 run that omits the stamp is not degraded, it is a FAIL** — the same footing `body_opened` sits on. **(ii)** **no row held `over-cap` outranks a row that was opened** — a P0 or P1 left unopened while a P2/P3 body was read means the cap bit the wrong end of the queue, and that is a FAIL whether or not the sequence field exists. Measured on two consecutive nights: run 102's opens 1-3 were P3 `act` and its first P0 was the seventh (clause (i)), and run 101 spent all twenty of its opens on P3 while its 3 P0 and 14 P1 threads finished `over-cap` (clause (ii)) — a night that scored `VALID_DEGRADED` 11/11 host-side. **`preview-insufficient` on a row the list showed as READ is a FAIL** (that thread was openable — it is `over-cap`, `no-substance`, `no-body-access-on-lane`, or — v5.40 — `browser-not-visible`), and **`body_opened: true` on a row held `unread-read-state-invariant` is an automatic FAIL, mutation-free extraction notwithstanding**: it means the run opened the owner's unread mail. **(v5.49, EXT-07) AND THE MIRROR OF THAT, WHICH IS THE ONE THIS CHECK KEPT MISSING: `held_reason: "no-substance"` on a row carrying `body_opened: false` is an automatic FAIL** — it is a post-read verdict written without the read (rule 1½'s two-way split), and every genuinely unopened case has its own reason. Nor is it enough that each row is individually well-formed: **an in-scope, already-READ thread that carries NO not-opened reason and was not opened is a FAIL**, because the pass owed it an open. Measured, and the reason this clause exists rather than being assumed: run 100 scored **E29: PASS** on its own report while 101 of its 112 rows were exactly this shape, and the host check that does catch it never ran because the run's PRE snapshot was under a drifted name. **(v5.43, EXT-06b) THE STAGING CAP IS GONE, AND IT CANNOT RETURN BY ACCIDENT:** the run report states the staging-cap state it ran under in words — **`uncapped` (the standing v5.43 ruling) or the number a cap declared** — because a candidate rate from a capped night and one from an uncapped night are two different instruments, and comparing them silently is exactly how "median 700 characters of real body" became a measurement. **Under `uncapped`, ANY row carrying `held_reason: "over-candidate-cap"` is a FAIL** — the reason asserts a bound that does not exist, and a dormant vocabulary firing anyway is how a removed cap comes back unnoticed. **THE STAGED COUNT LEADS, so a volume spike is loud:** `ingestion_candidates` is on tonight's metrics row (c) and the staged count opens the brief's ingestion line (component 5) — with no cap, staged volume is the only early warning left if the bar ever drifts from the zero-false-positive precision S14 measured, so a count buried behind an opened batch is a FAIL. **A REPORTED COUNT IS NOT A CAP:** a run that stages fewer candidates than it judged worth staging — for any self-imposed volume reason whatsoever — is an automatic FAIL, not a prudent night. **(v5.42, EXT-06) IF A CAP IS EVER DECLARED AGAIN it is recounted the same way as the read cap:** a row held `over-candidate-cap` carries `disposition: "held"` — writing it as `no-substance` asserts the exact opposite of what the reason means and is a FAIL — such rows appear ONLY on a run whose `candidate` row count actually REACHED the declared cap (overflow ledgered while the batch still had room is a FAIL, because something other than the cap did the dropping), and a run whose candidates EQUAL its cap states its `over-candidate-cap` count in the report, including when that count is zero. A full batch beside a silent overflow count is the shape S14 measured: run 63 staged exactly 8 against an 8/night cap, and two blind readers would have kept 9 of its 60 `no-substance` rows. **THE BODY BUDGET IS STATED, NOT INFERRED:** the run report names the budget it read to (rule 1½: 4000 characters of extracted message text, or the 6000-character raw-page fallback) — a night whose candidate rate is compared against another night's without both budgets on the record is comparing two different instruments, which is how "median 700 characters of real body" was ever written down as a measurement. **(c)** tonight's metrics row carries `ingestion_in_scope`, `ingestion_candidates`, `ingestion_held`, `attachment_lane` and — **(v5.49, EXT-07)** — `body_open_cap`, `body_open_actual` and `body_budget` — a missing field is a FAIL (E22(d) shape) — and the three counters EQUAL tonight's ledger row counts — **(v5.59) AND "per `disposition`" IS NOT A DEFINITION, WHICH IS WHY THIS KEPT COMING BACK. Spelled out, once, in the only form that cannot be half-remembered: `ingestion_in_scope` = every row except the `zero-eligible` marker; `ingestion_candidates` = the `disposition: "candidate"` rows; `ingestion_held` = IN-SCOPE MINUS CANDIDATES — every other in-scope row, whatever word it carries. So `in_scope = candidates + held` holds arithmetically and a row can never be accounted nowhere.** Read "per `disposition`" as a membership test over `{held, no-substance}` and you get 96 of 115, which is what run 108's row says; run 64 got 11 of 116 the same way, and run 105 caught the identical error IN FLIGHT and repaired the counter by hand ("`ingestion_held` must include both explicit held and no-substance rows, so the correct value is 115, not 112") — a correct repair that reached no rule, so run 108 reproduced it three nights later. **THE LEDGER IS WRITTEN BEFORE THE ROW IS APPENDED** (4¾(e)): `--append` refuses a row whose counters its own ledger denies, and — v5.59 — refuses a row claiming `ingestion_in_scope > 0` whose ledger does not exist yet, because run 108 appended six minutes before writing the ledger and the gate had nothing to compare against. Meanwhile **`body_open_actual` EQUALS the count of `body_opened: true` rows in that same ledger** (the host recounts exactly this: `cos_runverify.check_body_open_count`, which has been DEGRADED since run 69 because the field stopped being written); a counter that disagrees with the ledger is repaired at the counter, **NEVER by editing the ledger — and that prohibition is load-bearing, not a style note: run 105 rewrote four ledger rows' `disposition`/`held_reason`, and run 108 renumbered `body_open_seq` to be contiguous, after which `check_body_order` scored the repaired sequence as if the run had drawn it that way.** A ledger row records what happened; if what happened was wrong, the record stays and the run report says so. **(d)** if the downloads mount is absent, `attachment_lane` reads `blocked-no-downloads-mount`, the 🚧 BLOCKED block names it, and REQUIRED ACTIONS carries the ready-to-run capture action — an attachment lane blocked-by-construction and reported nowhere is a FAIL (measured: last ingest manifest 2026-07-17, 13 silent days). **(e) (v5.37, DOC-02) CATEGORY DISCIPLINE — the non-vacuous half E16 cannot cover** (E16 is CONDITIONAL over candidates that were staged; a `never` category's whole point is that none were): **ZERO candidates and ZERO manifest lines were produced from a `never` category** — one is a doctrine breach and an automatic FAIL, not a repair-and-continue, whatever the host's independent refusal did afterwards; every ledger row carries `category` (the rule-1¾ stamp, or `null` when the overlay taxonomy is absent/unparseable — a placeholder string in that slot is a FAIL); and every `never`-category row is ledgered `disposition: "no-substance"` with `held_reason: "never-category"` so the exclusion is COUNTED, never silent — a thread dropped for its category with no ledger row is the same failure as a silent phase. **(v5.60, TAX-02) AND THE STAMP ITSELF IS NOW SCORED AGAINST THE OWNER'S OWN PARSED TAXONOMY (`cos_runverify.check_category_stamp`), because this rule was measurably not being applied at all.** Four assertions: **(i)** a `null` category is legal ONLY when the overlay is genuinely absent or unparseable — a fact the HOST reads for itself — so **an active taxonomy beside an all-`null` ledger is a FAIL** (run 103: `category: null` on all 118 rows with the taxonomy present and parseable, i.e. running as though the feature were off); **(ii)** a stamped id the parsed overlay does not define is a FAIL (the producer rule, recounted rather than trusted); **(iii)** a row whose stamped category the taxonomy calls `never` and which was NOT excluded is a FAIL, and so is a row ledgered `never-category` whose category is not `never` — the two slots agree in both directions or the exclusion is decorative (runs 101, 102, 106, 108); and **(iv)** **`body_opened: true` beside `held_reason: "never-category"` is a FAIL** — rule 1¾ excludes on the rule-1½ DRAW, before the open, so a `never` thread that was opened spent one of the twenty the cap owed to actionable mail (measured: 11 of run 103's 19 opens, 3 of run 108's). **AND THE BLANKET DEFAULT FAILS:** on a night with more in-scope rows than the open cap, **one category covering more than 75% of them is a FAIL**. Calibrated, not guessed — every night that demonstrably applied the taxonomy sits at a dominant share of 0.20-0.33 (runs 57, 59, 63, 64) and every blanket-default night at 0.81-0.90 (runs 100, 101, 102, 104, 105, 106, 108), so 0.75 sits in the middle of a gap half the scale wide. The share is reported on every verdict, pass included; and if an honest night ever trips it the repair is the TAXONOMY — a category describing three quarters of the mail is one id doing several ids' work — never the check. **(f) (v5.37) THE BATCH PREVIEW RENDERED:** brief component 5 shows the staged material grouped by kind (`ingestion` · `attachment` · `supersede`) then by category, with one evidence line per item, every group present (`(none)` when empty), and a group this leg cannot see NAMED rather than omitted — a flat id list, a missing group, or an unwrapped source quote is a FAIL — `script` · **action_required**.
+- **E30** · Target identity (v5.46, measured runs 72/73): **(a)** every executed per-row action — open, checkbox select, context menu, ribbon command — carries `target_intended` AND `target_produced` as TWO SEPARATE FIELDS, each read at its own moment, and the two are EQUAL; a row recording only the intended id, or an action whose produced surface yielded no id, is a FAIL (an unreadable surface is a mismatch, never a pass) — **(v5.53) and when the two are NOT equal, clause (f) decides whether that mismatch fails the run: the pair must still be recorded truthfully here, but a mismatch the guard caught, recovered and kept inert is a PASS, not a FAIL**; **(v5.48) each ATTEMPT is its own row, keyed by attempt number — a mismatch row whose `target_produced` carries the id of the LATER successful retry rather than the id it actually produced is a FAIL, because the action-to-produced chain is then unauditable (measured run 75)**; **(v5.50) a MISMATCH row additionally carries `target_produced_pre` — the id the produced surface held immediately BEFORE the action — and a mismatch row missing it is a FAIL: without it the ledger cannot say whether the action moved the surface to the wrong conversation or never moved it at all, and after run 101 that distinction had to be reconstructed from the Codex rollout transcript**; **(b)** a run that hit a mismatch executed ZERO mutations after it and its report names the mismatch in the BLOCKED block — a mutation ledgered after a recorded mismatch is an automatic FAIL, not a repair-and-continue; **(c)** every read-path mismatch that survived its ONE bounded re-target is ledgered `held_reason: "target-identity-mismatch"` with `body_opened: false`, and no corpus row is joined to it — a `body_opened: true` row carrying that reason, or a corpus join on an unasserted convid, is a FAIL; **(d)** identity is asserted from a LATE re-resolution — a run whose evidence shows it acted on a node handle, row index or coordinate captured before the action is a FAIL even when the ids happened to match, because a virtualized list makes that a coincidence rather than a guarantee — **(v5.50) a rect read in the SAME evaluation as the id and used with no intervening scroll or await satisfies this; a rect from an earlier evaluation, or one whose row is not fully inside the visible list viewport, does not**; and **(e) (v5.50) the ONE bounded re-target DIFFERED from the attempt it followed** — brought the row into view, re-read rect and id together, and clicked a different deterministic point — and its row names what it changed; **a second attempt identical to the first is not a re-target and is a FAIL, whatever it produced** (measured run 101: both mismatches survived a re-target that re-clicked the same point of the same row, and both were the never-moved shape) — **(v5.55) and "DIFFERED" is judged per PRIMITIVE, from the field the action actually used: `point` for a click, `open_url` for a deep-link navigation. Every per-row action row carries `open_method` (`navigate` | `click`); a pre-v5.55 row with neither field reads as `click`. A mismatched navigation re-targets by falling back to the CLICK path — re-navigating to the same URL is run 101's defect one primitive over and is the same FAIL — and a navigated open additionally asserts the list's own `aria-selected="true"` row beside the URL, because after a navigation the URL is the input the run supplied and not a surface the app produced (a URL-only agreement is `held_reason: "target-identity-unconfirmed"` with `body_opened: false`, counted and reported, never an open and never a mismatch)**; and **(f) (v5.53, owner ruling 2026-08-09) A MISMATCH FAILS ONLY WHEN IT WENT UNGUARDED.** The safety property this check defends is *"no wrong action ever happens"*, NOT *"no mismatch ever occurs"*. On a virtualized ~300-row list the measured mismatch rate is roughly **one open in twenty**, so a bar of zero mismatches is unreachable by effort — it demands a quiet night, and it punishes the guard for working. **FAIL when a mismatch MUTATED anything, went UNDETECTED, or was NOT RECOVERED** — its one bounded re-target failed, was not taken, did not differ (clause (e)), or ran past its bound. **PASS when the guard DETECTED it AND the ONE bounded re-target RECOVERED it AND zero mutation followed.** **Recovery is PROVEN FROM THE ARTIFACTS, never asserted:** the mismatch row is marked unverified and carries `target_produced_pre` (clause (a)), the re-target row NAMES what it changed (clause (e)) and carries `target_produced == target_intended`, and no row carries `mutation: true` at or after the mismatch — **a row claiming recovery without those fields is a FAIL, not a pass.** **A recovered mismatch is still COUNTED AND REPORTED:** this E-check's line states `recovered mismatches: N` and the run report names them, so a rising rate stays visible — "recovered" must never come to mean "invisible". This clause moves the CHECK's bar and NOTHING else: the first mismatch still ends every mutation leg for the run (clause (b) and A MISMATCH STOPS THE LINE), a read-path mismatch that survives its one re-target is still ledgered `held_reason: "target-identity-mismatch"` with `body_opened: false` (clause (c)), and the re-target is still one and still has to differ. Because this LOOSENS a bar the run grades itself against, the host RECOUNTS it from the action ledger — `cos_runverify.check_target_identity`, which reads the ledger and never the run's prose. *Measured, run 104 (2026-08-09):* attempt 1 on one row produced the previously-opened conversation's id, the guard caught it, attempt 2 re-scrolled and clicked a different point and landed exactly, every mutation leg stopped and stayed stopped — and the night scored FAIL. **(g) (v5.60, INS-02) THE ATTEMPT IS INSTRUMENTED, AND THE IN-RUN CONTROL IS OBLIGATORY.** Every per-row action row — **including every FAILED attempt** — carries `open_method`, `open_url` on a navigation, `eval_ms`, `ready_state`, `rendered_rows`, `body_chars`, `url_has_id`, `hour`, `display_state`, and `hold_status` stamped `hold_status_source: "status-file"` (read from the hold's own status file, never assumed from launch — a hold that has lost its tab keeps reporting `holding`). A missing field on a v5.60 bundle is a FAIL; a pre-v5.60 ledger is reported and DEGRADED, never retro-failed. **An evaluation that TIMED OUT rather than returned carries `eval_timed_out: true` and its thread is ledgered `host-eval-timeout`, never `target-identity-mismatch`** — measured in daylight, one navigation wedged Chrome's `execute javascript` bridge for ~2 minutes and every read in that window timed out, so a mismatch verdict there is an instrument failure wearing a lane failure's word. **AND THE RUN WRITES `_cos_lane_control_<run_id>.json`** — the same fixed 12-row daylight burst (`tools/cos_lane_rehearsal.py --deep-link --rows 12 --out …`) re-run INSIDE the night, on the same lane and the same tab, after the body pass. **Its absence on a run that attempted any open is a FAIL.** *Why it is the obligation and not a suggestion:* v5.57 made the rehearsal re-anchor to the TOP of the folder while a night draws by PRIORITY across ~115 rows, so **the rehearsal and the night have never sampled the same population** — four successive fixes each scored 20/20 in daylight while the night kept failing, and run 108's own probe log records ~84% first-attempt failure against 26 of 26 neutral daylight opens at the same cadence. Control fails too ⇒ the LANE; control passes while the priority draw fails ⇒ the DRAW. Nothing else this run records separates those. **(h) (v5.60) A ROW THAT WAS NEVER ATTEMPTED MAY NOT WEAR A MISMATCH'S WORD.** `target-identity-mismatch` asserts an open was attempted and produced the wrong id; **a ledger row whose own `target_attempt` is 0 (or absent while its siblings carry one) and which carries that reason is a FAIL** — it is the pass-ended cascade, and its word is `pass-ended-by-identity-stop` (the v5.48 stop clause, as corrected). Scored off the run's OWN field, so no bundle is judged against a field it never named. *Measured, run 105 (2026-08-09):* **108 rows labelled `target-identity-mismatch`, every one with `target_attempt: 0` and `target_produced: null`** — read as written that is 108 identity failures; it is one stop and 108 threads written out behind it, and it made the night unscoreable for the very defect it appeared to prove. Runs 103, 106 and 108 pass this unchanged: their mismatch rows all carry `target_attempt: 2`. **(i) (v5.62, NAV-01) A REFUSED NAVIGATION IS NOT A MISMATCH, AND THE SPLIT IS RECOUNTED FROM THE PAGE — NEVER FROM THE RUN'S WORD.** A refusal is all four together: `open_method: "navigate"`, **no produced id at all**, `url_has_id: false`, and `body_chars` at or below the 42-character shell — every one of them a field clause (g) already obliges on every attempt, so this needs no new field and cannot be asserted into being (`cos_runverify._is_refusal`). Four teeth, and the first two are what keep the guard exactly as strong as it was: **a row carrying `navigation-refused-row-unreachable` WITHOUT that shape is a FAIL** — a landing that produced ANY id opened something, and a wrong one is `target-identity-mismatch` with the mutation stop and every obligation it carries, so the new word can never launder a wrong open out of the stop; **a refusal whose ONE bounded re-target was never taken is a FAIL** — the fallback is the CLICK path and it must SCROLL the row into the virtualized list first, which is precisely what run 111 never did; **a refusal re-targeted by navigating again is a FAIL** (clause (e), unchanged); and **`pass-ended-by-identity-stop` rows with no cause that ends a pass behind them — no `target-identity-mismatch`, no `host-eval-timeout`, no action row whose produced id differs from its intended one — are a FAIL**, because the pass then ended on a refusal, which opened nothing and moved nothing. *Measured, run 111 (2026-08-10), and the in-run control clause (g) obliges is what proved it:* the control scored **12/12 first attempt, 0 mismatches on the same lane and the same tab the same night**, while the priority draw met **4 refusals — every one `url_has_id: false`, `body_chars: 42`, `target_attempt: 1`** — and cascaded **111 rows** into `pass-ended-by-identity-stop`. Control passes, draw fails ⇒ the DRAW, which is the answer clause (g) was built to produce. Scored on v5.60+ ledgers only, off the run's own fields — `script` · **action_required**.
 
-🧪 block (after the three disposition blocks, in the companion) — `## 🧪 Run-integrity — E-checks (N/30 passed, R repair rounds)`, one line per check with PASS/FAIL→repaired evidence, `all passed, 0 repairs` when clean; N/A entries explicit and scoped.
+🧪 block (after the three disposition blocks, in the companion) — `## 🧪 Run-integrity — E-checks (N/30 passed, R repair rounds)`, one line per check with PASS/FAIL→repaired evidence, `all passed, 0 repairs` when clean; N/A entries explicit and scoped. **(v5.59, REP-01) When `R > 0` this block is followed by `## 🔧 Repairs` — one line per repair, `artifact · field · before → after · why` — and `R` EQUALS the number of those lines. The host recounts it (`cos_runverify.check_repairs`); a count that contradicts the list beneath it is the run-75 / run-106 shape, and a count with no list is run 104's.**
 
 ## FEEDBACK LOOP — verdicts in, doctrine out (v5.29, FL-01/FL-02/FL-03)
 

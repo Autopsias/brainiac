@@ -35,6 +35,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from brain import cos, cos_runverify  # noqa: E402
 
 
+def _resolve(vault: Path, run_id: str) -> str:
+    """Accept the bare run NUMBER as well as the full host-assigned id.
+
+    `tools/cos_contract.py --run-id 106` is legal, so a run naturally types the
+    same thing here — and got back "no host run manifest" while its manifest
+    sat on disk (run 106's own report carries that line). One id vocabulary.
+    """
+    want = run_id.strip()
+    if not want.isdigit():
+        return want
+    for rid in cos_runverify.known_run_ids(vault):
+        if rid.rsplit("run", 1)[-1] == want:
+            return rid
+    return want
+
+
 def _render(res: dict) -> str:
     head = (f"{res['run_id']}: {res['verdict'] or 'PENDING'}"
             + (f" — {res['reason']}" if res.get("reason") else ""))
@@ -77,7 +93,7 @@ def main(argv: list[str]) -> int:
                         for s in report["scored"]) or "nothing newly scored")
         return 1 if (report["invalid"] or report["inconclusive"]) else 0
 
-    run_ids = ([args.run_id] if args.run_id
+    run_ids = ([_resolve(vault, args.run_id)] if args.run_id
                else cos_runverify.known_run_ids(vault)[:args.window])
     if not run_ids:
         print(f"INCONCLUSIVE: no host run manifests under {cos.runs_dir(vault)} "

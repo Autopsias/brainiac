@@ -26,6 +26,12 @@ from pathlib import Path
 
 from ranx import Qrels, Run, evaluate
 
+# NOT the scorer of record. `eval/harness_direct.py` is (FOLLOWUPS' standing
+# instruction, and the only one that runs without ranx). This ranx twin is kept
+# for the three gate-contract tests and deliberately does NOT carry the HYG-02
+# codename map or the `bpref` secondary metric: duplicating the qrels-join in a
+# second scorer is how the two silently disagree. If you need a mapped or
+# bpref-carrying scorecard, use harness_direct.py.
 METRICS = ["recall@5", "recall@10", "recall@20", "ndcg@10", "mrr@10"]
 
 

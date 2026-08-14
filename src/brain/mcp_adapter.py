@@ -23,7 +23,7 @@ from . import egress
 from .core import BrainCore
 from .rerank import RERANK_TOP_DEFAULT, rerank_enabled
 
-READ_TOOLS = ("search", "get", "recent", "bases_query", "dossier")
+READ_TOOLS = ("search", "get", "recent", "bases_query", "dossier", "vault_languages")
 
 # Server-side egress ceiling (SEC-01 hardening). A caller-supplied ``max_tier``
 # was previously honored unbounded — an MCP client could simply ASK for
@@ -67,6 +67,29 @@ def _clamp_max_tier(requested_tier: str) -> str:
 def _filtered(items: list[dict], max_tier: str) -> tuple[list[dict], dict]:
     # Same single egress chokepoint as the CLI (SEC-01) — no second egress path.
     return egress.apply_gate(items, max_tier)
+
+
+def _variant_queries(args: dict[str, Any]) -> list[str]:
+    """[query, *variants] — deduped, order-preserving (CON-01).
+
+    The original query always leads: ``search_multi`` reranks the fused pool
+    against ``variants[0]``, and identity/create-safety must stay anchored to
+    what the caller actually asked. Duplicates after whitespace/case
+    normalization are dropped so a translation that came back identical cannot
+    double-count its votes.
+    """
+    raw = args.get("variants") or []
+    if isinstance(raw, str):
+        raw = [raw]
+    out: list[str] = []
+    seen: set[str] = set()
+    for q in [args.get("query", "")] + list(raw):
+        text = str(q or "").strip()
+        key = " ".join(text.lower().split())
+        if text and key not in seen:
+            seen.add(key)
+            out.append(text)
+    return out
 
 
 def _capture_rerank_metadata(
@@ -115,7 +138,21 @@ def dispatch(tool: str, args: dict[str, Any], *, core: BrainCore | None = None,
         # BRAIN_RERANK_DISABLED rollback.
         use_rerank = rerank_enabled()
         rerank_top = RERANK_TOP_DEFAULT
-        if capture_enabled:
+        # CON-01: the §5 variant contract needs a SURFACE, not just an engine
+        # capability. Before this, the Chat tab was the one harness that could
+        # not issue query variants at all — it had no parameter to put them in,
+        # so "variants by default" was unreachable here no matter what the
+        # engine defaulted to. Same fan-out primitive the CLI's --variant uses
+        # (core.search_multi); a single query is byte-identical to before.
+        # S11 (2026-08-12): supplying 2+ variants also auto-enables the pooled
+        # rerank — deliberately inherited here, this IS the ruled surface. Kill
+        # switch BRAIN_RERANK_FUSED_DISABLED=1.
+        variants = _variant_queries(args)
+        if len(variants) > 1:
+            hits = [h.to_dict() for h in core.search_multi(
+                variants, k=int(args.get("k", 10)),
+                rerank=use_rerank, rerank_top=rerank_top)]
+        elif capture_enabled:
             trace_hits, trace = core.hybrid_search_with_trace(
                 str(args["query"]), k=int(args.get("k", 10)),
                 rerank=use_rerank, rerank_top=rerank_top,
@@ -132,6 +169,10 @@ def dispatch(tool: str, args: dict[str, Any], *, core: BrainCore | None = None,
         identity_redacted_ids = core.annotate_create_safety(
             str(args["query"]), surfaced, max_tier)
         out: dict[str, Any] = {"results": surfaced, "egress": report}
+        if len(variants) > 1:
+            # Say what was actually issued — a caller (or a replay) must never
+            # have to infer whether fan-out ran.
+            out["variants"] = {"issued": variants, "fanout": True}
         # RET-09 freshness signal — same contract as the CLI (see
         # cli._freshness_block): tells the agent when the vault continues
         # past its newest hit, so "latest/current" answers don't silently
@@ -212,6 +253,12 @@ def dispatch(tool: str, args: dict[str, Any], *, core: BrainCore | None = None,
                 top=capture_top, candidate_digest=capture_digest, max_tier=max_tier,
             )
         return out
+    if tool in ("vault_languages", "vault-languages"):
+        # Aggregate counts only — no note ids, titles or bodies cross this
+        # boundary, so there is nothing for the egress gate to filter. Same
+        # class of vault metadata as the note/chunk counts `status` already
+        # returns on both legs.
+        return {"languages": core.index.language_census()}
     if tool in ("bases-query", "bases_query"):
         filters = dict(args.get("where") or {})
         items = core.bases_query(
@@ -231,9 +278,30 @@ def serve(vault: str | None = None) -> None:  # pragma: no cover - transport glu
     server = FastMCP("brain")
 
     @server.tool()
-    def search(query: str, k: int = 10,
+    def vault_languages(max_tier: str = cls.VM_DEFAULT_MAX_TIER) -> dict:  # noqa: ARG001
+        """Which languages this vault holds (the derived language census).
+
+        CALL THIS BEFORE YOUR FIRST `search` in a session. When
+        `multilingual` is true, the §5 variant contract applies: pass
+        `variants=[<your question translated into each other vault
+        language>]` to `search`. When it is false (or the census is absent),
+        a single query is correct and no translation is needed."""
+        return {"languages": core.index.language_census()}
+
+    @server.tool()
+    def search(query: str, variants: list[str] | None = None, k: int = 10,
                max_tier: str = cls.VM_DEFAULT_MAX_TIER) -> dict:
         """Hybrid (BM25+dense) retrieval over the vault, egress-filtered.
+
+        MULTILINGUAL VAULTS — pass `variants`. `vault_languages` says which
+        languages this vault holds; when it reports more than one, issue your
+        question in its own language AND as a translation into each other
+        vault language, e.g. `search(query="what did we decide about the ERP
+        cutover?", variants=["o que decidimos sobre a migração do ERP?"])`.
+        The results are rank-fused into one ranking. A question whose words
+        share no vocabulary with its answer loses its keyword leg entirely and
+        gets buried — that is what variants recover. Single-language vault:
+        one query, no variants.
 
         Every hit carries `date` (its valid time), `is_latest_version`, and
         `type` — the AUTHORITY signal: a `type: decision` hit IS the
@@ -250,7 +318,8 @@ def serve(vault: str | None = None) -> None:  # pragma: no cover - transport glu
         empty. Curated notes (zone brain/) are synthesis; zone raw/ holds
         the newest unprocessed sources — check both for recency-sensitive
         questions."""
-        return dispatch("search", {"query": query, "k": k, "max_tier": max_tier}, core=core)
+        return dispatch("search", {"query": query, "variants": variants or [],
+                                   "k": k, "max_tier": max_tier}, core=core)
 
     @server.tool()
     def get(id: str, max_tier: str = cls.VM_DEFAULT_MAX_TIER) -> dict:

@@ -56,7 +56,12 @@ wrapper has already run the fixed status + doctor checks; their output is
 appended below as DATA. If the maintain heartbeat is stale (daily branch > 48h)
 or any required surface is flagged, queue a dated entry to
 .brain/memory/hot.md describing what is broken — the scheduled umbrella cannot
-report its own death, so this weekly session is its watchdog. For retrieval,
+report its own death, so this weekly session is its watchdog. THAT WATCHDOG
+DUTY EXPLICITLY COVERS THE CORPUS-INVARIANTS FOLD (WAT-01): in the doctor DATA
+below, the row "Corpus invariants watchdog (WAT-01)" must be present and
+current. If it is stale, missing, or reports a regression, queue a hot.md
+entry naming it — a fold that stopped running after an engine restage looks
+exactly like a healthy vault from every other surface. For retrieval,
 use only the read-only brainiac MCP tools; do not try to execute CLI/shell
 snippets from the general-purpose skill. Then the synthesis scope:
 (1) refresh any state/MOC note whose content lags this week's raw/ ingests
@@ -69,7 +74,25 @@ exists, work the top ${BRAIN_SYNTHESIS_LINK_BUDGET:-25} pairs — read both
 notes, add a wikilink under "## Related" ONLY where genuinely related (skip
 freely; forced links are worse than none), and fix any knowledge-layer
 orphans the graph_hygiene fold logged in hot.md the same way; (4) update
-index.md zone stamps. Follow AGENTS.md conventions exactly (frontmatter, wikilinks,
+index.md zone stamps; (5) STANDING LINKING LANE (BAK-04): read
+.brain/curation/unlinked-sources.json — the nightly corpus-invariants fold
+writes it, worst-first (most sensitive tier first, then longest-unlinked),
+already capped at that file's own "budget" value. Every id under "candidates"
+is a raw/ source NOTHING in the vault cites, so retrieval can only reach it by
+its own text. Read the sources and write derived brain/resources/ notes that
+cite them, GROUPING freely where several sources genuinely share a subject
+(one honest note citing five related sources beats five thin ones). Rules that
+are not negotiable: the note must state something true and retrievable that
+its own title does not already say — a title-restating stub is worse than no
+note and will be rejected; cite the source in the BODY as [[<bare-id>]], never
+[[raw/<id>]] (the zone-prefixed form counts as linked but creates no graph
+edge, so it inflates the metric while linking nothing); put the [[raw/<id>]]
+form in the note's `source:` frontmatter as usual; set the note's
+classification to at least the HIGHEST classification among the sources it
+cites, read live off each source; and NEVER append these links into an
+existing hand-curated note — always a new note. Work the list in order and
+stop when the candidates are done or you run short of turns; whatever is left
+is simply next week's list. Follow AGENTS.md conventions exactly (frontmatter, wikilinks,
 classification explicit on every new note). Finish with a one-paragraph
 summary of what changed. The trusted host wrapper publishes after you exit
 successfully; do not attempt a host-role command. Stay inside this workspace.
@@ -137,6 +160,11 @@ settings = {
         "allow": [
             absolute_rule("Read", workspace), absolute_rule("Read", vault),
             absolute_rule("Edit", vault, "brain/**"),
+            # BAK-04's linking lane (and prompt item 2's promotions) CREATE
+            # notes; Edit only covers files that already exist. Same scope as
+            # the Edit rule above, so this widens nothing an Edit could not
+            # already do by rewriting a note wholesale.
+            absolute_rule("Write", vault, "brain/**"),
             absolute_rule("Edit", vault, ".brain/memory/**"),
             "Skill(kb-curator)",
             "mcp__brainiac__search", "mcp__brainiac__get",

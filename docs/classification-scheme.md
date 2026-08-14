@@ -58,6 +58,35 @@ Consequences:
   EDR-blind, should be capped at a **lower** max tier than a host session by
   policy — but that policy is enforced at the gate (S08), not in this scheme.
 
+## OPEN: the same document indexed twice at two different tiers (2026-08-10)
+
+**Status: measured, undecided. No owner ruling exists.** Found by
+`_plans/anylang-query-variants-2026-08-09` s02 while measuring something else;
+confirmed by that plan's acceptance review. Out of scope for that plan, recorded
+here because the finding is about this scheme, not about retrieval.
+
+On the reference deployment, of 282 `<ingest-date>-<slug>` / `<slug>` name-twin
+pairs, **201 carry the date-prefixed copy at a LOWER classification than the
+plain copy** — 133 `Internal`-vs-`Restricted`, 49 `Internal`-vs-`Confidential`,
+19 `Internal`-vs-`MNPI`. On a random 8-pair sample the normalized bodies are
+**88–99% similar** at 12–57 KB.
+
+**What that means, precisely.** The gate is behaving correctly: it applies each
+note's own label. The defect is upstream — two notes carrying nearly the same
+content disagree about the harm-if-leaked. The consequence is that a reader
+capped at `Internal` can read the substance of a `Restricted` document through
+its twin, without the gate ever being wrong about a single note.
+
+This is an **ingest consistency** question, not an egress one. It also
+independently rules out any ranking-time merge of *name-similar* documents:
+collapsing such a pair would assert an identity the tiers themselves contradict
+(which is why the shipped family collapse requires byte-identity plus an
+owner-accepted supersession link, `src/brain/index.py`).
+
+**Before acting, re-measure** — the counts above are a dated snapshot. The shape
+of the decision is: which copy carries the honest tier, and does ingest re-label
+the twin, refuse it, or link it. Nothing is in flight.
+
 ## Relationship to the at-rest posture
 
 Classification drives **egress** (what is surfaced). It is *separate* from

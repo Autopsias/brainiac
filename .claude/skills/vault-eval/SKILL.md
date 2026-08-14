@@ -151,6 +151,14 @@ collapsed dimension (e.g. T=40% hidden behind S=100%/X=100%).
 
 - The retrieval call is `brain search --rerank --json` (fused RRF(60) BM25 +
   dense, optional cross-encoder rerank), not `mcp__smart-connections__lookup`.
+
+> **Multilingual vaults — the variant contract (AGENTS.md §5 rule 3).** Before
+> the first vault search, read the derived census: `brain status --json` ->
+> `index.languages`. When `multilingual` is true, issue every search as the
+> question PLUS one `--variant "<the same question in that language>"` for each
+> other entry in `vault_languages` — you write the translation, the engine
+> fuses the result lists into one ranking. `multilingual: false`, one language,
+> or no census: a single query is correct — do not invent a variant.
 - There is no separate Step-1.5 rerank script to invoke — `--rerank` is a
   flag on `search` itself (Step 1+1.5 collapse into one verb).
 - There is no fixed five-step "cascade" to walk in order. AGENTS.md §5

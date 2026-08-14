@@ -40,7 +40,7 @@ REPO = HERE.parent
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(HERE))
 
-STRATA = ["monolingual_pt", "monolingual_es", "cross_lingual_en_pt",
+STRATA = ["cross_lingual_pt_en", "cross_lingual_es_en", "cross_lingual_en_pt",
           "cross_lingual_en_es", "lexical_identifier", "multi_hop", "temporal"]
 
 SCHEMA = "ret11-fusion-constant.v1"

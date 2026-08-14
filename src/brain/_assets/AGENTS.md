@@ -343,7 +343,118 @@ gates.
    ritual, never an inbox item. Only SYNTHESIS (writing/promoting prose
    notes, `index.md` content) stays session work — the folds manage
    metadata and generated views, never note bodies.
+
+   **The standing linking lane (BAK-04).** A `raw/` source nothing cites is
+   reachable only by its own text, and the corpus accumulated ~1,300 of
+   them before anyone had a number. The daily `corpus_invariants` fold
+   (WAT-01, `brain.invariants`) therefore also drops
+   `<vault>/.brain/curation/unlinked-sources.json` — the SAME population as
+   the `unlinked_sources` metric and the same G12 exclusion set, never
+   re-derived — sliced **worst-first: highest classification first
+   (unlabelled ranks MNPI, as at the egress gate), then longest-unlinked**,
+   capped at `$BRAIN_WEEKLY_LINK_BUDGET` (default **40**, the measured
+   median weekly `raw/` intake of ~34 plus headroom). The **weekly Sunday
+   synthesis session** works that file: it reads the sources and writes new
+   derived `brain/resources/` notes citing them, grouping freely where
+   sources genuinely share a subject. **No new scheduled task** — the lane
+   rides the existing fold and the existing session (§6). Two rules the
+   lane cannot break: a note must say something true its own title does not
+   (a title-restating stub is worse than no note), and the body cites the
+   source as `[[<bare-id>]]` — the `[[raw/<id>]]` form belongs in `source:`
+   frontmatter and creates **no graph edge**, so in a body it would inflate
+   the metric while linking nothing. Whatever the session does not reach is
+   simply next week's list; the `unlinked_sources` metric is what proves
+   the lane keeps working.
 5. **Capture under the VM is a *draft*, not a commit** — see §6.
+6. **A corpus-invariant fix never ships without its metric in the same
+   change (WAT-01, 2026-08-10).** A corpus invariant is a property the whole
+   corpus is supposed to hold — every raw source is reachable from some
+   note, one document carries one classification, a supersession link joins
+   two real documents, every gold document is reachable by some ranking leg.
+   Four of those drifted for months each, and the single reason was the same
+   every time: **nobody had a number for them, so nothing could notice.** So
+   the rule is mechanical — if you fix, backfill, or guard a corpus invariant,
+   the SAME change adds (or updates) its count in the `corpus_invariants`
+   nightly fold (`src/brain/invariants.py`), which trends it in
+   `health-history.jsonl` and renders it under `brain health-report`'s
+   "Corpus invariants" section. Thresholds there are **absolute and
+   ratcheting** — each metric's threshold is the best value ever recorded, so
+   the same rule alerts from a 2,132 baseline and from a zero one; never a
+   week-over-week percentage, which dies at zero exactly when a backfill
+   finally works. The fold carries a **dead-man's switch**: its own
+   last-successful-run age is a metric, and a row older than
+   `$BRAIN_INVARIANTS_MAX_AGE_DAYS` (default 3) — or missing on a vault whose
+   other branches run — is DEGRADED in `brain doctor`, in `brain
+   health-report`, in the weekly synthesis watchdog, and in the SessionStart
+   alerts hook. Sources that are unlinkable BY DESIGN (quarantined,
+   superseded, `inbox/`/`overlay/`) are excluded by ONE shared definition
+   (`invariants.link_coverage_exclusion`) and **counted separately** — "0
+   unlinked" must never quietly mean "0 except the ones we skip".
+
+   **A vault's own output is not a source (ENF-06, 2026-08-14).** Audit
+   records, nightly logs, health alerts and eval runs re-ingested into `raw/`
+   arrive declaring their kind in their OWN leading frontmatter, which the
+   ingest wrapper then overwrites with `type: source` — after which nothing
+   tells them apart from a client document. One historical drop of that shape
+   put **264** of them into the reference vault, and the link-coverage metric
+   counted every one as a source waiting for a note to be written about it.
+   Both ends now read `invariants.OPERATIONAL_SOURCE_TYPES`: ingestion sets
+   such a file aside under `inbox/_operational/<type>/` as **skipped, never
+   quarantined** (nothing failed — it is simply not knowledge), and the metric
+   excludes it as `operational_artifact`, counted like every other exclusion.
+   The set is explicit and conservative: `report`, `review`, `analysis` and
+   `proposal` are NOT in it, because a human writes those about the business,
+   and neither are the Chief-of-Staff briefs — machine-written, but about the
+   business, so they stay reachable. `BRAIN_INGEST_ALLOW_OPERATIONAL=1` admits
+   one deliberately.
+
+   **A duplicate is decided on CONTENT, never on a filename (ENF-03,
+   2026-08-12).** `cross_tier_twins` compares one id shape and therefore
+   reads 0 while renamed, re-extracted and re-versioned copies of the same
+   document sit at two classifications; ENF-02 tried to close that on names
+   and was withdrawn whole when its "138 detections" proved to be 138
+   filename matches and 0 content matches. So `cross_tier_duplicates` and
+   `cross_tier_candidates` compare bodies: 5-word-shingle Jaccard ≥ 0.60
+   DECIDES the same document, word-set Jaccard ≥ 0.60 without it is
+   **UNDECIDED and reported as such** — a detector that guesses on the
+   undecided band is the failure mode, and a metric with no undecided bucket
+   (the old one) can never report anything but zero. The ENF-01 body-size
+   floor applies first, and the shared exclusion definition applies with one
+   documented exception: **superseded notes are counted, not excluded** —
+   retiring a note does not remove it from the index, so a retired low twin
+   still leaks at its own tier. Coverage of the detector is a fraction with
+   its denominator on the report row, and is re-measured against an
+   exhaustive all-pairs scan by `tools/crosstier_coverage.py`, never asserted
+   from the screening algorithm's own arithmetic.
+
+   **And the tier is decided at ADMISSION, not counted afterwards (ENF-04,
+   2026-08-12).** `ingest/pipeline.py` DECLARES `classification: Internal`
+   for every drop-zone ingest, so the same document under a different id
+   entered below its twin and an Internal-capped reader — the Cowork VM's
+   default — reached high-tier substance through the low copy.
+   `brain.ingest.tierguard` closes that at the write path: before a source is
+   signed, its BODY is compared against the corpus through ENF-03's own
+   primitives (imported, never re-implemented — the engine holds ONE notion
+   of document identity), and a near-duplicate at a higher tier makes the new
+   source enter at the **high-water mark**. Five rules it cannot break: it
+   **only ever raises** (nothing outranks MNPI, so the email/attachment lane
+   returns before any work); the **undecided band fails CLOSED** to the higher
+   tier, because a detector reports a corpus state while a guard must choose
+   one, and the costs are asymmetric — over-classification is visible and
+   reversible through the audited path, a leak is neither; **below the ENF-01
+   floor it refuses to judge** rather than guess; **every verdict is stamped
+   on the note** (`classification_guard`, `…_leg`, `…_reason`), so an
+   unraised note proves the guard ran and an unexplained tier change cannot
+   happen; and its **screen gate scales with the smaller sketch**, because a
+   bottom-k sketch of a set smaller than k is the whole set and a body above
+   the floor with under 48 distinct words could otherwise never be screened
+   in at all. `unguarded_ingests` (metric 5) ratchets on the ONE number that
+   should be zero — sources admitted while the guard was unavailable. Raises
+   are trended PER LEG and never alerted on: they are monotone over an
+   append-only zone, so a min-ever floor would fire on every firing of a
+   working guard, and a per-leg total is the only thing that can tell a clean
+   corpus from a dead leg. The invariant the guard SERVES is
+   `cross_tier_duplicates`; holding that at its floor is how it is judged.
 
 **Supersession beyond `…-vN` is PROPOSED, never applied (CUR-01,
 2026-08-04).** Only two tiers auto-supersede: sha256-identical duplicates
@@ -404,7 +515,7 @@ links for multi-hop questions, read full notes on demand.
 
 | Tool | What it does | Embeds the query? |
 |---|---|---|
-| **search** / **hybrid-search** | fused **RRF(k=60)** BM25 + dense + bounded exact alias/title leg in one ranking; the skippable cross-encoder reranks the top 20 by default (BR-03, owner ruling 2026-08-04; ceiling 50 via `BRAIN_RERANK_TOP`/`BRAIN_RERANK_MAX`) — opt out with `--no-rerank` or `BRAIN_RERANK_DISABLED=1`; RK-02 skips that rerank on a query already decided by a unique exact-identity pin (`--no-rerank-gate` forces it back on); `--explain` emits gated per-stage attribution | yes (lazy — only here) |
+| **search** / **hybrid-search** | fused **RRF** — BM25 + dense + bounded exact alias/title leg in one ranking, fused at **`RRF_K_FUSE = 3`** (RET-11, 2026-08-05; rollback `BRAIN_RRF_K=60`, no rebuild — the separate `rrf_k = 60` below is ADR-0008's exact-leg calibration key, not the fusing constant); the skippable cross-encoder reranks the top 20 by default (BR-03, owner ruling 2026-08-04; ceiling 50 via `BRAIN_RERANK_TOP`/`BRAIN_RERANK_MAX`) — opt out with `--no-rerank` or `BRAIN_RERANK_DISABLED=1`; RK-02 skips that rerank on a query already decided by a unique exact-identity pin (`--no-rerank-gate` forces it back on); `--explain` emits gated per-stage attribution | yes (lazy — only here) |
 | **diagnose** | runs the production hybrid ranking unchanged, then reports only the gated target's stage presence/rank/cutoff; a withheld target is the opaque `withheld` sentinel | yes (same production search) |
 | **grep** | exact / `--regex` scan over note bodies | **no** (cheap first probe) |
 | **bases-query** | structured frontmatter view (`--where type=note --where classification=Internal`) | **no** |
@@ -580,6 +691,31 @@ of `new-id` — both sides of the version chain, written through the audited
 before any signing-key resolution): the VM read+draft surface never gains this
 verb. See §2 for the edit-vs-supersede identity test and ADR-0003 Ruling 2/8.
 
+**`brain unsupersede <old-id> <new-id> [--reason R]`** is its inverse: it
+breaks ONE supersession link, both sides, through the same audited path, the
+same single-writer lock and the same crash journal. **HOST-broker only**, same
+refusal shape. It exists because DDP-01's nightly auto-dedup could write a link
+nothing could undo — `supersede` deliberately refuses to re-supersede an
+already-superseded note — and an image whose OCR extracted to a `[no text
+detected]` stub is byte-identical to every other failed extraction, so part 1
+of a deck retired part 2. It repairs a ONE-SIDED link rather than demanding
+reciprocity (the malformed chains are the ones that most need repair), accepts
+either documented predecessor form (`previous_version` or the `replaces`
+alias, bare id or `[[wikilink]]`), and leaves the successor's own
+`is_latest_version` exactly as found.
+
+**The body-size floor (ENF-01).** Two notes are never judged the SAME document
+on a body too short to carry evidence of anything. `$BRAIN_FAMILY_MIN_BODY`
+(default 1024, **UTF-8 bytes** — at every site that consults it, never Unicode
+scalars, or a 400-character CJK body measures 400 against a byte floor) is the
+shared floor below which DDP-01's nightly auto-dedup refuses to merge, the
+ranking layer refuses to collapse a family, and `invariants.subfloor_families`
+counts the family as sub-floor. It exists because a failed extraction is
+byte-identical to every other failed extraction: an image whose OCR produced a
+`[no text detected]` stub is not a duplicate of the next such image, and merging
+them retired real documents. A skipped merge is reported
+(`autodedup_skipped_short_body` in the nightly's health metrics), never silent.
+
 ### Retrieval discipline — vault-first, and the web-search egress line
 
 The vault is the authoritative source for anything internal — projects, people,
@@ -608,10 +744,79 @@ rules, in order:
    silently capped and the elevation hint is suppressed — raising a VM's ceiling
    is a host-operator action, not something the model does on its own.
 
-3. **Ask it both ways, as a habit — issue the question as posed AND an English
-   paraphrase, and merge the results.** Not a fallback after a thin result: a
-   default, whenever the question's words are yours rather than the source's.
-   **The cause is FUSION, not the embedder** (corrected 2026-08-04, BR-02
+3. **Ask it in every language the vault holds — the VARIANT CONTRACT
+   (CON-01) — and paraphrase within your own.** The cross-language half is a
+   mechanical rule with a switch you can read, not a habit: the index carries
+   a DERIVED language census (no owner declares it, nothing to maintain), and
+   `brain status --json` surfaces it at `index.languages`. When
+   `multilingual` is true, issue the question as posed **and translated into
+   each other language in `vault_languages`**, as repeatable `--variant`
+   arguments — the engine fuses the result lists into one ranking:
+
+   ```bash
+   brain status --json | jq '.index.languages.vault_languages'   # e.g. ["en","pt"]
+
+   brain search "what did we decide about the ERP cutover?" \
+       --variant "o que decidimos sobre a migração do ERP?" --json
+   ```
+
+   **You supply the translation.** The engine holds no translation model and
+   never will (`brain` stays offline and model-agnostic) — the variant is
+   yours to write, which is why this rule lives here, where every harness
+   reads it, and not in a default the engine could flip on alone. One variant
+   per other vault language; `vault_languages` is already ordered by
+   prevalence and capped (`dropped_by_cap` names anything it dropped), so
+   translate exactly what it lists and nothing else.
+
+   **Single-language vaults are EXEMPT.** `multilingual: false`, an absent
+   census (`status: not-computed` — run `brain sync`), or a `vault_languages`
+   list of one means ONE query is correct: do not invent a variant. Never
+   translate into a language the census does not list. **Stated scope, because
+   the gap is real:** the census recognises a language only if it has a
+   stopword profile — English, Portuguese and Spanish ship built in, and
+   `$BRAIN_LANGUAGE_PROFILES` adds more without a code change. Anything else
+   classifies as `unknown`, never becomes a vault language, and so never earns
+   a variant. The variant MECHANISM is language-agnostic; the CENSUS knows the
+   languages it has profiles for.
+
+   **This rule is CALLER-OPT-IN, and that is a measured owner ruling, not an
+   oversight** (2026-08-10, `_decisions/anylang-s05-ship-ruling.md`). Fan-out
+   was measured on the held-out half of the 114-query split
+   `s05-2026-08-09-expanded114`: overall recall@10 **+0.0380, p = 0.2509**,
+   against a pre-registered bar of +0.0890 and p < 0.05 — a **NULL**, so
+   **nothing became an engine default**. What the same read did show is why the
+   rule stays: on the target case, English question → Portuguese document
+   (`cross_lingual_en_pt`), the held-out stratum moved off an absolute
+   **0.0000 → 0.2000**, and recall@20 rose +0.0980 — the mechanism fills the
+   pool, and roughly a third of that reaches the top 10 unaided. **A caller who
+   sends no variant keeps that gap at zero.** Spanish did not move at all
+   (+0.0000 on both halves) and cannot on this corpus: `es` is 0.65 % of
+   classified notes, below the census threshold, so it is not a vault language
+   and the paragraph above forbids inventing an ES variant. Full readout:
+   `_evidence/anylang/s04-variant-readout.md`.
+
+   **SENDING VARIANTS ALSO TURNS ON POOLED RERANKING — and nothing else does**
+   (owner ruling 2026-08-12, `_decisions/invariants-s11-ship-ruling.md`). When
+   2 or more variants survive the dedup/cap guards, the engine reranks the
+   FUSED pool once against your original query (`rerank_fused`, RET-05b);
+   a single query never does this and its ranking is untouched. It costs one
+   extra cross-encoder pass (~5-25 s) on those calls; opt out per call with
+   `--no-rerank-fused`, or globally with `BRAIN_RERANK_FUSED_DISABLED=1` (an
+   explicit flag always wins over the env var, same contract as
+   `BRAIN_RERANK_DISABLED`). **Read its evidence exactly as labelled:
+   +0.0643 recall@10 over the shipped configuration (p 0.0284, 6 wins / 1 loss
+   / 50 ties), TRAIN-HALF ONLY, never confirmed on a held-out half — the split
+   `s08-2026-08-11-expanded` stays UNCLAIMED and the ledger's terminal state is
+   CLAIM NOT MADE.** The often-quoted **+0.1667 is MIS-ATTRIBUTED** — it
+   compared a reranked arm against a non-reranked baseline, and 57 % of it is
+   the reranker this vault already ships; never cite it as a fan-out number
+   (`_evidence/invariants/s10-claim-readout.md`).
+
+   **The paraphrase habit stays, and it is a different problem.** Same
+   language, different words: issue the question as posed AND a paraphrase in
+   the source's own terminology, whenever the question's words are yours
+   rather than the source's — as additional `--variant` arguments in the same
+   call. **The cause is FUSION, not the embedder** (corrected 2026-08-04, BR-02
    Gate 0 — the earlier "the embedder's cross-lingual alignment is weak"
    wording was falsified): RRF ranks a document present WEAKLY in two legs
    above one present STRONGLY in one, so a query sharing no tokens with its
@@ -633,13 +838,26 @@ rules, in order:
    **A vault owner can reduce the burial itself** (not the agent — this is
    host configuration): `$BRAIN_ZONE_WEIGHTS` arms the RET-01 zone-authority
    prior, a query-time boost for dense-leg-only hits that measured held-out
-   mrr@10 0.198 → 0.386 and took `monolingual_pt` recall@10 from 0.000 to
-   0.458 on the reference vault. It ships OFF: 66 labelled queries can
+   mrr@10 0.198 → 0.386 and took `cross_lingual_pt_en` recall@10 from 0.000 to
+   0.458 on the reference vault — that stratum was named `monolingual_pt` until
+   2026-08-09, when all 22 of its gold documents turned out to be English prose
+   behind Portuguese questions, so it always measured PT→EN. It ships OFF: 66
+   labelled queries can
    establish the effect but not calibrate the weight, so 2.0-3.0 is an
    evidenced range and not a default (see `brain search --help` and
    `eval/FOLLOWUPS.md` #9, including what it costs temporal and identifier
-   queries). It needs no rebuild, and it does not fix Spanish
-   (`monolingual_es` is 0.000 at every weight — `eval/FOLLOWUPS.md` #11).
+   queries). It needs no rebuild, and it did not fix Spanish on the embedder
+   it was calibrated against (`cross_lingual_es_en` — the stratum renamed from
+   `monolingual_es` on 2026-08-09, because its gold documents are English and
+   it always tested ES→EN — stayed 0.000 at every weight on `e5-small`; it is
+   no longer 0.000 on the shipped `bge-m3-int8`, and the cause was never
+   established — `eval/FOLLOWUPS.md` #11).
+
+**Citing the eval ledger:** every `eval/FOLLOWUPS.md` item header states its
+STATUS and carries a `[verified <sha|date>]` stamp; whoever closes, reopens or
+supersedes an item updates both **in the same commit**. Never quote an item's
+claim without reading that stamp — an unstamped or stale header is what sent a
+whole plan to rebuild the already-shipped fusion fix (item 10, `d5b2c58`).
 
 4. **Never leak internal topics into a web search.** A web query for a
    Confidential-or-above subject — a deal codename, a counterparty, an internal
@@ -678,8 +896,8 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
 > `vault/inbox/` into signed, archived `raw/` sources — `brain ingest-transcript
 > <path>` is the transcript-specific route) and `brain graphify` (bounded
 > monthly link-discovery build, output `.brain/graph/graph.json`,
-> `authoritative: false`) join `brain supersede` (§5) as **refused on
-> `role=vm`** before `BrainCore` is even constructed — see §6.
+> `authoritative: false`) join `brain supersede` and `brain unsupersede` (§5)
+> as **refused on `role=vm`** before `BrainCore` is even constructed — see §6.
 >
 > **Per-harness wiring:** AGENTS.md is canonical; `CLAUDE.md` imports it
 > via `@AGENTS.md` and Gemini sets `contextFileName=AGENTS.md` (`.gemini/`). So
@@ -772,8 +990,8 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
 
 | Context | May do | May NOT do |
 |---|---|---|
-| **Cowork Linux VM** (sandbox, EDR-blind) | `search`, `get`, `recent`, `draft_capture` (full VM_ALLOWED list: `init, search, hybrid-search, diagnose, grep, bases-query, graph-expand, get, read, recent, status, draft-capture, capture, brief, digest, cos-propose` — `diagnose` is read-only and applies the same egress gate; `cos-propose` is an UNSIGNED drop into a proposal-drop dir `sync` never reads; only the host broker's owner-inbox gate can move it toward signing) | sign, index-commit, WAL write, snapshot, `write_note`, `ingest`, `ingest-transcript`, `supersede`, `graphify`, every other `cos-*` verb (broker/correct/evidence/priority-map/hold) |
-| **HOST broker** (macOS/Windows, EDR-visible, holds the audit key) | everything: `write_note`, audit signing, WAL writes, snapshot generation, index commit, plus the ADR-0003 host-only verbs `ingest`/`ingest-transcript` (drop-zone → signed `raw/`, originals archived immutably), `supersede` (both sides of a version chain), `graphify` (bounded monthly link-discovery build) | — |
+| **Cowork Linux VM** (sandbox, EDR-blind) | `search`, `get`, `recent`, `draft_capture` (full VM_ALLOWED list: `init, doctor, alerts, search, hybrid-search, diagnose, grep, bases-query, graph-expand, get, read, recent, status, draft-capture, capture, brief, digest, cos-propose` — `diagnose` is read-only and applies the same egress gate; `alerts` is the degradation digest every harness runs at session start (§9), file-reads only, and names the host-home sources the VM cannot reach instead of skipping them; `cos-propose` is an UNSIGNED drop into a proposal-drop dir `sync` never reads; only the host broker's owner-inbox gate can move it toward signing) | sign, index-commit, WAL write, snapshot, `write_note`, `ingest`, `ingest-transcript`, `supersede`, `unsupersede`, `graphify`, every other `cos-*` verb (broker/correct/evidence/priority-map/hold) |
+| **HOST broker** (macOS/Windows, EDR-visible, holds the audit key) | everything: `write_note`, audit signing, WAL writes, snapshot generation, index commit, plus the ADR-0003 host-only verbs `ingest`/`ingest-transcript` (drop-zone → signed `raw/`, originals archived immutably), `supersede`/`unsupersede` (both sides of a version chain, and its audited undo), `graphify` (bounded monthly link-discovery build) | — |
 
 **Why:** the Cowork VM is ephemeral, EDR-blind, and not audit-logged — it must
 never be the thing that signs the audit chain or mutates the canonical index.
@@ -857,6 +1075,17 @@ acquisition of the same lock, never an unbounded wait):
   skips, or a `writer_busy_since` older than a bounded grace period, is
   pathological (a leaked lock, a wedged rebuild) and must be surfaced as
   loudly as a failure — never silently reported HEALTHY.
+- **The supersede crash journal is host-private too** (ENF-01, 2026-08-10). It
+  is the rollback record for an unfinished `supersede`/`unsupersede`, and it
+  holds BOTH NOTES' COMPLETE PRE-IMAGES — full note text at whatever tier
+  those notes carry. On `<vault>/.brain/` that was unrestricted
+  Confidential/Restricted/MNPI content sitting outside the egress gate, so it
+  moved off the mount beside the writer lock (same helper, same app-data
+  fallback). A journal exists only while a transaction is unfinished; an
+  unparseable or STRUCTURALLY INCOMPLETE one fails closed — preserved, and
+  every supersession verb refuses until a human repairs the pair. `brain
+  maintain` validates/recovers it ONCE at the top of the run, before any
+  branch, so a blocked journal can never read as an ordinary skip.
 
 ---
 
@@ -893,6 +1122,21 @@ A clean validate (exit 0) is the conventions gate.
 `archive/`) is per-session operational state — full contract, rotation rule, and
 entry formats in `docs/session-memory.md`. Rules an agent needs at a glance:
 
+- **Run `brain alerts` at session start — EVERY harness, not just the one with
+  a hook.** It is the single degradation digest: auto-update state, weekly
+  synthesis health, the engine-feedback backlog, the owner-decision queue, and
+  the notify markers `brain maintain` writes (`blocked`, `trend:*`,
+  `invariant:*`). Pure file reads — no index, embedder, network or key — so it
+  costs the engine's import floor and nothing more. On the Cowork VM run
+  `brain --role vm alerts`: the markers, the inbox and the feedback backlog all
+  sit on the shared mount, so the VM sees the same findings the host does,
+  and the two host-home sources it cannot reach are listed under
+  `unreachable` rather than skipped. **Surface every finding to the owner.**
+  Claude Code and Codex both fire this from a SessionStart hook; Cowork has no
+  hook mechanism, so there this line IS the mechanism — run it first.
+  *Why:* until 2026-08-14 this logic lived only in a Claude Code hook, so a
+  Cowork session worked for days against a vault whose `unlinked_sources`
+  invariant had regressed with no surface that could tell it.
 - **Read `handoff.md` at session start.** The Claude Code CLI hook
   (`.claude/hooks/session-start.sh`) injects its head automatically as
   labelled, fenced **data** (session-memory content is untrusted per the

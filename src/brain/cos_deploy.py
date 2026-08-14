@@ -35,6 +35,11 @@ from pathlib import Path
 
 KERNEL_RE = re.compile(r'^\s*kernel_version:\s*["\']([^"\']+)["\']', re.MULTILINE)
 EXT_RE = re.compile(r'^\s*extraction_rules_version:\s*["\']([^"\']+)["\']', re.MULTILINE)
+#: E-check DEFINITIONS in a chief-of-staff SKILL.md (`- **E16** · …`). ONE
+#: definition, here beside the other two facts read off a bundle:
+#: ``brain.cos.write_run_manifest`` FREEZES the count at run launch and
+#: ``brain.cos_runverify`` counts a run report's RESULTS against it.
+ECHECK_RE = re.compile(r"^- \*\*E(\d{1,2})\*\*\s*·", re.MULTILINE)
 
 LANE_CODEX = "codex-automation"
 LANE_COWORK = "cowork-desktop"
@@ -218,7 +223,16 @@ def cowork_support(store: list[dict], codex: list[dict]) -> dict:
 
 
 def read_skill(path: Path | str) -> dict:
-    """Digest + both versions of ONE SKILL.md, read from the file itself."""
+    """Digest, both versions and the E-check COUNT of ONE SKILL.md.
+
+    The count is read here, at LAUNCH, for the same reason the digest is: a
+    bundle ships a new version between a run and its validation, and once the
+    bytes change the count the run owed can no longer be re-derived from them.
+    Freezing it is what keeps ``check_self_eval`` a PASS/FAIL rather than a
+    permanent ``degraded`` (measured: every run 101-106 degraded on exactly
+    that, so a run reporting ZERO of its 30 checks scored the same as a run
+    reporting all 30).
+    """
     p = Path(path)
     text = p.read_text(encoding="utf-8", errors="replace")
     km, em = KERNEL_RE.search(text), EXT_RE.search(text)
@@ -227,6 +241,7 @@ def read_skill(path: Path | str) -> dict:
         "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
         "bundle_version": km.group(1) if km else None,
         "extraction_rules_version": em.group(1) if em else None,
+        "echecks": len({int(m) for m in ECHECK_RE.findall(text)}) or None,
     }
 
 

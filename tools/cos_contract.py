@@ -25,6 +25,13 @@ recorded separately because it counts message items, not conversations.
 yesterday's ledgers in the same directory silently satisfy today's liveness
 guard. Exit 0 = PASS, 1 = FAILED, 2 = malformed input.
 
+A run whose safety guard correctly STOPPED still owes a bucket for every row it
+enumerated: `stopped_by_guard` is a terminal, ACCOUNTED disposition (v5.52), and
+it is refused unless the stop is both declared and corroborated by the run's own
+ledgers. The owner's elected-lane pin (`overlay/cos/browser-lane.md`) is read
+from the vault, never from the run, so a silent fallback to the other lane is a
+named clause instead of an unremarked lane change.
+
 ponytail: the output counts come from the ledgers and the eligible-input
 counts from the run's own candidate records — the run may not hand this script
 either total. Unknown ledger row shapes are ignored, never guessed, so the
@@ -43,16 +50,31 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cos_reconcile_metrics import _rows, counts_archive, counts_draft  # noqa: E402
 
-BUCKETS = ("archived", "held_non_drafted", "held_drafted", "chipped", "unaccounted")
+BUCKETS = ("archived", "held_non_drafted", "held_drafted", "chipped",
+           "unaccounted", "stopped_by_guard")
 PROFILES = ("full", "label-only")
 
 #: WHICH buckets count as ACCOUNTED is profile-dependent, and that is
 #: load-bearing: `full` refuses a bare P-chip (v5.26 wants a Held label on
 #: anything not archived), `label-only` accepts it and forbids archiving.
+#: `stopped_by_guard` is accounted under BOTH — a safety stop halts ACTION,
+#: never ACCOUNTING (v5.48/v5.52), and the disposition a stopped run owes is a
+#: terminal bucket that says so, not an absence.
 ACCOUNTED = {
-    "full": frozenset({"archived", "held_non_drafted", "held_drafted"}),
-    "label-only": frozenset({"chipped", "held_non_drafted", "held_drafted"}),
+    "full": frozenset({"archived", "held_non_drafted", "held_drafted",
+                       "stopped_by_guard"}),
+    "label-only": frozenset({"chipped", "held_non_drafted", "held_drafted",
+                             "stopped_by_guard"}),
 }
+
+#: The CLOSED vocabulary of stops that may excuse a row from its disposition.
+#: A run may not invent one: doctrine names the guard, and the guard's own
+#: ledger reason word is what corroborates it (E30(c)).
+GUARD_STOPS = ("target-identity-mismatch",)
+
+#: Where a recorded guard stop leaves its own trace. The checker DERIVES the
+#: corroboration from these — the `guard_stop` record alone is the run's word.
+GUARD_STOP_GLOBS = ("_cos_ingestion_ledger_*.jsonl", "_cos_action_ledger_*.jsonl")
 
 CAPABILITIES = ("archives", "drafts", "chip_clears")
 
@@ -207,7 +229,7 @@ def _uses_new_count_schema(pre: dict, post: dict) -> bool:
     )
 
 
-def _validate_browser_election(pre: dict) -> str:
+def _validate_browser_election(pre: dict, pin: str | None = None) -> str:
     election = pre.get("browser_election")
     if not isinstance(election, dict):
         raise Malformed("pre: new-schema snapshot requires browser_election")
@@ -216,8 +238,14 @@ def _validate_browser_election(pre: dict) -> str:
     if (not isinstance(attempted, list) or not attempted or
             not all(isinstance(toolset, str) for toolset in attempted)):
         raise Malformed("pre: browser_election.attempted must be a non-empty string list")
-    if attempted[0] != "iab":
-        raise Malformed("pre: browser_election must attempt iab first")
+    # Under an owner pin the pinned toolset is attempted first instead of iab.
+    # Whether the pin was HONOURED is a verdict clause, never a malformed input:
+    # a run that fell back must still render a block that says so.
+    if attempted[0] not in ({"iab", pin} if pin else {"iab"}):
+        raise Malformed("pre: browser_election must attempt iab first"
+                        if pin is None else
+                        f"pre: browser_election must attempt the pinned {pin!r} "
+                        "or iab first")
     if len(set(attempted)) != len(attempted) or any(toolset not in TOOLSETS for toolset in attempted):
         raise Malformed("pre: browser_election contains an invalid or repeated toolset")
     if elected not in TOOLSETS or elected != attempted[-1]:
@@ -240,11 +268,13 @@ def _validate_scan_provenance(
         raise Malformed(f"{label}: scan_provenance.identity_field must be conversation_id")
 
 
-def _validate_browser_provenance(pre: dict, post: dict, run_id: str) -> None:
+def _validate_browser_provenance(pre: dict, post: dict, run_id: str,
+                                 pin: str | None = None) -> str:
     """Require fresh, same-lane scans and IAB-first election for v5.30 inputs."""
-    elected = _validate_browser_election(pre)
+    elected = _validate_browser_election(pre, pin)
     for label, obj in (("pre", pre), ("post", post)):
         _validate_scan_provenance(obj, label, run_id, elected)
+    return elected
 
 
 # --- ledger side: what the run actually PRODUCED, scoped to this run --------
@@ -271,8 +301,40 @@ COUNTERS = {"archives": counts_archive, "drafts": counts_draft,
             "chip_clears": counts_chip_clear}
 
 
+#: Every spelling of a run id that the COS surfaces actually produce:
+#: `108`, `run108`, and — since MAN-01 (v5.58) told the run to take its
+#: identity from the host's manifest sheet verbatim — `2026-08-09-run108`.
+_RUN_TOKEN_RE = re.compile(r"(?:^|-)run(\d+)$|^(\d+)$")
+
+
 def _run_token(value: object) -> str:
-    return re.sub(r"^run", "", str(value))
+    """The RUN NUMBER, from whichever spelling of the id was handed over.
+
+    WHY THIS IS NOT `lstrip("run")` ANY MORE (measured, run 108, 2026-08-09).
+    MAN-01 made the run read its identity off the host's manifest sheet, whose
+    `run_id` is the FULL `<date>-run<N>`. Run 108 obeyed: it stamped
+    `2026-08-09-run108` into `scan_provenance.run_id` and into every ledger
+    row, and invoked this checker with `--run-id 2026-08-09-run108`, which
+    passed. The HOST validator re-executes the same checker with
+    `cos_runverify._run_number(run_id)` — the bare `108` — and the old token
+    (a leading-`run` strip, nothing more) made those two spellings unequal.
+    Two consequences on one night: `scan_provenance.run_id must match
+    --run-id` raised Malformed, so a genuine PASS block scored `contract:
+    FAIL`; and `run_scoped_rows` matched NONE of the run's 423 ledger rows,
+    which is the `OC-a-unaccounted` shape arriving from a spelling difference
+    rather than from missing work.
+
+    The run NUMBER is what every other joiner in this system already scopes on
+    (`_file_run`, `canonical_block_path`, `cos_runverify._run_number`), and a
+    run that writes under a foreign DATE has its own check
+    (`cos_runverify.check_artifact_naming`, built for exactly that run-64
+    defect) — so collapsing to the number here adds no blind spot it covers.
+    A value that is no recognised spelling is returned unchanged, so it can
+    still only match itself.
+    """
+    text = str(value).strip()
+    m = _RUN_TOKEN_RE.search(text)
+    return (m.group(1) or m.group(2)) if m else text
 
 
 def _file_run(path: Path) -> str | None:
@@ -306,6 +368,64 @@ def run_scoped_rows(ledgers: Path, glob: str, run_id: str) -> tuple[list[dict], 
     return keep, unattributed
 
 
+# --- guard stops: a stop halts action, never accounting (v5.52) --------------
+
+def _guard_stop_shape(post: dict, enumerated: set[str]) -> dict | None:
+    """The declared `guard_stop`, or None when it is absent or unusable.
+
+    Shape only — whether the stop actually HAPPENED is decided from the run's
+    own ledgers by `guard_stop_corroborated`, never from this record.
+    """
+    record = post.get("guard_stop")
+    if not isinstance(record, dict):
+        return None
+    if record.get("guard") not in GUARD_STOPS:
+        return None
+    convid = record.get("convid")
+    if not isinstance(convid, str) or convid not in enumerated:
+        return None
+    return record
+
+
+def guard_stop_corroborated(ledgers: Path, run_id: str, guard: str) -> bool:
+    """Did THIS run's own ledgers record the named guard firing?
+
+    The stop's evidence is the reason word doctrine already requires on the row
+    the guard fired on — `held_reason` on the ingestion ledger (E30(c)) or
+    `action` on the action ledger. A run that declares a stop it never ledgered
+    is asserting the one thing that would excuse its unaccounted rows, which is
+    exactly the shape this checker refuses everywhere else.
+    """
+    for glob in GUARD_STOP_GLOBS:
+        rows, _ = run_scoped_rows(ledgers, glob, run_id)
+        for row in rows:
+            if guard in (row.get("held_reason"), row.get("action")):
+                return True
+    return False
+
+
+# --- the elected-lane pin (owner overlay, v5.52) -----------------------------
+
+def lane_pin(ledgers: Path) -> str | None:
+    """The owner's pinned browser toolset, from `overlay/cos/browser-lane.md`.
+
+    ABSENT file, absent key, or any unrecognised value ⇒ **no pin** and the
+    ordinary IAB-first election stands. Owner configuration, so it is read from
+    the vault beside the ops dir and never supplied by the run — a pin the run
+    could declare for itself is a pin a silent fallback can drop.
+    """
+    path = ledgers.parent / "overlay" / "cos" / "browser-lane.md"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    body = re.sub(r"\A---\n.*?\n---\n", "", text, count=1, flags=re.S)
+    m = re.search(r"^pin:[ \t]*(\S+)[ \t]*$", body, re.M)
+    if m is None or m.group(1) not in TOOLSETS:
+        return None
+    return m.group(1)
+
+
 # --- input validation -------------------------------------------------------
 
 def _load(path: Path, label: str) -> dict:
@@ -328,7 +448,8 @@ def _require(obj: dict, key: str, kind: type, label: str):
     return obj[key]
 
 
-def validate(pre: dict, post: dict, profile: str, run_id: str) -> None:
+def validate(pre: dict, post: dict, profile: str, run_id: str,
+             pin: str | None = None) -> None:
     if profile not in PROFILES:
         raise Malformed(f"unknown --profile {profile!r} (expected one of {PROFILES})")
     declared = pre.get("run_profile")
@@ -348,7 +469,7 @@ def validate(pre: dict, post: dict, profile: str, run_id: str) -> None:
     _require(post, "capabilities", dict, "post")
     _counts(pre, post)
     if _uses_new_count_schema(pre, post):
-        _validate_browser_provenance(pre, post, run_id)
+        _validate_browser_provenance(pre, post, run_id, pin)
         if profile == "full":
             _validate_sent_snapshot(pre, "pre")
             _validate_sent_snapshot(post, "post")
@@ -382,8 +503,13 @@ def validate(pre: dict, post: dict, profile: str, run_id: str) -> None:
             raise Malformed("post: each candidate record needs a boolean `eligible`")
 
 
-def preflight(pre: dict, profile: str, run_id: str) -> list[str]:
-    """Validate the serialized PRE snapshot before any mailbox mutation."""
+def preflight(pre: dict, profile: str, run_id: str,
+              ledgers: Path | None = None) -> list[str]:
+    """Validate the serialized PRE snapshot before any mailbox mutation.
+
+    Pass `ledgers` (the ops dir) to check the owner's lane pin HERE, at 19:05,
+    instead of discovering at 21:30 that the whole night ran on the wrong lane.
+    """
     if profile not in PROFILES:
         raise Malformed(f"unknown --profile {profile!r} (expected one of {PROFILES})")
     if pre.get("run_profile") != profile:
@@ -397,12 +523,15 @@ def preflight(pre: dict, profile: str, run_id: str) -> list[str]:
     folder_items = _require(pre, "owa_folder_item_count_before", int, "pre")
     if min(count, folder_items) < 0:
         raise Malformed("pre: conversation and folder-item counts must be non-negative")
-    elected = _validate_browser_election(pre)
+    pin = lane_pin(ledgers) if ledgers is not None else None
+    elected = _validate_browser_election(pre, pin)
     _validate_scan_provenance(pre, "pre", run_id, elected)
     if profile == "full":
         _validate_sent_snapshot(pre, "pre")
 
     reasons: list[str] = []
+    if pin is not None and elected != pin:
+        reasons.append("OC-lane-pin-not-honoured")
     if (not all(isinstance(convid, str) and convid for convid in enumerated)
             or len(set(enumerated)) != len(enumerated)
             or count != len(enumerated)):
@@ -421,7 +550,8 @@ def _sha() -> str:
 
 
 def evaluate(pre: dict, post: dict, ledgers: Path, run_id: str, profile: str) -> dict:
-    validate(pre, post, profile, run_id)
+    pin = lane_pin(ledgers)
+    validate(pre, post, profile, run_id, pin)
 
     enumerated: list[str] = list(pre["enumerated"])
     enumerated_set = set(enumerated)
@@ -455,8 +585,11 @@ def evaluate(pre: dict, post: dict, ledgers: Path, run_id: str, profile: str) ->
     bucket_sum = sum(counts[b] for b in BUCKETS)
     if bucket_sum != len(enumerated):
         reasons.append("OC-provenance-bucket-sum")
+    # A guard-stopped row was never archived, so it is still in the Inbox and
+    # counts toward residency exactly as an unaccounted one did.
     resident = (counts["held_non_drafted"] + counts["held_drafted"]
-                + counts["chipped"] + counts["unaccounted"] + len(arrived))
+                + counts["chipped"] + counts["unaccounted"]
+                + counts["stopped_by_guard"] + len(arrived))
     if resident != conversation_after:
         reasons.append("OC-provenance-residency")
     if legacy_counts and folder_items_after != conversation_after:
@@ -466,11 +599,34 @@ def evaluate(pre: dict, post: dict, ledgers: Path, run_id: str, profile: str) ->
         reasons.append("OC-provenance-unknown-convid")
 
     # --- clause (a): accounted, per the run's declared profile --------------
+    #
+    # A STOP HALTS ACTION, NEVER ACCOUNTING (v5.48 for the ingestion ledger,
+    # v5.52 here). A run whose safety guard correctly ended every mutation still
+    # owes a terminal bucket for every row it enumerated: `stopped_by_guard`
+    # says "no disposition was written because writing one was forbidden", and
+    # it is ACCOUNTED. It is not a free pass — the stop must be RECORDED, and
+    # the record must be corroborated by the run's own ledgers. A row
+    # unaccounted for any OTHER reason still FAILS exactly as before.
     accounted = ACCOUNTED[profile]
     unaccounted_convids = sorted(
         c for c in enumerated if post_run.get(c) not in accounted)
     if unaccounted_convids:
         reasons.append("OC-a-unaccounted")
+
+    stopped_convids = sorted(
+        c for c in enumerated if post_run.get(c) == "stopped_by_guard")
+    guard_stop = _guard_stop_shape(post, enumerated_set)
+    if stopped_convids and guard_stop is None:
+        reasons.append("OC-guard-stop-unrecorded")
+    elif stopped_convids and not guard_stop_corroborated(
+            ledgers, run_id, guard_stop["guard"]):
+        reasons.append("OC-guard-stop-uncorroborated")
+
+    # The lane the owner pinned is the lane the run owes. A fallback is a named
+    # failure with the elected lane on the record, never a silent lane change.
+    if pin is not None and not legacy_counts:
+        if pre["browser_election"]["elected"] != pin:
+            reasons.append("OC-lane-pin-not-honoured")
 
     # `label-only` forbids archiving: an archived row is a scope violation.
     if profile == "label-only" and counts["archived"]:
@@ -549,6 +705,15 @@ def evaluate(pre: dict, post: dict, ledgers: Path, run_id: str, profile: str) ->
         "split": {"archive": counts["archived"], "hold": counts["held_non_drafted"],
                   "drafted": counts["held_drafted"]},
         "unaccounted_convids": unaccounted_convids,
+        "stopped_by_guard_convids": stopped_convids,
+        "guard_stop": guard_stop,
+        "lane": {
+            "elected": (pre["browser_election"]["elected"]
+                        if not legacy_counts else None),
+            "pin": pin,
+            "pin_honoured": (None if pin is None or legacy_counts
+                             else pre["browser_election"]["elected"] == pin),
+        },
         "unknown_convids": stray,
         "unattributed_ledger_rows": unattributed_total,
         "capability_liveness": liveness,
@@ -575,9 +740,16 @@ def render(block: dict) -> str:
         f"{block['owa_folder_item_count_after']}  "
         f"arrived_during_run {len(block['arrived_during_run'])}",
     ]
+    lane = block.get("lane") or {}
+    lines.append(f"  lane: elected {lane.get('elected')}  pin {lane.get('pin')}"
+                 f"  honoured {lane.get('pin_honoured')}")
     for cap, v in block["capability_liveness"].items():
         lines.append(f"  {cap}: output {v['output']} / eligible {v['eligible_inputs']}"
                      f" (raw {v['raw_inputs']}, in_scope {v['in_scope']})")
+    if c.get("stopped_by_guard"):
+        guard = (block.get("guard_stop") or {}).get("guard")
+        lines.append(f"  stopped_by_guard {c['stopped_by_guard']} "
+                     f"(guard {guard}) — accounted, no disposition written")
     if block["verdict_reasons"]:
         lines.append("  FAILED clauses: " + ", ".join(block["verdict_reasons"]))
     if block["unaccounted_convids"]:
@@ -633,7 +805,8 @@ def main(argv: list[str]) -> int:
 
     try:
         if args.preflight:
-            reasons = preflight(_load(args.pre, "pre"), args.profile, args.run_id)
+            reasons = preflight(_load(args.pre, "pre"), args.profile, args.run_id,
+                                args.ledgers)
             if reasons:
                 print("PRE-FLIGHT FAILED: " + ", ".join(reasons))
                 return 1

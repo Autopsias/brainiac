@@ -100,6 +100,13 @@ NOTE_CREATION_POLICIES: dict[str, dict[str, str]] = {
         "reason": "rewrites frontmatter of two EXISTING notes (both sides of "
                   "a version chain) — no new note body is created",
     },
+    "core._unsupersede_locked": {
+        "path": "core.BrainCore._unsupersede_locked (via unsupersede())",
+        "kind": "exempt",
+        "reason": "DROPS the supersession keys from two EXISTING notes "
+                  "(undoing a wrong DDP-01 auto-link, ENF-01) — no new note "
+                  "body is created, the exact inverse of _supersede_locked",
+    },
     "core._recover_pending_supersede": {
         "path": "core.BrainCore._recover_pending_supersede",
         "kind": "exempt",

@@ -633,6 +633,47 @@ def writer_lock_path(vault: str | os.PathLike[str] | None = None) -> Path:
     return host_lock_dir(vault) / f"writer-{vault_slug8(vault)}.lock"
 
 
+def supersede_journal_path(vault: str | os.PathLike[str] | None = None) -> Path:
+    """The crash journal for an unfinished ``supersede``/``unsupersede``.
+
+    OFF THE MOUNT (ENF-01, adversarial review round 3, 2026-08-10). It used to
+    be ``<vault>/.brain/supersede-pending.json``, and it does not hold a hash
+    or a marker — it holds BOTH NOTES' COMPLETE PRE-IMAGES, because rolling a
+    half-written version chain back means writing those bytes again. On the
+    VirtioFS mount that is unrestricted note text — Confidential, Restricted
+    or MNPI — sitting outside the classification egress gate, readable by the
+    untrusted Cowork VM leg. It was a narrow window while a failed journal was
+    deleted on sight; making an unparseable journal PERSIST (the round-2 fix)
+    turned the window into "until a human notices".
+
+    Same treatment and same helper as the COS approved queue (INT-01), the
+    attachment acceptance anchors (INT-04), the single-writer lock (INT-05)
+    and the drift dispositions above: being unreachable is the control.
+    Falls back to the app-data base exactly as ``host_lock_dir`` does when
+    ``$BRAIN_INDEX_DIR`` is misconfigured onto the mount — the fallback is
+    host-controlled by construction, so the confidentiality property holds,
+    and refusing outright would take every supersession down with it.
+    Keyed by vault identity so two vaults never share one journal."""
+    try:
+        d = proven_off_mount(host_private_base() / "supersede", vault,
+                             what="supersede crash journal store")
+    except HostPathUnsafe:
+        d = proven_off_mount(_app_data_base() / "supersede", vault,
+                             what="supersede crash journal store (app-data fallback)")
+    return d / f"supersede-pending-{vault_slug8(vault)}.json"
+
+
+# The crash journal lived at ``brain_runtime_dir(vault)/supersede-pending.json``
+# until 2026-08-10, and there is deliberately NO resolver for it any more
+# (adversarial review round 4). That path is on the VirtioFS mount the
+# untrusted Cowork leg can write, the journal's pre-images are replayed through
+# the audited ``write_note``, and the unattended hourly ``maintain`` calls the
+# recovery path — so a reader for it is an unsigned host write command, not a
+# migration. A probe proved it: a planted journal downgraded two MNPI notes to
+# Public and signed them into the audit chain. Nothing was pending anywhere on
+# the reference host when the reader was removed, so nothing was stranded.
+
+
 def audit_drift_dispositions_dir(vault: str | os.PathLike[str] | None = None) -> Path:
     """Directory holding the INT-02 drift-triage files. Resolution only — the
     writing path creates it, same convention as ``host_lock_dir``."""

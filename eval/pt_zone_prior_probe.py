@@ -15,7 +15,7 @@ Two facts make it a no-op on the live reference corpus:
   count is the indexed zones ``brain/`` + ``raw/`` minus ``raw/originals/``.)
 
 This probe sweeps ``$BRAIN_ZONE_WEIGHTS`` over the flattened zones and
-re-measures the ``monolingual_pt`` stratum through the PRODUCTION fused path
+re-measures the ``cross_lingual_pt_en`` stratum through the PRODUCTION fused path
 on the read-only reference index.  It ships no default change — it measures
 whether the dormant mechanism, when armed, moves the number that BR-02 was
 about to buy a bigger embedder to move.
@@ -65,7 +65,7 @@ def main() -> int:
                 out[notes[s][0]] = r["path"]
         return out
 
-    strata = ["monolingual_pt", "monolingual_es", "cross_lingual_en_pt",
+    strata = ["cross_lingual_pt_en", "cross_lingual_es_en", "cross_lingual_en_pt",
               "cross_lingual_en_es", "lexical_identifier", "multi_hop", "temporal"]
 
     def measure(weight: float) -> dict:
@@ -117,8 +117,8 @@ def main() -> int:
     for w in args.weights:
         result["sweep"][f"brain={w}"] = measure(w)
         m = result["sweep"][f"brain={w}"]
-        print(f"brain={w:<5} pt {m['monolingual_pt']['recall@10']:.4f} "
-              f"es {m['monolingual_es']['recall@10']:.4f} "
+        print(f"brain={w:<5} pt {m['cross_lingual_pt_en']['recall@10']:.4f} "
+              f"es {m['cross_lingual_es_en']['recall@10']:.4f} "
               f"ident {m['lexical_identifier']['recall@10']:.4f} "
               f"overall {m['overall']['recall@10']:.4f} "
               f"overall_mrr {m['overall']['mrr@10']:.4f}")

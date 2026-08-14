@@ -48,6 +48,19 @@ threshold (a listing's job is enumerating members, not prose density) —
 still routed through the same shared gate function, just tuned to that
 content's shape.
 
+**OPEN (2026-08-10): the density gate does not protect DDP-01's nightly
+auto-dedup.** Measured by `_plans/anylang-query-variants-2026-08-09` s02 on the
+reference deployment: **8 of the vault's 21 sha256-identical body families are
+122–125 byte `[no text detected]` stubs over DIFFERENT images** — one family has
+9 members, another merges a deck's part 1 with its part 2 — and **all eight are
+already supersession-linked**, so the nightly deduplicated them. Empty extraction
+makes unrelated documents byte-identical, and DDP-01's boilerplate guard keys on
+id patterns (`daily-*`, transcripts) so it cannot see an OCR stub. A body-length
+floor there would fix it — the same guard the ranking-time family collapse
+adopted for exactly this reason (`$BRAIN_FAMILY_MIN_BODY`, default 1024 bytes;
+every genuine duplicate on that vault is ≥ 6.3 KB, so the floor sits in a wide
+empty gap). Not yet fixed; no ruling.
+
 ### ZIP bounds (Zip-Slip-hardened, bomb-guarded)
 
 - **Zip-Slip:** every member's path is checked BEFORE any decompression —

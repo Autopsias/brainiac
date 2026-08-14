@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""S05 GATE 0, part 2 — WHY is ``monolingual_pt`` exactly 0.000 on the real
+"""S05 GATE 0, part 2 — WHY is ``cross_lingual_pt_en`` exactly 0.000 on the real
 reference corpus, if the shipped embedder demonstrably does Portuguese?
 
 Gate 0's fixture (``eval/pt_capacity_probe.py``) shows ``multilingual-e5-small``
@@ -34,7 +34,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 sys.path.insert(0, str(REPO / "src"))
 
-# English paraphrases of the 12 monolingual_pt questions, written to preserve
+# English paraphrases of the 12 cross_lingual_pt_en questions, written to preserve
 # the question's intent without borrowing the gold document's title wording.
 EN_PARAPHRASE = {
     "pt_01": "What does the RetainedCo IT strategy say?",
@@ -101,7 +101,7 @@ def main() -> int:
                        embedder=get_embedder("auto"), read_only=True)
     notes = _vault_notes(vault)
     golden = json.loads(Path(args.golden).read_text(encoding="utf-8"))
-    queries = [q for q in golden["queries"] if q["stratum"] == "monolingual_pt"]
+    queries = [q for q in golden["queries"] if q["stratum"] == "cross_lingual_pt_en"]
 
     def ranks_for(text: str, gold_rels: list[str]) -> dict[str, int | None]:
         hits = index.hybrid_search(text, k=args.deep_k, rerank=False)
@@ -162,7 +162,7 @@ def main() -> int:
         "probe": "s05-gate0-pt-stratum-diagnosis.v1",
         "index": index.stats(),
         "deep_k": args.deep_k,
-        "stratum": "monolingual_pt",
+        "stratum": "cross_lingual_pt_en",
         "gold_document_language": "English (measured separately; see the readout)",
         "aggregate": {
             "pt_query": agg("rank_pt_query"),

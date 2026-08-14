@@ -184,6 +184,43 @@ def yaml_scalar(value: Any) -> str:
     return text
 
 
+def _block_lines(block: str) -> list[str]:
+    """The frontmatter block's own lines.
+
+    :func:`split` returns everything between the two ``---`` markers, which
+    always begins with the newline that ended the opening marker — so
+    ``splitlines()`` leads with an empty element that is punctuation, not
+    content. Dropping it here (rather than filtering every blank line, as
+    ``set_keys``/``drop_keys`` used to) is what lets a REAL blank line inside
+    the block survive a rewrite, which "every other line is preserved
+    byte-for-byte" already claimed."""
+    lines = block.splitlines()
+    return lines[1:] if lines and lines[0] == "" else lines
+
+
+def _top_level_key(line: str) -> str | None:
+    """The TOP-LEVEL key ``line`` defines, or ``None`` when it defines none.
+
+    Indentation is read off the ORIGINAL line. The old predicate tested
+    ``line.strip()[0] not in " \\t-#"`` — but after ``strip()`` the first
+    character can never BE a space or a tab, so the "top-level only" half of
+    that guard was dead code. A nested ``previous_version:`` under a mapping,
+    and a ``superseded_by:`` line indented inside a literal block scalar, both
+    matched it and were deleted by ``drop_keys`` (reproduced, adversarial
+    review round 3, 2026-08-10): ``unsupersede`` could silently corrupt
+    unrelated metadata or prose and then SIGN the result.
+
+    One predicate, shared by both writers — the pair must agree on what a
+    top-level key is, or ``drop_keys`` stops being the inverse of
+    ``set_keys``."""
+    if not line or line[0] in " \t":
+        return None                       # nested value / block-scalar content
+    stripped = line.strip()
+    if not stripped or stripped[0] in "-#" or ":" not in stripped:
+        return None
+    return stripped.split(":", 1)[0].strip()
+
+
 def set_keys(text: str, updates: dict[str, Any]) -> str:
     """Return ``text`` with each ``updates`` key set in the frontmatter block —
     replacing an existing ``key: ...`` line in place, appending new keys at the
@@ -200,15 +237,36 @@ def set_keys(text: str, updates: dict[str, Any]) -> str:
     block, body = fm
     remaining = dict(updates)
     out_lines: list[str] = []
-    for line in block.splitlines():
-        stripped = line.strip()
-        if stripped and ":" in stripped and stripped[0] not in " \t-#":
-            key = stripped.split(":", 1)[0].strip()
-            if key in remaining:
-                out_lines.append(f"{key}: {_scalar(remaining.pop(key))}")
-                continue
+    for line in _block_lines(block):
+        key = _top_level_key(line)
+        if key is not None and key in remaining:
+            out_lines.append(f"{key}: {_scalar(remaining.pop(key))}")
+            continue
         out_lines.append(line)
     for key, val in remaining.items():
         out_lines.append(f"{key}: {_scalar(val)}")
-    new_block = "\n".join(ln for ln in out_lines if ln.strip() != "") + "\n"
+    new_block = "\n".join(out_lines) + "\n"
+    return f"---\n{new_block}---{body}"
+
+
+def drop_keys(text: str, keys: Any) -> str:
+    """Return ``text`` with each named top-level frontmatter key REMOVED.
+
+    The exact inverse of :func:`set_keys`, and line-based for the same reason:
+    ``core.unsupersede`` undoes a wrong auto-link by deleting the four
+    supersession keys, and every other line of the block must survive
+    byte-for-byte. A key that is not present is a silent no-op.
+
+    TOP-LEVEL means top-level: an indented line is content belonging to some
+    other key (a nested mapping value, a block scalar's text) and is never
+    matched, however it is spelled. See :func:`_top_level_key`.
+    """
+    fm = split(text)
+    if fm is None:
+        raise ValueError("drop_keys: text has no frontmatter block")
+    block, body = fm
+    drop = {str(k) for k in keys}
+    out_lines = [line for line in _block_lines(block)
+                 if _top_level_key(line) not in drop]
+    new_block = "\n".join(out_lines) + "\n"
     return f"---\n{new_block}---{body}"

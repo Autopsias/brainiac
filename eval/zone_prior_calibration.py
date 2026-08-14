@@ -2,7 +2,7 @@
 """S06 / PT-03 — calibrate the RET-01 zone-authority prior on a HELD-OUT split.
 
 s05's Gate 0 measured ``$BRAIN_ZONE_WEIGHTS={"brain": W, "raw": 1.0}`` lifting
-``monolingual_pt`` off an exact 0.000 and the whole 66-query set from 0.424 to
+``cross_lingual_pt_en`` off an exact 0.000 and the whole 66-query set from 0.424 to
 0.530 — but it swept W over the SAME 66 queries it scored, so
 the winning W is fitted to its own test set.  The owner accepted the option
 *including* its calibration condition, so this script answers the question
@@ -80,7 +80,7 @@ from stats import (  # noqa: E402
     paired_permutation_test,
 )
 
-STRATA = ["monolingual_pt", "monolingual_es", "cross_lingual_en_pt",
+STRATA = ["cross_lingual_pt_en", "cross_lingual_es_en", "cross_lingual_en_pt",
           "cross_lingual_en_es", "lexical_identifier", "multi_hop", "temporal"]
 
 SCHEMA = "s06-zone-prior-calibration.v2"

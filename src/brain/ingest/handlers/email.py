@@ -31,7 +31,13 @@ class _HtmlStripper(html.parser.HTMLParser):
 
     _BLOCK = {"p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6",
               "blockquote", "pre", "hr"}
-    _SKIP = {"script", "style", "head", "meta", "link"}
+    # Only skip tags that ALWAYS emit a closing tag. A tag that can go unclosed
+    # latches `_skip` at >0 and swallows the rest of the message:
+    #   * VOID elements (meta, link, br, hr, img) never fire handle_endtag at all
+    #     — `<meta charset>` mail used to extract to the empty string;
+    #   * `head` has an OPTIONAL end tag, so `<head><meta><body>` swallowed it too.
+    # This is the set handlers/html.py already proved out; keep the two in step.
+    _SKIP = {"script", "style", "noscript", "svg", "canvas", "iframe", "object", "embed"}
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)

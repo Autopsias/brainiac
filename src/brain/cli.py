@@ -28,6 +28,8 @@ FINAL stage before stdout. A harness self-discovers the whole contract from
     brain draft-capture [--id ID] [--source]   # VM-side capture: stage a DRAFT
     brain status [--json]                  # snapshot gen/age + pending drafts
     brain doctor [--json]                  # health + version table, ALL surfaces (read-only)
+    brain alerts [--json] [--one-line]     # degradation digest for a session start —
+                                            # pure file reads, VM_ALLOWED
     brain health-report [--json]           # static HTML health page -> .brain/brief/
                                             # health-latest.html [HOST]
     brain graph-report [--json]            # static HTML graph explorer -> .brain/graph/
@@ -72,6 +74,7 @@ from typing import Any
 
 from . import __version__, classification as cls
 from . import connect as _connect
+from . import core as core_mod
 from . import egress
 from .core import BrainCore
 
@@ -152,7 +155,7 @@ RET-01 zone-authority prior — a measured OPT-IN, off by default (s06, 2026-08-
   Measured on the 66-query golden set, weight selected on its pre-registered
   TRAIN half and read ONCE on the held-out half (eval/FOLLOWUPS.md #9,
   eval/zone_prior_calibration.py): held-out mrr@10 0.198 -> 0.386, paired
-  permutation p=0.011; monolingual_pt recall@10 0.000 -> 0.458 at W=3.0.
+  permutation p=0.011; cross_lingual_pt_en recall@10 0.000 -> 0.458 at W=3.0.
   NO REBUILD — it is a query-time multiplier, it never touches embed_model /
   embed_dim; unset it and the next process is back to shipped behaviour.
   It ships OFF because 66 queries can resolve the DIRECTION but not the
@@ -176,6 +179,41 @@ RET-01 zone-authority prior — a measured OPT-IN, off by default (s06, 2026-08-
   semantic_only (default semantic_only); BRAIN_ZONE_SOURCE_MODE=column
   disables the frontmatter lookup.
 
+--variant (RET-05 multi-query fan-out, wired 2026-08-09):
+  ask the SAME question in several phrasings and fuse the answers:
+    brain search "what did we decide about pricing" \
+        --variant "o que decidimos sobre precos" --explain --json
+  Each variant runs its own full hybrid search (shallow, per_query_k 20 — a
+  wider per-variant fetch measurably HURTS: 20->80 dropped fan-out recall
+  0.736->0.625) and the result lists are Reciprocal-Rank-Fused into one
+  ranking. The ORIGINAL query is always variant 0 and keeps every ADR-0008
+  guarantee: only IT can pin rank 1 or report create_safety `exists`, so a
+  mistranslated variant that happens to match an unrelated note's title can
+  never tell a capture agent that note already exists (it is capped at
+  `probable`). The egress gate applies ONCE, to the pooled result.
+  TWO CONSTANTS: the INNER per-variant fusion is unchanged (RRF_K_FUSE, with
+  rrf_k=60 as ADR-0008's exact-leg key); the OUTER pooling constant is
+  separate and moves only via BRAIN_MULTI_RRF_K (default 60) — deliberately
+  not a flag, since a non-60 rrf_k would silently disable the exact leg.
+  Guards: identical variants deduplicate, an empty variant contributes
+  nothing, variants past BRAIN_MULTI_MAX_VARIANTS (default 4) are dropped
+  from the TAIL and reported (supply variants in descending vault-language
+  prevalence), BRAIN_MULTI_GUARD=1 arms the correlated-vote guard (a document
+  some variant ranked in its top 3 outranks one no variant did), and
+  BRAIN_VARIANTS_ENABLED=0 is the kill switch.
+  --rerank-fused runs the cross-encoder once over the POOLED candidates
+  against the original query. Owner ruling 2026-08-12: it is ON BY DEFAULT
+  whenever 2+ variants survive the guards, and NEVER on a single query — the
+  single-query ranking is untouched. Evidence: +0.0643 recall@10 over the
+  shipped configuration (p 0.0284, 6 wins / 1 loss), TRAIN-HALF ONLY and not
+  confirmed on a held-out half. Costs one extra cross-encoder pass (~5-25s) on
+  fan-out calls. Opt out per call with --no-rerank-fused;
+  BRAIN_RERANK_FUSED_DISABLED=1 is the global kill switch (restart the invoking
+  process; no rebuild).
+  CONFIRM IT ENGAGED: `--explain --json` reports `variants`
+  (count, dropped sets, both constants, guard, pin, rerank gate, and each
+  variant's rank/contribution for every surfaced hit).
+
 evidence/create_safety:
   every surfaced search hit carries one evidence label: alias_hit,
   exact_title_match, title_phrase_match, keyword_exact, high_vector_match, or
@@ -183,6 +221,22 @@ evidence/create_safety:
   for one visible unique full alias/title owner; alias/title collisions, retired
   owners, or any full owner withheld by egress degrade the public answer without
   exposing hidden ids, owner counts, ranks, titles, or a collision label.
+
+duplicate-family collapse (HYG-01):
+  the same bytes indexed twice (a copy and its date-stamped re-ingest) split one
+  document's ranking signal across two near-identical vectors. Ranked retrieval
+  folds such a family into its canonical member BEFORE the legs are scored, so
+  the canonical inherits the family's best rank instead of two halves; the
+  absorbed ids ride on the surviving hit as `duplicates`, never as extra slots.
+  DELIBERATELY NARROW: a family needs byte-identical bodies AND an explicit
+  owner-accepted supersession link AND >= $BRAIN_FAMILY_MIN_BODY (1024) bytes of
+  body. Name/near-body similarity is NOT collapsed — AGENTS.md §4 CUR-01 makes
+  that a PROPOSAL for the owner, not a ranking-time identity claim — and short
+  bodies are refused because `[no text detected]` extraction stubs share one
+  hash across unrelated documents. Two genuine revisions are never one family.
+  `search --explain --json` reports ranking.family_collapse
+  (enabled/collapsed/declined); `BRAIN_FAMILY_COLLAPSE_DISABLED=1` is the
+  rollback and needs no rebuild.
 
 explain / diagnose:
   `search --explain` emits gated per-hit attribution (lexical/dense/exact
@@ -373,6 +427,78 @@ def _egress_footer(report: dict) -> str:
     return line
 
 
+def _variant_block(fanout: dict, allowed_ids: set[str], *, explain: bool) -> dict:
+    """Project a RET-05 fan-out trace onto the ALREADY-GATED result.
+
+    The trace is built pre-egress, so every id in it (per-variant orders,
+    per-variant contributions, the pin) is filtered to ``allowed_ids`` here — a
+    withheld note must not leak through the fan-out attribution any more than
+    through the ranking itself. Variant TEXTS are the caller's own input, never
+    vault content, so they are echoed verbatim.
+    """
+    dropped = {key: value for key, value in fanout["dropped"].items()
+               if key == "max_variants" or value}
+    block = {
+        "used": fanout["variants"],
+        "count": fanout["variant_count"],
+        "dropped": dropped,
+    }
+    if not explain:
+        return block
+    block.update({
+        # Both constants, side by side: the outer one is what this layer pools
+        # at, the inner one is ADR-0008's pin that gates the exact leg.
+        "fanout_k": fanout["fanout_k"],
+        "inner_rrf_k": fanout["inner_rrf_k"],
+        "exact_leg_enabled": fanout["exact_leg_enabled"],
+        "per_query_k": fanout["per_query_k"],
+        "guard": fanout["guard"],
+        "rerank_fused": fanout["rerank_fused"],
+        "rerank_fused_source": fanout["rerank_fused_source"],
+        "rerank_gate": fanout["rerank_gate"],
+        # A pin is only ever the ORIGINAL query's unique identity owner, and it
+        # is named here only when that note also survived egress.
+        "pin": (fanout["pin"] if fanout["pin"]["id"] in allowed_ids
+                else {**fanout["pin"], "id": None}),
+        "per_variant": [
+            {**entry, "order": [i for i in entry["order"] if i in allowed_ids]}
+            for entry in fanout["per_variant"]
+        ],
+        "contributions": {
+            note_id: [{**c, "contribution": round(c["contribution"], 6)} for c in contribs]
+            for note_id, contribs in fanout["contributions"].items()
+            if note_id in allowed_ids
+        },
+    })
+    return block
+
+
+def _render_variant_block(block: dict) -> list[str]:
+    """The text-mode fan-out footer — what ran, and what was dropped."""
+    lines = [f"-- fan-out: {block['count']} variant(s): "
+             + "; ".join(repr(v) for v in block["used"])]
+    for key in ("duplicate", "over_cap", "kill_switch"):
+        dropped = block["dropped"].get(key)
+        if dropped:
+            lines.append(f"-- dropped ({key}): " + "; ".join(repr(v) for v in dropped))
+    if "fanout_k" in block:
+        guard = block["guard"]
+        gate = block["rerank_gate"]
+        lines.append(
+            f"-- pooled at fanout_k={block['fanout_k']} "
+            f"(inner rrf_k={block['inner_rrf_k']}, "
+            f"exact_leg={'on' if block['exact_leg_enabled'] else 'off'}, "
+            f"per_query_k={block['per_query_k']}); "
+            f"guard={'on' if guard['enabled'] else 'off'}; "
+            f"rerank_fused={'on' if block['rerank_fused'] else 'off'} "
+            f"[{block.get('rerank_fused_source', 'caller')}] "
+            f"(gate: {gate['reason']}); pin={block['pin']['id']}")
+        for note_id, contribs in block["contributions"].items():
+            votes = " ".join(f"v{c['variant']}@{c['rank']}" for c in contribs)
+            lines.append(f"--   {note_id}: {votes}")
+    return lines
+
+
 def _render_explain_hit(hit: dict) -> list[str]:
     """Readable ADR-0008 attribution for one already-gated search result."""
     explain = hit.get("explain") or {}
@@ -519,6 +645,33 @@ def build_parser() -> argparse.ArgumentParser:
                              "forces unconditional reranking back on")
         sp.add_argument("--rrf-k", type=int, default=60,
                         help="Reciprocal Rank Fusion constant (default: 60)")
+        # RET-05 fan-out (wired 2026-08-09). Repeatable; the ORIGINAL query stays
+        # the first variant, so identity/create-safety semantics keep their
+        # trusted anchor. The OUTER pooling constant is deliberately NOT a CLI
+        # arg — it moves only via $BRAIN_MULTI_RRF_K, so no flag can be typed
+        # that silently disables the ADR-0008 exact leg.
+        sp.add_argument("--variant", action="append", default=None, metavar="TEXT",
+                        help="an alternative phrasing of the same question "
+                             "(repeatable) — each is searched separately and the "
+                             "result lists are rank-fused into one ranking "
+                             "(RET-05). Use it when the question's words are "
+                             "yours rather than the notes' (a translation, a "
+                             "synonym expansion). Identical variants are "
+                             "deduplicated; variants past "
+                             f"{core_mod.MULTI_MAX_VARIANTS} "
+                             "($BRAIN_MULTI_MAX_VARIANTS) are dropped from the "
+                             "tail and reported; BRAIN_VARIANTS_ENABLED=0 is the "
+                             "kill switch")
+        sp.add_argument("--rerank-fused", dest="rerank_fused",
+                        action=argparse.BooleanOptionalAction, default=None,
+                        help="with --variant: run the cross-encoder ONCE over the "
+                             "pooled candidates against the original query "
+                             "(RET-05b) instead of leaving the fused RRF order. "
+                             "ON by default whenever 2+ variants are supplied, and "
+                             "NEVER on a single query (owner ruling 2026-08-12); "
+                             "--no-rerank-fused opts out per call and "
+                             "BRAIN_RERANK_FUSED_DISABLED=1 is the global kill "
+                             "switch")
         sp.add_argument("--explain", action="store_true",
                         help="show per-stage RRF/zone/staleness attribution for each "
                              "egress-surfaced result (ADR-0008)")
@@ -621,6 +774,20 @@ def build_parser() -> argparse.ArgumentParser:
                          "installed / latest-published-on-PyPI) via a single cached "
                          "HTTPS metadata read. Off by default — this is the only "
                          "network call `doctor` ever makes, and only with this flag.")
+
+    sp = sub.add_parser(
+        "alerts",
+        help="READ-ONLY degradation digest every harness can call: auto-update "
+             "state, weekly-synthesis task health, engine-feedback backlog, the "
+             "owner-decision queue, and the notify markers `brain maintain` "
+             "writes. Pure file reads — no index, embedder, network or key. "
+             "role=vm reads only its own vault and REPORTS the two host-home "
+             "sources it cannot reach, so silence never means 'could not look'.",
+    )
+    sp.add_argument("--json", action="store_true")
+    sp.add_argument("--one-line", action="store_true",
+                    help="emit the single-line banner form a SessionStart hook "
+                         "injects (empty output when all clear)")
 
     sp = sub.add_parser(
         "mcp-config",
@@ -750,6 +917,17 @@ def build_parser() -> argparse.ArgumentParser:
         "supersede",
         help="host-broker: retire <old-id> in favour of <new-id> — both sides "
              "of the version chain, signed (TMP-02, ADR-0003 Ruling 2/8)",
+    )
+    sp.add_argument("old_id", metavar="old-id")
+    sp.add_argument("new_id", metavar="new-id")
+    sp.add_argument("--reason", default="")
+    sp.add_argument("--json", action="store_true")
+
+    sp = sub.add_parser(
+        "unsupersede",
+        help="host-broker: BREAK the <old-id> -> <new-id> supersession link — "
+             "both sides, signed. The audited undo for a wrong auto-link "
+             "(ENF-01)",
     )
     sp.add_argument("old_id", metavar="old-id")
     sp.add_argument("new_id", metavar="new-id")
@@ -988,9 +1166,12 @@ def build_parser() -> argparse.ArgumentParser:
              "named sources (calendar follow-ups, drafts ledger). `radar` "
              "prints late/at-risk open commitments. `render` regenerates the "
              "VM-readable shared/spine-summary.md projection (also run every "
-             "broker fold).",
+             "broker fold). `grounding-pack` regenerates the BAK-01 "
+             "shared/grounding-pack.md projection — Internal-safe POINTERS to "
+             "documents above the VM leg's egress ceiling, from the host-private "
+             "host/grounding-pack-ids.txt list (also run every broker fold).",
     )
-    sp.add_argument("action", choices=("record", "radar", "render"))
+    sp.add_argument("action", choices=("record", "radar", "render", "grounding-pack"))
     sp.add_argument("--event", default="created", choices=(
         "created", "rescheduled", "completed", "cancelled", "corrected", "reopened"))
     sp.add_argument("--id", dest="commitment_id", default=None,
@@ -1498,6 +1679,11 @@ def _cmd_connect(args: Any) -> int:
 VM_ALLOWED = frozenset({
     "init",  # filesystem-only overlay validation; safe on either role
     "doctor",  # read-only version/health inspection; no index/key touched
+    # The degradation digest. VM_ALLOWED on purpose: it is the ONE surface that
+    # tells a Cowork session its vault is degraded, and it reads only plain
+    # files on the shared mount that `maintain` already wrote. Its host-home
+    # sources are unreachable there and are REPORTED as such, never skipped.
+    "alerts",
     "mcp-config",  # prints a config string; no index/key/vault read
     "search", "hybrid-search", "diagnose", "dossier", "grep", "bases-query", "graph-expand",
     "get", "read", "recent", "status", "draft-capture",
@@ -1702,6 +1888,32 @@ def _main(argv: list[str] | None = None) -> int:
     # dispatch BEFORE BrainCore construction, same reasoning as `init`: it
     # must work even against a vault with no index built yet, and it never
     # touches the vault at all.
+    if cmd == "alerts":
+        from . import alerts as brain_alerts
+
+        # A vault is OPTIONAL here, and demanding one was a real bug: the host
+        # role sweeps the workspace registry and never needed a vault at all,
+        # so `brain alerts` from any directory that is not a vault exited 3 and
+        # the Codex hook reported "cannot check" (measured 2026-08-14). Resolve
+        # leniently and let `collect` say what it could not reach — on the VM
+        # leg an unresolved vault is a REPORTED gap, never a cheerful
+        # "no alerts".
+        try:
+            alerts_vault = config.vault_root(args.vault)
+        except config.VaultNotFoundError:
+            alerts_vault = None
+        report = brain_alerts.collect(role=role, vault=alerts_vault)
+        if args.one_line:
+            banner = brain_alerts.one_line(report)
+            if banner:
+                print(banner)
+        else:
+            _emit(report if args.json else None, args.json,
+                  None if args.json else brain_alerts.render_human(report))
+        # Exit 0 even with findings: this runs at session start in every
+        # harness, and a non-zero exit reads as "the check itself broke".
+        return 0
+
     if cmd == "doctor":
         from . import doctor as brain_doctor
 
@@ -1838,7 +2050,21 @@ def _main(argv: list[str] | None = None) -> int:
         capture_enabled = querylog.capture_requested(role)
         capture_started = time.perf_counter() if capture_enabled else None
         trace = None
-        if args.explain or capture_enabled:
+        fanout = None
+        # RET-05: the ORIGINAL query is always variant 0 — every identity and
+        # create-safety guarantee is anchored to it (see core.search_multi).
+        # With no --variant this branch is not taken at all, so the single-query
+        # ranking is untouched, byte for byte.
+        variants = [args.query] + list(getattr(args, "variant", None) or [])
+        if len(variants) > 1:
+            fan_hits, fanout = core.search_multi(
+                variants, k=args.k, rerank=args.rerank,
+                rerank_top=args.rerank_top, rrf_k=args.rrf_k,
+                rerank_gate=args.rerank_gate,
+                rerank_fused=args.rerank_fused, return_trace=True,
+            )
+            hits = [hit.to_dict() for hit in fan_hits]
+        elif args.explain or capture_enabled:
             trace_hits, trace = core.hybrid_search_with_trace(
                 args.query, k=args.k, rerank=args.rerank,
                 rerank_top=args.rerank_top, rrf_k=args.rrf_k,
@@ -1882,6 +2108,10 @@ def _main(argv: list[str] | None = None) -> int:
                     # rather than inferring a skip from requested-but-not-applied,
                     # which also covers an absent model and a timeout fallback.
                     "rerank_gate": trace.rerank_gate,
+                    # HYG-01: how many byte-identical, owner-superseded
+                    # duplicate families this query folded into their canonical
+                    # member (and how many it saw but a guard declined).
+                    "family_collapse": trace.family_collapse,
                 },
                 "results": surfaced,
                 # This bounded projection is built only from IDs that survived
@@ -1893,12 +2123,21 @@ def _main(argv: list[str] | None = None) -> int:
         else:
             payload = {"query": args.query, "rerank": args.rerank,
                        "results": surfaced, "egress": report}
+        if fanout is not None:
+            payload["variants"] = _variant_block(
+                fanout, {hit["id"] for hit in surfaced}, explain=args.explain,
+            )
         # Shared post-egress serialization seam (ADR-0008 S04): only the
         # already-gated rows plus S03's safe digest reach the host ledger.
         # querylog swallows any containment/permission/append failure and
         # increments its local counter, so a healthy search never fails merely
         # because observability is unavailable.
-        if capture_enabled and capture_started is not None:
+        # A fan-out query is deliberately NOT captured: the ledger's only
+        # consumer is `brain eval replay`, which re-runs each record as the
+        # single query it stores and would report a fan-out ranking as drift
+        # (and its schema refuses any mode label outside search/hybrid-search/
+        # dossier). Capturing it would corrupt a replay, not enrich it.
+        if capture_enabled and capture_started is not None and fanout is None:
             capture_top, capture_digest = querylog.projection_from_gated(
                 surfaced, trace=trace, redacted_ids=identity_redacted_ids,
             )
@@ -1918,7 +2157,7 @@ def _main(argv: list[str] | None = None) -> int:
                 payload["embedder_notice"] = notice
             _emit(payload, True)
         else:
-            if args.explain:
+            if args.explain and fanout is None:
                 lines = [line for hit in surfaced for line in _render_explain_hit(hit)]
             else:
                 lines = [f"[{h['source']}] {h['id']}  <{h.get('type') or '?'}>"
@@ -1928,6 +2167,8 @@ def _main(argv: list[str] | None = None) -> int:
                          f"\n    {h['snippet']}"
                          for h in surfaced]
             footer = _egress_footer(report)
+            if fanout is not None:
+                footer += "\n" + "\n".join(_render_variant_block(payload["variants"]))
             if notice:
                 footer += f"\n-- {notice}"
             if freshness and freshness.get("hint"):
@@ -2444,6 +2685,10 @@ def _main(argv: list[str] | None = None) -> int:
                                 for r in res["late"]) +
                          "".join(f"\n  RISK  {r['id']} {r['counterparty']} due={r['due']}"
                                 for r in res["at_risk"]))
+            elif args.action == "grounding-pack":
+                res = core.cos_grounding_pack()
+                human = (f"rendered {res['path']} (documents={res['documents']} "
+                         f"requested={res['requested']} missing={len(res['missing'])})")
             else:  # render
                 res = core.cos_spine_render()
                 human = f"rendered {res['path']} (open={res['open']} late={res['late']} at_risk={res['at_risk']})"
@@ -2729,6 +2974,35 @@ def _main(argv: list[str] | None = None) -> int:
             return 3
         _emit(res if args.json else
               f"superseded {res['old_id']} -> {res['new_id']} (both sides signed)",
+              args.json)
+        return 0
+
+    if cmd == "unsupersede":
+        try:
+            res = core.unsupersede(args.old_id, args.new_id, reason=args.reason)
+        except Exception as exc:  # RoleError / ValueError / KeyUnavailable -> fail closed
+            _emit({"error": type(exc).__name__, "detail": str(exc)} if args.json
+                  else f"unsupersede refused ({type(exc).__name__}): {exc}", args.json)
+            return 3
+        # Report what actually happened. `unsupersede` repairs the successor
+        # OPPORTUNISTICALLY (`new_write` stays None when nothing on that side
+        # named old_id), so "both sides signed" was a false audit assurance
+        # precisely on the malformed one-sided chains this verb exists for
+        # (adversarial review round 3, 2026-08-10).
+        if res.get("new_write"):
+            how = (f"both sides signed: dropped "
+                   f"{', '.join(res.get('cleared_keys') or []) or 'no keys'} "
+                   f"from {res['new_id']}")
+        else:
+            kept = res.get("new_previous_version_kept")
+            how = (f"ONE side signed ({res['old_id']} only) — {res['new_id']} "
+                   + (f"names {kept!r} as its predecessor, not {res['old_id']}, "
+                      "so it was left untouched"
+                      if kept else
+                      f"never named {res['old_id']} as its predecessor, so "
+                      "there was nothing to clear"))
+        _emit(res if args.json else
+              f"unlinked {res['old_id']} -> {res['new_id']} ({how})",
               args.json)
         return 0
 

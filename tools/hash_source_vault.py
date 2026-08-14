@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """S10 LV-01 — read-only pre/post migration integrity check for the SOURCE vault.
 
+STATUS (audited 2026-08-10, owner ruling: KEEP LIVE). No importer, by design —
+this is an operator-invoked one-shot from
+``_plans/profile-a-brain-hardening-open-release-plan-2026-07-03`` (all 14
+sessions closed DONE). It stays in ``tools/`` because it verifies a
+no-write-to-source guarantee that any FUTURE corpus migration needs too. Do not
+flag it as dead code; "nothing imports it" is the expected state.
+
 The corpus migration (``migrate_corpus.py`` dry-run + ``apply_live_migration.py``
 apply) reads the source Obsidian vault but must NEVER write to it. This tool
 computes a sha256 manifest of every file under the vault root (name + hash,
@@ -20,7 +27,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import sys
 from pathlib import Path
 
 

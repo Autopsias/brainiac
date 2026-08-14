@@ -81,7 +81,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from . import config, cos, cos_corpus
+from . import config, cos, cos_corpus, cos_deploy
 
 # -- check-row states ---------------------------------------------------------
 #: the control ran, was re-executable where it mattered, and holds
@@ -106,8 +106,30 @@ DEFAULT_QUIESCE_SECONDS = 900
 #: is re-checked only if its inputs change.
 DEFAULT_RUN_WINDOW = 10
 
-#: E-check DEFINITIONS in a chief-of-staff SKILL.md (`- **E16** · …`).
-_SKILL_ECHECK_RE = re.compile(r"^- \*\*E(\d{1,2})\*\*\s*·", re.MULTILINE)
+#: How long a run may sit PENDING before the silence is itself the finding.
+#: ``alert`` reads recorded VERDICTS, and a run that never completes never gets
+#: one — so the loudest failure this validator has is also the one it cannot
+#: see. Measured twice: run 100 (2026-08-08) wrote its PRE snapshot under a
+#: drifted name and is unscored to this day, and run 106 (2026-08-09) wrote its
+#: report as ``_cos_brief_…md`` where the manifest declared ``_cos_nightly_…md``
+#: — a full night of work, 30 self-eval results, and not one host check ever
+#: executed on either. A nightly writes for ~30 minutes and the broker fold
+#: fires hourly, so a run idle this long is stuck, not slow.
+STALLED_PENDING_HOURS = 6
+
+#: How far back the stalled scan looks — in DAYS, not in runs, and that is the
+#: load-bearing part. ``alert``'s verdict window is the newest 5 runs, and this
+#: deployment fired SIX runs on 2026-08-09 alone: a run idle for 6 hours would
+#: have been pushed out of a 5-run window before it was ever old enough to
+#: report, so a count-based window here is an instrument that cannot fire. A
+#: date-based one is rate-independent, still bounded (a few dozen manifests),
+#: and lets a stalled night age out rather than become permanent noise.
+STALLED_LOOKBACK_DAYS = 3
+
+#: E-check DEFINITIONS in a chief-of-staff SKILL.md (`- **E16** · …`). Defined
+#: in :mod:`brain.cos_deploy` beside the other facts read off a bundle, so the
+#: count the manifest FREEZES and the count derived here can never disagree.
+_SKILL_ECHECK_RE = cos_deploy.ECHECK_RE
 #: E-check RESULTS in a run report. Line-anchored and list-item-anchored on
 #: purpose: an Outlook conversation id is base64 and full of `E8XWki0=`-shaped
 #: noise, and a substring match over the report counts that as a self-eval.
@@ -127,6 +149,86 @@ _RUN_NUMBER_RE = re.compile(r"run([0-9]+)")
 #: ledger dispositions that mean "this thread was in Phase-1.6 scope"
 _HELD_DISPOSITIONS = {"held", "no-substance"}
 _MARKER_DISPOSITION = "zero-eligible"
+
+#: Phase-1.6 rule 8's CLOSED disposition vocabulary, plus the degrade marker.
+#: Closed because the counters are defined by these words: an invented one
+#: silently leaves its rows out of every total (run 106 wrote
+#: `no-new-substance` on 15 rows and its `ingestion_held` legitimately read
+#: 100 of 115 — 15 rows accounted nowhere, and nothing said so).
+_LEDGER_DISPOSITIONS = {"candidate", *_HELD_DISPOSITIONS, _MARKER_DISPOSITION}
+
+#: The managed `held_reason` set, verbatim from SKILL.md Phase 1.6 rule 1½'s
+#: eight + rule 1¾'s `never-category` + rule 6's (dormant) `over-candidate-cap`.
+#: E29(b) has required membership since v5.36 and NOTHING ever checked it, so
+#: every run invented its own words: `browser-control-failure` (61),
+#: `dedup-prior-proposal` (65), `corpus-closed-before-capture` (68), the whole
+#: Phase-1.5 `Held · uncertain` vocabulary (73), `body-read-no-distinct-durable
+#: -claim` + `target-not-found-timeout` + `capture-blocked-download-path`
+#: (101), `unread-native-category-deferred` (103),
+#: `no-substance-or-already-represented` (106, 108). Drift is not cosmetic:
+#: `check_body_pass` keys on the WORD, so run 108's 19 substance verdicts
+#: spelled `no-substance-or-already-represented` were invisible to the one
+#: check written to score them, and it passed reporting "no `no-substance`
+#: verdict in this run's ingestion ledger".
+#: (v5.60) Two words the set genuinely lacked, named in SKILL.md rule 1½ first
+#: and only then used, exactly as E29(b) requires. `pass-ended-by-identity-stop`
+#: is the CASCADE (the pass ended on a mismatch and this thread was written out
+#: behind it, `target_attempt: 0` — run 105 wrote 108 such rows as
+#: `target-identity-mismatch`, which reads as 108 identity failures and is one
+#: stop). `host-eval-timeout` is the INSTRUMENT (the host-side evaluation that
+#: judges identity did not return within its bound — measured in daylight, one
+#: navigation wedged Chrome's JS bridge for ~2 minutes and every read in that
+#: window timed out; scoring that as a lane mismatch is an instrument failure
+#: wearing a lane failure's word).
+_HELD_REASONS = {
+    "unread-read-state-invariant", "no-body-access-on-lane",
+    "preview-insufficient", "over-cap", "no-substance", "browser-not-visible",
+    "target-identity-mismatch", "target-identity-unconfirmed",
+    "never-category", "over-candidate-cap",
+    "pass-ended-by-identity-stop", "host-eval-timeout",
+    # (v5.62) OWA refused the navigation — the bare shell, no conversation
+    # opened, the pane never moved — AND the click fallback could not scroll the
+    # row into the virtualized list to click it. The only refusal shape that
+    # costs the run a body; a recovered one is an ordinary open.
+    "navigation-refused-row-unreachable",
+}
+
+#: (v5.60) Rule 5's CLOSED dedup vocabulary. Dedup has no drop path at all — a
+#: near-duplicate yields `merge_candidate: <id>` INSTEAD OF a fresh `create`,
+#: an inconclusive probe still stages — so a value here that reports a DROP is
+#: asserting an authority rule 5 does not grant. Measured: run 106 wrote "brain
+#: lexical probes; no novel durable candidate staged" into this slot on 15
+#: rows, run 108 wrote "no novel durable candidate staged" into all 115 of its
+#: rows, run 61 wrote the fused `inconclusive-vm-tier-clamp`. `not-run` is the
+#: honest value on a row that never reached rule 5 (an unopened body, a capped
+#: thread, a `never` category). ABSENT is legal — the key is optional.
+_DEDUP_CHECKS = {"clean", "inconclusive", "not-run"}
+
+#: (v5.60) SKILL.md rule 1½ step 4: the bare `<origin>/mail/` shell OWA drops a
+#: tab to when a conversation will not deep-link is 42 characters, folder and id
+#: gone. An extraction at or below it is a FAILED OPEN, not a short message —
+#: run 108 appended two 42-character bodies to its corpus and gave both a
+#: post-read `no-substance` verdict.
+_EMPTY_SHELL_CHARS = 42
+
+#: (v5.60) SKILL.md rule 1¾'s blanket-default bar. CALIBRATED, not guessed:
+#: every night that demonstrably APPLIED the owner's taxonomy sits at a dominant
+#: category share of 0.20-0.33 (runs 57, 59, 63, 64) and every blanket-default
+#: night at 0.81-0.90 (runs 100, 101, 102, 104, 105, 106, 108), so 0.75 sits in
+#: the middle of a gap half the scale wide. Only scored on a night with more
+#: in-scope rows than the body-open cap, where a lopsided draw is not noise.
+_CATEGORY_DOMINANCE_MAX_SHARE = 0.75
+_CATEGORY_DOMINANCE_MIN_ROWS = 21
+
+#: (v5.62) The hold reasons that legitimately END the body pass, so the threads
+#: behind them may wear `pass-ended-by-identity-stop`. A wrong conversation
+#: opened (`target-identity-mismatch`) is the original stop; a host evaluation
+#: that timed out instead of answering (`host-eval-timeout`, v5.60) learned
+#: nothing about the conversation, and carrying on blind past a wedged bridge is
+#: not a pass either. **A REFUSED navigation is deliberately NOT here** — it
+#: opened nothing, moved nothing and touched nothing, so it holds its own thread
+#: and the draw continues to the next row.
+_PASS_STOPPING_REASONS = {"target-identity-mismatch", "host-eval-timeout"}
 
 #: The one Phase-1.6 hold reason that can ONLY be reached by reading the body.
 #: SKILL.md rule 1½ gives every "could not read it" case its own reason
@@ -327,12 +429,31 @@ def ledger_rows(vault, run_id: str) -> list[dict[str, Any]]:
 
 
 def ledger_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
-    """The three Phase-1.6 counters, RECOUNTED from the ledger itself."""
+    """The three Phase-1.6 counters, RECOUNTED from the ledger itself.
+
+    ``ingestion_held`` is EVERY in-scope row that is not a staged candidate —
+    `held`, `no-substance`, and anything else a run writes in that slot — so
+    ``in_scope == candidates + held`` is an arithmetic identity rather than a
+    coincidence of three independent sums.
+
+    WHY IT IS SPELLED THIS WAY (measured three times). Run 64 reported
+    ``ingestion_held: 11`` against 116 held/no-substance rows. Run 105 hit it
+    again and *repaired the counter by hand mid-run*, reporting "ingestion_held
+    must include both explicit held and no-substance rows" — and that repair
+    reached no rule, so run 108 reproduced it exactly (row 96, ledger 115: the
+    96 is the `held` rows alone). The membership test that made those three
+    possible is gone: there is no set to be half-remembered any more, only
+    "not a candidate". Run 106 shows the other end of the same defect — 15
+    rows disposed `no-new-substance` fell out of the old set and out of every
+    total at once.
+    """
     dispositions = [str(r.get("disposition") or "") for r in rows]
+    in_scope = [d for d in dispositions if d != _MARKER_DISPOSITION]
+    candidates = sum(1 for d in in_scope if d == "candidate")
     return {
-        "ingestion_in_scope": sum(1 for d in dispositions if d != _MARKER_DISPOSITION),
-        "ingestion_candidates": sum(1 for d in dispositions if d == "candidate"),
-        "ingestion_held": sum(1 for d in dispositions if d in _HELD_DISPOSITIONS),
+        "ingestion_in_scope": len(in_scope),
+        "ingestion_candidates": candidates,
+        "ingestion_held": len(in_scope) - candidates,
     }
 
 
@@ -341,19 +462,44 @@ def _run_number(run_id: str) -> str:
     return m.group(1) if m else run_id
 
 
+#: (v5.62, REP-02) See ``tools/cos_reconcile_metrics.SUPERSEDES``. One spelling,
+#: two sides: the writer refuses a second row for a key that does not declare
+#: it, and the scorer reads the LAST row for the key while keeping the history.
+_SUPERSEDES = "supersedes_run_ts"
+
+
+def metrics_rows(vault, run_id: str) -> list[dict[str, Any]]:
+    """EVERY row this run appended, in ledger order.
+
+    Normally one. A run that safe-stopped, was corrected and RE-RAN under the
+    same manifest has two — append-only is the design and it is right, so the
+    rerun says which of them is current rather than editing either.
+    """
+    ops = cos.run_ops_dir(vault)
+    want_run = _run_number(run_id)
+    date = run_id[:10]
+    return [row for row in _read_jsonl(ops / "_cos_metrics.jsonl")
+            if row.get("date") == date
+            and _run_number(str(row.get("run"))) == want_run]
+
+
 def metrics_row(vault, run_id: str) -> dict[str, Any] | None:
-    """This run's row in ``_cos_metrics.jsonl`` (the row of record).
+    """This run's row of record in ``_cos_metrics.jsonl``.
+
+    (v5.62) THE LAST ONE, not the first. Measured, run 111: the first attempt
+    safe-stopped on a stale banner and appended a row reading `mail_triaged: 0`;
+    the corrected rerun enumerated 304/304 and wrote a 118-row ledger. Reading
+    the FIRST row scores the retracted night and calls the real one a
+    disagreement with its own ledger — which is exactly what happened. The
+    history stays readable (``metrics_rows``) and ``check_metrics_row`` refuses
+    a second row that does not declare what it supersedes, so "last" can never
+    mean "whichever was appended most recently and said nothing about why".
 
     Falls back to the per-run ``_cos_metrics_row_<run>.json`` side file only to
     NAME the shortfall precisely — a side file is the run's draft; the appended
     row is what every counter and every reconciliation reads."""
-    ops = cos.run_ops_dir(vault)
-    want_run = _run_number(run_id)
-    date = run_id[:10]
-    for row in _read_jsonl(ops / "_cos_metrics.jsonl"):
-        if row.get("date") == date and _run_number(str(row.get("run"))) == want_run:
-            return row
-    return None
+    rows = metrics_rows(vault, run_id)
+    return rows[-1] if rows else None
 
 
 def host_received_candidates(vault, run_id: str) -> int:
@@ -426,18 +572,135 @@ def check_self_eval(vault, run_id: str, manifest: dict[str, Any]) -> dict[str, A
                     reexecuted=False)
     return _row("self_eval", PASS,
                 f"{len(found)} self-eval check result(s) reported, against "
-                f"{expected} derived from the run manifest's skill digest",
+                f"{why} — never against whatever SKILL.md is deployed now",
                 reexecuted=False)
+
+
+#: The self-eval header every run report carries, e.g.
+#: "## 🧪 Run-integrity — E-checks (16/30 passed, 1 repair round)".
+_REPAIR_HEADER_RE = re.compile(r"(\d+)\s+repair\s+rounds?\b", re.IGNORECASE)
+#: v5.59's Repairs section, and the bullets under it.
+_REPAIRS_SECTION_RE = re.compile(
+    r"^#{2,4}\s*(?:\S+\s+)?REPAIRS\b[^\n]*\n(.*?)(?=^#{1,4}\s|\Z)",
+    re.IGNORECASE | re.MULTILINE | re.DOTALL)
+_BULLET_RE = re.compile(r"^\s*[-*]\s+\S", re.MULTILINE)
+
+
+def check_repairs(vault, run_id: str, manifest: dict[str, Any]) -> dict[str, Any]:
+    """(a2) A repair round is ITEMISED, not just counted.
+
+    WHY THIS EXISTS (measured, four consecutive nights). A run that finds its
+    own artifact wrong repairs it in flight and prints a number — and that
+    number is the only trace, so the repair reaches nobody and the same defect
+    returns:
+
+    * run 105: "Repair round 1 corrected the ingestion held counter and
+      normalized all four never-category rows" — the counter rule it worked
+      out that night ("`ingestion_held` must include both explicit held and
+      no-substance rows") was never written down, and run 108 reproduced the
+      identical error three nights later,
+    * run 75 and run 106 both print "**0 repair rounds**" in the header of a
+      document whose body describes counter repairs ("metrics append succeeded
+      after counter repair"; "ledger counters reconcile after two counter-only
+      repairs") — the count is prose, so it can contradict the page it sits on,
+    * run 104: "1 placement repair" — no artifact anywhere says what was
+      placed, or where,
+    * run 108: "Body-open sequence is contiguous 1-19 after a bookkeeping
+      repair" — a `body_open_seq` renumber is a LEDGER edit, and
+      `check_body_order` then scored the repaired sequence as if the run had
+      drawn it that way.
+
+    So the count is RECOUNTED from the list, exactly as every other counter in
+    this file is recounted from its ledger. What each repair touched has to be
+    written down for the list to exist, and that written line is the thing
+    that can become doctrine.
+
+    VERSION-GATED, like `body_open_seq`: a bundle before v5.59 was never told
+    to write the section, and retro-FAILing forty nights on a heading their
+    doctrine never named is the wolf-cry this file refuses elsewhere. Those
+    runs DEGRADE with the contradiction named, which is how run 75 and run 106
+    read today.
+    """
+    ops = cos.run_ops_dir(vault)
+    report = ops / f"_cos_nightly_{run_id}.md"
+    if not report.is_file():
+        report = ops / f"_cos_run_report_{run_id}.md"
+    try:
+        text = report.read_text(encoding="utf-8")
+    except OSError as exc:
+        return _row("repairs", INCONCLUSIVE,
+                    f"no readable run report for {run_id} ({exc}) — the host "
+                    "cannot tell what this run repaired",
+                    reexecuted=False)
+
+    gated = _bundle_at_least(str(manifest.get("bundle_version") or ""), (5, 59))
+    declared = _REPAIR_HEADER_RE.search(text)
+    section = _REPAIRS_SECTION_RE.search(text)
+    itemised = len(_BULLET_RE.findall(section.group(1))) if section else None
+
+    if declared is None:
+        if not gated:
+            # NON-WOLF-CRY: a pre-v5.59 bundle was never asked for the count,
+            # and a run that claims nothing has made no claim to contradict.
+            # The DEGRADED path below is for the runs that DID claim a repair
+            # and left no record of it — 104, 105 and 108, not forty nights.
+            return _row("repairs", PASS,
+                        f"{report.name} states no repair-round count, and the "
+                        f"bundle that ran ({manifest.get('bundle_version')}) "
+                        "predates v5.59's Repairs section — nothing is claimed "
+                        "here, so nothing is contradicted",
+                        reexecuted=False)
+        return _row("repairs", FAIL,
+                    f"{report.name} states no repair-round count at all, so a "
+                    "repair this run made to its own artifacts would leave no "
+                    "trace. v5.59 requires the count in the run-integrity "
+                    "header and one line per repair under `## 🔧 Repairs`",
+                    reexecuted=False)
+    n = int(declared.group(1))
+    if itemised is None:
+        if n == 0:
+            return _row("repairs", PASS,
+                        f"{report.name} declares 0 repair rounds and lists "
+                        "none — nothing was repaired in flight",
+                        reexecuted=True)
+        return _row("repairs", DEGRADED if not gated else FAIL,
+                    f"{report.name} declares {n} repair round(s) and carries no "
+                    "`## 🔧 Repairs` section — the count is the only record, so "
+                    "what was repaired, in which artifact, is unrecoverable "
+                    "(run 104's 'placement repair' is this exact shape)",
+                    reexecuted=True)
+    if itemised != n:
+        return _row("repairs", DEGRADED if not gated else FAIL,
+                    f"{report.name} declares {n} repair round(s) but its "
+                    f"`## 🔧 Repairs` section itemises {itemised} — a count "
+                    "that disagrees with the list beneath it is the run-75 / "
+                    "run-106 shape ('0 repair rounds' in the header of a page "
+                    "describing counter repairs)",
+                    reexecuted=True)
+    return _row("repairs", PASS,
+                f"{n} repair round(s) declared and {itemised} itemised in "
+                f"{report.name} — the count survives a recount from its own list",
+                reexecuted=True)
 
 
 def expected_check_count(manifest: dict[str, Any]) -> tuple[int | None, str]:
     """How many E-checks the bundle THAT RAN defines — or why we cannot know.
 
-    Digest-verified: the manifest names a path AND the sha256 of the bytes that
-    executed. If the file has since changed (it always has, once a skill ships
-    a new version) the count is UNDERIVABLE, and saying so is the honest
-    answer — re-deriving it from today's file would score the run against a
-    bundle it never executed."""
+    Since MAN-01 the count is FROZEN INTO THE MANIFEST at launch, from the
+    bytes that were about to run, so it survives the bundle shipping a new
+    version. It has to be: the fallback below is digest-verified against a file
+    that has ALWAYS changed by validation time, so before the freeze this
+    answered ``None`` on every real run — runs 101-106 each scored
+    ``degraded`` here, which meant a run reporting ZERO of its 30 checks and a
+    run reporting all 30 scored identically. Re-deriving from TODAY's file
+    would score the run against a bundle it never executed, so the fallback
+    stays digest-verified and stays honest about failing.
+    """
+    frozen = manifest.get("expected_echecks")
+    if isinstance(frozen, int) and not isinstance(frozen, bool) and frozen > 0:
+        return frozen, (f"{frozen} check(s) frozen into the run manifest at "
+                        f"launch from the bundle that ran "
+                        f"({manifest.get('bundle_version')})")
     path = manifest.get("skill_path")
     want = str(manifest.get("skill_sha256") or "")
     if not path:
@@ -472,9 +735,40 @@ def check_metrics_row(vault, run_id: str, manifest: dict[str, Any],
         return _row("metrics_row", FAIL,
                     f"no row for {run_id} in _cos_metrics.jsonl{hint}",
                     reexecuted=True)
+
+    # (v5.62, REP-02) A rerun under the same manifest may append a second row —
+    # the ledger is append-only and stays that way — but it must SAY which row
+    # it retires. Two silent rows for one key is not history, it is two answers
+    # with no rule for choosing, and "the last one" would then mean "whichever
+    # was written most recently", which is a habit and not a record.
+    history = metrics_rows(vault, run_id)
+    if len(history) > 1:
+        seen: list[str] = []
+        for later in history[1:]:
+            names = str(later.get(_SUPERSEDES) or "").strip()
+            if not names or names not in seen + [str(history[0].get("run_ts"))]:
+                return _row("metrics_row", FAIL,
+                            f"{len(history)} rows for {run_id} in "
+                            "_cos_metrics.jsonl and one of them declares no "
+                            f"`{_SUPERSEDES}` naming an earlier row's `run_ts` "
+                            "— the ledger is append-only, so a corrected rerun "
+                            "APPENDS a row that says what it replaces; two "
+                            "undeclared rows for one run leave every counter "
+                            "with two answers and no rule (REP-02)",
+                            reexecuted=True)
+            seen.append(str(later.get("run_ts")))
+    superseded = (f" (row of record is the LATEST of {len(history)}; "
+                  f"{len(history) - 1} superseded by a corrected rerun, kept "
+                  "in place)" if len(history) > 1 else "")
+
     if recon is not None:
         try:
-            recon._require_ingestion_fields(row)
+            # body_pass=False: this scores HISTORY. Every row before the v5.49
+            # bump legitimately predates `body_open_cap`/`body_open_actual`/
+            # `body_budget`, and retro-FAILing those nights on a field their
+            # bundle never named is a wolf-cry. `check_body_open_count` already
+            # carries the right answer for a counter that predates its check.
+            recon._require_ingestion_fields(row, body_pass=False)
         except ValueError as exc:
             return _row("metrics_row", FAIL, str(exc), reexecuted=True)
 
@@ -510,7 +804,222 @@ def check_metrics_row(vault, run_id: str, manifest: dict[str, Any],
     return _row("metrics_row", PASS,
                 "present, all four Phase-1.6 fields, host stamps match the run "
                 "manifest, and all three ingestion counters survive a recount "
-                "from the run's ledger",
+                "from the run's ledger" + superseded,
+                reexecuted=True)
+
+
+def check_ledger_vocabulary(run_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """(b2) The ingestion ledger uses the CLOSED vocabulary E29(b) names.
+
+    WHY THIS EXISTS. E29(b) has said "a `held_reason` from the managed set"
+    since v5.36, and `disposition` has been a three-word enum since rule 8 was
+    written — but nothing host-side ever checked either, so every run coined
+    its own words (see `_HELD_REASONS`). That is not a tidiness problem, it is
+    how the counters and the other checks go quietly wrong:
+
+    * run 106 disposed 15 rows `no-new-substance`; they left `ingestion_held`
+      and were accounted nowhere,
+    * run 108 wrote its 19 substance verdicts as
+      `held_reason: "no-substance-or-already-represented"`, and
+      `check_body_pass` — which keys on the word — passed reporting that the
+      ledger contained no substance verdict at all,
+    * run 105 noticed its own drift and *hand-normalized four ledger rows
+      mid-run* ("normalized all four never-category rows to
+      `disposition: no-substance` with `held_reason: never-category`"), which
+      is a LEDGER edit: precisely what E29(c) forbids, done because no gate
+      caught the drift at the point it was written.
+
+    Scored on every bundle. Unlike `body_open_seq` this needs no new field —
+    both keys have been REQUIRED since ING-05, so a run of any vintage owed
+    them, and the vocabulary they are drawn from has never changed.
+    """
+    bad_disp: dict[str, int] = {}
+    bad_reason: dict[str, int] = {}
+    bad_dedup: dict[str, int] = {}
+    missing_reason = 0
+    for r in rows:
+        disp = str(r.get("disposition") or "").strip()
+        if disp not in _LEDGER_DISPOSITIONS:
+            bad_disp[disp or "<absent>"] = bad_disp.get(disp or "<absent>", 0) + 1
+        # (v5.60) The dedup slot is where run 106 and run 108 actually WROTE
+        # the novelty verdict, so it is closed on the same terms as the other
+        # two. ABSENT is legal; a present value must be one of rule 5's three.
+        if "dedup_check" in r and r.get("dedup_check") is not None:
+            dedup = str(r.get("dedup_check")).strip()
+            if dedup not in _DEDUP_CHECKS:
+                bad_dedup[dedup] = bad_dedup.get(dedup, 0) + 1
+        if disp in ("candidate", _MARKER_DISPOSITION):
+            continue
+        reason = str(r.get("held_reason") or "").strip()
+        if not reason:
+            missing_reason += 1
+        elif reason not in _HELD_REASONS:
+            bad_reason[reason] = bad_reason.get(reason, 0) + 1
+
+    problems: list[str] = []
+    if bad_disp:
+        problems.append(
+            "disposition(s) outside rule 8's vocabulary "
+            f"({'|'.join(sorted(_LEDGER_DISPOSITIONS))}): "
+            + ", ".join(f"{v!r}×{n}" for v, n in sorted(bad_disp.items())))
+    if missing_reason:
+        problems.append(f"{missing_reason} non-candidate row(s) carry no "
+                        "`held_reason` at all")
+    if bad_reason:
+        problems.append(
+            "held_reason(s) outside the managed set: "
+            + ", ".join(f"{v!r}×{n}" for v, n in sorted(bad_reason.items())))
+    if bad_dedup:
+        problems.append(
+            "dedup_check value(s) outside rule 5's closed set "
+            f"({'|'.join(sorted(_DEDUP_CHECKS))}): "
+            + ", ".join(f"{v!r}×{n}" for v, n in sorted(bad_dedup.items()))
+            + " — dedup has NO drop path (a near-duplicate is "
+              "`merge_candidate`, an inconclusive probe still stages), so a "
+              "value reporting a DROP asserts an authority rule 5 never granted")
+    if problems:
+        return _row("ledger_vocabulary", FAIL,
+                    f"{len(rows)} ingestion ledger row(s): " + "; ".join(problems)
+                    + ". These words DEFINE the counters and select the rows "
+                      "every other Phase-1.6 check scores, so an invented one "
+                      "does not read as a variant — it reads as absence "
+                      "(E29(b); SKILL.md Phase 1.6 rules 1½/1¾/6/8)",
+                    reexecuted=True)
+    return _row("ledger_vocabulary", PASS,
+                f"all {len(rows)} ingestion ledger row(s) carry a rule-8 "
+                "disposition, every non-candidate row a `held_reason` from "
+                "the managed set, and every `dedup_check` one of rule 5's "
+                "three words",
+                reexecuted=True)
+
+
+def check_category_stamp(vault, run_id: str,
+                         rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """(b3) The rule-1¾ stamp, scored against the owner's OWN parsed taxonomy.
+
+    WHY THIS EXISTS (measured 2026-08-10, against the live, present and
+    parseable ``overlay/cos/ingest.md``). Rule 1¾ was not being applied at all:
+
+    * runs 103, 106 and 108 wrote **zero** ``never-category`` rows,
+    * run 103 stamped ``category: null`` on **all 118** of its rows — running
+      as though the feature were OFF while the taxonomy sat on disk,
+    * runs 105/106/108 stamped ``internal-coordination`` on **exactly 100 of
+      115** rows each, a blanket default rather than a per-thread judgment.
+
+    The consequence is not cosmetic: ``never`` material was OPENED — 11 of run
+    103's 19 opens and 3 of run 108's — spending a budget the cap owed to
+    actionable mail, and then folded into the same ``no-substance`` bucket.
+
+    Everything here is threshold-free EXCEPT the blanket-default bar, which is
+    calibrated off the same corpus (see ``_CATEGORY_DOMINANCE_MAX_SHARE``). The
+    dominant share is reported on EVERY verdict, pass included, so drift is
+    visible before it is a failure — the discipline v5.53 gave the recovered
+    mismatch count.
+
+    Scored only when the taxonomy is ACTIVE. Absent or unparseable is the
+    documented feature-OFF state (``cos.ingest_taxonomy``), and a run cannot be
+    failed for a rule that was not in force.
+    """
+    try:
+        taxonomy = cos.ingest_taxonomy(vault)
+    except Exception as exc:                     # pragma: no cover - defensive
+        return _row("category_stamp", INCONCLUSIVE,
+                    f"the owner's ingest taxonomy could not be read ({exc}), "
+                    "so the rule-1¾ stamp could not be scored",
+                    reexecuted=False)
+    if taxonomy.get("mode") != "active":
+        return _row("category_stamp", PASS,
+                    f"the ingest taxonomy is {taxonomy.get('mode')!r} — rule "
+                    "1¾ is not in force, so `category: null` on every row is "
+                    "the documented shape and there is nothing to score",
+                    reexecuted=True)
+
+    rules = taxonomy.get("rules") or {}
+    never = {cid for cid, r in rules.items()
+             if str((r or {}).get("disposition") or "").strip().lower() == "never"}
+    scored = [r for r in rows if r.get("disposition") != _MARKER_DISPOSITION]
+    if not scored:
+        return _row("category_stamp", PASS,
+                    "no in-scope ingestion rows to stamp", reexecuted=True)
+
+    stamped = [r for r in scored if r.get("category") is not None]
+    problems: list[str] = []
+
+    if not stamped:
+        problems.append(
+            f"all {len(scored)} in-scope row(s) carry `category: null` while "
+            f"the owner's taxonomy is ACTIVE and defines {len(rules)} "
+            "categor(ies) — `null` is legal ONLY when the overlay is absent or "
+            "unparseable, and this run behaved as though the feature were off "
+            "(run 103's shape: 118 of 118)")
+
+    undefined: dict[str, int] = {}
+    not_excluded = 0
+    wrong_reason = 0
+    for r in stamped:
+        cid = str(r.get("category")).strip()
+        if cid not in rules:
+            undefined[cid] = undefined.get(cid, 0) + 1
+            continue
+        excluded = (str(r.get("held_reason") or "") == "never-category"
+                    and r.get("disposition") == "no-substance"
+                    and not r.get("body_opened"))
+        if cid in never and not excluded:
+            not_excluded += 1
+    for r in scored:
+        if str(r.get("held_reason") or "") != "never-category":
+            continue
+        cid = r.get("category")
+        if cid is None or str(cid).strip() not in never:
+            wrong_reason += 1
+
+    if undefined:
+        problems.append(
+            "categor(ies) the parsed overlay does not define: "
+            + ", ".join(f"{c!r}×{n}" for c, n in sorted(undefined.items()))
+            + " — an id the owner never wrote is not a category, it is a guess")
+    if not_excluded:
+        problems.append(
+            f"{not_excluded} row(s) stamped a `never` category "
+            f"({'|'.join(sorted(never))}) and were NOT excluded — rule 1¾ owes "
+            "each of them `disposition: no-substance`, `held_reason: "
+            "never-category`, `body_opened: false`, or the exclusion is "
+            "decorative")
+    if wrong_reason:
+        problems.append(
+            f"{wrong_reason} row(s) ledgered `never-category` whose stamped "
+            "category the taxonomy does not call `never` — the two slots agree "
+            "in both directions or neither is evidence")
+
+    counts: dict[str, int] = {}
+    for r in stamped:
+        cid = str(r.get("category")).strip()
+        counts[cid] = counts.get(cid, 0) + 1
+    top, top_n = (max(counts.items(), key=lambda kv: kv[1]) if counts
+                  else ("<none>", 0))
+    share = top_n / len(scored) if scored else 0.0
+    if (len(scored) >= _CATEGORY_DOMINANCE_MIN_ROWS
+            and share > _CATEGORY_DOMINANCE_MAX_SHARE):
+        problems.append(
+            f"one category ({top!r}) covers {top_n} of {len(scored)} in-scope "
+            f"rows ({share:.0%}) — over the {_CATEGORY_DOMINANCE_MAX_SHARE:.0%} "
+            "blanket-default bar. Every night that demonstrably APPLIED this "
+            "taxonomy sits at 20-33%; every blanket-default night at 81-90%. "
+            "If this night is honest the repair is the TAXONOMY (one id doing "
+            "several ids' work), never this check")
+
+    detail_tail = (f"; dominant category {top!r} at {top_n}/{len(scored)} "
+                   f"({share:.0%})")
+    if problems:
+        return _row("category_stamp", FAIL,
+                    f"{len(scored)} in-scope ingestion row(s): "
+                    + "; ".join(problems) + " (E29(e); SKILL.md Phase 1.6 "
+                    "rule 1¾)" + detail_tail,
+                    reexecuted=True)
+    return _row("category_stamp", PASS,
+                f"{len(scored)} in-scope row(s) stamped against the owner's "
+                f"active taxonomy: every id defined, every `never` category "
+                f"excluded before its body was opened{detail_tail}",
                 reexecuted=True)
 
 
@@ -569,10 +1078,75 @@ def check_body_pass(run_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
     Measured false-positive rate on the real corpus: ZERO. Runs 57-63 carry not
     one such row (run 63: all 60 ``no-substance`` rows ``body_opened: true``,
     68 opens total); run 64 carries 58.
+
+    THE VERDICT IS READ OFF ``held_reason`` AND ONLY THERE, deliberately —
+    ``disposition: "no-substance"`` cannot carry it, because E29(e) MANDATES
+    that same disposition for the `never-category` exclusion, which is a
+    taxonomy drop and owes no body read (run 104 carries 4 such rows). So the
+    two slots say different things and only one of them asserts a read.
+
+    That is also why this check went vacuous on run 108 (2026-08-09), which
+    wrote its 19 substance verdicts as ``held_reason:
+    "no-substance-or-already-represented"`` and got "no `no-substance` verdict
+    in this run's ingestion ledger — nothing claims a read it did not make".
+    The repair belongs at the invented word, not here: widening this check to
+    read ``disposition`` too would FAIL every doctrine-conforming
+    `never-category` row. ``check_ledger_vocabulary`` (v5.59) refuses a
+    `held_reason` outside the managed set, which is what makes the one word
+    this check keys on trustworthy.
     """
     substance = [r for r in rows
                  if str(r.get("held_reason") or "") == _READ_IMPLYING_REASON]
     opened = sum(1 for r in rows if r.get("body_opened"))
+
+    # (v5.60) TWO COHERENCE RULES ON THE SAME PAIR OF SLOTS, scored before the
+    # substance verdicts because either one invalidates an open outright.
+    #
+    # (1) A `never` CATEGORY COSTS ZERO OPENS. Rule 1¾ excludes on the rule-1½
+    #     DRAW, before the body is opened, so a `never` thread that was opened
+    #     spent one of the twenty the cap owed to actionable mail — a FAIL even
+    #     when the row is ledgered correctly afterwards. Measured: 11 of run
+    #     103's 19 opens and 3 of run 108's went to `never` categories.
+    # (2) AN EMPTY SHELL IS NOT A BODY. Rule 1½ step 4: an extraction at or
+    #     below the 42-character bare-folder shell is a FAILED OPEN, and a row
+    #     claiming `body_opened: true` over one claims a read that did not
+    #     happen. Scored only where `body_chars` is present — a bundle that
+    #     never named the field is never failed against it.
+    never_opened = [r for r in rows
+                    if r.get("body_opened")
+                    and str(r.get("held_reason") or "") == "never-category"]
+    if never_opened:
+        return _row("body_pass", FAIL,
+                    f"{len(never_opened)} row(s) carry `body_opened: true` "
+                    "beside `held_reason: \"never-category\"` — rule 1¾ "
+                    "excludes a `never` category on the rule-1½ DRAW, BEFORE "
+                    "the body is opened, so each of these spent one of the "
+                    "twenty opens the cap owed to actionable material. A "
+                    "post-hoc exclusion recovers the doctrine and keeps the "
+                    "cost (E29(e); measured: 11 of run 103's 19 opens)",
+                    reexecuted=True)
+    shells = [r for r in rows
+              if r.get("body_opened")
+              and isinstance(r.get("body_chars"), int)
+              and not isinstance(r.get("body_chars"), bool)
+              and r["body_chars"] <= _EMPTY_SHELL_CHARS]
+    if shells:
+        return _row("body_pass", FAIL,
+                    f"{len(shells)} row(s) claim `body_opened: true` over an "
+                    f"extraction of at most {_EMPTY_SHELL_CHARS} characters — "
+                    "that is the bare `<origin>/mail/` shell v5.57 names "
+                    "(folder and id gone), so the open FAILED and the row "
+                    "records it as landed. Rule 1½ step 4: `body_opened: "
+                    "false`, no corpus row, and never a post-read verdict "
+                    "(measured: run 108 banked two 42-character bodies and "
+                    "judged both `no-substance`). (v5.62) The reason is "
+                    "`navigation-refused-row-unreachable` when the click "
+                    "fallback could not scroll the row into the list; a row "
+                    "the fallback DID reach is an ordinary open, and only a "
+                    "landing that produced a WRONG id is "
+                    "`target-identity-mismatch`",
+                    reexecuted=True)
+
     if not substance:
         return _row("body_pass", PASS,
                     f"no `{_READ_IMPLYING_REASON}` verdict in this run's "
@@ -602,6 +1176,1090 @@ def check_body_pass(run_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
                 f"{opened} body open(s) across {len(rows)} row(s); every "
                 f"`{_READ_IMPLYING_REASON}` verdict is backed by an actual read",
                 reexecuted=True)
+
+
+#: Rule 1½'s draw groups, coarsest first. The body pass owes P0 before P1
+#: before everything else in scope; inside a group the order is newest-first,
+#: which the ledger does not witness (no `received` field) and this therefore
+#: does not claim to check.
+def _draw_rank(row: dict[str, Any]) -> int:
+    tier = str(row.get("tier") or "").strip().upper()
+    return {"P0": 0, "P1": 1}.get(tier, 2)
+
+
+def _declares(rows: list[dict[str, Any]], want: tuple[int, int]) -> bool:
+    """Does any row's own ``bundle_version`` claim ``want`` or later?
+
+    The version gate s07-followup established: a row is never failed for a field
+    the bundle that wrote it never named, and the row itself is what says which
+    bundle that was.
+
+    (v5.62) IT USED TO ANCHOR AT THE START OF THE STRING, AND THAT MADE EVERY
+    GATE IT GUARDS UNFIREABLE ON THE ONE FORM RUNS ACTUALLY WRITE. Two spellings
+    are live in the real ledgers — a bare ``"5.51"`` and the stamped
+    ``"chief-of-staff v5.60"`` the host manifest carries — and ``re.match`` with
+    ``^v?`` accepts only the first. Counted over every ingestion ledger this
+    project holds: 782 rows in the bare form, and **234 rows spelling it
+    ``chief-of-staff v5.60`` / ``v5.61``**, i.e. runs 110 and 111 — the very
+    bundles that owed v5.60's per-attempt instrumentation and its obligatory
+    in-run control. Both gates read False on them and neither could fail. A
+    version gate that cannot recognise the version is the "check that returns
+    clean because its input was empty" shape, one field over, so it is probed in
+    BOTH spellings by ``test_declares_reads_the_stamped_bundle_string``.
+    """
+    for r in rows:
+        raw = str(r.get("bundle_version") or "")
+        m = re.search(r"v(\d+)\.(\d+)", raw) or re.match(r"(\d+)\.(\d+)", raw)
+        if m and (int(m.group(1)), int(m.group(2))) >= want:
+            return True
+    return False
+
+
+def _declares_v551(rows: list[dict[str, Any]]) -> bool:
+    return _declares(rows, (5, 51))
+
+
+def check_body_order(run_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """(c4) The body pass drew P0 before P1 before the rest.
+
+    WHY THIS EXISTS (measured, two consecutive nights). Run 102 (2026-08-09) had
+    113 threads in scope and a cap of 20, and the first three bodies it opened
+    were P3 ``act`` rows; its first P0 was the SEVENTH open. Its cap happened
+    not to starve anything, so that harm was latent — but run 101, the night
+    before, is the same defect realized: ALL TWENTY of its opens went to P3
+    threads while every one of its 3 P0 and 14 P1 in-scope threads finished
+    ``over-cap``. Run 102's own E29 caught the ordering ("P3-before-P0"); run
+    101's did not catch the starvation at all, and this validator scored that
+    night VALID_DEGRADED 11/11.
+
+    TWO ASSERTIONS, DELIBERATELY UNEQUAL IN WHAT THEY NEED:
+
+    * ``over-cap`` never outranks an open — the cap must bite the LOWEST draw
+      group first. Field-free (it reads only ``tier`` and ``held_reason``, which
+      every bundle since ING-05 writes), so it scores a run of ANY vintage. It
+      fires on RUN 101, which read 20 P2/P3 bodies while 17 in-scope rows
+      reaching up to P0 finished ``over-cap`` — a night this validator scored
+      VALID 11/11 the morning after.
+    * ``body_open_seq`` is contiguous and non-decreasing in rank. This needs the
+      v5.51 field, and it is what catches RUN 102's shape. Run 102's own line
+      order shows the defect plainly (``ot ot ot P1 P1 P1 P0 …``) but a
+      pre-v5.51 ledger's line order is ENUMERATION order, so a run of that
+      vintage DEGRADES here rather than being retro-FAILed against a field its
+      own bundle never named.
+    """
+    opened = [r for r in rows if r.get("body_opened")]
+    if not opened:
+        return _row("body_order", PASS,
+                    f"no body was opened in this run's ingestion ledger "
+                    f"({len(rows)} row(s)) — no draw order to check",
+                    reexecuted=True)
+
+    # (ii) the field-free half: the cap must bite the LOWEST group first, so
+    # NO `over-cap` row may outrank ANY row that was opened — compared against
+    # the LOWEST-ranked body the pass actually read, never the highest. (The
+    # first cut of this compared against the highest and scored run 102 clean:
+    # its 3 starved P1 rows outrank the 3 P3 bodies it opened, but not the P0s
+    # it also opened. The probe caught it; a positive-only test never would.)
+    open_worst = max(_draw_rank(r) for r in opened)
+    starved = [r for r in rows
+               if str(r.get("held_reason") or "") == "over-cap"
+               and _draw_rank(r) < open_worst]
+    if starved:
+        names = ["P0", "P1", "other"]
+        best = min(_draw_rank(r) for r in starved)
+        return _row("body_order", FAIL,
+                    f"{len(starved)} in-scope row(s) finished `over-cap` at a "
+                    f"HIGHER draw group than a body this run actually opened "
+                    f"(the starved set reaches {names[best]}; the lowest group "
+                    f"opened was {names[open_worst]}) — rule 1½ draws P0, then "
+                    "P1, then the rest, so the cap must bite the LOWEST group "
+                    "first. The night's reading budget went to the wrong end "
+                    "of the queue",
+                    reexecuted=True)
+
+    # (i) the sequence half. `body_open_seq` (v5.51) is the ONLY witness: this
+    # ledger holds one row per in-scope thread written in ENUMERATION order,
+    # opened and unopened interleaved (run 63's opened rows are scattered the
+    # length of its file), so line order is not a fallback in either direction.
+    names = ["P0", "P1", "other"]
+    seqs = [r.get("body_open_seq") for r in opened]
+    if all(s is None for s in seqs):
+        if _declares_v551(opened):
+            return _row("body_order", FAIL,
+                        f"none of this run's {len(opened)} opened rows carries "
+                        "`body_open_seq` and its own `bundle_version` says "
+                        "v5.51 or later, which requires it — the draw cannot "
+                        "be recounted, and rule 8 puts the stamp on the same "
+                        "footing as `body_opened`",
+                        reexecuted=True)
+        if len({_draw_rank(r) for r in opened}) == 1:
+            return _row("body_order", PASS,
+                        f"all {len(opened)} body open(s) sit in ONE draw group "
+                        f"({names[_draw_rank(opened[0])]}) and no `over-cap` "
+                        "row outranks them — there is no order here to get "
+                        "wrong, stamp or no stamp",
+                        reexecuted=True)
+        # A pre-v5.51 ledger is not retro-failed against a field its own bundle
+        # never named — but its line order is the only ordering signal it left,
+        # so print it: a reader deciding whether to look harder should see it.
+        seen = "".join(names[_draw_rank(r)][:2] for r in opened)
+        return _row("body_order", DEGRADED,
+                    f"none of this run's {len(opened)} opened rows carries "
+                    "`body_open_seq`, so the order they were DRAWN in cannot "
+                    "be recounted — the bundle predates v5.51 and this "
+                    "ledger's line order is enumeration order, not open order. "
+                    f"No `over-cap` row outranks an open. Line order was: {seen}",
+                    reexecuted=True)
+    if any(s is None for s in seqs):
+        return _row("body_order", FAIL,
+                    f"{sum(1 for s in seqs if s is None)} of this run's "
+                    f"{len(opened)} opened rows carry no `body_open_seq` while "
+                    "others do — a partially-stamped sequence cannot be "
+                    "replayed and is not a witness to anything",
+                    reexecuted=True)
+    elif not all(isinstance(s, int) and not isinstance(s, bool) for s in seqs):
+        return _row("body_order", FAIL,
+                    "a `body_open_seq` in this run's ingestion ledger is not "
+                    f"an integer position: {sorted(map(repr, seqs))[:5]}",
+                    reexecuted=True)
+    elif sorted(seqs) != list(range(1, len(seqs) + 1)):
+        return _row("body_order", FAIL,
+                    f"the {len(seqs)} `body_open_seq` value(s) are not a "
+                    f"contiguous 1..{len(seqs)} — a gap or a repeat means the "
+                    "draw cannot be replayed from the ledger "
+                    f"(got {sorted(seqs)})",
+                    reexecuted=True)
+    ordered = sorted(opened, key=lambda r: r["body_open_seq"])
+    ranks = [_draw_rank(r) for r in ordered]
+    for i in range(1, len(ranks)):
+        if ranks[i] < ranks[i - 1]:
+            return _row("body_order", FAIL,
+                        f"open #{i + 1} is {names[ranks[i]]} but open #{i} was "
+                        f"{names[ranks[i - 1]]} — rule 1½ draws P0, then P1, "
+                        "then the rest, and no thread is opened while an "
+                        "unopened in-scope thread of a higher group remains. "
+                        "Observed `body_open_seq` order: "
+                        + "".join(names[r][:2] for r in ranks),
+                        reexecuted=True)
+    return _row("body_order", PASS,
+                f"{len(opened)} body open(s) drawn P0→P1→rest and recounted "
+                "from `body_open_seq`; no `over-cap` row outranks an open",
+                reexecuted=True)
+
+
+#: The ONE category primitive that writes without selecting the row. Every
+#: other one has to touch the row, and Outlook reads a native selection as an
+#: open — SKILL.md v5.51, measured on run 102's SAP thread.
+_NON_TOUCHING_CATEGORIZE_PRIMITIVE = "rest-categorize"
+_UNREAD_DEFER_REASON = "unread-native-category-deferred"
+
+
+def action_rows(vault, run_id: str) -> list[dict[str, Any]]:
+    return _read_jsonl(cos.run_ops_dir(vault) / f"_cos_action_ledger_{run_id}.jsonl")
+
+
+#: metrics-row counters that only a MUTATION can make non-zero
+_MUTATION_COUNTERS = ("archived", "marked", "drafts_created", "captured")
+
+
+def unledgered_mutations(vault, run_id: str, rows: list[dict[str, Any]]) -> str:
+    """Did this run mutate the mailbox with NO action ledger to check? (why, or "")
+
+    ``check_unread_touch`` and ``check_target_identity`` both re-execute over
+    the action ledger, and both read an EMPTY one as "nothing acted, so nothing
+    could act wrongly" — which is true only when the run really did nothing.
+    Measured, run 106 (2026-08-09): no ``_cos_action_ledger_…jsonl`` was written
+    at all, while the run's own metrics row records 2 verified archives and its
+    own report names FIVE unrecovered identity mismatches. Both controls
+    returned PASS on 0 rows — two instruments that could not fail, on the one
+    night that most needed them.
+
+    So the absence is corroborated against the run's OWN counters, the same
+    cross-artifact discipline ``degrade_evidence`` uses: an action ledger that
+    exists and simply carries no `categorize` row is an ordinary night and stays
+    a PASS.
+    """
+    if rows:
+        return ""
+    row = metrics_row(vault, run_id) or {}
+    did = {}
+    for k in _MUTATION_COUNTERS:
+        v = row.get(k)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and int(v) > 0:
+            did[k] = int(v)
+    if not did:
+        return ""
+    return (f"this run's _cos_action_ledger_{run_id}.jsonl is absent or empty, "
+            f"but its own metrics row records "
+            + ", ".join(f"{k}={v}" for k, v in sorted(did.items()))
+            + ". The ledger this control re-executes over does not exist on a "
+              "run that mutated the mailbox — read as 'nothing acted', that is "
+              "an instrument which cannot fail, so it is INCONCLUSIVE and not a "
+              "pass (E1 already makes the missing ledger a FAIL of the run)")
+
+
+def check_unread_touch(run_id: str, rows: list[dict[str, Any]],
+                       unledgered: str = "") -> dict[str, Any]:
+    """(c5) No category was written onto a row the run had screened UNREAD.
+
+    WHY THIS EXISTS (measured, run 102, 2026-08-09). The run applied
+    ``Held · deadline`` through the native lane to a thread whose own action
+    row reads ``unread_before: true``. Its immediate re-read said the row was
+    still unread (``unread_immediate_after: true``) and the final census said it
+    was read (``unread_final_after: false``) — the flip is ASYNCHRONOUS, so the
+    post-write re-read is not evidence and the only honest moment to look is
+    before. ``unread-touch`` is a Layer-2 hard deny, so this single defect
+    failed E1, E12 and E27 at once, and the run correctly refused to "repair" it
+    by marking the row unread again (that would be a second forbidden
+    mutation).
+
+    The conservative branch v5.51 requires instead is a DEFERRAL — no category,
+    a held row carrying ``held_reason: "unread-native-category-deferred"``, and
+    a count in the report — so the check reports those beside the verdict: a
+    deferral nobody counts is how the write creeps back.
+    """
+    cats = [r for r in rows if str(r.get("action") or "") == "categorize"]
+    if not cats:
+        if unledgered:
+            return _row("unread_touch", INCONCLUSIVE, unledgered, reexecuted=True)
+        return _row("unread_touch", PASS,
+                    f"no `categorize` row in this run's action ledger "
+                    f"({len(rows)} row(s)) — nothing could have touched an "
+                    "unread row through a category write",
+                    reexecuted=True)
+    deferred = [r for r in cats
+                if str(r.get("held_reason") or "") == _UNREAD_DEFER_REASON]
+    executed = [r for r in cats if r not in deferred]
+    touched = [r for r in executed
+               if r.get("unread_before") is True
+               and str(r.get("primitive") or "")
+               != _NON_TOUCHING_CATEGORIZE_PRIMITIVE]
+    if touched:
+        prims = sorted({str(r.get("primitive") or "?") for r in touched})
+        return _row("unread_touch", FAIL,
+                    f"{len(touched)} of this run's {len(cats)} `categorize` "
+                    f"row(s) wrote a category onto a row screened "
+                    f"`unread_before: true` via {', '.join(prims)} — a native "
+                    "category write must SELECT the row and Outlook reads that "
+                    "as an open, so the write IS the unread-touch a Layer-2 "
+                    "hard deny forbids (v5.51). The row is DEFERRED instead, "
+                    f"ledgered `{_UNREAD_DEFER_REASON}`; it is never repaired "
+                    "by marking the message unread again",
+                    reexecuted=True)
+    unstamped = [r for r in executed if "unread_before" not in r]
+    if unstamped:
+        return _row("unread_touch", DEGRADED,
+                    f"{len(unstamped)} of this run's {len(cats)} `categorize` "
+                    "row(s) carry no `unread_before`, so the read state at the "
+                    "moment of the write cannot be recounted host-side — the "
+                    "bundle predates v5.51, and a post-write re-read is not a "
+                    "substitute",
+                    reexecuted=True)
+    return _row("unread_touch", PASS,
+                f"{len(executed)} category write(s), every one onto a row "
+                f"screened read (or via `{_NON_TOUCHING_CATEGORIZE_PRIMITIVE}`, "
+                f"which does not touch it); {len(deferred)} unread row(s) "
+                "deferred and ledgered",
+                reexecuted=True)
+
+
+#: An identity assertion is any action row carrying BOTH id fields — an
+#: EXCLUSION list, deliberately, because the event names drift between runs
+#: (run 102 writes `native-ui-liveness` for run 104's `liveness-preflight`) and
+#: an inclusion list would let a renamed event escape the check unnoticed,
+#: which is the vacuous pass this validator exists to prevent. Excluded, both
+#: measured on run 104's real ledger: `mutation-stop` RE-STATES the mismatch
+#: pair as its stop record (it is not a second mismatch), and `attachment-lane`
+#: reuses the same two fields for a DOWNLOAD PATH
+#: (`target_intended: "BRAIN_COS_DOWNLOADS_DIR"`). Reading either as a per-row
+#: conversation action reports three mismatches where the run made one. A
+#: FUTURE event that reuses the fields for something that is not a conversation
+#: fails loudly here rather than passing silently — the right direction.
+_NON_IDENTITY_EVENTS = ("mutation-stop", "attachment-lane")
+
+
+def _ordered(rows: list[dict[str, Any]]) -> tuple[list[tuple[Any, dict[str, Any]]], bool]:
+    """The ledger in the only order it can honestly be read, and whether that
+    order is the timestamps'.
+
+    Run 104's action ledger is NOT written in timestamp order (its stop record
+    carries 08:54:01 at line 13 while line 21 carries 08:53:30), so ledger
+    position and clock disagree and neither is reliable alone. Timestamps win
+    when EVERY row carries one; otherwise position is all there is, and the
+    caller says so rather than implying a precision it does not have.
+    """
+    by_ts = all(str(r.get("ts") or "") for r in rows)
+    key = (lambda i_r: str(i_r[1].get("ts"))) if by_ts else (lambda i_r: i_r[0])
+    return sorted(enumerate(rows), key=key), by_ts
+
+
+def _repeated_action(retry: dict[str, Any], first: dict[str, Any]) -> str:
+    """Did the one bounded re-target repeat the attempt that just failed (E30(e))?
+
+    Identified by what the action actually DID, per primitive — a click by the
+    point it clicked, a v5.55 deep-link open by the URL it navigated to. Until
+    the body pass could only click, `point` was the whole answer; a re-target
+    that re-navigates to one URL is run 101's defect one primitive over, and a
+    check that knows only about points cannot see it. Returns the phrase naming
+    what repeated, or "" when the two attempts genuinely differed.
+
+    An attempt that carries NEITHER field never acted (`row-not-rendered`), and
+    two of those are not one action taken twice — so they never fingerprint.
+    """
+    point, url = retry.get("point"), retry.get("open_url")
+    if point and point == first.get("point"):
+        return f"clicked the SAME point {point}"
+    if url and url == first.get("open_url"):
+        return f"navigated to the SAME URL {url}"
+    return ""
+
+
+def _is_refusal(row: dict[str, Any]) -> bool:
+    """(v5.62) Did OWA REFUSE this navigation, rather than open the wrong thread?
+
+    RECOUNTED FROM THE PAGE, never from a word the run chose. All four
+    conditions, because each one alone is a different defect:
+
+    * ``open_method: "navigate"`` — a click cannot be refused this way; it either
+      moves the pane or it does not, and the reading-pane URL is app-produced.
+    * NO PRODUCED ID. This is the anti-weakening condition and it is absolute:
+      the moment the page yields ANY conversation id, something opened, and if
+      it is not the intended one that is a `target-identity-mismatch` with every
+      obligation that carries. A refusal is the absence of an open, not a
+      gentler kind of wrong one.
+    * ``url_has_id: false`` — the tab lost its `/id/` segment entirely.
+    * ``body_chars`` at or below the 42-character bare-folder shell, READ AT THE
+      MOMENT IDENTITY WAS JUDGED (v5.60 obliges exactly that). A shell-length
+      page is the whole evidence that nothing was opened; a page with real text
+      and no id is `no-id`, which stays a mismatch.
+
+    All four are fields a v5.60 run already owes on EVERY attempt including the
+    failed ones, so this needs no new field and cannot be asserted into being.
+    """
+    if row.get("open_method") != "navigate":
+        return False
+    if row.get("target_produced"):
+        return False
+    if row.get("url_has_id") is not False:
+        return False
+    body = row.get("body_chars")
+    return (isinstance(body, int) and not isinstance(body, bool)
+            and body <= _EMPTY_SHELL_CHARS)
+
+
+def _refusal_followups(asserted: list[dict[str, Any]],
+                       refused: list[dict[str, Any]]) -> list[str]:
+    """Each refusal took its ONE bounded re-target, and it was the CLICK path.
+
+    Held by name is an acceptable answer; silence is not. The re-target row
+    either produced the intended id (the fallback reached the row and opened
+    it) or records that the row could not be reached
+    (``navigation-refused-row-unreachable``) — which is a counted hold, and the
+    only refusal shape that costs the run a body.
+    """
+    problems: list[str] = []
+    for first in refused:
+        n = first.get("attempt")
+        if not isinstance(n, int) or isinstance(n, bool) or n < 1:
+            problems.append("a refusal row with no attempt number — the "
+                            "re-target cannot be read off it (E30(a))")
+            continue
+        same = [r for r in asserted
+                if str(r.get("target_intended")) == str(first.get("target_intended"))]
+        retries = [r for r in same if r.get("attempt") == n + 1]
+        if not retries:
+            problems.append("a refusal whose bounded re-target was never taken "
+                            "— run 111's shape exactly: the fallback had no "
+                            "rendered row to click and the attempt simply ended")
+            continue
+        retry = retries[0]
+        if retry.get("open_method") != "click":
+            problems.append(
+                "a refusal re-targeted by "
+                f"{str(retry.get('open_method'))!r} rather than the CLICK path "
+                "— re-navigating to the same URL repeats the attempt that was "
+                "just refused (E30(e))")
+        elif (retry.get("target_produced") != retry.get("target_intended")
+                and str(retry.get("held_reason") or "")
+                != "navigation-refused-row-unreachable"):
+            problems.append(
+                "a refusal whose click fallback neither produced the intended "
+                "id nor recorded `navigation-refused-row-unreachable` — a "
+                "fallback that failed for an unnamed reason is not a held row, "
+                "it is an unaccounted body")
+    return problems
+
+
+def check_target_identity(run_id: str, rows: list[dict[str, Any]],
+                          unledgered: str = "") -> dict[str, Any]:
+    """(c6) Every identity mismatch was GUARDED — detected, recovered, inert.
+
+    WHY THIS EXISTS (owner ruling 2026-08-09, on run 104). The safety property
+    is *"no wrong action ever happens"*, not *"no mismatch ever occurs"*. On a
+    virtualized ~300-row list the measured mismatch rate is about one open in
+    twenty, so E30's old bar of ZERO mismatches demanded luck and punished the
+    guard for working: run 104 detected its mismatch, recovered on the one
+    bounded re-target, mutated nothing — and scored FAIL.
+
+    v5.53 fails only an UNGUARDED mismatch. That loosening is exactly the kind
+    of bar a run grades itself against and can now claim its way past, so the
+    claim is RECOUNTED here from the action ledger and never read out of the
+    run's prose. A mismatch fails when it MUTATED anything, went UNDETECTED, or
+    was NOT RECOVERED — the one bounded re-target failed, was not taken, did not
+    differ (E30(e)), or ran past its bound. Recovery must be PROVEN by the
+    fields E30(a)/(e) already oblige: `target_produced_pre` on the mismatch row,
+    a re-target that NAMES what it changed, and `target_produced ==
+    target_intended` on the attempt that landed.
+
+    The recovered count is in the detail on EVERY verdict, pass included — a
+    rising mismatch rate that "recovered" absorbs into silence is the same
+    disappearance `ingestion_candidates` made at run 41.
+
+    (v5.62) AND A REFUSED NAVIGATION IS NOT ONE OF THEM. Measured, run 111
+    (2026-08-10), with the lane's own in-run control CLEAN on the same tab the
+    same night (12/12, 0 mismatches): the priority draw met four navigations OWA
+    simply refused — every one `url_has_id: false`, `body_chars: 42`,
+    `ready_state: complete`, no produced id — and each was scored
+    `target-identity-mismatch`, which ended the pass and cascaded 111 rows into
+    `pass-ended-by-identity-stop`. Nothing wrong opened; NOTHING opened. So the
+    shape is separated here and scored on its own terms, and the separation is
+    RECOUNTED from the fields v5.60 already obliges rather than taken from a
+    word the run chose — a run cannot relabel a wrong-conversation landing as a
+    refusal, because a refusal has no produced id at all (`_is_refusal`).
+    """
+    asserted = [r for r in rows
+                if "target_intended" in r and "target_produced" in r
+                and r.get("event") not in _NON_IDENTITY_EVENTS]
+    if not asserted:
+        if unledgered:
+            return _row("target_identity", INCONCLUSIVE, unledgered,
+                        reexecuted=True)
+        return _row("target_identity", PASS,
+                    f"no per-row identity assertion in this run's action "
+                    f"ledger ({len(rows)} row(s)) — nothing acted on a row, so "
+                    "nothing could act on the wrong one; recovered "
+                    "mismatches: 0",
+                    reexecuted=True)
+
+    differing = [r for r in asserted
+                 if r.get("target_produced") != r.get("target_intended")]
+    refused = [r for r in differing if _is_refusal(r)]
+    # (v5.62) The click fallback that could not SCROLL its row into the
+    # virtualized list never clicked anything, so it has no produced surface to
+    # judge — it is the named hold, not a mismatch. It still cannot hide one:
+    # producing ANY id means something opened, and the word is then a forgery
+    # (caught here and, on the ledger side, by `check_open_instrumentation`).
+    unreachable = [r for r in differing
+                   if str(r.get("held_reason") or "")
+                   == "navigation-refused-row-unreachable"]
+    forged = [r for r in unreachable if r.get("target_produced")]
+    if forged:
+        return _row("target_identity", FAIL,
+                    f"{len(forged)} action row(s) carry "
+                    "`navigation-refused-row-unreachable` while producing a "
+                    "conversation id — a row the fallback never reached cannot "
+                    "have produced anything, and an id it DID produce that is "
+                    "not the intended one is `target-identity-mismatch`",
+                    reexecuted=True)
+    mismatched = [r for r in differing
+                  if not _is_refusal(r) and r not in unreachable]
+
+    # (v5.62) THE REFUSALS ARE SCORED FIRST, AND ON THEIR OWN OBLIGATION: the
+    # ONE bounded re-target is still owed, and on a refusal it is the CLICK
+    # path — which is exactly what run 111 never took. All four of its refusals
+    # died at `target_attempt: 1`, because a refused navigation leaves the tab
+    # on the bare shell with a dozen rows rendered from the TOP of the folder
+    # while a priority row is the OLDEST mail in it, so `row-not-rendered` was
+    # the honest answer to a fallback that never scrolled. A refusal is only
+    # inert if it was RECOVERED or HELD BY NAME; unaccounted, it is a body the
+    # run silently did not read.
+    refusal_problems = _refusal_followups(asserted, refused)
+    if refusal_problems:
+        return _row("target_identity", FAIL,
+                    f"{len(refusal_problems)} of this run's {len(refused)} "
+                    "REFUSED navigation(s) took no bounded re-target: "
+                    + "; ".join(sorted(set(refusal_problems))[:3])
+                    + ". A refusal is answered by the CLICK path, and the click "
+                      "path must first SCROLL the row into the virtualized list "
+                      "— a fallback that cannot reach its row is a second "
+                      "refusal wearing the first one's cause (measured run 111: "
+                      "4 refusals, all dead at attempt 1)",
+                    reexecuted=True)
+
+    if not mismatched:
+        return _row("target_identity", PASS,
+                    f"{len(asserted)} per-row action(s), every one produced the "
+                    f"id it intended or was a navigation OWA REFUSED that took "
+                    f"its bounded click re-target; recovered mismatches: 0; "
+                    f"navigations refused: {len(refused)}",
+                    reexecuted=True)
+
+    # (i) DETECTED. The ledger says the ids differ; the run must say so too. A
+    # row asserting `identity_verified: true` over a differing pair is a
+    # mismatch nobody saw — and it is also the shape a re-target takes when it
+    # claims success without having produced the id it intended.
+    undetected = [r for r in mismatched if r.get("identity_verified") is not False]
+    if undetected:
+        return _row("target_identity", FAIL,
+                    f"{len(undetected)} of this run's {len(mismatched)} "
+                    "identity mismatch(es) are not marked detected "
+                    "(`identity_verified` is not false) — the produced id "
+                    "differs from the intended one and the row asserts the "
+                    "identity held. An UNDETECTED mismatch is what E30 exists "
+                    "for, and a re-target that claims success without "
+                    "`target_produced == target_intended` reads exactly like "
+                    "this",
+                    reexecuted=True)
+
+    # (ii) The mismatch row carries `target_produced_pre` (E30(a), v5.50):
+    # without it "never moved" and "moved to the wrong row" are the same record.
+    no_pre = [r for r in mismatched if "target_produced_pre" not in r]
+    if no_pre:
+        return _row("target_identity", FAIL,
+                    f"{len(no_pre)} of this run's {len(mismatched)} mismatch "
+                    "row(s) carry no `target_produced_pre`, so the ledger "
+                    "cannot say whether the action moved the surface to the "
+                    "wrong conversation or never moved it at all (E30(a), "
+                    "v5.50) — recovery cannot be PROVEN from a record that "
+                    "incomplete",
+                    reexecuted=True)
+
+    # (iii) INERT. Nothing mutated at or after the first mismatch (E30(b)).
+    order, by_ts = _ordered(rows)
+    positions = {id(r): i for i, (_, r) in enumerate(order)}
+    first_at = min(positions[id(r)] for r in mismatched)
+    mutated = [r for _, r in order[first_at:] if r.get("mutation") is True]
+    if mutated:
+        return _row("target_identity", FAIL,
+                    f"{len(mutated)} row(s) carry `mutation: true` at or after "
+                    "this run's first identity mismatch — the first mismatch "
+                    "ends every mutation leg for the run (E30(b)), and a "
+                    "mutation after it is an automatic FAIL, never a "
+                    "repair-and-continue. Ordering read from "
+                    + ("timestamps" if by_ts else
+                       "LEDGER POSITION (not every row carries a `ts`)"),
+                    reexecuted=True)
+
+    # (iv) RECOVERED, once, and differently. One bounded re-target per mismatched
+    # target: it names what it changed, clicks a different point where both
+    # attempts recorded one, and produces the id it intended.
+    problems: list[str] = []
+    recovered = 0
+    for first in mismatched:
+        # Attempt-KEYED, never "every row on this convid": a later action on the
+        # same conversation is not a third attempt at this open, and grouping by
+        # id alone would read one as a breach of the bound (E30(a), v5.48).
+        n = first.get("attempt")
+        if not isinstance(n, int) or isinstance(n, bool) or n < 1:
+            problems.append("a mismatch row with no attempt number — the "
+                            "action-to-produced chain cannot be replayed, so "
+                            "no recovery can be read off it (E30(a))")
+            continue
+        if n > 1:
+            problems.append("a mismatch on the RE-TARGET itself: the one "
+                            "bounded re-target never recovered it (this is run "
+                            "101's and run 103's shape)")
+            continue
+        same = [r for r in asserted
+                if str(r.get("target_intended")) == str(first.get("target_intended"))]
+        if [r for r in same if isinstance(r.get("attempt"), int)
+                and not isinstance(r.get("attempt"), bool) and r["attempt"] > n + 1]:
+            problems.append("more than one re-target on a single open — the "
+                            "re-target is ONE and bounded (E30)")
+            continue
+        retries = [r for r in same if r.get("attempt") == n + 1]
+        if not retries:
+            problems.append("a mismatch whose one bounded re-target was never "
+                            "taken — a mismatch left unrecovered is a FAIL, "
+                            "recovered or not is the whole distinction")
+            continue
+        retry = retries[0]
+        if retry.get("target_produced") != retry.get("target_intended"):
+            problems.append("a re-target that did not produce the id it "
+                            "intended (this is run 101's and run 103's shape)")
+        elif not str(retry.get("retarget_changed") or "").strip():
+            problems.append("a re-target that names no change — a retry "
+                            "identical to the attempt that just failed is not "
+                            "a re-target, whatever it produced (E30(e))")
+        elif repeated := _repeated_action(retry, first):
+            problems.append(f"a re-target that {repeated} (E30(e))")
+        else:
+            recovered += 1
+    if problems:
+        return _row("target_identity", FAIL,
+                    f"{len(problems)} of this run's {len(mismatched)} identity "
+                    "mismatch(es) were NOT recovered on the one bounded "
+                    "re-target: " + "; ".join(sorted(set(problems))[:3])
+                    + f". recovered mismatches: {recovered}",
+                    reexecuted=True)
+
+    return _row("target_identity", PASS,
+                f"{len(asserted)} per-row action(s); navigations refused: "
+                f"{len(refused)}; recovered mismatches: "
+                f"{recovered} — each DETECTED (`identity_verified: false` over "
+                "a `target_produced_pre` pair), each recovered by ONE bounded "
+                "re-target that named its change and produced the id it "
+                "intended, and zero mutation at or after the stop. Fail-closed "
+                "action held; the mismatch is counted, not absorbed",
+                reexecuted=True)
+
+
+#: (v5.60, INS-02) What a v5.60 attempt row owes, per attempt and EVEN WHEN THE
+#: ATTEMPT FAILED. `open_method`/`open_url` because run 106 landed every one of
+#: its twenty opens on attempt 2 while recording neither, which makes that night
+#: unscoreable outright. `eval_ms` because a wedged host bridge and a wrong
+#: conversation currently arrive as the same word. The four page facts because
+#: "the page never loaded", "the list rendered nothing", "the body never
+#: arrived" and "the URL lost its /id/" are four different defects. `hour` and
+#: `display_state` because the night fires at an hour daylight never tests, on a
+#: machine whose screen state daylight never has. `hold_status` READ FROM THE
+#: STATUS FILE because a hold that has lost its tab keeps reporting `holding`.
+_ATTEMPT_FIELDS = ("open_method", "eval_ms", "ready_state", "rendered_rows",
+                   "body_chars", "url_has_id", "hour", "display_state",
+                   "hold_status", "hold_status_source")
+
+#: The in-run control: the SAME fixed daylight burst, re-run inside the night on
+#: the same lane. v5.57 made the rehearsal re-anchor to the TOP of the folder
+#: while a night draws by PRIORITY across ~115 rows, so the rehearsal and the
+#: night have never sampled the same population — which is how four successive
+#: fixes each scored 20/20 in daylight while the night kept failing.
+_CONTROL_ARTIFACT = "_cos_lane_control_{run_id}.json"
+
+
+def check_open_instrumentation(vault, run_id: str,
+                               ledger: list[dict[str, Any]],
+                               acts: list[dict[str, Any]]) -> dict[str, Any]:
+    """(c7) The night can be told apart from its instrument.
+
+    TWO THINGS, and only the first is version-gated.
+
+    (1) THE MISLABEL, scored on every bundle that wrote the field. A row whose
+    own ``target_attempt`` is 0 was never opened, so it cannot carry
+    ``target-identity-mismatch`` — that reason asserts an open happened and
+    produced the wrong id. Measured, run 105 (2026-08-09): **108 rows labelled
+    ``target-identity-mismatch``, every one carrying ``target_attempt: 0`` and
+    ``target_produced: null``**. Read as written that is 108 identity failures;
+    it is ONE stop and 108 threads written out behind it, and the v5.48 stop
+    clause told the run to write exactly that. The word is now
+    ``pass-ended-by-identity-stop``. This is scored off the run's OWN field, so
+    no bundle is judged against a field it never named — runs 103, 106 and 108
+    pass unchanged, their mismatch rows all carrying ``target_attempt: 2``.
+
+    (2) THE PER-ATTEMPT INSTRUMENTATION and the IN-RUN CONTROL, on v5.60+ only.
+    Item B does not close from artifacts: the derivation is correct, page-1
+    membership predicts nothing, 26 of 26 neutral daylight opens landed at the
+    night's own cadence — and run 108's probe log records ~84% first-attempt
+    failure. One transient mode WAS caught in daylight: a navigation wedged
+    Chrome's JS bridge for ~2 minutes, and a run whose identity read times out
+    in that window records a mismatch. The control is what decides it: if the
+    control also fails it is the LANE, if the control passes while the priority
+    draw fails it is the DRAW.
+    """
+    problems: list[str] = []
+
+    mislabelled = [r for r in ledger
+                   if str(r.get("held_reason") or "") == "target-identity-mismatch"
+                   and isinstance(r.get("target_attempt"), int)
+                   and not isinstance(r.get("target_attempt"), bool)
+                   and r["target_attempt"] < 1]
+    if mislabelled:
+        problems.append(
+            f"{len(mislabelled)} ledger row(s) carry `target-identity-mismatch` "
+            "with their own `target_attempt: 0` — never opened, so nothing "
+            "produced the wrong id. That is the pass-ended cascade wearing a "
+            "mismatch's word (run 105 wrote 108 of them, and the night read as "
+            "108 identity failures); its reason is "
+            "`pass-ended-by-identity-stop`")
+
+    # (v5.62) THE REFUSAL WORD, SCORED IN BOTH DIRECTIONS.
+    #
+    # (a) It may only sit on a row that really was refused — recounted from the
+    #     page facts (`_is_refusal`), never from the word. Without this the new
+    #     word is a way to launder a wrong-conversation landing out of the
+    #     mutation stop, which is the one thing this split must never buy.
+    forged = [r for r in ledger
+              if str(r.get("held_reason") or "") == "navigation-refused-row-unreachable"
+              and not _is_refusal(r)]
+    if forged:
+        problems.append(
+            f"{len(forged)} ledger row(s) carry "
+            "`navigation-refused-row-unreachable` without the page facts a "
+            "refusal is defined by (`open_method: \"navigate\"`, no produced "
+            f"id, `url_has_id: false`, `body_chars` <= {_EMPTY_SHELL_CHARS}). "
+            "A landing that produced ANY id opened something; if it was not "
+            "the intended conversation that is `target-identity-mismatch`, "
+            "with the mutation stop and everything else it carries")
+    # (b) AND A REFUSAL MAY NOT END THE PASS. The stop exists for a wrong
+    #     conversation being opened; a refusal opened none, so the cascade word
+    #     needs a TRUE mismatch behind it. Measured run 111: four refusals, and
+    #     111 rows written out `pass-ended-by-identity-stop` behind them — a
+    #     whole night's reading lost to a stop nothing had triggered.
+    cascade = [r for r in ledger
+               if str(r.get("held_reason") or "") == "pass-ended-by-identity-stop"]
+    real_stop = any(str(r.get("held_reason") or "") in _PASS_STOPPING_REASONS
+                    for r in ledger) or any(
+        r.get("target_produced") != r.get("target_intended") and not _is_refusal(r)
+        for r in acts
+        if "target_intended" in r and "target_produced" in r
+        and r.get("event") not in _NON_IDENTITY_EVENTS)
+    if cascade and not real_stop:
+        problems.append(
+            f"{len(cascade)} ledger row(s) carry `pass-ended-by-identity-stop` "
+            "while nothing in this run records a cause that ENDS a pass "
+            f"({'/'.join(sorted(_PASS_STOPPING_REASONS))}, or an action row "
+            "whose produced id differs from the intended one) — so the pass "
+            "ended on a REFUSAL, which opened no conversation, moved no pane "
+            "and touched nothing. A refusal holds its own thread and the pass "
+            "carries on (measured run 111: 4 refusals, 111 rows written out "
+            "behind a stop nothing triggered)")
+
+    gated = _declares(ledger, (5, 60)) or _declares(acts, (5, 60))
+    if gated:
+        attempts = [r for r in acts
+                    if "target_intended" in r
+                    and r.get("event") not in _NON_IDENTITY_EVENTS]
+        missing: dict[str, int] = {}
+        for r in attempts:
+            for f in _ATTEMPT_FIELDS:
+                if r.get(f) is None:
+                    missing[f] = missing.get(f, 0) + 1
+            if r.get("open_method") == "navigate" and not r.get("open_url"):
+                missing["open_url"] = missing.get("open_url", 0) + 1
+            if r.get("hold_status_source") not in (None, "status-file"):
+                problems.append(
+                    "an attempt row whose `hold_status_source` is "
+                    f"{r['hold_status_source']!r} — the hold's status is READ "
+                    "FROM ITS FILE or it is not evidence: a hold that has lost "
+                    "its tab keeps reporting `holding`")
+        if missing:
+            problems.append(
+                f"{len(attempts)} attempt row(s) missing per-attempt "
+                "instrumentation: "
+                + ", ".join(f"{f}×{n}" for f, n in sorted(missing.items()))
+                + " — these are owed on EVERY attempt including the failed "
+                  "ones; run 106 is unscoreable for want of `open_method` and "
+                  "`open_url` alone")
+        control = cos.run_ops_dir(vault) / _CONTROL_ARTIFACT.format(run_id=run_id)
+        if attempts and not control.is_file():
+            problems.append(
+                f"no in-run control ({control.name}) beside {len(attempts)} "
+                "open attempt(s) — the same fixed daylight burst re-run inside "
+                "the night on the same lane is the ONE field that separates a "
+                "lane fault from the priority draw, and without it this night "
+                "cannot be scored either way (E30(g))")
+
+    if problems:
+        return _row("open_instrumentation", FAIL,
+                    f"{len(ledger)} ledger row(s), {len(acts)} action row(s): "
+                    + "; ".join(problems[:4])
+                    + " (E30(g)/(h); SKILL.md A MISMATCH STOPS THE LINE)",
+                    reexecuted=True)
+    if not gated:
+        return _row("open_instrumentation", PASS,
+                    f"no row of this run claims v5.60, so the per-attempt "
+                    "instrumentation and the in-run control are not owed; no "
+                    f"mismatch reason sits on a `target_attempt: 0` row "
+                    f"({len(ledger)} ledger row(s))",
+                    reexecuted=True)
+    return _row("open_instrumentation", PASS,
+                "every attempt row carries its method, URL, evaluation "
+                "duration, page facts, hour, display state and a hold status "
+                "read from the status file; the in-run control is on disk; and "
+                "no mismatch reason sits on a row that was never attempted",
+                reexecuted=True)
+
+
+# -- Phase 1.5f: the cycling set, recounted ------------------------------------
+
+#: Dispositions a Phase-1.5f row carries. A `held` row is IN the batch and
+#: deliberately carries NO stamp (E26 v5.13: an unscreened chip must come back
+#: to the front of the queue), so it is drawn-but-unstamped, never both.
+_REEVAL_DISPOSITIONS = {"reevaluated", "held"}
+
+
+def _is_reeval_row(row: dict[str, Any]) -> bool:
+    """Is this chip-ledger row a Phase-1.5f re-evaluation?
+
+    ``_cos_chip_ledger_*`` also carries Phase-1.5d RE-LEVEL rows (run 72 wrote
+    38, run 74 fifty), which are not draws from the cycling queue and must not
+    be counted as one. A 1.5f row is the one that carries a re-eval disposition
+    or a ``last_reeval`` stamp field.
+    """
+    return (str(row.get("disposition") or "") in _REEVAL_DISPOSITIONS
+            or "last_reeval" in row or "previous_last_reeval" in row)
+
+
+def chip_rows(vault, run_id: str) -> list[dict[str, Any]]:
+    return _read_jsonl(cos.run_ops_dir(vault) / f"_cos_chip_ledger_{run_id}.jsonl")
+
+
+def hold_rows(vault, run_id: str) -> list[dict[str, Any]]:
+    return _read_jsonl(cos.run_ops_dir(vault) / f"_cos_hold_ledger_{run_id}.jsonl")
+
+
+def _written_before(name: str, run_id: str) -> bool:
+    """Was ``name`` written by a run that preceded ``run_id``?
+
+    Run NUMBER first (they ascend, and three runs share 2026-08-09), the date in
+    the filename only when one side carries no run number — a ledger a LATER run
+    wrote must never contribute a stamp to an earlier run's recount, or
+    re-scoring run 102 today would grade it against run 104's work.
+    """
+    a, b = _RUN_NUMBER_RE.search(name), _RUN_NUMBER_RE.search(run_id)
+    if a and b:
+        return int(a.group(1)) < int(b.group(1))
+    m = re.search(r"(\d{4}-\d{2}-\d{2})", name)
+    return bool(m) and m.group(1) < run_id[:10]
+
+
+def prior_reeval_stamps(vault, run_id: str) -> dict[str, str]:
+    """The stamp of record per conversation, from THIS VAULT'S OWN ledgers.
+
+    E26(a)/(j): the ordering is computed from the vault's chip ledgers, and a
+    conversation's stamp is the LATEST ``last_reeval`` any earlier run wrote for
+    it. A conversation with no row here has never been re-evaluated and sorts at
+    epoch 0 — ahead of every dated entry.
+    """
+    ops = cos.run_ops_dir(vault)
+    out: dict[str, str] = {}
+    for path in sorted(ops.glob("_cos_chip_ledger_*.jsonl")) + \
+            sorted(ops.glob("_chip_reeval_*.jsonl")):
+        if run_id in path.name or not _written_before(path.name, run_id):
+            continue
+        for r in _read_jsonl(path):
+            if not _is_reeval_row(r):
+                continue
+            cid = str(r.get("conversation_id") or "")
+            stamp = str(r.get("last_reeval") or "")
+            if cid and stamp and stamp > out.get(cid, ""):
+                out[cid] = stamp
+    return out
+
+
+def _bundle_at_least(bundle: str, want: tuple[int, int]) -> bool:
+    """Does the manifest's ``bundle_version`` claim ``want`` or later?
+
+    The same version gate ``_declares_v551`` applies to a ledger row, read off
+    the MANIFEST instead — a chip-reeval row carries no ``bundle_version``, and
+    the manifest is the artifact that froze which doctrine actually ran.
+    """
+    m = re.search(r"v?(\d+)\.(\d+)", str(bundle or ""))
+    return bool(m) and (int(m.group(1)), int(m.group(2))) >= want
+
+
+def _denominator_row(drawn_rows: list[dict[str, Any]], recount: int,
+                     bundle: str, detail: str) -> dict[str, Any]:
+    """E26(j): the run STATES the population it drew from, and the host recounts it.
+
+    A denominator nobody can recompute is how ``33`` survived three runs while
+    the real population was 287: it was reported in prose, in a self-eval the
+    run wrote about itself, and nothing on the host could disagree with it.
+    """
+    reported = {r["cycling_population"] for r in drawn_rows
+                if isinstance(r.get("cycling_population"), int)
+                and not isinstance(r.get("cycling_population"), bool)}
+    if not reported:
+        if _bundle_at_least(bundle, (5, 54)):
+            return _row("chip_reeval_draw", FAIL,
+                        f"{detail} — but this run's bundle ({bundle}) carries "
+                        "E26(j) and its chip ledger states no "
+                        "`cycling_population`. A denominator that cannot be "
+                        "recomputed from the vault's own ledgers is a FAIL: "
+                        f"the host recounts {recount}, and runs 103 and 104 "
+                        "both reported 33",
+                        reexecuted=True)
+        return _row("chip_reeval_draw", DEGRADED,
+                    f"{detail}. The run states no `cycling_population`, so the "
+                    "denominator it reported in prose cannot be checked — its "
+                    f"bundle ({bundle or 'unknown'}) predates E26(j), and a run "
+                    "is not retro-failed against a field its own doctrine never "
+                    f"named. The host's own recount is {recount}",
+                    reexecuted=True)
+    if len(reported) > 1:
+        return _row("chip_reeval_draw", FAIL,
+                    f"{detail} — but the chip ledger states "
+                    f"{len(reported)} different `cycling_population` values "
+                    f"({sorted(reported)}); one draw has one denominator",
+                    reexecuted=True)
+    stated = reported.pop()
+    if stated != recount:
+        return _row("chip_reeval_draw", FAIL,
+                    f"{detail} — but the run states it drew from "
+                    f"{stated} conversation(s) and the host recounts "
+                    f"{recount} from this run's own hold ledger. A denominator "
+                    "that does not survive a recount is E26(j)'s whole point. "
+                    "THE DEFINITION, and it is the only one: the population is "
+                    "the count of DISTINCT `conversation_id` in this run's own "
+                    "`_cos_hold_ledger_<run_id>.jsonl` (union the threads this "
+                    "phase drew, which the ledger already contains). NO ROW IS "
+                    "FILTERED OUT — not by `held_category`, and above all not "
+                    "by `held_reason`: a thread held because tonight's browser "
+                    "broke is a held thread. Measured, run 109 "
+                    "(2026-08-10): 301 hold rows, of which 51 carried "
+                    "`safety-hold: body-pass-visibility-control-unavailable` "
+                    "and were dropped from the count, giving the 250 the run "
+                    "reported against the host's 301",
+                    reexecuted=True)
+    source = ""
+    for r in drawn_rows:
+        source = str(r.get("cycling_population_source") or "").strip()
+        if source:
+            break
+    if not source:
+        if _bundle_at_least(bundle, (5, 54)):
+            return _row("chip_reeval_draw", FAIL,
+                        f"{detail}, and the stated `cycling_population` "
+                        f"{stated} survives the recount — but no row names "
+                        "`cycling_population_source`, so HOW the set was "
+                        "enumerated is unrecorded, which is the half of E26(j) "
+                        "that catches a right number derived the wrong way",
+                        reexecuted=True)
+        return _row("chip_reeval_draw", DEGRADED,
+                    f"{detail}, and the stated `cycling_population` {stated} "
+                    "survives the recount, but the run names no "
+                    "`cycling_population_source`",
+                    reexecuted=True)
+    return _row("chip_reeval_draw", PASS,
+                f"{detail}. Stated `cycling_population` {stated} survives the "
+                f"host recount, derived from {source!r}",
+                reexecuted=True)
+
+
+def check_chip_reeval_draw(run_id: str, batch: list[dict[str, Any]],
+                           held: list[dict[str, Any]], prior: dict[str, str],
+                           *, bundle: str = "") -> dict[str, Any]:
+    """(c7) The chip re-evaluation batch IS the head of the cycling queue.
+
+    WHY THIS EXISTS (measured, runs 100/103/104, 2026-08-08..09). E26(a) has
+    required an oldest-``last_reeval``-first draw since v5.5 and never once got
+    one. Run 104 re-evaluated the IDENTICAL twenty conversations run 102 had
+    evaluated nine hours earlier, while 234 held-and-chipped conversations had
+    NEVER been stamped at all and so, under E26(a)'s epoch-0 rule, owned every
+    slot in that batch. Same shape on runs 100 and 103. Three occurrences.
+
+    THE DEFECT IS THE POPULATION, NOT THE COMPARATOR — which is why this
+    recounts the SET and not just the order. Both runs 103 and 104 reported the
+    denominator ``33``, and 33 is exactly the number of DISTINCT CONVERSATIONS
+    THE PHASE HAD ALREADY EVALUATED (``|run100 ∪ run102|`` = ``|run102 ∪
+    run103|`` = 33, the same set both times). Enumerating candidates from the
+    ``last_reeval`` STAMPS is self-referential: a never-stamped thread has no
+    stamp row to find, so it can never enter the list, rule 1's epoch-0 clause
+    becomes unreachable, and the queue ping-pongs forever among the threads it
+    has already drawn. Six runs, 120 stamp events, 53 distinct conversations,
+    and the backlog RTG-01 exists to drain untouched.
+
+    So the population is the run's OWN held-and-chipped census (tonight's
+    ``_cos_hold_ledger_``), never the stamp file, and this check FAILS a batch
+    that is not that population's head. The run's prose is not an input.
+
+    WHAT IT DOES NOT CLAIM. Which of the never-stamped threads a cold start
+    picked is NOT recountable here — the hold ledger carries no ``received``, so
+    E26(a)'s oldest-``received``-then-``conversation_id`` tiebreak has no source
+    on this surface. The set-level invariant is what is decidable and it is what
+    every measured failure violates: while never-stamped threads remain, a
+    stamped one may not be drawn.
+    """
+    drawn_rows = [r for r in batch if _is_reeval_row(r)]
+    drawn = list(dict.fromkeys(str(r.get("conversation_id") or "")
+                               for r in drawn_rows if r.get("conversation_id")))
+    if not drawn:
+        return _row("chip_reeval_draw", PASS,
+                    f"no Phase-1.5f row in this run's chip ledger "
+                    f"({len(batch)} row(s)) — no draw to recount (a phase that "
+                    "owed a batch and wrote none is E26's run-obligation, "
+                    "scored on the self-eval, not here)",
+                    reexecuted=True)
+
+    held_ids = {str(r.get("conversation_id") or "") for r in held}
+    held_ids.discard("")
+    missing = [c for c in drawn if c not in held_ids]
+    if missing:
+        # ponytail: the hold ledger is the only chipped census a run writes.
+        # When it does not even contain the batch it is not one, and a
+        # population recounted from it would be fiction. The OUTCOME CONTRACT
+        # is what catches a hold ledger that under-reports (archive : hold :
+        # drafted must equal the enumeration), so this degrades rather than
+        # inventing a second census.
+        return _row("chip_reeval_draw", DEGRADED,
+                    f"this run's hold ledger ({len(held_ids)} conversation(s)) "
+                    f"does not contain {len(missing)} of the {len(drawn)} "
+                    "thread(s) the chip ledger says were re-evaluated, so it is "
+                    "not a census of the chipped set and the cycling "
+                    "POPULATION cannot be recounted from it — the draw is taken "
+                    "on the run's word",
+                    reexecuted=False)
+
+    population = held_ids | set(drawn)
+    never = [c for c in population if c not in prior]
+    stamped_drawn = [c for c in drawn if c in prior]
+
+    if len(never) >= len(drawn):
+        if stamped_drawn:
+            oldest = min(prior[c] for c in stamped_drawn)
+            return _row("chip_reeval_draw", FAIL,
+                        f"{len(stamped_drawn)} of the {len(drawn)} thread(s) "
+                        f"drawn had ALREADY been re-evaluated (oldest such "
+                        f"stamp {oldest}) while {len(never)} of the "
+                        f"{len(population)} held-and-chipped conversation(s) "
+                        "have NEVER been stamped — a never-reeval'd thread "
+                        "sorts at epoch 0 and owns every slot in this batch "
+                        "(E26(a)/(j)). This is the run-104 shape: the "
+                        "population was enumerated from the `last_reeval` "
+                        "stamps, which only the already-drawn threads have, so "
+                        "the queue re-draws its own head and the backlog never "
+                        "cycles",
+                        reexecuted=True)
+        # Say which it is, rather than asserting the ceiling from memory: run
+        # 109's hold ledger carries `received` on all 301 rows, and its report
+        # still claimed "the hold ledger lacks the received evidence" because
+        # THIS STRING said so unconditionally.
+        tiebreak = ("(Which unstamped threads were picked is not recountable: "
+                    "this run's hold ledger carries no `received` for E26(a)'s "
+                    "cold-start tiebreak)"
+                    if not any(r.get("received") for r in held) else
+                    "(This run's hold ledger DOES carry `received`, so E26(a)'s "
+                    "cold-start tiebreak is recountable from it — no check "
+                    "scores it yet, and no run may claim the evidence is "
+                    "missing)")
+        return _denominator_row(
+            drawn_rows, len(population), bundle,
+            f"{len(drawn)} thread(s) drawn, every one never previously "
+            f"re-evaluated, from a population of {len(population)} "
+            f"held-and-chipped conversation(s) of which {len(never)} are "
+            f"unstamped — the epoch-0 head. {tiebreak}")
+
+    left_behind = [c for c in never if c not in drawn]
+    if left_behind:
+        return _row("chip_reeval_draw", FAIL,
+                    f"{len(left_behind)} never-re-evaluated conversation(s) "
+                    f"were left behind by a batch of {len(drawn)} that had room "
+                    f"for them — every one of the {len(never)} unstamped "
+                    f"thread(s) in this run's population of {len(population)} "
+                    "sorts at epoch 0, ahead of any dated stamp (E26(a)/(j))",
+                    reexecuted=True)
+
+    # Fewer unstamped threads than slots: the remainder goes to the OLDEST
+    # stamps. Ties are inclusive — a whole cohort shares one stamp, and picking
+    # any member of it is a correct draw.
+    needed = len(drawn) - len(never)
+    oldest_first = sorted(prior[c] for c in population if c in prior)
+    cutoff = oldest_first[needed - 1]
+    late = [c for c in stamped_drawn if prior[c] > cutoff]
+    if late:
+        return _row("chip_reeval_draw", FAIL,
+                    f"{len(late)} thread(s) in this batch carry a "
+                    f"`last_reeval` NEWER than the {needed}th-oldest stamp in "
+                    f"the population ({cutoff}) — the batch is not the head of "
+                    "the queue, and the threads it skipped stay skipped "
+                    "(E26(a)/(j))",
+                    reexecuted=True)
+
+    return _denominator_row(
+        drawn_rows, len(population), bundle,
+        f"{len(drawn)} thread(s) drawn from a population of "
+        f"{len(population)} held-and-chipped conversation(s): all "
+        f"{len(never)} never-stamped thread(s) first, the remaining "
+        f"{needed} slot(s) filled from stamps no newer than {cutoff}")
 
 
 def check_body_open_count(run_id: str, rows: list[dict[str, Any]],
@@ -1098,12 +2756,25 @@ def verify_run(vault, run_id: str, *, now: _dt.datetime | None = None,
 
     manifest = cos.run_manifest(vault, run_id)
     if manifest is None:
-        out.update(state="scored", verdict=cos.RUN_INCONCLUSIVE,
-                   reason=("no host run manifest for this run — the host never "
-                           "recorded what was supposed to run, so it cannot "
-                           "check whether the run did it"),
-                   checks=[_row("completion", INCONCLUSIVE,
-                                "no host run manifest", reexecuted=True)])
+        # NAME WHICH OF THE TWO IT IS. A malformed id (`106` for
+        # `2026-08-09-run106`) resolves to no manifest path at all, and
+        # reporting that as "no host run manifest" sends the reader looking for
+        # a missing file that is sitting right there — run 106's own report
+        # carries exactly that line while its manifest existed the whole time.
+        try:
+            cos.checked_run_id(run_id)
+            why = ("no host run manifest for this run — the host never "
+                   "recorded what was supposed to run, so it cannot "
+                   "check whether the run did it")
+            short = "no host run manifest"
+        except ValueError as exc:
+            why = (f"{exc}. That is a MALFORMED run id, NOT a missing "
+                   "manifest: pass the full host-assigned id, which the host "
+                   "publishes at .brain/cos/shared/current-run.json")
+            short = "malformed run id (not a missing manifest)"
+        out.update(state="scored", verdict=cos.RUN_INCONCLUSIVE, reason=why,
+                   checks=[_row("completion", INCONCLUSIVE, short,
+                                reexecuted=True)])
         return out
     out["inputs_digest"] = inputs_digest(vault, run_id, manifest)
 
@@ -1138,10 +2809,25 @@ def verify_run(vault, run_id: str, *, now: _dt.datetime | None = None,
                                 row, rows, recon)
 
     checks.append(check_self_eval(vault, run_id, manifest))
+    checks.append(check_repairs(vault, run_id, manifest))
     checks.append(check_metrics_row(vault, run_id, manifest, rows, recon))
+    checks.append(check_ledger_vocabulary(run_id, rows))
+    checks.append(check_category_stamp(vault, run_id, rows))
     checks.append(check_ingestion_ledger(vault, run_id, rows, recon))
     checks.append(check_body_pass(run_id, rows))
+    checks.append(check_body_order(run_id, rows))
     checks.append(check_body_open_count(run_id, rows, row))
+    acts = action_rows(vault, run_id)
+    # Corroborated ONCE and handed to both controls: an empty action ledger is
+    # "nothing acted" only if the run's own counters agree (run 106 did not).
+    unledgered = unledgered_mutations(vault, run_id, acts)
+    checks.append(check_unread_touch(run_id, acts, unledgered))
+    checks.append(check_target_identity(run_id, acts, unledgered))
+    checks.append(check_open_instrumentation(vault, run_id, rows, acts))
+    checks.append(check_chip_reeval_draw(
+        run_id, chip_rows(vault, run_id), hold_rows(vault, run_id),
+        prior_reeval_stamps(vault, run_id),
+        bundle=str(manifest.get("bundle_version") or "")))
     checks.append(check_corpus_join(vault, run_id, rows))
     checks.append(check_candidate_stamps(run_id, rows))
     checks.append(check_artifact_naming(vault, run_id))
@@ -1227,6 +2913,58 @@ def recent_verdicts(vault, *, window: int = 5) -> list[dict[str, Any]]:
             for rid in known_run_ids(vault)[:max(0, int(window))]]
 
 
+def stalled_runs(vault, *, days: int | None = None,
+                 now: _dt.datetime | None = None,
+                 hours: float | None = None) -> list[dict[str, Any]]:
+    """Runs that WORKED and never completed — PENDING with nothing coming.
+
+    Deliberately narrow, so it stays loud instead of becoming background noise:
+
+    * a run with a recorded verdict is ``alert``'s business, not this one;
+    * a manifest with NO artifacts naming it is an ABANDONED STAMP — the host
+      re-ran ``cos-run-begin`` before the run started, which is ordinary
+      (2026-08-09 stamped run107 at 18:20Z and nothing was ever written under
+      that name; run 108 launched three hours later) and is not a stalled run.
+      Run 106 is NOT one of these and this docstring said it was: it carries
+      20 artifacts and is a genuine PENDING, held back only by the 6-hour
+      idle floor below;
+    * a run still writing, or complete-but-not-yet-scored, is simply in flight.
+
+    What is left is the failure that has now happened twice: artifacts on disk,
+    a manifest-declared name never written, and no verdict ever recorded.
+    """
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    limit = float(STALLED_PENDING_HOURS if hours is None else hours) * 3600.0
+    oldest = (now.date()
+              - _dt.timedelta(days=max(0, int(STALLED_LOOKBACK_DAYS
+                                              if days is None else days))))
+    out: list[dict[str, Any]] = []
+    for run_id in known_run_ids(vault):
+        if run_id[:10] < oldest.isoformat():
+            continue
+        if cos.run_validity(vault, run_id).get("recorded"):
+            continue
+        manifest = cos.run_manifest(vault, run_id)
+        if manifest is None:
+            continue
+        files = run_artifacts(vault, run_id)
+        newest = None
+        for p in files:
+            try:
+                newest = max(newest or 0.0, p.stat().st_mtime)
+            except OSError:                                # pragma: no cover
+                continue
+        if newest is None:
+            continue                       # abandoned stamp, not a stalled run
+        done = completion(vault, run_id, manifest, now=now, quiesce=0)
+        idle = now.timestamp() - newest
+        if done["complete"] or idle < limit:
+            continue
+        out.append({"run_id": run_id, "idle_hours": round(idle / 3600.0, 1),
+                    "artifacts": len(files), "missing": done["missing"]})
+    return out
+
+
 def alert(vault, *, window: int = 5) -> dict[str, Any]:
     """The loud surface: which recent runs are NOT claimable, and why.
 
@@ -1245,6 +2983,22 @@ def alert(vault, *, window: int = 5) -> dict[str, Any]:
             "their candidates are quarantined, never claimed; see "
             "`_cos_nightly_<run>.md` and the recorded reason in "
             f"{cos.runs_dir(vault)}/<run>.validity.json")
+    # NOT `window`: see STALLED_LOOKBACK_DAYS — the verdict window is 5 runs and
+    # this deployment fires six in a day, so a count-based scan here could never
+    # fire at all.
+    stalled = stalled_runs(vault)
+    if stalled:
+        out["stalled_runs"] = stalled
+        names = ", ".join(f"{s['run_id']} (idle {s['idle_hours']}h, "
+                          f"{s['artifacts']} artifact(s), missing "
+                          f"{', '.join(s['missing'])})" for s in stalled)
+        out["stalled_text"] = (
+            f"{len(stalled)} COS run(s) did a night's work and never became "
+            f"COMPLETE, so NOT ONE host check ever executed on them ({names}) "
+            "— the run wrote an artifact under a name the host did not "
+            "declare. The manifest's `expected_artifacts` is the list of names "
+            "it owes (MAN-01); rename the artifact to the declared name and "
+            "the next broker fold scores the night.")
     return out
 
 
@@ -1272,5 +3026,5 @@ __all__ = [
     "PASS", "DEGRADED", "FAIL", "INCONCLUSIVE",
     "alert", "checkers", "completion", "expected_check_count", "hot_entry",
     "inputs_digest", "known_run_ids", "ledger_counts", "recent_verdicts",
-    "run_artifacts", "verify_pending_runs", "verify_run",
+    "run_artifacts", "stalled_runs", "verify_pending_runs", "verify_run",
 ]

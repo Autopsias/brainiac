@@ -72,6 +72,14 @@ query-against-corpus search using the new content's own gist as the query:
 
 ```bash
 brain --vault "$BRAIN_VAULT" search "<first ~150 chars of the new source>" --rerank --json
+
+> **Multilingual vaults — the variant contract (AGENTS.md §5 rule 3).** Before
+> the first vault search, read the derived census: `brain status --json` ->
+> `index.languages`. When `multilingual` is true, issue every search as the
+> question PLUS one `--variant "<the same question in that language>"` for each
+> other entry in `vault_languages` — you write the translation, the engine
+> fuses the result lists into one ranking. `multilingual: false`, one language,
+> or no census: a single query is correct — do not invent a variant.
 ```
 
 Read the top result's score. There is no calibrated "auto-block" threshold

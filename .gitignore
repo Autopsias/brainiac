@@ -70,11 +70,59 @@ _evidence/obs-recovery-2026-07/*
 !_evidence/obs-recovery-2026-07/lock-contention-stress.txt
 # S03B (RB-02): kill-resume transcript, generic synthetic-vault content only.
 !_evidence/obs-recovery-2026-07/kill-resume-proof.txt
+# eval-ledger-power-fusion-residual-2026-08-09: the whole evidence tree is
+# TRACKED — it holds the fixture-recovery snapshot and the once-only held-out
+# claim ledger, whose only backup is the commit. Ledger audits, fingerprint
+# manifests and metric tables only; never real owner/vault content.
+!_evidence/eval-power/
+!_evidence/eval-power/**
+# anylang-query-variants-2026-08-09 (CON-01): the language-census readout —
+# per-language COUNTS, gold-document verdicts keyed by QUERY ID, and grep/tool
+# transcripts. No corpus paths, no document text, no query text; same content
+# class as the committed s09 stratum audit, and the acceptance review reads it.
+# Allowlisted FILE BY FILE on purpose: a later session's evidence in this tree
+# has to be a deliberate decision, never one inherited from this line.
+!_evidence/anylang/
+_evidence/anylang/*
+!_evidence/anylang/s03-census.txt
+# s04 (MEA-01): the pre-registration, the measurement readout and the DERIVED
+# population inventory. Metric tables, query IDs, strata and language codes
+# only — no corpus path, no document title, no query text, no variant text.
+# Deliberately NOT allowlisted beside them: s04-variant-leakage.txt, which
+# prints real gold-document titles next to the query text they were checked
+# against. It exists and is non-empty on disk for the evidence gate; it stays
+# untracked on purpose, same posture as s02's family probe.
+!_evidence/anylang/s04-PRE-REGISTRATION.md
+!_evidence/anylang/s04-variant-readout.md
+!_evidence/anylang/s04-population-inventory.json
 eval/_expand/
 eval/golden_set*.json
+# s03 (PWR-01/PWR-02): the staged expansion draft. Same content class as
+# golden_set.json — real corpus paths plus verbatim spans quoted out of MNPI
+# meeting notes, audits and decks — so it never enters a commit either.
+eval/golden-expansion-draft.json
+# ...and its review sheet, which is the ONE exception to the force-tracked
+# _evidence/eval-power/ tree below: the evidence contract requires a span
+# quoted from each gold DOCUMENT, and that is exactly the "real owner/vault
+# content" that tree forbids. Excluded rather than redacted into uselessness;
+# consequence is that it has no commit backup and must be read from disk.
+_evidence/eval-power/s03-expansion-review.md
+# s09 (PT-01/PT-02): the Portuguese expansion draft and its review sheet, same
+# content class and same reason as the two s03 lines above — real corpus paths
+# plus verbatim spans quoted out of MNPI Portuguese meeting notes, deep-dive
+# reports and legal analyses. Neither has a commit backup; s05 reads both from
+# disk. The s09 STRATUM AUDIT (`s09-pt-stratum-audit.md`) is NOT listed here —
+# it carries counts, verdicts and fixture paths only, so it stays tracked.
+eval/golden-expansion-draft-pt.json
+_evidence/eval-power/s09-pt-expansion-review.md
 eval/qrels/
 eval/reformulations.json
 eval/runs/
+# HYG-02: the score-time codename map. It carries the PRIVATE corpus's real
+# names on one side of every entry, so it is exactly as sensitive as
+# golden_set.json — never committed. Absent map == identity (see
+# eval/path_normalize.py); the scorecard stamps which map it used.
+eval/codename-map.json
 
 # s04 full-corpus capture: multi-hour job output is a TEMP artifact promoted
 # to eval/runs/s13-final.json by s05 only AFTER the DONE sentinel validates —
@@ -101,3 +149,60 @@ _archive/
 # counts and timings only, no note content.
 !_evidence/obs-recovery-2026-07/real-corpus-validation.txt
 dist_build/
+
+# s05 (PWR-03): the PRE-MERGE fixture snapshot. `_evidence/eval-power/**` is
+# force-tracked, but these three files are byte copies of the private fixtures
+# (real corpus paths), so the copies stay out of the commit while
+# `manifest.txt` beside them — sha256s and counts only — stays tracked. That
+# manifest is what proves the snapshot was taken before the merge; the copies
+# are the local revert path, which is why they are copies and not a git ref.
+_evidence/eval-power/s05-fixtures-pre-merge/golden_set.json
+_evidence/eval-power/s05-fixtures-pre-merge/qrels.json
+_evidence/eval-power/s05-fixtures-pre-merge/codename-map.json
+# s04 (MEA-01): the PRE-VARIANT fixture snapshot, same rule and same reason —
+# byte copies of the private fixtures stay out of the commit, `manifest.txt`
+# beside them (sha256s and counts only) stays tracked and is what proves the
+# snapshot was taken before the variants were written.
+_evidence/eval-power/s04-fixtures-pre-variants/golden_set.json
+_evidence/eval-power/s04-fixtures-pre-variants/qrels.json
+_evidence/eval-power/s04-fixtures-pre-variants/codename-map.json
+# s08 (EVL-01): the PRE-EXPANSION fixture snapshot, same rule and same reason as
+# the two blocks above — byte copies of the private fixtures stay out of the
+# commit, `manifest.txt` beside them (sha256s, byte counts and the proved
+# restore command) stays tracked and is what shows the snapshot was taken
+# before the expansion.
+_evidence/eval-power/s08-fixtures-pre-expansion/golden_set.json
+_evidence/eval-power/s08-fixtures-pre-expansion/qrels.json
+_evidence/eval-power/s08-fixtures-pre-expansion/codename-map.json
+# s08 (EVL-01): the authored expansion draft and its per-stratum source files.
+# Same content class as `golden-expansion-draft.json` above — real corpus paths
+# plus question text derived from MNPI meeting notes, audits, contracts and
+# decks — so neither enters a commit. `eval/_expand/` is already excluded; this
+# line covers the assembled draft that sits beside the fixtures.
+eval/golden-expansion-draft-s08.json
+
+# s10 (EVL-03): the RAW per-query captures. `_evidence/eval-power/**` is
+# force-tracked, but these two files hold every arm's returned document keys
+# for every query — 10,603 real corpus paths, the same content class as
+# eval/runs/ and golden_set.json. They exist on disk so a reporting bug never
+# costs a re-capture (`--from-runs`), and they stay untracked for the same
+# reason those do. The AGGREGATE artifacts beside them (s10-train.json,
+# s10-validate.json, s10-train-extra-contrasts.json) carry metric tables,
+# strata, counts and fixture digests only — verified 0 corpus paths — and stay
+# tracked.
+_evidence/eval-power/s10-attempt-1/s10-train-runs.json
+_evidence/eval-power/s10-attempt-1/s10-train-runs-shipped-valve-30s.json
+
+# s10 (EVL-03): the pre-registration, the claim readout and its rendered
+# one-pager. `_evidence/*` above excludes this directory wholesale, so the
+# directory itself is re-included first (an excluded parent cannot be
+# re-entered by a file pattern). Same allowlisting posture, and same
+# confidentiality review, as s04's equivalents above: metric tables, arm
+# names, strata, criteria and fixture digests only — verified 0 corpus paths,
+# 0 document titles, 0 query text. Everything else under _evidence/invariants/
+# stays untracked, exactly as s01-s09 left it.
+!_evidence/invariants/
+_evidence/invariants/*
+!_evidence/invariants/s10-PRE-REGISTRATION.md
+!_evidence/invariants/s10-claim-readout.md
+!_evidence/invariants/s10-one-pager.html

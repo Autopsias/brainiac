@@ -1,0 +1,280 @@
+#!/usr/bin/env python3
+"""BLK-01 — the quality gate for a BULK RELINKING batch, run over the WHOLE
+batch rather than a sample.
+
+Why this is a script and not a review habit: an agent told to drive an
+unreachable-document count toward zero converges on the cheapest note that
+survives a skim, and this vault has MEASURED that filler links are worse than
+none (4,353 graphify-inferred edges rescued zero floor labels and cost one,
+through PageRank dilution). So the quality contract is declared up front, in
+code, with thresholds fixed BEFORE the batch is written, and every note is
+checked — no sampling, no tolerated defect rate to argue about afterwards.
+
+A batch note is a ``brain/`` note carrying ``bulk_link_batch: <id>`` in its
+frontmatter (the same note-level stamp ``graph.bulk_linked_ids`` reads, so what
+is checked here is exactly what can be excluded from the graph later).
+
+The six checks, and what each one is actually defending against:
+
+1. STAMPED       — type ``source-derived``, a ``source:`` frontmatter anchor,
+                   and the batch stamp. Without the stamp the note cannot be
+                   isolated, and the counterfactual arm dies.
+2. SUBSTANCE     — the body clears a minimum length and carries at least
+                   ``MIN_PROPOSITIONS`` sentences bearing a figure, date or
+                   quantity that does NOT appear in the note's own title.
+                   This is the anti-stub check: a note that restates its title
+                   has no such sentence.
+3. NOT-A-TITLE-  — at least ``MIN_NOVEL_TOKEN_RATIO`` of the body's DISTINCT
+   PARAPHRASE      content vocabulary (unique tokens, function words removed)
+                   is absent from the title.
+
+                   CORRECTION, 2026-08-11, disclosed because it was made after
+                   the first batch was measured: this ratio was originally
+                   computed over every body token INCLUDING repeats and
+                   function words, which is not what "content tokens" means and
+                   is not what the check is for. A long title containing "the",
+                   "for" or "and" then scored against every occurrence of those
+                   words in the body, and three notes carrying 11-15
+                   figure-bearing propositions each landed at 81-85% purely on
+                   article frequency. The threshold was NOT moved; the metric
+                   was corrected to the distinct-vocabulary basis it always
+                   claimed, and the known-positive probe (a stub restating its
+                   own title) still fails it at 44%. The frequency-basis number
+                   is still reported, ungated, as ``token_frequency_ratio`` so
+                   nothing is hidden by the correction.
+4. RELATIONS     — every wikilink to a cited raw source sits on a line that
+                   also states a relation (an em-dash clause). A bare wikilink
+                   is exactly the edge that dilutes PageRank without carrying
+                   meaning.
+5. NO-TEMPLATE   — pairwise 5-gram Jaccard between any two batch bodies stays
+                   at or below ``MAX_PAIR_SIMILARITY``. Catches a batch written
+                   from one template with the nouns swapped.
+6. TIER          — the note's classification is at least the maximum of the
+                   classifications of the sources it cites. A derived note that
+                   summarises Restricted substance at Internal is a fresh
+                   cross-tier exposure, and one no filename-twin metric can see.
+
+Read-only. Exit 0 when every check passes, 1 otherwise.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "src"))
+
+# -- the pre-registered thresholds (fix these BEFORE writing a batch) --------
+MIN_BODY_CHARS = 1200
+MIN_PROPOSITIONS = 5
+MIN_NOVEL_TOKEN_RATIO = 0.85
+MAX_PAIR_SIMILARITY = 0.15
+
+TIERS = ["Public", "Internal", "Confidential", "Restricted", "MNPI"]
+_WORD = re.compile(r"[0-9A-Za-zÀ-ÿ][0-9A-Za-zÀ-ÿ'’-]*")
+_FIGURE = re.compile(r"\d")
+_LINK = re.compile(r"\[\[([^\]\|#\n\r]+)(?:#[^\]\|\n\r]+)?(?:\|.+?)?\]\]")
+
+
+def _tokens(text: str) -> list[str]:
+    return [m.group(0).lower() for m in _WORD.finditer(text or "")]
+
+
+def _function_words() -> frozenset[str]:
+    """The census stopword profiles, reused rather than re-listed — plus the
+    short English articles/prepositions the census deliberately omits (it is a
+    language-ID census, not a stopword list, so it only carries DISCRIMINATIVE
+    words)."""
+    from brain.language import load_profiles
+
+    words = {w for spec in load_profiles().values() for w in spec["stopwords"]}
+    words |= {"a", "at", "or", "not", "its", "it", "if", "so", "no", "but",
+              "was", "were", "has", "have", "had", "can", "cannot", "do",
+              "does", "did", "than", "then", "there", "their", "them", "they",
+              "these", "those", "what", "which", "who", "whom", "whose", "when",
+              "where", "why", "how", "all", "any", "both", "each", "more",
+              "most", "other", "some", "such", "only", "own", "same", "too",
+              "very", "into", "over", "under", "out", "up", "down", "about",
+              "after", "before", "between", "through", "during", "against",
+              "one", "two", "three", "s", "t", "per", "also", "still", "while",
+              "because", "been", "being", "would", "could", "should", "may",
+              "might", "must", "shall", "here", "now", "yet", "own", "is"}
+    return frozenset(words)
+
+
+def _unwrap(body: str) -> list[str]:
+    """Bullet lines, with wrapped continuations folded back onto their bullet —
+    otherwise a relation that ran onto the next line reads as a bare link."""
+    out: list[str] = []
+    for raw in (body or "").splitlines():
+        if raw.startswith(("  ", "\t")) and out and out[-1].lstrip().startswith(("-", "*")):
+            out[-1] = out[-1].rstrip() + " " + raw.strip()
+        else:
+            out.append(raw)
+    return out
+
+
+def _sentences(body: str) -> list[str]:
+    prose = "\n".join(ln for ln in _unwrap(body) if not ln.lstrip().startswith("#"))
+    return [s.strip() for s in re.split(r"(?<=[.!?;])\s+|\n{2,}|\n\|", prose) if s.strip()]
+
+
+def _shingles(body: str, n: int = 5) -> set[tuple[str, ...]]:
+    toks = _tokens(body)
+    return {tuple(toks[i:i + n]) for i in range(max(0, len(toks) - n + 1))}
+
+
+def check_batch(vault: Path, batch: str) -> dict:
+    from brain import frontmatter as fm
+
+    notes: list[dict] = []
+    for path in sorted((vault / "brain").rglob("*.md")):
+        meta, body = fm.parse_text(path.read_text(encoding="utf-8"))
+        if not meta or str(meta.get("bulk_link_batch") or "").strip() != batch:
+            continue
+        notes.append({"path": str(path.relative_to(vault)), "meta": meta, "body": body})
+
+    # classification of every note in the vault, for the tier check
+    tier_of: dict[str, str] = {}
+    for path in sorted(vault.rglob("*.md")):
+        if any(p in {".brain", "inbox", "overlay", "originals"} for p in path.parts):
+            continue
+        try:
+            meta, _ = fm.parse_text(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if meta and meta.get("id"):
+            tier_of[str(meta["id"])] = str(meta.get("classification") or "MNPI")
+
+    # A cited source is a link that RESOLVES to a raw/-zone note. It is not a
+    # `raw/`-prefixed target: `graph._build_resolver` keys on the bare id/stem,
+    # so `[[raw/x]]` in a body produces NO graph edge at all (the conventions
+    # validator warns about it too). Frontmatter `source:` keeps the
+    # `[[raw/...]]` shape AGENTS.md §2 prescribes; bodies must use the bare id.
+    raw_ids = {str(m["id"]) for m in
+               (fm.parse_text(pp.read_text(encoding="utf-8"))[0] or {}
+                for pp in (vault / "raw").rglob("*.md")
+                if "originals" not in pp.parts) if m.get("id")}
+
+    stop = _function_words()
+    failures: list[str] = []
+    rows: list[dict] = []
+    for n in notes:
+        meta, body, rel = n["meta"], n["body"], n["path"]
+        nid = str(meta.get("id") or rel)
+        title = str(meta.get("title") or "")
+        title_toks = set(_tokens(title))
+        body_toks = _tokens(body)
+        freq_ratio = (sum(1 for t in body_toks if t not in title_toks)
+                      / len(body_toks)) if body_toks else 0.0
+        vocab = {t for t in body_toks if t not in stop}
+        novel_vocab = vocab - title_toks
+        ratio = (len(novel_vocab) / len(vocab)) if vocab else 0.0
+        props = [s for s in _sentences(body)
+                 if _FIGURE.search(s) and any(
+                     t not in title_toks for t in _tokens(s) if _FIGURE.search(t))]
+        cited = [t for ln in _unwrap(body) for t in _LINK.findall(ln)
+                 if t.split("/")[-1] in raw_ids]
+        bare = [ln.strip() for ln in _unwrap(body)
+                if any(t.split("/")[-1] in raw_ids for t in _LINK.findall(ln))
+                and "—" not in ln and " - " not in ln]
+        unresolvable = [t for ln in _unwrap(body) for t in _LINK.findall(ln)
+                        if t.startswith("raw/")]
+        want = max((TIERS.index(tier_of.get(c.split("/", 1)[-1], "MNPI"))
+                    for c in cited), default=0)
+        have = TIERS.index(str(meta.get("classification") or "Public")) \
+            if str(meta.get("classification") or "") in TIERS else -1
+
+        row = {
+            "id": nid, "path": rel, "body_chars": len(body),
+            "propositions": len(props), "novel_token_ratio": round(ratio, 4),
+            "token_frequency_ratio": round(freq_ratio, 4),
+            "cited_sources": cited, "bare_links": bare,
+            "graph_invisible_links": unresolvable,
+            "classification": meta.get("classification"),
+            "min_required_tier": TIERS[want] if cited else None,
+        }
+        rows.append(row)
+
+        if str(meta.get("type") or "") != "source-derived":
+            failures.append(f"{nid}: type is {meta.get('type')!r}, not source-derived")
+        if not str(meta.get("source") or "").strip():
+            failures.append(f"{nid}: no `source:` frontmatter anchor")
+        if len(body) < MIN_BODY_CHARS:
+            failures.append(f"{nid}: body {len(body)}B < {MIN_BODY_CHARS}B floor")
+        if len(props) < MIN_PROPOSITIONS:
+            failures.append(f"{nid}: {len(props)} figure-bearing propositions "
+                            f"absent from the title < {MIN_PROPOSITIONS}")
+        if ratio < MIN_NOVEL_TOKEN_RATIO:
+            failures.append(f"{nid}: only {ratio:.2%} of the body's distinct content "
+                            f"vocabulary is absent from the title "
+                            f"(< {MIN_NOVEL_TOKEN_RATIO:.0%}) — reads as a title paraphrase")
+        if not cited:
+            failures.append(f"{nid}: cites no raw/ source in its body")
+        if unresolvable:
+            failures.append(f"{nid}: {len(unresolvable)} body link(s) written as "
+                            f"[[raw/...]] — these resolve to NOTHING in the graph: "
+                            f"{unresolvable[:2]}")
+        if bare:
+            failures.append(f"{nid}: {len(bare)} raw/ link(s) with no relation "
+                            f"statement: {bare[:2]}")
+        if cited and have < want:
+            failures.append(f"{nid}: classified {meta.get('classification')} while citing "
+                            f"{TIERS[want]} sources — a cross-tier derived note")
+
+    pairs: list[dict] = []
+    for i in range(len(notes)):
+        for j in range(i + 1, len(notes)):
+            a, b = _shingles(notes[i]["body"]), _shingles(notes[j]["body"])
+            sim = len(a & b) / len(a | b) if (a | b) else 0.0
+            pairs.append({"a": notes[i]["meta"].get("id"),
+                          "b": notes[j]["meta"].get("id"), "similarity": round(sim, 4)})
+            if sim > MAX_PAIR_SIMILARITY:
+                failures.append(f"{notes[i]['meta'].get('id')} ~ "
+                                f"{notes[j]['meta'].get('id')}: 5-gram similarity "
+                                f"{sim:.2%} > {MAX_PAIR_SIMILARITY:.0%} — template reuse")
+
+    return {
+        "batch": batch, "notes": len(notes), "rows": rows,
+        "max_pair_similarity": max((p["similarity"] for p in pairs), default=0.0),
+        "pairs": sorted(pairs, key=lambda p: -p["similarity"])[:10],
+        "thresholds": {
+            "MIN_BODY_CHARS": MIN_BODY_CHARS, "MIN_PROPOSITIONS": MIN_PROPOSITIONS,
+            "MIN_NOVEL_TOKEN_RATIO": MIN_NOVEL_TOKEN_RATIO,
+            "MAX_PAIR_SIMILARITY": MAX_PAIR_SIMILARITY,
+        },
+        "failures": failures, "ok": not failures,
+    }
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--vault", required=True)
+    ap.add_argument("--batch", required=True)
+    ap.add_argument("--json", action="store_true")
+    args = ap.parse_args()
+
+    res = check_batch(Path(args.vault).expanduser(), args.batch)
+    if args.json:
+        print(json.dumps(res, indent=2, ensure_ascii=False))
+    else:
+        print(f"batch {res['batch']}: {res['notes']} note(s), "
+              f"max pairwise similarity {res['max_pair_similarity']:.2%}")
+        for r in res["rows"]:
+            print(f"  {r['id']}: {r['body_chars']}B, {r['propositions']} propositions, "
+                  f"{r['novel_token_ratio']:.2%} novel vocabulary "
+                  f"({r['token_frequency_ratio']:.2%} by token frequency), "
+                  f"{len(r['cited_sources'])} cited source(s), "
+                  f"{r['classification']} (>= {r['min_required_tier']})")
+        for f in res["failures"]:
+            print(f"  FAIL {f}")
+        print("OK" if res["ok"] else f"FAILED ({len(res['failures'])})")
+    return 0 if res["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

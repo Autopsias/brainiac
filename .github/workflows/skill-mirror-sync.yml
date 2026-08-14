@@ -30,9 +30,10 @@ jobs:
         run: |
           git diff --exit-code -- \
             .agents/skills \
-            plugins/profile-a-kernel/skills \
-            plugins/profile-a-extras/skills \
+            plugins/brainiac-kernel/skills \
+            plugins/brainiac-extras/skills \
             plugins/brainiac-manager/skills \
+            src/brain/_assets \
             || {
               echo "::error::Skill mirrors are stale or hand-edited. Run 'python3 tools/package_clients.py' and commit the result." >&2
               exit 1

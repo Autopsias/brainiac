@@ -29,6 +29,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+
 from .doctor import (
     CHANNEL_EDITABLE,
     CHANNEL_PIP_USER,
@@ -51,6 +52,30 @@ from .doctor import (
 # (dry-run-by-construction), so the version-compare/downgrade-decision logic
 # is exercised without ever touching a real plugin store or venv.
 # --------------------------------------------------------------------------
+
+def resolve_claude_bin() -> Optional[str]:
+    """Locate the ``claude`` CLI the way the shipped scripts already do.
+
+    A bare ``shutil.which`` is correct in a login shell and WRONG under
+    launchd, which hands a job the minimal ``/usr/bin:/bin:/usr/sbin:/sbin``
+    unless its plist sets PATH. On 2026-08-12 the nightly auto-update aborted
+    with "`claude` CLI not found on PATH" while the binary sat at
+    ``~/.local/bin/claude`` — the nightly plist sets no PATH, and the synthesis
+    plist (which does) is why that lane never hit this.
+
+    Same precedence as ``brain-synthesis.sh``: an explicit override, then PATH,
+    then the standard install location. Returns None only if there is genuinely
+    no executable to run.
+    """
+    override = os.environ.get("BRAIN_CLAUDE_BIN")
+    if override and os.access(override, os.X_OK):
+        return override
+    found = shutil.which("claude")
+    if found:
+        return found
+    fallback = os.path.expanduser("~/.local/bin/claude")
+    return fallback if os.access(fallback, os.X_OK) else None
+
 
 Runner = Callable[..., "subprocess.CompletedProcess[str]"]
 
@@ -96,7 +121,7 @@ def probe_cli_capability(run: Runner = _default_runner) -> dict:
     calls to be present. Blocks (does not raise) on mismatch: callers must
     check ``ok`` and stop, printing the manual fallback commands.
     """
-    claude_bin = shutil.which("claude")
+    claude_bin = resolve_claude_bin()
     if claude_bin is None:
         return {
             "ok": False,
@@ -143,7 +168,7 @@ def probe_cli_capability(run: Runner = _default_runner) -> dict:
 # --------------------------------------------------------------------------
 
 def refresh_marketplace(marketplace_name: str, run: Runner = _default_runner) -> dict:
-    claude_bin = shutil.which("claude") or "claude"
+    claude_bin = resolve_claude_bin() or "claude"
     try:
         out = run([claude_bin, "plugin", "marketplace", "update", marketplace_name])
     except Exception as exc:
@@ -186,7 +211,7 @@ def apply_plugin_action(
     and the caller (run_update) surfaces that as a partial/mixed-version
     state rather than claiming success.
     """
-    claude_bin = shutil.which("claude") or "claude"
+    claude_bin = resolve_claude_bin() or "claude"
     spec = f"{plugin_name}@{marketplace_name}"
     if action == "skip":
         return {"action": "skip", "ok": True, "detail": "already current"}
@@ -435,6 +460,26 @@ def read_update_state(brainiac_home: Path) -> Optional[dict]:
         return json.loads(update_state_path(brainiac_home).read_text(encoding="utf-8"))
     except Exception:
         return None
+
+
+def failure_is_moot(state: Optional[dict], installed: Optional[str]) -> bool:
+    """True when a recorded FAILED update targeted a version the machine has
+    SINCE REACHED — the record describes a past state and must stop nagging.
+
+    Nothing else clears a `failed` record: the availability check writes one
+    only when an update IS available, so once the machine catches up (manually,
+    or by a later version applying cleanly) the stale banner ran on in every
+    session until the hook's 7-day freshness window expired. Judged on the
+    DETERMINED comparison installed >= the version that failed — never on
+    `available: False`, which also means "could not check".
+    """
+    target = (state or {}).get("latest")
+    if not target or not installed:
+        return False
+    try:
+        return _compare(str(installed), str(target)) >= 0
+    except Exception:
+        return False
 
 
 def write_update_state(

@@ -39,6 +39,15 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 EXCLUDE_PREFIXES = (
     "_archive/", "_plans/", "_evidence/", "_workspace/",
+    # `_decisions/` joins its siblings above (2026-08-14, found by the 0.20.8
+    # contamination gate). It is owner RULING material of exactly the same
+    # class as `_plans/` and `_evidence/` — written about the owner's live
+    # corpus, citing real parties by name — and it was the only one of the four
+    # never excluded. Eleven files were shipping; three carried direct hits (a
+    # counterparty name, and the owner's own name twice). The omission was an
+    # oversight, not a decision: nothing in ADR-0001 argues these belong in a
+    # clean-room export.
+    "_decisions/",
     # Internal-only, corpus-derived (excluded 2026-07-12): the test suite and
     # the eval golden set were built USING the owner's real vault as example
     # data, so they carry vault-shaped content that is not needed publicly and
@@ -54,6 +63,42 @@ EXCLUDE_PREFIXES = (
     # the investigation and has no public value; the generic PT diagnostics
     # beside it stay.
     "eval/pt_capacity_fixture.py",
+    # Same class again, found 2026-08-10 by the operator-home-path guard below
+    # (it caught s02_family_collapse_ab.py) and then by scanning the tracked
+    # tree for the real client directory name, which that guard cannot see.
+    # `eval/s<NN>_*.py` is the per-session one-off convention prior plans use:
+    # each script is written against the owner's live vault for ONE plan
+    # session, and four of them (s02_family_collapse_ab, s04_variant_arms,
+    # s05_merge_split, s06_fusion_residual) hardcode the vault path including
+    # the owner's real client directory. They are plan evidence, not the
+    # generic harness beside them, and have no public value. The prefix covers
+    # future ones too, which is the point — the previous three leaks of this
+    # exact shape were each found one file at a time, after the fact.
+    "eval/s0",
+    # Off-by-one repair (2026-08-12, found by the ENF-03 scan): the prefix above
+    # stops at s09, so every session script from s10 on escaped it — and
+    # eval/s10_claim_arms.py was already carrying the real client name. This
+    # prefix covers s10-s19. Deliberately NOT collapsed to "eval/s": that would
+    # also swallow eval/stats.py, which is generic harness meant to ship.
+    "eval/s1",
+    # The same corpus-derived class, one level up from the per-session scripts
+    # (2026-08-14, 0.20.8 gate). These two are GENERIC-LOOKING — a control
+    # harness and the eval ledger — which is exactly why the file-by-file
+    # excludes above kept missing them, and why they are named here rather
+    # than trusted to a prefix:
+    #   bulk_link_control.py — its docstring quotes this corpus's three
+    #     highest-degree note ids WITH their degree counts, i.e. real note ids
+    #     and two real party names, as the worked example of the probe shape.
+    #   FOLLOWUPS.md — the eval ledger. AGENTS.md cites it heavily and it reads
+    #     as framework documentation, but its findings are written ABOUT the
+    #     live corpus: it carries a codename mapping and a real note id. Every
+    #     future entry is written the same way, so redacting today's two lines
+    #     would only defer the next leak.
+    "eval/bulk_link_control.py",
+    "eval/FOLLOWUPS.md",
+    # Same 2026-08-10 scan: a COS lane-rehearsal note carrying the real client
+    # vault path. Internal operational record, never public.
+    "tools/cos_lane_rehearsal_iab.md",
     # One-time, owner-specific corpus-migration scripts + doc (excluded
     # 2026-07-12, owner decision): they map the owner's real Obsidian vault
     # taxonomy and are not general-purpose. Not useful

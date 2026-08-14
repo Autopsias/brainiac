@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """False-negative sweep over the WHOLE migrated corpus (S03 acceptance gate).
 
+STATUS (audited 2026-08-10, owner ruling: KEEP LIVE). No importer, by design —
+this is an operator-invoked acceptance gate from
+``_plans/profile-a-brain-hardening-open-release-plan-2026-07-03`` (all 14
+sessions closed DONE). It stays in ``tools/`` because a mislabelled-LOW
+sensitive note is an egress failure, and any future bulk reclassification wants
+this bound re-run. Do not flag it as dead code; "nothing imports it" is expected.
+
 The r2-codex threshold requires ZERO known Restricted/MNPI false-negatives — a
 sensitive note classified too LOW is an egress failure (default-deny only
 protects UNLABELLED notes, not mislabelled-LOW ones). The stratified human

@@ -58,6 +58,11 @@ PROVENANCE_KEYS = set(PROVENANCE_DATE_KEYS) | set(PROVENANCE_BOOL_KEYS) | {
 # Frontmatter keys recognised by the optional OKF-aligned lint profile.
 OKF_ALLOWED_KEYS = REQUIRED_BRAIN | REQUIRED_RAW | BITEMPORAL_KEYS | PROVENANCE_KEYS | {
     "source", "tags", "sha256", "status", "provenance", "related", "aliases",
+    # ENF-04 — the ingest cross-tier guard's verdict, stamped on every note the
+    # ingest pipeline writes (`brain.ingest.tierguard`). The status is on EVERY
+    # such note, not only raises, so an unraised note proves the guard ran.
+    "classification_guard", "classification_guard_leg",
+    "classification_guard_reason",
 }
 JD_FILENAME = re.compile(r"^\d\d[. ]")          # Johnny-Decimal, e.g. "60.03 x"
 # Alias matched non-greedily, right-anchored to the FINAL ]] so an alias with

@@ -23,7 +23,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 STRATA = [
-    "monolingual_pt", "monolingual_es", "cross_lingual_en_es", "cross_lingual_en_pt",
+    "cross_lingual_pt_en", "cross_lingual_es_en", "cross_lingual_en_es", "cross_lingual_en_pt",
     "lexical_identifier", "multi_hop", "temporal",
 ]
 

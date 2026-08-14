@@ -19,10 +19,73 @@ flag the resolution method.
 """
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
 _DATE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
+
+# --------------------------------------------------------------------------
+# HYG-02 — the score-time CODENAME map (FOLLOWUPS item 3)
+# --------------------------------------------------------------------------
+# The private fixtures name entities by an anonymization scheme that drifts
+# from the corpus (a note renamed in the vault, a codename retired). When it
+# drifts, every qrel path carrying that name stops resolving and the score
+# silently understates quality — that is what produced the 0.000 Spanish
+# artifact. This is deliberately NOT the existing 72-entry path map
+# (``ne-upgrade-established-path-map.json``, applied at CAPTURE time to map a
+# brain path back to its source path): this reconciles the ANONYMIZATION
+# SCHEME itself, so ONE entry (``Northwind`` -> the corpus name) repairs every
+# path containing it instead of thirty path rewrites.
+#
+# ponytail: plain longest-key-first string substitution. No regex, no aliases
+# per zone. Upgrade to per-field rules only if a codename ever needs to mean
+# different things in different path segments.
+CODENAME_MAP_PATH = Path(__file__).with_name("codename-map.json")
+
+
+def load_codename_map(path: str | Path | None = None) -> dict[str, str]:
+    """Load the gitignored fixture-codename -> corpus-name map.
+
+    An ABSENT or EMPTY map is identity ({}), which is exactly today's behaviour
+    — the map may never be required to score, and ``--codename-map /dev/null``
+    is the way to turn it off deliberately. A map that is PRESENT and non-empty
+    but malformed raises: silently degrading to identity is the same silent
+    understatement it exists to prevent. Keys beginning with ``_`` are comments.
+    """
+    p = Path(path) if path is not None else CODENAME_MAP_PATH
+    try:
+        text = p.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    if not text.strip():
+        return {}
+    raw = json.loads(text)
+    if not isinstance(raw, dict):
+        raise ValueError(f"{p}: codename map must be a JSON object of "
+                         f"fixture-name -> corpus-name, got {type(raw).__name__}")
+    out = {}
+    for k, v in raw.items():
+        if k.startswith("_"):
+            continue
+        if not isinstance(v, str) or not k:
+            raise ValueError(f"{p}: codename map entry {k!r} must map to a string")
+        out[k] = v
+    return out
+
+
+def apply_codenames(path: str, cmap: dict[str, str]) -> str:
+    """Rewrite a FIXTURE doc key into the current corpus namespace.
+
+    Longest key first, so a longer codename is never shadowed by a shorter one
+    that is its prefix. Each key is applied once over the already-rewritten
+    string; a map whose replacements feed each other is a map bug, not a
+    feature to support.
+    """
+    for k in sorted(cmap, key=len, reverse=True):
+        if k in path:
+            path = path.replace(k, cmap[k])
+    return path
 
 
 def normalize(raw_path: str, mapping: dict[str, str] | None = None) -> str:

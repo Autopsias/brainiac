@@ -71,6 +71,31 @@ reaches that same paragraph; none re-states it.
 | **Cowork (Desktop VM)** | workspace-root `CLAUDE.md` auto-loaded at session start; contract INLINED in the marked BRAIN-CONTRACT block (@imports don't expand in Cowork). Probe: send `contract?` → `[brain contract loaded] [contract inlined]` = healthy; session-prompt paste = fallback | VM shell: `brain --role vm …` |
 | **Claude Desktop — Chat tab** | (cannot run a command) | OPTIONAL thin MCP adapter — see below |
 
+## Alert surfacing — `brain alerts`, and why it is not a hook
+
+A degraded vault has to reach whichever harness the owner happens to open.
+Until 2026-08-14 the degradation digest existed ONLY as a Claude Code
+SessionStart hook, so Codex and Cowork were blind to it by construction —
+the inputs are five plain files, and nothing about reading them is
+Claude-Code-specific. `brain alerts` is that logic in the engine (`VM_ALLOWED`,
+file reads only), and each harness reaches it by whatever mechanism it has:
+
+| Harness | Mechanism | Guarantee |
+|---|---|---|
+| **Claude Code (CLI)** | `SessionStart` hook in `~/.claude/settings.json` → `~/.claude/hooks/brainiac-alerts.sh` → `brain alerts --one-line` | **hard** — the harness injects it |
+| **Codex** | `SessionStart` in `~/.codex/hooks.json` (same schema as Claude Code) → the same script | **hard** — the harness injects it |
+| **Cowork (Desktop VM)** | AGENTS.md §9 instruction, inlined into the workspace `CLAUDE.md` BRAIN-CONTRACT block → `brain --role vm alerts` | **soft** — Cowork has no hook mechanism; the model must follow the line |
+| **Gemini CLI / Desktop Code tab** | AGENTS.md §9 instruction | **soft** |
+
+Two consequences worth stating plainly. **Cowork cannot be made hard** — there
+is no hook surface to register, so the contract line is the mechanism, and a
+session that ignores it sees nothing. **The VM sees a subset, and says so:**
+the notify markers, the owner inbox and the engine-feedback backlog live on the
+shared mount and read identically from either role, but
+`~/.brainiac/update-state.json` and `~/.brain/synthesis-state.json` are host
+home and unreachable — `alerts` lists them under `unreachable` so "no alerts"
+on the VM can never quietly mean "could not look".
+
 **Prereq for all shell harnesses:** `brain` must be on `PATH`. Local/host:
 `./install.sh` / `./install.ps1` (PyPI-first — `uv tool install` / `pipx
 install` / `pip install --user`, whichever succeeds first — installs the
@@ -93,6 +118,14 @@ the `.mcpb` extension (`docs/install/README.md` Path G) — a thin Node stdio
 shim that spawns this same host-installed `brain-mcp`; `brain connect
 --client claude-desktop` is the alternative config-stanza route (pick one,
 never both — `brain doctor` flags double registration).
+
+**The variant contract reaches this surface too (CON-01).** `search` takes a
+`variants` list — the MCP twin of the CLI's repeatable `--variant` — routed to
+the same `core.search_multi`, and a `vault_languages` tool publishes the
+derived language census so the one harness that cannot run `brain status
+--json` can still tell whether AGENTS.md §5 rule 3 applies. Which entry points
+can and cannot carry variants, and why, is
+`docs/query-variant-entry-points.md`.
 
 ## Why no MCP for the command-capable surfaces
 

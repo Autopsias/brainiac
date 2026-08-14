@@ -101,8 +101,58 @@ def _build_resolver(rows: list[tuple[str, str, str]]) -> dict[str, str]:
     return resolver
 
 
+#: BLK-01 — the note-level bulk-link stamp. A wikilink is parsed down to its
+#: TARGET (``_WIKILINK`` above discards everything around it), so a per-LINK
+#: provenance marker cannot be read back out of the graph. Isolation is
+#: therefore per NOTE: a note written by a bulk relinking pass carries this
+#: frontmatter key, and every edge it contributes can be dropped as a unit.
+#: That makes the with/without-bulk-links counterfactual a real measurement
+#: rather than a promise — which matters because bulk edges have MEASURED
+#: harm on this vault (4,353 graphify-inferred edges rescued zero floor labels
+#: and cost one, through PageRank dilution).
+BULK_LINK_KEY = "bulk_link_batch"
+
+
+def bulk_linked_ids(conn: sqlite3.Connection, vault: Any) -> set[str]:
+    """Ids of notes stamped ``bulk_link_batch: <batch>`` in their frontmatter.
+
+    ponytail: the index stores the post-frontmatter body only, so the stamp is
+    read back off disk — and only for the ``brain/`` zone (a few hundred small
+    files), because a bulk relinking pass writes derived notes there and never
+    into immutable ``raw/``. Widen the zone filter, not this function, if that
+    ever stops holding."""
+    from pathlib import Path
+
+    from . import frontmatter as fm
+
+    out: set[str] = set()
+    for nid, path in conn.execute(
+            "SELECT id, path FROM notes WHERE zone = 'brain'").fetchall():
+        p = Path(str(path or ""))
+        if not p.is_absolute():
+            p = Path(vault) / str(path or "")
+        try:
+            text = p.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        meta, _body = fm.parse_text(text)
+        if meta and str(meta.get(BULK_LINK_KEY) or "").strip():
+            out.add(str(nid))
+    return out
+
+
+def build_graph_without_bulk(
+    conn: sqlite3.Connection, vault: Any, **kwargs: Any
+) -> LinkGraph:
+    """The graph as if no bulk-stamped note had ever been written — the
+    counterfactual arm for measuring what a bulk relinking pass actually
+    bought (or cost)."""
+    return build_graph(conn, exclude_ids=bulk_linked_ids(conn, vault), **kwargs)
+
+
 def build_graph(
-    conn: sqlite3.Connection, *, extra_edges: Iterable[tuple[str, str]] | None = None
+    conn: sqlite3.Connection, *, extra_edges: Iterable[tuple[str, str]] | None = None,
+    exclude_ids: Iterable[str] | None = None,
 ) -> LinkGraph:
     """Build the wikilink graph on demand from the index's ``notes`` table.
 
@@ -112,8 +162,14 @@ def build_graph(
     undirected adjacency pairs — the graphify build's INFERRED edges — into
     the SAME graph before BFS/PPR run, so ``graph_expand`` can optionally
     treat them as discovery-only traversal input. Never persisted here; the
-    caller decides whether to pass any."""
-    rows = conn.execute("SELECT id, title, path, body FROM notes").fetchall()
+    caller decides whether to pass any.
+
+    ``exclude_ids`` (BLK-01) omits those notes AND every edge incident on them
+    — including ``extra_edges`` — so the result is the graph the vault would
+    have had without them. Used with ``bulk_linked_ids`` above."""
+    drop = {str(x) for x in (exclude_ids or ())}
+    rows = [r for r in conn.execute(
+        "SELECT id, title, path, body FROM notes").fetchall() if str(r[0]) not in drop]
     id_rows = [(r[0], r[1] or "", r[2] or "") for r in rows]
     resolver = _build_resolver(id_rows)
     g = LinkGraph()

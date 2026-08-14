@@ -1217,6 +1217,47 @@ def check_vm_maintain_heartbeat(vault: Path) -> dict:
     return _row(surface, CURRENT, f"{len(state)} branch(es) tracked, none stale/repeatedly-failing")
 
 
+def check_corpus_invariants(vault: Path) -> dict:
+    """WAT-01 dead-man's switch, lane 1: is the corpus-invariants watchdog
+    actually alive, and is anything regressing?
+
+    A dead fold cannot report its own death, so this reads the persisted
+    maintain-state row from OUTSIDE the nightly — `brain doctor` is run ad
+    hoc, by `brain health-report`, and by the weekly synthesis watchdog.
+    STALE (the gating status) when the row is missing on a vault whose other
+    branches run, when it has gone older than
+    ``$BRAIN_INVARIANTS_MAX_AGE_DAYS`` (default 3), or when the last run
+    recorded a regression past a metric's ratcheted floor."""
+    from . import config
+    from . import invariants as inv
+
+    surface = "Corpus invariants watchdog (WAT-01)"
+    state = _read_json(config.maintain_state_path(vault))
+    if not state:
+        return _row(surface, NOT_DETECTABLE,
+                    "no maintain-state.json yet — brain maintain has not run here")
+    live = inv.liveness_finding(state)
+    if live:
+        return _row(surface, STALE, live[1],
+                    remediation="brain maintain   # then re-check; if the row stays "
+                                "missing, this engine build predates WAT-01 — restage it",
+                    raw={"age_days": inv.invariants_age_days(state),
+                         "max_age_days": inv.max_age_days()})
+    regs = inv.state_regressions(state)
+    if regs:
+        return _row(surface, STALE,
+                    "; ".join(str(r.get("summary")) for r in regs),
+                    remediation="brain health-report   # 'Corpus invariants' section",
+                    raw={"regressions": regs})
+    entry = state.get(inv.STATE_KEY) if isinstance(state.get(inv.STATE_KEY), dict) else {}
+    metrics = entry.get("metrics") if isinstance(entry.get("metrics"), dict) else {}
+    values = inv.metric_values(metrics)
+    return _row(surface, CURRENT,
+                f"last run {entry.get('last_run', '?')}, no regression "
+                f"({', '.join(f'{k}={v}' for k, v in sorted(values.items())) or 'no values yet'})",
+                raw={"values": values, "floors": entry.get("floors")})
+
+
 def check_audit_content_drift(vault: Path) -> dict:
     """INT-02: notes whose bytes changed after the audit chain signed them.
 
@@ -1351,6 +1392,12 @@ def run_doctor_vm(vault: Optional[str | os.PathLike[str]] = None) -> dict[str, A
                                  _VM_PYTHON))
     rows.append(check_embedder_liveness())  # DV-03: model files present ≠ embedder loads
     rows.append(check_vm_maintain_heartbeat(vault_path))
+    # WAT-01 dead-man's switch, lane 2: the WEEKLY SYNTHESIS watchdog runs
+    # `--role vm doctor` and pastes its rows into the session as DATA, so the
+    # invariants row has to exist on THIS row set or that lane is blind. It
+    # reads the same `maintain-state.json` the heartbeat row above already
+    # reads — no key, no index, no host-only import.
+    rows.append(check_corpus_invariants(vault_path))
     rows.extend(_row(s, NOT_DETECTABLE,
                      "requires `brain doctor` on the host Mac — not checkable from this staged VM copy")
                 for s in _HOST_ONLY_SURFACES)
@@ -1553,6 +1600,10 @@ def run_doctor(
         # INT-02: same host-only, per-vault surface — a signature-only
         # verify-audit "ok" must not be the only thing a health readout sees.
         rows.append(check_audit_content_drift(capture_vault))
+        # WAT-01: and neither must a corpus-invariants fold that quietly
+        # stopped running — checked here precisely because doctor does not
+        # depend on the nightly having fired.
+        rows.append(check_corpus_invariants(capture_vault))
 
     if registry_fetch is not None:
         rows.append(check_pypi_registry_drift(repo_root, ssot, fetch=registry_fetch))

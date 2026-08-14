@@ -32,9 +32,44 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import path_normalize as pn  # noqa: E402
+
+# The GATING metric family. ``eval/gate.py`` decides from these, and
+# ``eval/ne_upgrade_gate.py`` imports this exact list and requires every member
+# to be non-inferior — so nothing may be appended here without changing what
+# those two gates mean.
 METRICS = ["recall@5", "recall@10", "recall@20", "ndcg@10", "mrr@10"]
+
+# Reported alongside, never gated on: bpref (HYG-01/s06). Under INCOMPLETE
+# judgments — 66 queries, 1-4 judged docs each, no judged negatives at all —
+# recall is the most fragile metric there is: a run that surfaces a genuinely
+# relevant but UNJUDGED document is scored as if it had surfaced junk, so a
+# fusion change that finds new good documents can read as a regression. bpref
+# ignores unjudged documents entirely, which is the point of reporting it.
+SECONDARY_METRICS = ["bpref"]
+SCORED_METRICS = METRICS + SECONDARY_METRICS
+
+# HYG-01: the stratum was called ``monolingual_es`` until 2026-08-09. Its gold
+# documents are English prose (verified: all six, 2026-08-09), so it always
+# tested cross-lingual ES->EN retrieval and the old name asserted the opposite.
+# Frozen artifacts keep the old name — they carry engine+corpus fingerprints and
+# rewriting one makes it uncomparable — so the SCORER reads the old name as an
+# alias instead.
+#
+# PT-01, same day, same defect on the other language: ``monolingual_pt`` ->
+# ``cross_lingual_pt_en``. All 22 gold documents behind its 12 Portuguese
+# questions resolved against the live corpus (codename map applied, 22/22, none
+# unresolved) and every one is English prose.
+STRATUM_ALIASES = {"monolingual_es": "cross_lingual_es_en",
+                   "monolingual_pt": "cross_lingual_pt_en"}
+
+
+def canonical_stratum(name: str) -> str:
+    return STRATUM_ALIASES.get(name, name)
 
 
 def _load(p: str) -> dict:
@@ -87,7 +122,42 @@ def _mrr_at_k(rel: dict[str, int], ranked: list[str], k: int) -> float:
     return 0.0
 
 
+def _bpref(rel: dict[str, int], ranked: list[str]) -> float:
+    """bpref (Buckley & Voorhees, SIGIR 2004) — the judgment-robust metric.
+
+    bpref = (1/R) * sum over each retrieved relevant doc r of
+            1 - |judged NON-relevant docs ranked above r| / min(R, N)
+
+    R = judged relevant (grade > 0), N = judged non-relevant (grade == 0).
+    UNJUDGED documents in the ranking are ignored outright — they neither help
+    nor hurt — which is exactly what makes it robust to an incomplete pool.
+
+    N == 0 (this vault's qrels judge no negatives) is not undefined: with no
+    judged non-relevant document in existence the count above every r is 0, so
+    every retrieved relevant doc contributes 1.0 and bpref collapses to
+    "fraction of judged-relevant documents present anywhere in the returned
+    list". That is a genuinely different reading from recall@10 — depth-blind
+    and unjudged-blind — not a restatement of it. It goes up when the pool of
+    judged negatives grows (s03 pools per leg), which is when it starts to bite.
+    """
+    rels = {d for d, g in rel.items() if g > 0}
+    nonrels = {d for d, g in rel.items() if g == 0}
+    if not rels:
+        return 0.0
+    cap = min(len(rels), len(nonrels))
+    seen_nonrel = 0
+    total = 0.0
+    for d in ranked:
+        if d in nonrels:
+            seen_nonrel += 1
+        elif d in rels:
+            total += 1.0 if cap == 0 else 1.0 - min(seen_nonrel, cap) / cap
+    return total / len(rels)
+
+
 def _metric(name: str, rel: dict[str, int], ranked: list[str]) -> float:
+    if name == "bpref":
+        return _bpref(rel, ranked)
     kind, k = name.split("@")
     k = int(k)
     if kind == "recall":
@@ -104,7 +174,7 @@ def _seg_eval(qrels_d: dict, run_d: dict, qids: list[str]) -> dict:
     if not qd:
         return {}
     out: dict[str, float] = {}
-    for m in METRICS:
+    for m in SCORED_METRICS:
         vals = [_metric(m, qrels_d[q], _ranked(run_d.get(q) or {})) for q in qd]
         out[m] = round(sum(vals) / len(vals), 4)
     out["n"] = len(qd)
@@ -130,12 +200,36 @@ def main() -> int:
     ap.add_argument("--out", required=True)
     ap.add_argument("--md", default=None)
     ap.add_argument("--session", default="s05")
+    ap.add_argument("--codename-map", default=None,
+                    help="HYG-02: fixture-codename -> corpus-name map applied to the "
+                         "QRELS doc keys before they are matched against a run's doc "
+                         f"keys (default: {pn.CODENAME_MAP_PATH}; absent == identity). "
+                         "Pass /dev/null to score with the map deliberately off.")
     args = ap.parse_args()
 
     golden = _load(args.golden)
     qrels_d = _load(args.qrels)
     cur = _load(args.current)
     new = _load(args.new)
+
+    # HYG-02 — reconcile the fixture's anonymization scheme with the corpus
+    # BEFORE any doc key is compared. Applied to the qrels side only: a run
+    # already speaks the corpus's own namespace. Never silent — the scorecard
+    # stamps which map was used and how many keys it moved, so "no map" and
+    # "map that changed nothing" stay distinguishable.
+    cmap_path = args.codename_map or pn.CODENAME_MAP_PATH
+    cmap = pn.load_codename_map(args.codename_map)
+    cmap_rewritten = 0
+    if cmap:
+        remapped = {}
+        for qid, docs in qrels_d.items():
+            out_docs = {}
+            for doc, grade in docs.items():
+                new_doc = pn.apply_codenames(doc, cmap)
+                cmap_rewritten += new_doc != doc
+                out_docs[new_doc] = grade
+            remapped[qid] = out_docs
+        qrels_d = remapped
 
     qmeta = {q["id"]: q for q in golden["queries"]}
     cur_runs, new_runs = cur["runs"], new["runs"]
@@ -145,23 +239,27 @@ def main() -> int:
     missing_current = sorted(set(qrels_d) - set(cur_runs))
     missing_new = sorted(set(qrels_d) - set(new_runs))
 
+    def qstratum(qid: str) -> str:
+        return canonical_stratum(qmeta[qid]["stratum"])
+
     def segments(qids):
         segs = {"overall": qids}
         for lng in sorted({qmeta[q]["lang"] for q in qids if q in qmeta}):
             segs[f"lang:{lng}"] = [q for q in qids if qmeta[q]["lang"] == lng]
-        for st in sorted({qmeta[q]["stratum"] for q in qids if q in qmeta}):
-            segs[f"class:{st}"] = [q for q in qids if qmeta[q]["stratum"] == st]
+        for st in sorted({qstratum(q) for q in qids if q in qmeta}):
+            segs[f"class:{st}"] = [q for q in qids if qstratum(q) == st]
         segs["held_out"] = [q for q in qids if qmeta.get(q, {}).get("held_out")]
         return segs
 
     segs = segments(scored)
     cov = golden.get("coverage", {})
+    strata_cov = {canonical_stratum(k): v for k, v in cov.get("strata", {}).items()}
 
     def power_of(seg_name: str, n: int) -> str:
         if seg_name == "overall":
             return "gate"
         if seg_name.startswith("class:"):
-            return cov.get("strata", {}).get(seg_name[6:], {}).get("power", "smoke")
+            return strata_cov.get(seg_name[6:], {}).get("power", "smoke")
         if seg_name.startswith("lang:"):
             return cov.get("languages", {}).get(seg_name[5:], {}).get("power", "smoke")
         return "smoke"
@@ -192,7 +290,12 @@ def main() -> int:
             "new": _per_query_recall(qrels_d, new_runs, scored, k=20),
         },
         "_qlang": {q: qmeta[q]["lang"] for q in scored if q in qmeta},
-        "_qstratum": {q: qmeta[q]["stratum"] for q in scored if q in qmeta},
+        "_qstratum": {q: qstratum(q) for q in scored if q in qmeta},
+        # HYG-02: which codename map scored this card. `entries: 0` with a
+        # present path means the file was absent (identity); a present map that
+        # rewrote nothing reads as entries>0, rewritten_doc_keys=0.
+        "codename_map": {"path": str(cmap_path), "entries": len(cmap),
+                         "rewritten_doc_keys": cmap_rewritten},
     }
 
     for seg, qids in segs.items():
@@ -201,7 +304,7 @@ def main() -> int:
         if not cur_m and not new_m:
             continue
         delta = {}
-        for m in METRICS:
+        for m in SCORED_METRICS:
             if m in cur_m and m in new_m:
                 delta[m] = round(new_m[m] - cur_m[m], 4)
         scorecard["metrics"]["by_segment"][seg] = {
@@ -228,23 +331,28 @@ def main() -> int:
                  f"- metrics engine: {scorecard['metrics_engine']}",
                  f"- paired scored set: **{len(scored)}** queries "
                  f"(missing from current: {len(missing_current)}, from new: {len(missing_new)})",
+                 f"- codename map: `{cmap_path}` — {len(cmap)} entries, "
+                 f"{cmap_rewritten} qrel doc keys rewritten",
                  "", "## Metrics by segment", "",
-                 "| segment | n | power | R@10 cur | R@10 new | Δ R@10 | nDCG@10 cur | nDCG@10 new | MRR@10 cur | MRR@10 new |",
-                 "|---|--:|---|--:|--:|--:|--:|--:|--:|--:|"]
+                 "| segment | n | power | R@10 cur | R@10 new | Δ R@10 | nDCG@10 cur | nDCG@10 new "
+                 "| MRR@10 cur | MRR@10 new | bpref cur | bpref new | Δ bpref |",
+                 "|---|--:|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|"]
         for seg, d in scorecard["metrics"]["by_segment"].items():
             c, n, dl = d["current"], d["new"], d["delta"]
             lines.append(
                 f"| {seg} | {d['n']} | {d['power']} | {c.get('recall@10','-')} | "
                 f"{n.get('recall@10','-')} | {dl.get('recall@10','-')} | "
                 f"{c.get('ndcg@10','-')} | {n.get('ndcg@10','-')} | "
-                f"{c.get('mrr@10','-')} | {n.get('mrr@10','-')} |")
+                f"{c.get('mrr@10','-')} | {n.get('mrr@10','-')} | "
+                f"{c.get('bpref','-')} | {n.get('bpref','-')} | {dl.get('bpref','-')} |")
         lat = scorecard["latency_ms"]
         lines += ["", "## Latency (ms)", "",
                   f"- current p50={lat['current']['p50']} p95={lat['current']['p95']}",
                   f"- new p50={lat['new']['p50']} p95={lat['new']['p95']}", ""]
         Path(args.md).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    print(f"scored {len(scored)} paired queries; segments={len(scorecard['metrics']['by_segment'])}")
+    print(f"scored {len(scored)} paired queries; segments={len(scorecard['metrics']['by_segment'])}; "
+          f"codename_map={len(cmap)} entries -> {cmap_rewritten} qrel doc keys rewritten")
     print(f"wrote {args.out}" + (f" + {args.md}" if args.md else ""))
     return 0
 

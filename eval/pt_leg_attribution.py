@@ -2,7 +2,7 @@
 """S05 GATE 0, part 3 — WHICH retrieval leg loses the Portuguese queries?
 
 Parts 1-2 established that the shipped embedder handles Portuguese (rank 1,
-5/5 monolingual) and that every ``monolingual_pt`` gold document is retrievable
+5/5 monolingual) and that every ``cross_lingual_pt_en`` gold document is retrievable
 by its own title at rank 1, yet the PT questions land around rank ~52 on the
 real corpus while their English paraphrases land around rank ~13.
 
@@ -53,7 +53,7 @@ def main() -> int:
                        embedder=get_embedder("auto"), read_only=True)
     notes = _vault_notes(vault)
     golden = json.loads(Path(args.golden).read_text(encoding="utf-8"))
-    queries = [q for q in golden["queries"] if q["stratum"] == "monolingual_pt"]
+    queries = [q for q in golden["queries"] if q["stratum"] == "cross_lingual_pt_en"]
 
     conn = index.conn
 
@@ -139,7 +139,7 @@ def main() -> int:
         "probe": "s05-gate0-pt-leg-attribution.v1",
         "index": index.stats(),
         "n": args.n,
-        "stratum": "monolingual_pt",
+        "stratum": "cross_lingual_pt_en",
         "aggregate": {
             f"{lang}_{leg}": agg(lang, leg)
             for lang in ("pt", "en") for leg in ("dense", "lexical", "fused")

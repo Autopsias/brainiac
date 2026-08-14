@@ -74,6 +74,24 @@ REQUIRED_INGESTION_FIELDS = (
     "ingestion_in_scope", "ingestion_candidates", "ingestion_held",
     "attachment_lane",
 )
+
+# SKILL.md v5.49 (EXT-07) Disposition 4¾(e): the three BODY-PASS fields are
+# required on the same terms, for the identical reason one layer down.
+# `body_open_cap`/`body_open_actual` were emitted by runs 61-68 only because a
+# run invented them; runs 69-100 stopped, and `cos_runverify` —
+# `check_body_open_count`, built to recount `body_open_actual` against the
+# ledger — has returned DEGRADED on every night since.
+#
+# They are a SEPARATE tuple because the two callers ask different questions.
+# `--append` is a WRITE-TIME gate on a run happening now: it refuses all seven.
+# `cos_runverify.check_metrics_row` SCORES HISTORY, and every row before this
+# bump legitimately predates these three — retro-FAILing 40-odd nights on a
+# field their bundle never named is a wolf-cry, and the engine already has the
+# right answer for a counter that predates its check: DEGRADED, in
+# `check_body_open_count`.
+REQUIRED_BODY_PASS_FIELDS = (
+    "body_open_cap", "body_open_actual", "body_budget",
+)
 ATTACHMENT_LANES = {
     "downloads-mounted", "blocked-no-downloads-mount", "not-exercised",
 }
@@ -160,9 +178,17 @@ def reconcile(ops_dir: Path) -> dict:
     reported: dict[str, dict[str, int]] = defaultdict(lambda: dict.fromkeys(COUNTERS, 0))
     metrics = ops_dir / "_cos_metrics.jsonl"
     if metrics.exists():
-        for row in _rows(metrics):
+        rows = _rows(metrics)
+        # (v5.62) A row a later row for the same key SUPERSEDES is history, not
+        # a second night's work. Summing both would report a rerun's counters
+        # twice and quietly widen the cover this join measures — the direction
+        # that hides a shortfall rather than crying wolf.
+        retired = superseded_run_ts(rows)
+        for row in rows:
             date = row.get("date")
             if not date:
+                continue
+            if (str(date), str(row.get("run")), str(row.get("run_ts"))) in retired:
                 continue
             for c in COUNTERS:
                 reported[date][c] += int(row.get(c) or 0)
@@ -345,23 +371,41 @@ def observation_guard(ops: Path, run_tag: str) -> dict:
     return out
 
 
-def _require_ingestion_fields(row: dict) -> None:
-    """Refuse an append that drops a Phase-1.6 counter (SKILL.md v5.36 4¾(e)).
+def _require_ingestion_fields(row: dict, *, body_pass: bool = False) -> None:
+    """Refuse an append that drops a Phase-1.6 counter (SKILL.md v5.36 4¾(e),
+    extended v5.49 4¾(e) to the three body-pass fields).
 
     Fails CLOSED and names the field: the run's repair is to read its own
     ingestion ledger, not to lower a number. `null` counts as absent — the
     defect being fixed is a counter quietly going away, and a null is exactly
-    that with extra steps."""
-    missing = [f for f in REQUIRED_INGESTION_FIELDS if row.get(f) is None]
+    that with extra steps.
+
+    ``body_pass`` DEFAULTS OFF, and that direction is deliberate: the WRITE
+    path (`append_metric`) opts INTO the stricter check, while every reader —
+    including a PINNED engine whose `cos_runverify` predates this signature and
+    calls with no keyword at all — gets history mode. The other default would
+    have made an old engine + this new tools/ copy retro-FAIL 40 nights on a
+    field their bundle never named. See REQUIRED_BODY_PASS_FIELDS."""
+    required = REQUIRED_INGESTION_FIELDS + (
+        REQUIRED_BODY_PASS_FIELDS if body_pass else ())
+    missing = [f for f in required if row.get(f) is None]
     if missing:
         raise ValueError(
             "metrics row is missing required Phase-1.6 field(s): "
             + ", ".join(missing)
             + " — count them from tonight's _cos_ingestion_ledger_<date>-run<N>"
-              ".jsonl (SKILL.md v5.36 Disposition 4¾(e), self-eval E29)")
-    for f in ("ingestion_in_scope", "ingestion_candidates", "ingestion_held"):
+              ".jsonl (SKILL.md v5.36/v5.49 Disposition 4¾(e), self-eval E29)")
+    ints = ["ingestion_in_scope", "ingestion_candidates", "ingestion_held"]
+    if body_pass:
+        ints += ["body_open_cap", "body_open_actual"]
+    for f in ints:
         if isinstance(row[f], bool) or not isinstance(row[f], int) or row[f] < 0:
             raise ValueError(f"`{f}` must be a non-negative integer, got {row[f]!r}")
+    if body_pass and not str(row["body_budget"]).strip():
+        raise ValueError(
+            "`body_budget` must name the budget the opens were read to "
+            "(e.g. '4000 extracted characters' or '6000 raw page fallback') — "
+            "two nights read to different budgets are two different instruments")
     if row["attachment_lane"] not in ATTACHMENT_LANES:
         raise ValueError(
             f"`attachment_lane` must be one of {sorted(ATTACHMENT_LANES)}, "
@@ -381,14 +425,33 @@ def _require_ingestion_recount(ops_dir: Path, row: dict) -> None:
 
     The recount is :func:`brain.cos_runverify.ledger_counts`, deliberately:
     one definition of these three counters, shared with the validator that
-    re-executes them. A run with no ledger for its own id is E29(a)'s silent
-    phase and is left to the observation guard — this function refuses
-    disagreement, never absence.
+    re-executes them.
+
+    AN ABSENT LEDGER IS NOT A PASS WHEN THE ROW CLAIMS WORK (measured, run
+    108, 2026-08-09). This used to return silently on a missing ledger, on the
+    reasoning that a silent Phase 1.6 is E29(a)'s business and this function
+    refuses disagreement, never absence. Run 108 appended its metrics row at
+    23:26:32 and wrote its ingestion ledger at 23:32:47 — six minutes later —
+    so the gate that exists to catch exactly this row's error had nothing to
+    compare against and let `ingestion_held: 96` through against a ledger that
+    counts 115. A counter that CANNOT be recounted is not a counter that
+    reconciles. So: a row claiming in-scope ingestion work is refused until
+    the ledger it was supposedly counted from exists. A row claiming none is
+    still left to the observation guard, which is the check that knows whether
+    the night owed any.
     """
     from brain import cos_runverify                          # noqa: PLC0415
 
     ledger = ops_dir / f"_cos_ingestion_ledger_{row['date']}-run{row['run']}.jsonl"
     if not ledger.is_file():
+        if int(row.get("ingestion_in_scope") or 0) > 0:
+            raise ValueError(
+                f"metrics row reports ingestion_in_scope="
+                f"{row['ingestion_in_scope']} but {ledger.name} does not exist, "
+                "so the counters it claims cannot be recounted from anything. "
+                "Phase 1.6 rule 8 writes the ledger FIRST and the row is "
+                "counted from it (SKILL.md E29(c)) — write the ledger, then "
+                "append the row")
         return
     counted = cos_runverify.ledger_counts(_rows(ledger))
     disagree = [f"`{k}`: row says {row.get(k)!r}, {ledger.name} counts {v}"
@@ -426,11 +489,43 @@ def host_stamps(ops_dir: Path, date: str, run: str) -> dict:
             "skill_sha256": manifest["skill_sha256"]}
 
 
+#: (v5.62, REP-02) The field a RERUN's row uses to account for the row its own
+#: earlier attempt left behind. `_cos_metrics.jsonl` is append-only by design and
+#: that design is right — a metrics row is evidence, and evidence is not edited
+#: in place (E29(c), REP-01). But a run that safe-stops early, is corrected, and
+#: RE-RUNS under the SAME manifest then has two truths for one key and no way to
+#: say which is current. Measured, run 111 (2026-08-10): the first attempt
+#: safe-stopped on a stale sign-in banner and appended a row reading
+#: `mail_triaged: 0`, `ingestion_in_scope: 0`; the rerun enumerated 304/304 and
+#: wrote a 118-row ledger, and its row could not be appended at all — the append
+#: guard correctly refused a conflicting row for the same key, so the night's
+#: real counters exist only in a side file the verifier does not read.
+#:
+#: The rule that settles it: the rerun APPENDS ITS OWN ROW naming the `run_ts`
+#: of the row it supersedes. Nothing is edited, nothing is deleted, the history
+#: stays readable in order — and every counter reads the LATEST row for the run.
+SUPERSEDES = "supersedes_run_ts"
+
+
+def superseded_run_ts(rows: list[dict]) -> set[tuple[str, str, str]]:
+    """(date, run, run_ts) of every row a LATER row for the same key retired."""
+    return {(str(r.get("date")), str(r.get("run")), str(r.get(SUPERSEDES)))
+            for r in rows if r.get(SUPERSEDES)}
+
+
 def append_metric(ops_dir: Path, row: dict) -> str:
-    """Append once by (date, run); refuse a different row for the same key."""
+    """Append once by (date, run); refuse a different row for the same key.
+
+    (v5.62) UNLESS IT DECLARES WHAT IT SUPERSEDES. A rerun under the same
+    manifest may append a second row for the key when it names the `run_ts` of
+    the row it replaces (`supersedes_run_ts`) and that row is actually there.
+    The ledger stays append-only and the history stays intact; what changes is
+    that the run can finally SAY which of its two rows is current, instead of
+    being forced to choose between an editable ledger and a lost night.
+    """
     if not isinstance(row, dict) or not row.get("date") or row.get("run") is None:
         raise ValueError("metrics row requires non-empty `date` and `run`")
-    _require_ingestion_fields(row)
+    _require_ingestion_fields(row, body_pass=True)
     row = {**row, "run": str(row["run"])}
     _require_ingestion_recount(ops_dir, row)
     stamps = host_stamps(ops_dir, row["date"], row["run"])
@@ -446,14 +541,37 @@ def append_metric(ops_dir: Path, row: dict) -> str:
                 "record wins; investigate which bundle actually ran")
     row = {**row, **stamps}
     path = ops_dir / "_cos_metrics.jsonl"
-    for existing in _rows(path) if path.exists() else []:
-        if (existing.get("date"), str(existing.get("run"))) != (
-                row["date"], row["run"]):
-            continue
+    siblings = [r for r in (_rows(path) if path.exists() else [])
+                if (r.get("date"), str(r.get("run"))) == (row["date"], row["run"])]
+    supersedes = str(row.get(SUPERSEDES) or "").strip()
+    for existing in siblings:
         if {**existing, "run": str(existing["run"])} == row:
             return "unchanged"
+    if siblings and not supersedes:
         raise ValueError(
-            f"conflicting metrics row for {(row['date'], row['run'])!r}")
+            f"conflicting metrics row for {(row['date'], row['run'])!r} — this "
+            f"key already has {len(siblings)} row(s) and the ledger is "
+            f"append-only. A RERUN under the same manifest appends its own row "
+            f"carrying `{SUPERSEDES}: <the earlier row's run_ts>`; nothing here "
+            "is ever edited or deleted (REP-01/REP-02, E29(c))")
+    if supersedes:
+        if not siblings:
+            raise ValueError(
+                f"metrics row declares {SUPERSEDES}={supersedes!r} but "
+                f"{(row['date'], row['run'])!r} has no earlier row at all — a "
+                "supersession with nothing to supersede is a claim about "
+                "history that history does not carry")
+        known = {str(r.get("run_ts")) for r in siblings}
+        if supersedes not in known:
+            raise ValueError(
+                f"metrics row declares {SUPERSEDES}={supersedes!r}, which "
+                f"matches no earlier row for {(row['date'], row['run'])!r} "
+                f"(this key carries run_ts {sorted(known)}) — name the row you "
+                "are replacing or the chain cannot be read")
+        if str(row.get("run_ts") or "").strip() == supersedes:
+            raise ValueError(
+                f"metrics row supersedes its OWN run_ts ({supersedes!r}) — a "
+                "row cannot replace itself, and the chain would not terminate")
 
     prior = path.read_text(encoding="utf-8") if path.exists() else ""
     payload = (prior.rstrip("\n") + ("\n" if prior else "")

@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from . import handlers as H
+from . import tierguard as TG
 from ..audit import AuditError
 from ..notes import safe_slug
 
@@ -40,6 +41,7 @@ INBOX_DIRNAME = "inbox"
 PROCESSING_DIRNAME = "_processing"
 QUARANTINE_DIRNAME = "_quarantine"
 DUPLICATE_DIRNAME = "_duplicate"
+OPERATIONAL_DIRNAME = "_operational"  # ENF-06: set aside, not quarantined
 MANIFEST_RELPATH = ("ingest-manifest.json",)  # under .brain/
 FAILURES_RELPATH = ("ingest-failures.json",)  # under .brain/ — per-file retry counter (C2)
 
@@ -453,6 +455,11 @@ def run_ingest(core: Any, *, dry_run: bool = False) -> dict[str, Any]:
         return report
 
     manifest = _load_manifest(vault)
+    # ENF-04: ONE guard per run, threaded through every candidate (and every
+    # nested zip member / eml attachment). Its corpus table is built lazily on
+    # the first document that actually needs it, so a drain that promotes
+    # nothing — the common hourly case, empty drop zone — pays nothing.
+    guard = TG.guard_for(core)
     today = _dt.date.today().isoformat()
     anchor_pubkey: Any = None      # INT-04, resolved lazily ONCE per drain
     # INT-04 round 2, the fail-CLOSED arm. "No anchor" legitimately means
@@ -584,7 +591,7 @@ def run_ingest(core: Any, *, dry_run: bool = False) -> dict[str, Any]:
             _process_claimed(
                 claimed, path.name, original_bytes=original_bytes,
                 original_sha=original_sha, core=core, manifest=manifest,
-                vault=vault, today=today, quarantine_dir=quarantine_dir,
+                guard=guard, vault=vault, today=today, quarantine_dir=quarantine_dir,
                 duplicate_dir=duplicate_dir, processing_dir=processing_dir,
                 report=report, prov=claimed_prov,
             )
@@ -648,6 +655,11 @@ def run_ingest(core: Any, *, dry_run: bool = False) -> dict[str, Any]:
                 COS.clear_attachment_anchor(vault, anchor.get("dest") or path,
                                             original_sha)
 
+    # ENF-04: PER-LEG counts, never just a total. An aggregate "0 raised"
+    # cannot be told apart from a leg that never fires on real content — which
+    # is precisely how ENF-02's 138 filename matches / 0 content matches went
+    # unnoticed until someone finally measured them separately.
+    report["tier_guard"] = guard.counts.as_dict()
     return report
 
 
@@ -774,7 +786,7 @@ def _existing_note_classification(vault: Path, existing_id: str) -> str | None:
 
 def _process_claimed(
     claimed: Path, orig_name: str, *, original_bytes: bytes, original_sha: str,
-    core: Any, manifest: dict[str, str],
+    core: Any, manifest: dict[str, str], guard: TG.CrossTierGuard,
     vault: Path, today: str, quarantine_dir: Path, duplicate_dir: Path,
     processing_dir: Path, report: dict[str, Any],
     depth: int = 0, budget: dict[str, int] | None = None, parent: str | None = None,
@@ -844,6 +856,13 @@ def _process_claimed(
         _append("quarantined", {"file": claimed.name, "reason": result.quarantine_reason})
         return
 
+    declared = _operational_type(result.markdown or "")
+    if declared:
+        _set_aside_operational(claimed, quarantine_dir.parent, declared)
+        _append("skipped", {"file": claimed.name,
+                            "reason": f"operational_artifact:{declared}"})
+        return
+
     stem = _slugify_stem(claimed.stem)
     slug = safe_slug(f"{today}-{stem}")
     archive_subdir = vault / "raw" / "originals" / f"{today}-{stem}"
@@ -874,6 +893,17 @@ def _process_claimed(
         prov = {**parsed_prov, "verified": True}
     meta = _meta(slug, today, archive_path, vault,
                  hashlib.sha256(linked_markdown.encode("utf-8")).hexdigest(), prov)
+    # ENF-04: the same DOCUMENT under a DIFFERENT id enters at `Internal`
+    # while its twin sits at Restricted or MNPI, and an Internal-capped reader
+    # then reaches high-tier substance through the low-tier copy. `_meta`'s
+    # `Internal` is a DECLARATION, not a measurement; this is the measurement.
+    # It only ever RAISES, to a tier a twin already carries, on BODY CONTENT
+    # alone — see `brain.ingest.tierguard`. The verdict is stamped on the note
+    # either way, so an unraised note proves the guard ran rather than leaving
+    # a silent gap.
+    verdict = guard.verdict(linked_markdown, str(meta["classification"]))
+    meta["classification"] = verdict.tier
+    meta.update(verdict.frontmatter())
     body_sha = meta["sha256"]
     classification = meta["classification"]
     note_rel = f"raw/{slug}.md"
@@ -913,13 +943,22 @@ def _process_claimed(
     manifest[original_sha] = slug
     _save_manifest(vault, manifest)
     claimed.unlink(missing_ok=True)  # promoted; the processing copy is spent
-    _append("processed", {
+    # ENF-04: `write_note` signs and writes the file but does NOT index (the
+    # index sync runs after the whole drain), so without this a second copy
+    # arriving later in the SAME run would not see the first and both would
+    # enter at `Internal`.
+    guard.admit(slug, linked_markdown, classification)
+    entry = {
         "file": orig_name, "id": slug, "note": note_rel,
         "archived": str(archive_path.relative_to(vault)),
         "classification": classification,
         "warnings": result.warnings,
         "autolink_added": autolink_added,
-    })
+        "guard": verdict.status,
+    }
+    if verdict.status != TG.CLEAR:
+        entry["guard_reason"] = verdict.reason
+    _append("processed", entry)
 
     # S06 (ING-03): zip members / eml attachments re-enter the SAME
     # dispatcher, one level deeper. Only on a FRESH promotion (never on a
@@ -932,7 +971,7 @@ def _process_claimed(
     if nested:
         _process_nested(
             nested, parent_slug=slug, depth=depth, budget=budget,
-            core=core, manifest=manifest, vault=vault, today=today,
+            core=core, manifest=manifest, guard=guard, vault=vault, today=today,
             quarantine_dir=quarantine_dir, duplicate_dir=duplicate_dir,
             processing_dir=processing_dir, report=report, prov=prov,
         )
@@ -940,8 +979,8 @@ def _process_claimed(
 
 def _process_nested(
     nested: list[dict], *, parent_slug: str, depth: int, budget: dict[str, int],
-    core: Any, manifest: dict[str, str], vault: Path, today: str,
-    quarantine_dir: Path, duplicate_dir: Path, processing_dir: Path,
+    core: Any, manifest: dict[str, str], guard: TG.CrossTierGuard, vault: Path,
+    today: str, quarantine_dir: Path, duplicate_dir: Path, processing_dir: Path,
     report: dict[str, Any], prov: dict[str, Any] | None = None,
 ) -> None:
     """Re-enter the dispatcher for each nested (name, data) item a handler
@@ -989,7 +1028,7 @@ def _process_nested(
         try:
             _process_claimed(
                 temp_path, name, original_bytes=data, original_sha=_sha256_bytes(data),
-                core=core, manifest=manifest, vault=vault, today=today,
+                core=core, manifest=manifest, guard=guard, vault=vault, today=today,
                 quarantine_dir=quarantine_dir, duplicate_dir=duplicate_dir,
                 processing_dir=processing_dir, report=report,
                 depth=depth + 1, budget=budget, parent=parent_slug, prov=prov,
@@ -1105,6 +1144,53 @@ def _meta(slug: str, today: str, archive_path: Path, vault: Path, body_sha: str,
         meta["classification"] = tier
         meta.update(P.frontmatter_keys(fields, verified=host_verified))
     return meta
+
+
+def _operational_type(markdown: str) -> str:
+    """ENF-06 — the operational kind this extracted document declares about
+    ITSELF, or ``""`` when it is not one of ours.
+
+    A vault's own output is not knowledge about anything, and it arrives
+    saying so: `type: audit`, `type: log`, `type: graph-health-alert` in its
+    own leading frontmatter. The ingest wrapper would overwrite that with
+    `type: source`, after which nothing distinguishes it from a client
+    document — which is how one historical drop put 264 audit records,
+    nightly logs and health alerts into a client knowledge vault, where the
+    link-coverage metric then counted every one of them as an unlinked source
+    waiting for someone to write a note about it.
+
+    The type set is `invariants.OPERATIONAL_SOURCE_TYPES` — the same one the
+    metric excludes on, so the two ends can never drift apart.
+    ``BRAIN_INGEST_ALLOW_OPERATIONAL=1`` turns the check off for an operator
+    who genuinely means to file one.
+    """
+    if os.environ.get("BRAIN_INGEST_ALLOW_OPERATIONAL", "").strip() not in (
+            "", "0", "false", "False"):
+        return ""
+    from ..invariants import OPERATIONAL_SOURCE_TYPES, embedded_source_type
+
+    declared = embedded_source_type(markdown)
+    return declared if declared in OPERATIONAL_SOURCE_TYPES else ""
+
+
+def _set_aside_operational(claimed: Path, inbox: Path, declared: str) -> None:
+    """Consume the claim without admitting it — SKIPPED, never quarantined.
+
+    Quarantine means verification or signing FAILED. Nothing failed here, so
+    the original is set aside intact beside the other inbox sinks, with the
+    reason written next to it. It stays under ``inbox/``, which the
+    link-coverage exclusion already treats as a non-knowledge zone, so a set
+    aside file can never re-enter the population it was kept out of.
+    """
+    dest_dir = inbox / OPERATIONAL_DIRNAME / declared
+    dest = _unique_dest(dest_dir, claimed.name)
+    _move(claimed, dest)
+    (dest_dir / f"{dest.name}.reason.txt").write_text(
+        f"skipped_reason: operational_artifact:{declared}\n"
+        "- this document declares its own operational type; it is the vault's\n"
+        "  output, not knowledge about the business\n"
+        "- set BRAIN_INGEST_ALLOW_OPERATIONAL=1 and re-drop it to override\n",
+        encoding="utf-8")
 
 
 def _quarantine(claimed: Path, quarantine_dir: Path, reason: str, warnings: list[str]) -> None:

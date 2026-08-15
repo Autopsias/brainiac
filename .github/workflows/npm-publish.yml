@@ -120,3 +120,73 @@ jobs:
           fi
 
           npm publish --access public
+
+  # A pushed tag is NOT a GitHub Release — they are separate objects. This repo
+  # had six Releases created by hand on 2026-08-07 and none after, so the
+  # Releases page silently fell four versions behind while the tags, the code
+  # and npm were all current (found 2026-08-15, on v0.20.10).
+  #
+  # SEPARATE JOB on purpose. `publish` carries `id-token: write` to mint the npm
+  # trusted-publishing token; adding `contents: write` there would hand
+  # release-creation rights to the job already holding the strongest credential
+  # in this workflow. This job takes `contents: write` and no id-token, so
+  # neither can do the other's work.
+  github-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Select and validate the tag
+        id: tag
+        shell: bash
+        env:
+          REF_NAME_RAW: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$REF_NAME_RAW" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "refusing a tag that is not vX.Y.Z: ${REF_NAME_RAW}" >&2
+            exit 1
+          fi
+          git checkout --quiet "refs/tags/${REF_NAME_RAW}"
+          echo "ref_name=${REF_NAME_RAW}" >> "$GITHUB_OUTPUT"
+
+      - name: Create the Release, with its CHANGELOG section as the body
+        shell: bash
+        env:
+          # The validated value, never the raw input — same rule as `publish`.
+          REF_NAME: ${{ steps.tag.outputs.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          # Idempotent: a re-run, or a Release made by hand before this job
+          # existed, must not fail the release.
+          if gh release view "$REF_NAME" >/dev/null 2>&1; then
+            echo "Release ${REF_NAME} already exists — nothing to do"
+            exit 0
+          fi
+
+          # `gh` and python3 are preinstalled on the GitHub-hosted runner.
+          # Nothing is installed here: an unpinned network fetch inside a job
+          # holding a write token is the exact class this repo's supply-chain
+          # check forbids.
+          version="${REF_NAME#v}"
+          python3 - "$version" <<'PY' > /tmp/release-notes.md
+          import re, sys
+          version = sys.argv[1]
+          text = open("CHANGELOG.md", encoding="utf-8").read()
+          # This version's heading up to the next `## [` heading.
+          m = re.search(r"^## \[" + re.escape(version) + r"\][^\n]*\n(.*?)(?=^## \[|\Z)",
+                        text, re.S | re.M)
+          body = m.group(1).strip() if m else ""
+          print(body or f"See CHANGELOG.md for {version}.")
+          PY
+
+          gh release create "$REF_NAME" \
+            --title "brainiac ${REF_NAME}" \
+            --notes-file /tmp/release-notes.md

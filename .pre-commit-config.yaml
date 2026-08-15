@@ -29,3 +29,23 @@ repos:
         additional_dependencies: ['PyYAML>=6']
         pass_filenames: false
         files: ^\.github/workflows/.*\.ya?ml$
+
+      # Two CI gates failed on v0.20.9 and both traced to the same omission: the
+      # release bumped pyproject.toml by hand and never ran the packager, which
+      # is the step that propagates the SSOT version into package.json and
+      # _version.py (ADR-0005 Ruling 1) and regenerates src/brain/_assets/ from
+      # the repo-root originals (PYP-02). npm-publish caught it only AFTER the
+      # tag was pushed ("tag v0.20.9 does not match package.json 0.20.8"), and
+      # Skill Mirror Sync only after an edit had gone into a GENERATED mirror
+      # instead of its canonical file. Both are decided by files already in the
+      # commit, so both belong here, before the tag exists.
+      #
+      # --validate-only never writes; it exits non-zero on the same conditions
+      # the two workflows check. Measured ~1s, so it stays cheap enough to run
+      # on every commit that touches a file it governs.
+      - id: packaged-client-artifacts
+        name: packaged client artifacts match the version SSOT and their sources
+        entry: python3 tools/package_clients.py --validate-only
+        language: system
+        pass_filenames: false
+        files: '^(pyproject\.toml|AGENTS\.md|CLAUDE\.md|README\.md|src/brain/_version\.py|src/brain/_assets/.*|packaging/npm/.*|\.claude/skills/.*|\.agents/skills/.*|plugins/.*)$'

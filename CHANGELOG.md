@@ -6,6 +6,25 @@ are tagged `v<semver>` (e.g. `v0.9.0`) per `docs/adr/0001-publish-via-clean-room
 Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
+### Added
+- **A pushed tag now creates its GitHub Release.** The two were never
+  connected: this repo's six Releases were all created by hand on 2026-08-07
+  and none after, so the Releases page sat at v0.20.5 while the tags, the
+  published code and npm were all at v0.20.10. Nothing was broken — Releases
+  are separate objects from tags, and no workflow made one.
+
+  `npm-publish.yml` gains a `github-release` job that runs after a successful
+  publish, extracts this version's CHANGELOG section as the release body, and
+  is idempotent (a Release that already exists is left alone, so a re-run or a
+  hand-made Release does not fail the pipeline).
+
+  It is a SEPARATE job, deliberately. `publish` holds `id-token: write` to mint
+  the npm trusted-publishing token; granting it `contents: write` as well would
+  give release-creation rights to the job already carrying the strongest
+  credential in the workflow. The new job takes `contents: write` and no
+  id-token. Nothing is installed — `gh` and `python3` are preinstalled on the
+  runner, and an unpinned fetch inside a write-token job is the class
+  `tools/check_workflow_supply_chain.py` exists to refuse.
 
 ## [0.20.10] — 2026-08-14
 ### Fixed

@@ -225,24 +225,6 @@ re-derived**. So "E<n> PASS" in a run report is a claim, and "scored from the ar
 means re-deriving it from the ledger files — never from the report's own PASS line.
 `docs/cos-instrument-inventory.md` §7 is the authority on which is which.
 
-**The frozen set** is whatever file the run was STAMPED against, not "the doctrine" —
-`expected_echecks` is frozen at `cos-run-begin` from `cos_deploy.read_skill(skill_path)`
-(`src/brain/cos.py`), and run 136 recorded `skill_path: …/chief-of-staff/DOCTRINE.md`
-with `lane_reason: "operator-asserted skill path"` while the sibling `SKILL.md` in the
-same directory defines 30 checks. Two files, two counts, and the stamp picks one. A
-result line also only *counts* if it carries a literal `PASS`, `FAIL` or `N/A` token —
-`_REPORT_ECHECK_RE` matches nothing without it, so an honestly-worded answer with no
-verdict word reads as a **missing** check, not a degraded one.
-
-**Bucket** vs **tier** — two ORTHOGONAL axes on one verdict, and conflating them is how
-an archive rule ends up selecting the empty set. A *bucket* is the disposition
-(`act` | `read` | `noise`, `tools/cos_judge.py`); a *tier* is the priority
-(`P0` | `P1` | `P2` | `P3`). Archive-eligibility is a **bucket** question — `noise`, past
-the blast-radius floor — never a tier one: P3 is the tier FLOOR, so "below P3" names
-nothing and any rule phrased that way is vacuously satisfied. Priority chips rank within
-`act`; `read` at P0/P1 is in-scope work (see the verdict-ledger entry above), not
-reading matter.
-
 **Vacuous pass** — a conditional check that reports PASS because its precondition never
 fired (no rows, no actions, nothing in scope). The doctrine repeatedly had to add an
 explicit non-vacuity floor for exactly this (E22(a2), E26's non-zero evaluated count,

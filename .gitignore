@@ -206,3 +206,8 @@ _evidence/invariants/*
 !_evidence/invariants/s10-PRE-REGISTRATION.md
 !_evidence/invariants/s10-claim-readout.md
 !_evidence/invariants/s10-one-pager.html
+
+# /plan-harden 2026-08-15: per-worktree test scope for the pytest-quality-v2 gate.
+# Scratch, never committed — seven tier-3 members each write their own, and a
+# committed copy would be an M5 merge conflict over a file with no content value.
+.quality-v2-scope

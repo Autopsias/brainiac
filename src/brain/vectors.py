@@ -151,7 +151,7 @@ class SqliteVecBackend:
         # Newer sqlite (>=~3.41) pushes a parameterised LIMIT into vec0's query
         # planner so ``ORDER BY distance LIMIT ?`` works, but older builds (e.g.
         # the Cowork device VM's bundled sqlite) do not, and vec0 then raises
-        # "A LIMIT or 'k = ?' constraint is required on vec0 knn queries". The
+        # The vec0 API requires a LIMIT or k constraint on KNN queries. The
         # ``k = ?`` form is sqlite-vec's canonical KNN API and is version-robust.
         rows = conn.execute(
             "SELECT rowid, distance FROM vec_index "

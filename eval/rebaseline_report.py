@@ -17,8 +17,6 @@ both s04 and s09 decide from these numbers) — reported separately as
 from __future__ import annotations
 
 import json
-import statistics
-import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent

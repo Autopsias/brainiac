@@ -56,6 +56,9 @@
     ".codex/hooks/block-vault-recursive-scan.py",
     ".codex/hooks/pre-compact.sh",
     ".codex/hooks/session-start.sh",
+    ".complexity-exceptions",
+    ".file-size-exceptions",
+    ".function-length-exceptions",
     ".gemini/settings.json",
     ".gitattributes",
     ".github/dependabot.yml",
@@ -311,6 +314,7 @@
     "src/brain/cos_runverify.py",
     "src/brain/dbretry.py",
     "src/brain/doctor.py",
+    "src/brain/doctor_vendor.py",
     "src/brain/egress.py",
     "src/brain/embed.py",
     "src/brain/encryption.py",
@@ -370,6 +374,9 @@
     "tools/brain_daily.py",
     "tools/build_brain_binary.sh",
     "tools/bulk_link_check.py",
+    "tools/check_complexity.py",
+    "tools/check_file_sizes.py",
+    "tools/check_function_lengths.py",
     "tools/check_workflow_supply_chain.py",
     "tools/code_origin_audit.py",
     "tools/cos_browser_scan.mjs",
@@ -395,6 +402,7 @@
     "tools/probe_xlingual.py",
     "tools/publish_public.py",
     "tools/publish_release.py",
+    "tools/quality_v2_progress.py",
     "tools/release.py",
     "tools/validate.py",
     "tools/vendor_semantic_deps.py",
@@ -413,5 +421,5 @@
     "vault/raw/2026-06-27-arctic-vs-e5-benchmark.md",
     "vault/raw/README.md"
   ],
-  "count": 412
+  "count": 420
 }

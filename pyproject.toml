@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 # check. The IMPORT package stays `brain` and the console script stays
 # `brain` — only the distribution/project name changes.
 name = "brainiac-cli"
-version = "0.20.10"
+version = "0.20.11"
 description = "Brainiac — local any-LLM second-brain core engine + brain CLI (Markdown truth, derived SQLite index)."
 readme = "README.md"
 license = "Apache-2.0"
@@ -134,6 +134,12 @@ where = ["src"]
 # SYNCED — never hand-edited — by tools/package_clients.py from the repo-root
 # originals (lockstep-validated in --validate-only).
 brain = ["_assets/**"]
+
+[tool.claude-quality]
+# Trees the size gates skip: frozen plan/archive/evidence dirs and the
+# generated _assets mirror of tools/ + scripts/ (re-synced by
+# tools/package_clients.py). Not authored source.
+exclude = ["_plans", "_archive", "_evidence", "_assets"]
 
 [tool.pytest.ini_options]
 # Scope collection to tests/ so pytest never descends into a local model venv

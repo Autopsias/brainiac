@@ -135,8 +135,7 @@ def _pem_from_cmd(cmd: str) -> bytes:
     try:
         # nosec B602 - operator-set env var (BRAIN_AUDIT_KEY_CMD), never untrusted
         # input; see the NOTE above and docs/SECURITY_NOTES.md.
-        # nosemgrep: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true
-        out = subprocess.run(cmd, shell=True, capture_output=True, timeout=20)  # noqa: S602
+        out = subprocess.run(cmd, shell=True, capture_output=True, timeout=20)  # noqa: S602  # nosemgrep: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true
     except (OSError, subprocess.SubprocessError) as exc:
         raise KeyUnavailable(f"BRAIN_AUDIT_KEY_CMD failed to run: {exc}") from exc
     if out.returncode != 0 or not out.stdout.strip():

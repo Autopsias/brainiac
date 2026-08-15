@@ -222,7 +222,6 @@ def main() -> int:
         print(f"ERROR: scorecard has no '{pq_key}'. Re-run harness_direct to emit it.")
         return 2
     pq = sc[pq_key]
-    seg_metric = args.metric  # which by_segment recall to read for stratum deltas
     by_seg = sc["metrics"]["by_segment"]
 
     print("=" * 72)

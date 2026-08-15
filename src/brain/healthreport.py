@@ -136,11 +136,9 @@ def collect_health_report_data(core: Any, *, today: datetime.date | None = None)
     for reg in inv.state_regressions(state):
         act_now.append(f"{reg.get('summary')} — see the Corpus invariants section")
 
-    quarantine_growing = False
     if len(trend_rows) >= 2:
         cur_q, prev_q = trend_rows[0].get("quarantine"), trend_rows[1].get("quarantine")
         if isinstance(cur_q, (int, float)) and isinstance(prev_q, (int, float)) and cur_q > prev_q:
-            quarantine_growing = True
             act_now.append(
                 f"quarantine growing ({prev_q} -> {cur_q}) — "
                 f"inspect `vault/inbox/_quarantine/`"
@@ -149,9 +147,7 @@ def collect_health_report_data(core: Any, *, today: datetime.date | None = None)
     snap = status.get("snapshot") if isinstance(status.get("snapshot"), dict) else {}
     age_s = snap.get("age_seconds") if isinstance(snap, dict) else None
     stale_hours = maint.DEFAULT_OFFHOST_DAILY_STALE_HOURS  # reuse — no new magic number
-    stale_snapshot = False
     if isinstance(age_s, (int, float)) and (age_s / 3600) > stale_hours:
-        stale_snapshot = True
         act_now.append(
             f"snapshot age {age_s / 3600:.1f}h (> {stale_hours}h) — "
             f"run `brain sync --publish`"

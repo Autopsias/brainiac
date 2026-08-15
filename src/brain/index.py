@@ -970,8 +970,7 @@ class BrainIndex:
                 # short, stable disambiguator for a colliding synthetic id), not a
                 # security boundary -- collision resistance / preimage resistance
                 # don't matter for this use. See docs/SECURITY_NOTES.md.
-                # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1
-                row["id"] = f"{row['id']}__{hashlib.sha1(row['path'].encode()).hexdigest()[:8]}"  # nosec B303 B324
+                row["id"] = f"{row['id']}__{hashlib.sha1(row['path'].encode()).hexdigest()[:8]}"  # nosec B303 B324  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1
             seen.add(row["id"])
         chunks = chunk_text(note.body)
         if not chunks:

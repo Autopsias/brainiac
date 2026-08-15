@@ -243,8 +243,6 @@ def main(argv: list[str]) -> int:
 
 def _selfcheck() -> None:
     """assert-based, on the two failures that have actually happened."""
-    import tempfile
-
     saved = (cos_deploy.CODEX_AUTOMATIONS, cos_deploy.DESKTOP_SESSIONS)
     try:
         _selfcheck_body()

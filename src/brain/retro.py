@@ -18,7 +18,6 @@ from __future__ import annotations
 import datetime
 import re
 from pathlib import Path
-from typing import Any
 
 # hot.md is one "<!-- idempotency-key: K -->\n## <date> — <title>\n<body>" block
 # per finding, blank-line separated.

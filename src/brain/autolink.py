@@ -26,7 +26,6 @@ import os
 import re
 import unicodedata
 from pathlib import Path
-from typing import Any
 
 from .graph import parse_wikilinks
 from .notes import scan_vault

@@ -1062,49 +1062,13 @@ def check_vm_model_cache(vault: Path) -> dict:
 # Keep in lockstep with tools/vendor_semantic_deps.py's VM_PYTHON.
 _VM_PYTHON = (3, 10)
 
-_CPYTHON_SO_RE = re.compile(r"\.cpython-(\d)(\d+)-")
-
-
-def check_vendor_abi(vendor_dir: Path, interpreter: tuple[int, int]) -> dict:
-    """Report the vendored wheels' extension-module ABI tags against the
-    interpreter that will import them, and NAME a mismatch explicitly
-    ("vendor is cp311 but interpreter is 3.10") instead of leaving the VM to
-    die later with a bare EmbedderUnavailable. Reads only filenames of
-    extracted ``.so`` files (``*.cpython-3XX-*.so`` / ``*.abi3.so``)."""
-    surface = "Vendored deps ABI (.brain/vendor)"
-    want = f"cp{interpreter[0]}{interpreter[1]}"
-    if not vendor_dir.is_dir():
-        return _row(surface, NOT_DETECTABLE, f"no vendor dir at {vendor_dir}")
-    tags: set[str] = set()
-    for so in vendor_dir.rglob("*.so"):
-        # _retired-*/ holds deliberately quarantined old wheels (e.g. the
-        # cp311 set retired by the 2026-07 ABI fix) — corpses, not the live
-        # vendor; counting them re-reports the exact outage they ended.
-        if any(part.startswith("_retired") for part in so.relative_to(vendor_dir).parts):
-            continue
-        m = _CPYTHON_SO_RE.search(so.name)
-        if m:
-            tags.add(f"cp{m.group(1)}{m.group(2)}")
-        elif so.name.endswith(".abi3.so"):
-            tags.add("abi3")
-    if not tags:
-        return _row(surface, NOT_DETECTABLE,
-                    f"no tagged extension modules under {vendor_dir} — vendor not staged "
-                    "(VM runs lexical-only)")
-    bad = sorted(t for t in tags if t not in ("abi3", want))
-    if bad:
-        return _row(surface, STALE,
-                    f"vendor is {'/'.join(bad)} but interpreter is "
-                    f"{interpreter[0]}.{interpreter[1]} — the vendored wheels cannot import "
-                    "here, so semantic search dies with EmbedderUnavailable",
-                    remediation="re-stage from the host: tools/cowork_workspace_install.sh "
-                                f"(vendored wheels must be {want}/abi3 — "
-                                "tools/vendor_semantic_deps.py now refuses mismatched tags)",
-                    raw={"tags": sorted(tags), "interpreter": want})
-    return _row(surface, CURRENT,
-                f"vendored ABI tags {sorted(tags)} match interpreter "
-                f"{interpreter[0]}.{interpreter[1]}",
-                raw={"tags": sorted(tags), "interpreter": want})
+# Vendored-deps ABI check lives in doctor_vendor.py since 2026-08-15 (size ratchet);
+# re-exported here so every existing caller keeps importing it from doctor.
+from .doctor_vendor import (  # noqa: E402  (re-export)
+    check_vendor_abi,
+    _prune_retired_dirs,  # noqa: F401  (public re-export; existing callers use doctor._prune_retired_dirs)
+    _running_vendor_arch,
+)
 
 
 def check_embedder_liveness() -> dict:
@@ -1388,8 +1352,14 @@ def run_doctor_vm(vault: Optional[str | os.PathLike[str]] = None) -> dict[str, A
     # COS's brief header, which reads that verdict per contract. On the VM the
     # two are equal, so this changes nothing where the check actually applies.
     # Matches the run_doctor() call site below, which already used _VM_PYTHON.
+    # Arch-restricted (2026-08-15 field report): only vendor/<running arch>/ can
+    # be imported here (the shim PYTHONPATHs exactly one arch dir), and on the
+    # VirtioFS mount the full-tree walk — including a _retired-*/ corpse yard
+    # this check discards — never completed inside a VM call budget, leaving
+    # this row set (and the WAT-01 lane that pastes it into the weekly
+    # synthesis session) blind.
     rows.append(check_vendor_abi(config.brain_runtime_dir(vault_path) / "vendor",
-                                 _VM_PYTHON))
+                                 _VM_PYTHON, arch=_running_vendor_arch()))
     rows.append(check_embedder_liveness())  # DV-03: model files present ≠ embedder loads
     rows.append(check_vm_maintain_heartbeat(vault_path))
     # WAT-01 dead-man's switch, lane 2: the WEEKLY SYNTHESIS watchdog runs

@@ -99,10 +99,11 @@ def main() -> int:
     # anyone who can rewrite this process's $PATH can already run code as this
     # user without going through here.
     r = subprocess.run(
-        # The rule anchors on the argv list (the taint source), so the
-        # suppression has to sit here, not above the `subprocess.run(` line.
-        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
-        [brain_bin(), "--vault", vault, "capture", "--type", "daily",
+        # The rule anchors on the argv list's FIRST line (the taint source),
+        # so the suppression has to sit exactly there — not on the trailing
+        # argv line, and not above `subprocess.run(` (measured 2026-08-15:
+        # both misplacements left the finding live while looking suppressed).
+        [brain_bin(), "--vault", vault, "capture", "--type", "daily",  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
          "--id", note_id, "--classification", a.classification],
         input=body, capture_output=True, text=True)
     sys.stdout.write(r.stdout)

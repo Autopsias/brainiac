@@ -13,9 +13,19 @@ repos:
         # (measured: 13 rules time out on core.py/cli.py/index.py/cos.py), which
         # is why .github/workflows/semgrep.yml re-runs the same packs at
         # --timeout 30 in CI. Fast here, complete there.
+        #
+        # --timeout-threshold 1 added 2026-08-15: a timeout is NOT a finding,
+        # but semgrep still exits 1 on timeout ERRORS under --error — measured
+        # on the v0.20.11 release commit: 9-10 timeouts on the big
+        # src/brain/eval files, "Findings: 0 (0 blocking)" three runs in a row,
+        # exit 1 every time, release blocked on a clean tree. With the
+        # threshold, a file whose rules time out is SKIPPED (partial coverage,
+        # the documented posture above) instead of failing the commit. CI still
+        # scans everything at --timeout 30.
         args: ['--config', 'p/python', '--config', 'p/secrets',
                '--config', 'p/github-actions',
-               '--error', '--skip-unknown-extensions']
+               '--error', '--skip-unknown-extensions',
+               '--timeout-threshold', '1']
 
   - repo: local
     hooks:
@@ -49,3 +59,43 @@ repos:
         language: system
         pass_filenames: false
         files: '^(pyproject\.toml|AGENTS\.md|CLAUDE\.md|README\.md|src/brain/_version\.py|src/brain/_assets/.*|packaging/npm/.*|\.claude/skills/.*|\.agents/skills/.*|plugins/.*)$'
+
+      # The size ratchet (7f0451e) committed .file-size-exceptions and
+      # .function-length-exceptions and said "anything new blocks at commit
+      # time" -- but nothing read them. Neither checker ran here, in
+      # .git/hooks/, or in any Claude Code hook, so the baselines were inert
+      # for their whole existence. These three hooks are what makes the
+      # ratchet real.
+      #
+      # Each checker scans the WHOLE project (pass_filenames: false), because
+      # a baseline is a property of the corpus, not of the staged diff; the
+      # `files` filter only decides whether the hook runs at all. Measured
+      # warm on this repo: 0.5s + 0.8s + 0.2s.
+      #
+      # The checkers are vendored into tools/ deliberately. They started life
+      # under ~/.claude/scripts/quality/, and a hook pointing at a home
+      # directory fails for every other clone and in CI.
+      - id: file-size-ratchet
+        name: no new file over the size limit (baseline only shrinks)
+        entry: python3 tools/check_file_sizes.py --project .
+        language: system
+        pass_filenames: false
+        files: '\.py$'
+
+      - id: function-length-ratchet
+        name: no new function over the length limit (baseline only shrinks)
+        entry: python3 tools/check_function_lengths.py --project .
+        language: system
+        pass_filenames: false
+        files: '\.py$'
+
+      # Complexity was never baselined by 7f0451e -- ruff C901 has no exception
+      # file of its own, so tools/check_complexity.py adds one. 103 functions
+      # are grandfathered; a NEW one over 12, or a baselined one getting worse,
+      # blocks. Improving a function never blocks.
+      - id: complexity-ratchet
+        name: no new function over complexity 12 (baseline only shrinks)
+        entry: python3 tools/check_complexity.py --project .
+        language: system
+        pass_filenames: false
+        files: '\.py$'

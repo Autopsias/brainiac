@@ -30,6 +30,12 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 
+from .reexec import engine_version_moved, reexec_after_engine_move  # noqa: F401
+from .vmstaging import (
+    stage_vm_binaries,
+    stage_vm_support_files,
+    vm_binaries_verdict,
+)
 from .doctor import (
     CHANNEL_EDITABLE,
     CHANNEL_PIP_USER,
@@ -112,6 +118,15 @@ def _default_runner(cmd: list[str], **kwargs: Any) -> "subprocess.CompletedProce
 # --------------------------------------------------------------------------
 
 REQUIRED_SUBCOMMANDS = ("marketplace", "list", "uninstall", "install", "update")
+
+#: Reported when dist-rebuild/re-stage are skipped for lack of a checkout.
+_NO_CHECKOUT_DETAIL = (
+    "skipped — no local checkout resolved (tried explicit/$BRAINIAC_ENGINE_SRC/"
+    "__file__/marketplace installLocation) (a PyPI-first install "
+    "has none by default; only needed to re-stage Cowork workspaces — clone "
+    "https://github.com/Autopsias/brainiac.git and pass --engine-src, or set "
+    "$BRAINIAC_ENGINE_SRC, if you use Cowork)"
+)
 
 
 def probe_cli_capability(run: Runner = _default_runner) -> dict:
@@ -647,57 +662,17 @@ def stage_engine_and_skills(
     for z in zips:
         shutil.copyfile(z, skills_dst_dir / z.name)
 
-    # (c/c2/c3) offline semantic stack (DV-04) — the re-stage previously staged
-    # ONLY engine+skills, so a `brain update` shipped the fixed engine but left
-    # the VM without vendored tokenizers/sqlite-vec and with a stale shim/prompt:
-    # semantic search silently stayed on the hash fallback. Stage all three from
-    # the SAME shared helper the installer uses, so update == install.
-    vendor_status: dict[str, str] = {}
-    try:
-        import sys as _sys
-        _sys.path.insert(0, str(engine_src / "tools"))
-        import vendor_semantic_deps as _vsd  # type: ignore
+    # (c/c2/c3 + prompt + AGENTS.md + probes) the VM-facing extras — see
+    # brain/vmstaging.py.
+    vendor_status = stage_vm_support_files(brain_dir, engine_src, _packaged_script)
 
-        _vsd.write_shim(brain_dir)                       # vendored-deps-aware shim
-        vendor_status = _vsd.stage_vendor(brain_dir)     # tokenizers + sqlite-vec per arch
-    except Exception as exc:  # advisory — a networkless host degrades to lexical
-        vendor_status = {"error": f"{type(exc).__name__}: {exc}"}
-    # session prompt — the instruction the Cowork agent follows each session.
-    prompt_src = engine_src / "docs" / "install" / "cowork-session-prompt.md"
-    if prompt_src.exists():
-        routines_dst = brain_dir / "routines"
-        routines_dst.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(prompt_src, routines_dst / "cowork-session-prompt.md")
-
-    # conventions contract — the AGENTS.md the session prompt points the agent at
-    # (cowork_workspace_install.sh leg, line ~218). The re-stage previously
-    # SKIPPED it, so an AGENTS.md change (e.g. the retrieval-discipline block)
-    # never reached Cowork on `brain update`: the doctor's staged-version check
-    # reads the engine stamp and is blind to a stale contract. Copy it so
-    # update == install for the contract too.
-    agents_src = engine_src / "AGENTS.md"
-    if agents_src.exists():
-        shutil.copyfile(agents_src, brain_dir / "AGENTS.md")
-
-    # The two VM probes, staged 0755 so a Cowork session can run either one
-    # straight from the workspace root. Both ship in the wheel via
-    # _assets/scripts:
-    #   vm-selftest.sh        the un-fakeable PASS/FAIL retrieval self-test —
-    #                         proves the VM leg WORKS (step 8).
-    #   vm-boundary-probe.sh  the NEGATIVE half — proves it REFUSES everything
-    #                         the host broker holds. It was hand-copied into
-    #                         one workspace on 2026-07-31 and would have
-    #                         vanished on the next re-stage; a boundary claim
-    #                         is only worth what can be re-measured on demand.
-    for script_name in ("vm-selftest.sh", "vm-boundary-probe.sh"):
-        script_src = _packaged_script(script_name, engine_src)
-        if script_src is not None:
-            dst = brain_dir / script_name
-            shutil.copyfile(script_src, dst)
-            dst.chmod(0o755)
+    # (a-ELF) the frozen Linux binaries — the leg this function omitted until
+    # 2026-08-16; see brain/vmstaging.py for what that cost.
+    bin_status = stage_vm_binaries(brain_dir, engine_src / "dist")
 
     ssot = _ssot_version(engine_src)
     staged = _read_version_stamp(engine_dir / "brain" / "_version.py")
+    bin_ok, bin_detail = vm_binaries_verdict(bin_status, ssot)
     return {
         "ssot_version": ssot,
         "staged_version": staged,
@@ -706,7 +681,34 @@ def stage_engine_and_skills(
         "skills_src_dir": str(skills_src_dir),
         "vendor_status": vendor_status,
         "model_status": model_status,
+        "binaries": bin_status,
+        "binaries_ok": bin_ok,
+        "binaries_detail": bin_detail,
     }
+
+
+def _restage_no_op_reason(stage_info: dict) -> str | None:
+    """The no-silent-no-op predicate (DV-01, ADR-0005 Ruling 1): why this
+    re-stage must NOT be reported ok, or None if it is genuinely fine.
+
+    One predicate rather than three inline guards — the original defect was a
+    re-stage reporting "ok" off the index sync alone while the staged engine
+    stayed at a stale pre-0.10.0 copy, and every artifact this function landed
+    has since earned the same treatment.
+    """
+    if not stage_info["version_ok"]:
+        return (f"staged engine version {stage_info['staged_version']!r} != "
+                f"SSOT {stage_info['ssot_version']!r} after re-stage — "
+                "engine copy landed a missing/stale _version.py stamp")
+    # Same rule for the ELF leg (2026-08-16): without it the re-stage reports
+    # ok while the VM's PATH-first binary is releases behind and silently
+    # ranking on hash vectors.
+    if not stage_info["binaries_ok"]:
+        return stage_info["binaries_detail"]
+    if stage_info["skills_shipped"] == 0:
+        return (f"no .skill bundles found in {stage_info['skills_src_dir']} "
+                "to refresh — run tools/package_clients.py in the checkout")
+    return None
 
 
 def restage_workspaces(
@@ -787,23 +789,10 @@ def restage_workspaces(
                                 "reason": f"engine/model/skill re-stage failed: "
                                           f"{type(exc).__name__}: {exc}"})
                 continue
-            # No-silent-no-op (DV-01, ADR-0005 Ruling 1): a re-stage that
-            # lands a missing/mismatched _version.py must never report ok —
-            # that's exactly the defect this fix exists to close (staged
-            # engine stayed at a stale pre-0.10.0 copy while `brain update`
-            # reported "ok" off the index sync alone).
-            if not stage_info["version_ok"]:
+            no_op = _restage_no_op_reason(stage_info)
+            if no_op:
                 results.append({"workspace_path": workspace_path, "target": target,
-                                "status": "failed",
-                                "reason": f"staged engine version {stage_info['staged_version']!r} != "
-                                          f"SSOT {stage_info['ssot_version']!r} after re-stage — "
-                                          "engine copy landed a missing/stale _version.py stamp"})
-                continue
-            if stage_info["skills_shipped"] == 0:
-                results.append({"workspace_path": workspace_path, "target": target,
-                                "status": "failed",
-                                "reason": f"no .skill bundles found in {stage_info['skills_src_dir']} "
-                                          "to refresh — run tools/package_clients.py in the checkout"})
+                                "status": "failed", "reason": no_op})
                 continue
             sync_out = run([str(brain_bin), "sync", "--publish"],
                            env={**os.environ, "BRAIN_VAULT": vault_path})
@@ -968,6 +957,8 @@ def run_update(
         result["notes"] = f"engine venv refresh failed: {engine_result['detail']} — stopping before workspace re-stage."
         return result
 
+    reexec_after_engine_move(engine_result, dry_run=dry_run)
+
     # Step 3.5 — rebuild dist/ (COMPAT + cowork-skills bundles) from the
     # freshly-installed engine, BEFORE staging workspaces below reads it.
     # PYP-04: dist_rebuild and workspace re-stage both need a REAL checkout
@@ -975,15 +966,9 @@ def run_update(
     # install has none by default, and only Cowork workspaces need either
     # step. Gate on the checkout actually existing so a host-only PyPI
     # install's `brain update` never fails on a step it doesn't need.
+    no_checkout_detail = _NO_CHECKOUT_DETAIL
     engine_src_available = (
         resolved_engine_src is not None and (resolved_engine_src / "pyproject.toml").exists()
-    )
-    no_checkout_detail = (
-        "skipped — no local checkout resolved (tried explicit/$BRAINIAC_ENGINE_SRC/"
-        "__file__/marketplace installLocation) (a PyPI-first install "
-        "has none by default; only needed to re-stage Cowork workspaces — clone "
-        "https://github.com/Autopsias/brainiac.git and pass --engine-src, or set "
-        "$BRAINIAC_ENGINE_SRC, if you use Cowork)"
     )
     if dry_run:
         dist_rebuild = {"ok": True, "detail": "[dry-run] tools/package_clients.py (skipped)"}

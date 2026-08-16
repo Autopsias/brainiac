@@ -30,6 +30,7 @@ import contextlib
 import json
 import os
 import random
+import secrets
 import time
 from pathlib import Path
 from typing import Any, Iterator
@@ -38,6 +39,18 @@ from typing import Any, Iterator
 # (a ~100-byte JSON object at offset 0) because that lock is mandatory, not
 # advisory. Locking past EOF is legal and does not extend the file.
 _SENTINEL_OFFSET = 1 << 20
+
+
+def _atomic_temp_path(path: Path) -> Path:
+    """Return an unpredictable temporary sibling that fits ``NAME_MAX``."""
+    suffix = f".{secrets.token_hex(8)}.tmp"
+    try:
+        name_max = int(os.pathconf(path.parent, "PC_NAME_MAX"))
+    except (OSError, ValueError, AttributeError):
+        name_max = 255
+    keep = max(1, name_max - len(suffix.encode("utf-8")) - 1)
+    stem = path.name.encode("utf-8")[:keep].decode("utf-8", "ignore")
+    return path.with_name(f".{stem}{suffix}")
 
 
 class WriterLockBusy(RuntimeError):

@@ -22,22 +22,33 @@ if ! python3 -c "import PyInstaller" 2>/dev/null; then
 fi
 
 NAME="brain-${OS}-${ARCH}"
-echo "[build] PyInstaller one-file: $NAME"
+VERSION="$(python3 -c 'import sys; sys.path.insert(0, "'"$REPO"'/src"); from brain._version import __version__; print(__version__)')"
+echo "[build] PyInstaller one-file: $NAME (version $VERSION)"
 # Entry point: packaging/brain_entry.py — the package-aware shim. NEVER freeze
 # src/brain/cli.py directly: it uses package-relative imports, so a frozen
 # copy crashes at import time ("attempted relative import with no known
 # parent package") — found in the wild 2026-07-04. --collect-all pulls
 # onnxruntime/sqlite_vec native libs into the bundle so the VM needs nothing
 # pre-installed.
+BUILDTMP="$(mktemp -d)"
+trap 'rm -rf "$BUILDTMP"' EXIT
 python3 -m PyInstaller \
   --onefile --name "$NAME" \
   --collect-all onnxruntime --collect-all sqlite_vec \
   --collect-all tokenizers \
   --paths "$REPO/src" \
   --distpath "$OUTDIR" \
+  --workpath "$BUILDTMP/build" --specpath "$BUILDTMP" \
   "$REPO/packaging/brain_entry.py"
 
-echo "[build] wrote $OUTDIR/$NAME"
+# The version marker is what makes a stale ELF VISIBLE. The host cannot execute
+# a Linux binary to ask its version, so without this file `brain doctor` can
+# only check the ELF's integrity (SHA256SUMS) — which passes happily on a
+# binary that is three releases behind, exactly the 0.17.0-under-0.20.12 skew
+# found 2026-08-16. Written next to the ELF and staged with it.
+printf '%s\n' "$VERSION" > "$OUTDIR/$NAME.version"
+
+echo "[build] wrote $OUTDIR/$NAME (version $VERSION)"
 echo
 echo "Cross-arch: this built only $ARCH. For the other Linux arch, run the SAME"
 echo "command on an aarch64 (or x86_64) runner, or under:"

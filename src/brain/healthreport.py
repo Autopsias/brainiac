@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from . import brief as brief_mod
+from .healthreport_unsigned import _unsigned_notes_context
 
 VERDICT_HEALTHY = "HEALTHY"
 VERDICT_DEGRADED = "DEGRADED"
@@ -312,6 +313,7 @@ _INVARIANT_LABELS = {
     "unguarded_ingests": "ingests admitted unguarded",
     "subfloor_families": "sub-floor supersession families",
     "unreachable_gold": "unreachable gold documents",
+    "unsigned_notes": "notes with no audit-chain entry",
 }
 
 
@@ -329,10 +331,8 @@ def _report_date(data: dict[str, Any]) -> datetime.date | None:
 
 def _corpus_invariants_html(state: dict[str, Any], trend: list[dict[str, Any]],
                             today: datetime.date | None = None) -> str | None:
-    """WAT-01: the four corpus invariants, each against its RATCHETED floor
-    (the best value ever recorded — the threshold, not a percentage), plus
-    the fold's own liveness and a trend table. ``None`` when the fold has
-    never run on this vault."""
+    """WAT-01: corpus invariants against their RATCHETED floors, plus the
+    fold's liveness and a trend table. ``None`` when it has never run."""
     from . import invariants as inv
 
     entry = state.get(inv.STATE_KEY)
@@ -353,7 +353,7 @@ def _corpus_invariants_html(state: dict[str, Any], trend: list[dict[str, Any]],
         threshold = f"&le; {brief_mod._esc(floor)}" if isinstance(floor, int) else "(baselining)"
         if isinstance(floor, int) and tol:
             threshold += f" (+{tol})"
-        extra = ""
+        extra = _unsigned_notes_context(m) if name == "unsigned_notes" else ""
         if name == "unlinked_sources":
             extra = (f"{brief_mod._esc(m.get('population', '?'))} in population, "
                      f"{brief_mod._esc(m.get('excluded', 0))} excluded by design")

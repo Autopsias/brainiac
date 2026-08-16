@@ -33,6 +33,8 @@ import shlex
 from pathlib import Path
 from typing import Any
 
+from .maintenance_invariant_fields import invariant_health_history_fields
+
 _log = logging.getLogger("brain.maintenance")
 
 
@@ -2471,35 +2473,8 @@ def collect_health_metrics(
         "autodedup_skipped_recurring": (
             len(autodedup["skipped_recurring"]) if "skipped_recurring" in autodedup else None
         ),
-        # WAT-01 — the four corpus invariants (null on a run where the daily
-        # fold was not due/failed) plus `invariant_age_days`, the dead-man's
-        # switch metric: how long ago the fold last COMPLETED, present on
-        # EVERY record so a dead fold is visible in the trend itself.
-        "invariant_unlinked_sources": inv_values.get("unlinked_sources"),
-        "invariant_cross_tier_twins": inv_values.get("cross_tier_twins"),
-        # ENF-03: the CONTENT detector, both halves. The decided and the
-        # undecided count trend as separate series on purpose — a falling
-        # conflict count beside a rising candidate count is a detector losing
-        # its grip, and one merged number hides it.
-        "invariant_cross_tier_duplicates": inv_values.get("cross_tier_duplicates"),
-        "invariant_cross_tier_candidates": inv_values.get("cross_tier_candidates"),
-        # ENF-04 — the ingest guard. Two series, because they answer different
-        # questions: `unguarded` is the RATCHETED should-be-zero (the guard was
-        # supposed to run and couldn't), while `raises` is monotone activity —
-        # trended so a leg that stops firing is visible, never alerted on,
-        # because a min-ever floor over an append-only zone would fire on every
-        # firing of a working guard.
-        "invariant_unguarded_ingests": inv_values.get("unguarded_ingests"),
-        "invariant_ingest_guard_raises": (
-            (inv_metrics.get("unguarded_ingests") or {}).get("raised")
-            if isinstance(inv_metrics.get("unguarded_ingests"), dict) else None),
-        "invariant_subfloor_families": inv_values.get("subfloor_families"),
-        # Monthly-cadence (read from the reachability artifact, which is
-        # produced by a deliberate eval run) -> null on ~every record, the
-        # golden_score shape. MIRRORED into the never-rotated sparse sidecar
-        # below so it survives the 14-day history read window.
-        "invariant_unreachable_gold": inv_values.get("unreachable_gold"),
-        "invariant_age_days": inv_age,
+        # WAT-01 invariant fields are kept in one extracted mapping.
+        **invariant_health_history_fields(inv_values, inv_metrics, inv_age),
     }
 
 

@@ -24,7 +24,7 @@ from . import frontmatter
 from . import provenance
 from .audit import AuditChain, KeyUnavailable
 from .index import BrainIndex, Hit
-from .lock import WriterLockBusy, vault_writer_lock
+from .lock import WriterLockBusy, _atomic_temp_path, vault_writer_lock
 from .notes import note_from_text, safe_slug, sha256_text
 
 
@@ -124,10 +124,9 @@ def _write_atomic_durable(path: Path, data: bytes, *, mode: int) -> None:
     Unlike ``cos._fsync_dir``, the parent fsync RAISES on failure —
     ``supersede`` unlinks its crash journal on the strength of "both notes are
     on disk", and a silently-failed fsync means they are not."""
-    import secrets
     import stat as _stat
 
-    tmp = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+    tmp = _atomic_temp_path(path)
     flags = (os.O_WRONLY | os.O_CREAT | os.O_EXCL
              | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
     fd = os.open(tmp, flags, 0o600)

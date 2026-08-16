@@ -166,6 +166,36 @@ def run_packager(*, dry_run: bool) -> None:
     subprocess.run([sys.executable, str(REPO_ROOT / "tools" / "package_clients.py")], check=True, cwd=REPO_ROOT)
 
 
+def run_vm_binary_build(*, dry_run: bool) -> None:
+    """Rebuild the Cowork VM ELFs as part of the cut (2026-08-16).
+
+    The release used to propagate the new version into every client EXCEPT
+    this one: nothing called tools/build_brain_binary.sh, so dist/brain-linux-*
+    stayed at the hand-built 2026-07-13 v0.17.0 while the engine moved to
+    0.20.12. The workspace stagers faithfully copied that stale ELF, and the VM
+    bootstrap PATH-prefers it — so Cowork retrieval silently ran a three-release
+    -old engine on hash vectors.
+
+    ADVISORY, not fatal: the build needs Docker, and a cut from a host without
+    it must still succeed. The staged-VM-binary doctor row and the re-stage
+    assert are what make a skipped build VISIBLE, so a warning here cannot
+    quietly become a stale binary later.
+    """
+    script = REPO_ROOT / "tools" / "build_brain_binary_linux.sh"
+    if dry_run:
+        print("  (dry-run: skipping tools/build_brain_binary_linux.sh)")
+        return
+    print("  rebuilding the Cowork VM ELFs (tools/build_brain_binary_linux.sh) ...")
+    try:
+        subprocess.run([str(script)], check=True, cwd=REPO_ROOT)
+    except (subprocess.CalledProcessError, OSError) as exc:
+        print(f"  WARNING: VM ELF rebuild did not run ({exc}).", file=sys.stderr)
+        print("  dist/brain-linux-* is now OLDER than this release. Run "
+              "tools/build_brain_binary_linux.sh on a host with Docker before "
+              "staging any Cowork workspace; `brain doctor` will report the "
+              "staged VM binary as stale until you do.", file=sys.stderr)
+
+
 def apply_release(new_version: str, *, dry_run: bool) -> None:
     pyproject_text = PYPROJECT_PATH.read_text(encoding="utf-8")
     current = read_version(pyproject_text)
@@ -190,6 +220,9 @@ def apply_release(new_version: str, *, dry_run: bool) -> None:
         print(f"  wrote {CHANGELOG_PATH.relative_to(REPO_ROOT)} ([{new_version}] — {today})")
 
     run_packager(dry_run=dry_run)
+    # AFTER the packager: build_brain_binary.sh stamps the ELF with the version
+    # package_clients.py just wrote, so the order is load-bearing.
+    run_vm_binary_build(dry_run=dry_run)
 
 
 def main() -> int:

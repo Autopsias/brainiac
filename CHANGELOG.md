@@ -7,6 +7,102 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.13] — 2026-08-16
+### Fixed
+- **`brain update` ran the OLD code after upgrading the engine underneath
+  itself.** Every step after the venv refresh — dist rebuild, workspace
+  re-stage, doctor verify — runs from modules already imported into the running
+  process, and pip replaces files on disk, never modules in memory. Measured on
+  this very cut: the run that installed the ELF-staging leg did not stage the
+  ELFs and still reported `ok: true`, while the workspace kept binaries a
+  release behind; a second run applied it. `brain/reexec.py` now re-execs once
+  (env-guarded) so the rest of the chain IS the version just installed.
+- **`/brainiac-update` named `$HOME/brainiac` as the checkout.** On a host with
+  more than one clone that is the WRONG one — measured here at 0.20.10 against a
+  real source at 0.20.13 — and `--engine-src` decides what gets staged into
+  every Cowork workspace, so the re-stage ships an old engine and still reports
+  every step ok. The step now resolves the checkout BY VERSION against the SSOT.
+- Four decayed tests that reported defects which did not exist: an alerts test
+  pinned to a hardcoded date that aged out of its 1-day marker window; an
+  NFC/NFD characterization test still asserting a limitation ADR-0008 identity
+  had already fixed; and two reranker tests that failed on a missing optional
+  extra instead of skipping.
+- **The Cowork VM binary was never re-staged, and nothing checked its version.**
+  `cowork_workspace_install.sh`'s leg (a) is the frozen Linux ELFs; `update.py`'s
+  own "(a)" is the PYTHON SOURCE — same letter, different leg. So every
+  `brain update` refreshed engine, model and skills while `.brain/bin/` kept
+  whatever binary was last staged by hand. Measured 2026-08-16 on the reference
+  workspace: a **0.17.0** ELF under a **0.20.12** engine, byte-identical to a
+  `dist/` build from 2026-07-13 that no release had ever rebuilt.
+  It stayed invisible because `SHA256SUMS` proves a binary is INTACT, never
+  CURRENT, and the host cannot execute a Linux ELF to ask its version. It was
+  not cosmetic: `cowork_session_bootstrap.sh` symlinks the arch-matched ELF
+  OVER the zero-install shim and PATH-prepends it, so a bootstrapped VM session
+  ran the old engine — which cannot read the newer snapshot schema and falls
+  back to HashEmbedder, querying a real-model index with random vectors and
+  raising nothing.
+
+### Added
+- **`tools/build_brain_binary_linux.sh`** — builds both Linux ELFs from any host
+  with Docker, running the SAME inner `build_brain_binary.sh` per arch so there
+  is one build definition. `tools/release.py` now calls it, so the ELF is a
+  release artifact like the wheel instead of a hand-built afterthought
+  (advisory: a cut from a host without Docker still succeeds, and the two checks
+  below make the skip visible rather than silent).
+- **A `.version` marker beside each ELF**, written at build time and carried by
+  both stagers. Freshness has to be a file the host can read WITHOUT executing
+  the binary — otherwise it cannot be checked at all.
+- **`brain doctor` surface "Staged VM binary"** — CURRENT / STALE / UNKNOWN per
+  workspace. An unversioned ELF is UNKNOWN, never assumed current.
+- **A no-silent-no-op assert on the ELF leg in `brain update`** — a version that
+  DISAGREES with SSOT fails the re-stage; a MISSING marker warns instead, since
+  every pre-2026-08-16 ELF lacks one and the rebuild needs Docker.
+- `brain/vmstaging.py` + `tests/test_vm_staging.py` — the VM-facing staging
+  concern in one module (size ratchet), the same split as `doctor_vendor.py`.
+
+## [0.20.12] — 2026-08-15
+### Added
+- **`invariants.unsigned_notes` (WAT-01 metric 8) — notes that are indexed and
+  retrievable with NO audit-chain entry at all.** `verify-audit` structurally
+  cannot see these: content drift compares SIGNED notes against disk, so a note
+  that was never signed produces no record — it is absent from the population,
+  not flagged. Found on the reference vault 2026-08-15: 24 `brain/` notes, up
+  to MNPI, going back to 2026-07-09. The metric fails to `available: false`,
+  never to a large number — with no readable chain every note looks unsigned,
+  and firing the ratchet on an instrument fault is the mirror image of the
+  empty-input false-all-clear this module exists to prevent. Population is the
+  INDEX's own scope, not a filesystem walk: a first cut counted 1,046
+  `raw/originals/` archived binaries the index never holds.
+
+### Fixed
+- **The weekly synthesis session's notes are signed on the host (sign-drain).**
+  The confined session holds `Write(vault/brain/**)` but denies Bash and runs
+  `BRAIN_ROLE=vm`, so it cannot sign what it writes — deliberately, because it
+  reads untrusted vault content and must not hold the audit key at the same
+  time (AGENTS.md §5). Every note BAK-04's linking lane created was therefore
+  indexed with no provenance, and every note it edited drifted. The host now
+  drains and signs after the session exits and BEFORE `sync --publish`, the
+  same shape as the VM-draft → host-commit protocol (§6). A note it cannot
+  sign fails the run rather than logging a number nobody reads.
+- **A note whose filename is near `NAME_MAX` can be written at all.**
+  `_write_atomic_durable`'s temp name added 22 bytes to the note's own
+  basename, so a 251-character transcript id (taken from a meeting title) blew
+  past 255 and died with `ENAMETOOLONG` *after* the audit entry was signed —
+  leaving a `write`/`write_failed` pair and no way to ever commit that note.
+  The random token is the security property and is kept whole; the embedded
+  original name is only for legibility, so that is the half now truncated.
+- **The .mcpb release-asset gate is un-broken — and can't drift again.**
+  Every release publish since v0.20.5 died in the handshake gate with
+  "unexpected tool(s) exposed" and no release carried its `.mcpb` asset,
+  because the gate hard-coded five read verbs while the engine's read
+  surface had six (`vault_languages`, the CON-01 language census). The
+  gate's allowlist is now DERIVED from `brain.mcp_adapter.READ_TOOLS` — the
+  engine's own definition of its read surface — so the next read verb
+  changes one list, not two. A regression test pins gate and adapter
+  together and asserts no write verb ever appears in the set. v0.20.11's
+  release assets (wheel, sdist, brainiac.mcpb) were attached manually after
+  the fix.
+
 ## [0.20.11] — 2026-08-15
 ### Fixed
 - **`brain --role vm doctor` completes on a Cowork mount again** (field

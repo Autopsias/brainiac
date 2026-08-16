@@ -87,6 +87,17 @@ for arch in x86_64 aarch64; do
   if [ -f "$src" ]; then
     cp -f "$src" "$BRAIN_DIR/bin/brain-linux-$arch"
     chmod 755 "$BRAIN_DIR/bin/brain-linux-$arch"
+    # Carry the version marker WITH the binary (2026-08-16). Without it the
+    # host can only verify the ELF's integrity, never its freshness — a
+    # 0.17.0 binary sat under a 0.20.12 engine for a month and every check
+    # passed. tools/build_brain_binary.sh writes it at build time; an ELF
+    # built before that change has none, and doctor reports it as unknown
+    # rather than assuming it is current.
+    if [ -f "$src.version" ]; then
+      cp -f "$src.version" "$BRAIN_DIR/bin/brain-linux-$arch.version"
+    else
+      rm -f "$BRAIN_DIR/bin/brain-linux-$arch.version"
+    fi
     shipped=$((shipped+1))
   fi
 done

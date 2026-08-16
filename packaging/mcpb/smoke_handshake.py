@@ -17,7 +17,31 @@ import os
 import sys
 from pathlib import Path
 
-EXPECTED_TOOLS = {"search", "get", "recent", "dossier", "bases_query"}
+
+def expected_tools() -> set[str]:
+    """The read-verb allowlist, DERIVED from the engine's own definition
+    (``brain.mcp_adapter.READ_TOOLS``) — never a second hand-maintained copy
+    here.
+
+    Field failure 2026-08-15, six releases long: this file hard-coded five
+    verbs while the engine's read surface grew a sixth (``vault_languages``,
+    the CON-01 language census, added with the variant contract). Every
+    release publish since v0.20.5 died in this gate with "unexpected tool(s)
+    exposed" and no release has carried its .mcpb asset since. Deriving the
+    set from the adapter means the NEXT read verb fails in the adapter's own
+    review, not six releases of broken asset attachment later.
+
+    No fallback on ImportError, deliberately: build.sh only ever runs this
+    under an interpreter that has the engine importable (it resolves the
+    interpreter from brain-mcp's own shebang), so an unimportable engine
+    here is itself a gate failure worth seeing, not a reason to guess a
+    stale list.
+    """
+    from brain.mcp_adapter import READ_TOOLS
+    return set(READ_TOOLS)
+
+
+EXPECTED_TOOLS = expected_tools()
 
 
 async def main() -> int:

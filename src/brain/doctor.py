@@ -790,6 +790,14 @@ def check_staged_skill_bundles(registry_entries: list[dict], ssot: str) -> list[
 # with a schema skew is still visible.
 # --------------------------------------------------------------------------
 
+def _staged_payload_rows(registry_entries: list[dict], ssot: str) -> list[dict]:
+    """Every versioned payload staged INTO a workspace, in report order: the
+    skill bundles, then the frozen VM binaries. Both answer the same question
+    — does what we staged match SSOT — so they are read together."""
+    return (check_staged_skill_bundles(registry_entries, ssot)
+            + check_staged_vm_binaries(registry_entries, ssot))
+
+
 def check_workspace_schema(registry_entries: list[dict], binary_schema_version: int) -> list[dict]:
     rows = []
     for entry in registry_entries:
@@ -1070,6 +1078,11 @@ from .doctor_vendor import (  # noqa: E402  (re-export)
     _running_vendor_arch,
 )
 
+# Staged VM binaries live in vmstaging.py since 2026-08-16 — same reason and
+# same shape as the doctor_vendor split above (size ratchet). Re-exported so the
+# row reads like every other staged-artifact surface.
+from .vmstaging import check_staged_vm_binaries  # noqa: E402,F401  (re-export)
+
 
 def check_embedder_liveness() -> dict:
     """Probe whether the LIVE runtime can produce real semantic embeddings, or
@@ -1337,6 +1350,7 @@ def run_doctor_vm(vault: Optional[str | os.PathLike[str]] = None) -> dict[str, A
 
     rows: list[dict] = [check_vm_engine_stamp(engine_version)]
     rows.extend(check_staged_skill_bundles(entries, engine_version))
+    rows.extend(check_staged_vm_binaries(entries, engine_version))
     rows.extend(check_workspace_schema(entries, SCHEMA_VERSION))
     rows.append(check_vm_snapshot(vault_path))
     rows.append(check_vm_model_cache(vault_path))
@@ -1526,7 +1540,7 @@ def run_doctor(
         vdir = Path(_cowork_vault_dir(entry)) / ".brain" / "vendor"
         if vdir.is_dir():
             rows.append(check_vendor_abi(vdir, _VM_PYTHON))
-    rows.extend(check_staged_skill_bundles(registry_entries, ssot))
+    rows.extend(_staged_payload_rows(registry_entries, ssot))
     rows.extend(check_workspace_schema(registry_entries, SCHEMA_VERSION))
     # ES-01: the host is the only leg that actually RUNS `brain maintain`, so
     # this is where a repeated-failure/stuck-lock/stale branch must gate the

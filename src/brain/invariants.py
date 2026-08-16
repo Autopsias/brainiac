@@ -40,10 +40,13 @@ The seven:
 7. ``unreachable_gold``  — READ, never re-run, from the newest
    ``eval/s06_reachability.py`` artifact: gold documents no ranking leg
    reaches at all.
+8. ``unsigned_notes`` — indexed notes without an audit-chain entry; its
+   implementation lives in ``invariant_unsigned_notes``.
 
-All seven are no-model and read-only. 1-4 and 6 read the index (plus the
+All eight are no-model and read-only. 1-4 and 6 read the index (plus the
 ``brain/`` zone's frontmatter, ~hundreds of small files); 5 reads ``raw/``
-frontmatter (~1.7s on the reference vault); 7 reads one JSON artifact.
+frontmatter (~1.7s on the reference vault); 7 reads one JSON artifact; 8
+reads the audit chain once and stats each note (no note bodies).
 
 **Thresholds are ABSOLUTE and RATCHETING, never percent** (hardening G3). A
 percent-regression check against a trailing baseline dies at zero — the exact
@@ -81,6 +84,9 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .invariant_reachability import unreachable_gold
+from .invariant_unsigned_notes import unsigned_notes
+
 # The metric names, in report order. Every consumer (state, health
 # record, report, alerting) iterates THIS tuple rather than re-listing them.
 INVARIANT_METRICS = (
@@ -91,6 +97,7 @@ INVARIANT_METRICS = (
     "unguarded_ingests",
     "subfloor_families",
     "unreachable_gold",
+    "unsigned_notes",
 )
 
 # The state key this fold owns inside maintain-state.json. It is a plain
@@ -224,12 +231,12 @@ def _resolve(resolver: dict[str, str], target: str) -> str | None:
     t = (target or "").strip()
     if not t:
         return None
-    hit = resolver.get(t) or resolver.get(t.lower())
+    from .link_targets import resolve_target
+    hit = resolve_target(resolver, t)
     if hit:
         return hit
     if "/" in t:
-        tail = t.rsplit("/", 1)[-1]
-        return resolver.get(tail) or resolver.get(tail.lower())
+        return resolve_target(resolver, t.rsplit("/", 1)[-1])
     return None
 
 
@@ -863,53 +870,6 @@ def subfloor_families(conn: Any, *, cap: int = SAMPLE_CAP) -> dict[str, Any]:
     }
 
 
-def unreachable_gold(vault: Path) -> dict[str, Any]:
-    """Gold documents no ranking leg reaches (metric 4) — READ from the
-    newest ``eval/s06_reachability.py`` artifact, never re-measured here (the
-    audit costs a full embedded sweep; the fold is no-model by contract).
-
-    Looks under ``$BRAIN_INVARIANTS_REACHABILITY_GLOB`` (a colon-separated
-    list of globs; default ``<vault>/.brain/eval/s06-reachability*.json``).
-    ``available: False`` when no artifact exists — reported, never alerted:
-    a missing measurement is not a regression."""
-    patterns = os.environ.get(REACHABILITY_GLOB_ENV, "").strip()
-    globs = ([p for p in patterns.split(":") if p]
-              if patterns else [str(vault / ".brain" / "eval" / "s06-reachability*.json")])
-    import glob as _glob
-
-    candidates: list[Path] = []
-    for g in globs:
-        candidates.extend(Path(p) for p in _glob.glob(g))
-    if not candidates:
-        return {"value": None, "available": False, "artifact": None,
-                "generated": None, "age_days": None, "labels": None}
-    newest = max(candidates, key=lambda p: p.stat().st_mtime)
-    try:
-        data = json.loads(newest.read_text(encoding="utf-8"))
-        labels = data.get("labels") or []
-        unreachable = sum(
-            1 for rec in labels
-            if isinstance(rec, dict)
-            and not ((rec.get("reached") or {}).get("default_any_leg"))
-        )
-    except (OSError, ValueError, AttributeError) as exc:
-        return {"value": None, "available": False, "artifact": str(newest),
-                "generated": None, "age_days": None, "labels": None,
-                "error": f"{type(exc).__name__}: {exc}"}
-    generated = str(data.get("generated") or "")
-    age_days = None
-    try:
-        age_days = (datetime.date.today()
-                    - datetime.date.fromisoformat(generated[:10])).days
-    except ValueError:
-        pass
-    return {
-        "value": unreachable, "available": True, "artifact": str(newest),
-        "generated": generated or None, "age_days": age_days,
-        "labels": len(labels),
-    }
-
-
 def corpus_invariants(conn: Any, vault: Path, *, cap: int = SAMPLE_CAP) -> dict[str, Any]:
     """All four metrics in one read-only pass. Never raises on one metric —
     a metric that blows up records ``{"value": None, "error": …}`` so the
@@ -935,6 +895,7 @@ def corpus_invariants(conn: Any, vault: Path, *, cap: int = SAMPLE_CAP) -> dict[
         "unguarded_ingests": lambda: ingest_guard(vault, cap=cap),
         "subfloor_families": lambda: subfloor_families(conn, cap=cap),
         "unreachable_gold": lambda: unreachable_gold(vault),
+        "unsigned_notes": lambda: unsigned_notes(conn, vault, cap=cap),
     }
     for name in INVARIANT_METRICS:
         try:

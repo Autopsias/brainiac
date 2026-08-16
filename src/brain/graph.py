@@ -29,6 +29,8 @@ from __future__ import annotations
 import datetime
 import re
 import sqlite3
+
+from .link_targets import _build_resolver, resolve_target  # noqa: F401
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
@@ -85,22 +87,9 @@ class LinkGraph:
         return adj
 
 
-def _build_resolver(rows: list[tuple[str, str, str]]) -> dict[str, str]:
-    """Map every alias (id, path stem, lowercased title) -> canonical note id."""
-    resolver: dict[str, str] = {}
-    for nid, title, path in rows:
-        resolver[nid] = nid
-        resolver[nid.lower()] = nid
-        stem = path.rsplit("/", 1)[-1]
-        if stem.endswith(".md"):
-            stem = stem[:-3]
-        resolver.setdefault(stem, nid)
-        resolver.setdefault(stem.lower(), nid)
-        if title:
-            resolver.setdefault(title.lower(), nid)
-    return resolver
-
-
+#: Resolver construction and lookup live in ``link_targets`` — one module
+#: owns link-target resolution. Re-exported here because existing callers
+#: and tests import ``graph._build_resolver``.
 #: BLK-01 — the note-level bulk-link stamp. A wikilink is parsed down to its
 #: TARGET (``_WIKILINK`` above discards everything around it), so a per-LINK
 #: provenance marker cannot be read back out of the graph. Isolation is
@@ -179,7 +168,7 @@ def build_graph(
         g.inn.setdefault(nid, set())
     for nid, _title, _path, body in ((r[0], r[1], r[2], r[3]) for r in rows):
         for target in parse_wikilinks(body or ""):
-            tgt = resolver.get(target) or resolver.get(target.lower())
+            tgt = resolve_target(resolver, target)
             if tgt is None:
                 g.unresolved.setdefault(nid, []).append(target)
                 continue
@@ -291,7 +280,7 @@ def graph_expand(
         [(r[0], r[1] or "", r[2] or "")
          for r in conn.execute("SELECT id, title, path FROM notes").fetchall()]
     )
-    resolved_seeds = [resolver.get(s) or resolver.get(s.lower()) or s for s in seed_list]
+    resolved_seeds = [resolve_target(resolver, s) or s for s in seed_list]
     known_seeds = [s for s in resolved_seeds if s in g.nodes]
 
     bfs = wikilink_bfs(g, known_seeds, depth=depth)
@@ -366,7 +355,7 @@ def stale_wikilink_targets(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for nid, _title, _path, _cls, body in rows:
         for target in parse_wikilinks(body or ""):
-            resolved = resolver.get(target) or resolver.get(target.lower())
+            resolved = resolve_target(resolver, target)
             if resolved is None:
                 out.append({
                     "from": meta[nid], "target": None, "target_text": target,
@@ -500,7 +489,7 @@ def graph_hygiene_metrics(conn: sqlite3.Connection, *, cap: int = 20) -> dict[st
     dangling: set[str] = set()
     for nid in knowledge_ids:
         for target in parse_wikilinks(body_by_id.get(nid, "")):
-            tgt = resolver.get(target) or resolver.get(target.lower())
+            tgt = resolve_target(resolver, target)
             if tgt is None:
                 dangling.add(target)
                 continue

@@ -7,6 +7,44 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.16] — 2026-08-17
+### Fixed
+- **The built-in Portuguese profile shipped without a single article, so
+  ordinary Portuguese prose classified as `unknown`.** `pt` carried 24 words,
+  none of them `o`/`os`/`um`/`em`/`da`/`na`/`ao`, and the cross-profile
+  disjointness rule then took `de`/`que`/`para`/`como` as well — leaving 16
+  words, no article among them. Spanish kept its articles (`el`, `los`,
+  `las`, `del`); Portuguese had none to keep. Measured on the reference
+  vault: a contract clause and a whole board-minute paragraph both scored
+  **zero** and classified `unknown`. Because `census()` computes `classified`
+  by excluding `unknown`, such notes counted toward no language at all, `pt`
+  could never reach `MIN_NOTES_PER_LANGUAGE`, and a vault could fill up with
+  Portuguese while reporting itself monolingual English — silently switching
+  OFF AGENTS.md §5's variant contract, and with it the BM25 leg those
+  cross-language queries most need. Semantic retrieval was never affected
+  (bge-m3 matches across languages). `pt` now carries its articles,
+  contractions, auxiliaries and adverbs; `es` gains its own gaps. Reference
+  vault: `pt` 363 → 442 notes, and `unknown`/`es` notes with Portuguese
+  bodies (`aprovacoes`, `reuniao-retail-…`) now read `pt`.
+- **A one- or two-letter token is now discarded when it is ALL-UPPERCASE.**
+  Admitting Portuguese's short articles is what makes the language
+  detectable, and is also what collides with the acronyms real notes are full
+  of. Measured across 1,833 unambiguously-English notes: `OS` (470 hits),
+  `N/A`, `UN`, `LA`, and `EN`/`ES` from `(EN summary)` and `lang="en"`. The
+  test is `isupper()` and not `islower()` on purpose — a sentence-initial
+  `In`/`El` is Title case, not shouting, and rejecting it cost three English
+  notes their classification and Spanish its leading `El`. Spanish `y` was
+  excluded from the profile outright, for the one reason no case rule can
+  address: 14,111 hits from *lowercase* `overflow-y` / `translateY` in Marp
+  deck CSS, enough to outscore English on its own decks.
+  Reference-vault effect, every move inspected: 72 notes carrying an English
+  summary beside a `(PT, verbatim)` quote now read `pt` or tie to `unknown`
+  (a tie is honest — nothing is rounded into English), 8 genuinely Portuguese
+  notes move off `unknown`/`es`, and 3 wikilink-list stubs whose only English
+  signal was the acronym `IT` counted as the pronoun `it` now read `unknown`.
+  `brain.chunk.detect_language` keeps its separate word lists untouched — it
+  feeds embed input, and changing it would move every vector.
+
 ## [0.20.15] — 2026-08-17
 
 ### Changed

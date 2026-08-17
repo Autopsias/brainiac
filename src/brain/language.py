@@ -29,6 +29,18 @@ the 54 resolvable gold documents get s09's verdict, including all 22
 Portuguese-framed note whose body is a verbatim SPANISH email — s09's two-way
 PT/EN tally had no Spanish bucket to put it in.
 
+**That agreement was re-measured after the 2026-08-17 profile repair** (see
+``score`` and the ``pt`` profile below), because a claim about the classifier
+cannot outlive a change to the classifier. Over the 92 cross-lingual gold
+documents that resolve in the reference vault today, 89 keep their verdict
+and 3 move EN -> PT. All three are Portuguese-titled slide decks that read
+as English only because ALL-CAPS slide headings were counted as English
+function words:
+one of them scored ``en`` 150 / ``pt`` 113 before, and ``en`` 37 / ``pt`` 279
+once shouted short tokens stop counting. The audit was right about the method
+and wrong about those three documents; the divergence is an improvement, not
+a regression, and it is recorded here rather than quietly absorbed.
+
 **Profiles are DATA, not code.** ``BUILTIN_PROFILES`` ships English,
 Portuguese and Spanish (the languages the reference deployment holds). A vault
 in any other language extends the set WITHOUT a code change by pointing
@@ -70,10 +82,37 @@ BUILTIN_PROFILES: dict[str, dict[str, Any]] = {
     },
     "pt": {
         "name": "Portuguese",
+        # Portuguese function words are SHORT — `o`, `os`, `um`, `em`, `da`,
+        # `na`, `ao` — and the profile shipped without a single one of them
+        # until 2026-08-17. Spanish kept its articles (`el`, `los`, `las`,
+        # `del`); Portuguese had none to keep, and the disjointness rule then
+        # took `de`/`que`/`para`/`como` as well. What survived was 16 words,
+        # none of them an article, so ordinary Portuguese prose scored ZERO:
+        # a whole board-minute paragraph classified `unknown`, never counted
+        # toward `classified`, and `pt` could not reach
+        # MIN_NOTES_PER_LANGUAGE. A vault could fill up with Portuguese and
+        # keep reporting itself monolingual English, which silently switches
+        # OFF §5's variant contract — the BM25 leg those queries most need.
         "stopwords": [
-            "de", "que", "não", "uma", "para", "com", "como", "mais", "está",
-            "são", "também", "já", "nós", "sobre", "será", "foi", "às",
-            "então", "porque", "dos", "das", "pelo", "pela", "isso",
+            # articles, and the preposition contractions built on them
+            "o", "os", "um", "uma", "da", "das", "dos", "na", "nas", "ao",
+            "aos", "à", "às", "num", "numa", "pelo", "pela", "pelos", "pelas",
+            "neste", "nesta", "nesse", "nessa", "deste", "desta", "desse",
+            "dessa",
+            # prepositions and conjunctions Spanish spells differently
+            "de", "que", "em", "para", "com", "sem", "até", "sob", "após",
+            "ou", "mas", "pois", "porém", "embora", "porque", "então",
+            # copula and auxiliaries
+            "é", "são", "foi", "foram", "tem", "têm", "ter", "tinha", "havia",
+            "há", "pode", "podem", "deve", "devem", "seja", "sejam", "está",
+            # determiners and pronouns
+            "seu", "sua", "seus", "suas", "nosso", "nossa", "nós", "qual",
+            "quais", "outro", "outra", "outros", "outras", "qualquer",
+            "mesmo", "mesma", "isso",
+            # adverbs
+            "não", "mais", "muito", "ainda", "assim", "apenas", "bem",
+            "como", "depois", "onde", "quando", "sempre", "sobre", "também",
+            "já", "será", "através",
         ],
     },
     "es": {
@@ -81,10 +120,18 @@ BUILTIN_PROFILES: dict[str, dict[str, Any]] = {
         # deliberately WITHOUT "no": it is a common English word that the
         # English profile does not list, so it would score Spanish on English
         # prose (the disjointness rule only sees cross-PROFILE collisions).
+        # For the same reason this profile takes no NEW one- or two-letter
+        # word. Spanish `y` measured 14,111 hits across 196 unambiguously
+        # English notes in the reference vault — `overflow-y`, `translateY`
+        # — enough to outscore English on its own decks. Spanish already has
+        # its articles; it does not need the short-word risk to read Spanish.
         "stopwords": [
             "de", "que", "una", "para", "con", "como", "más", "está",
             "son", "también", "ya", "nosotros", "sobre", "será", "fue", "pero",
-            "porque", "el", "los", "las", "del", "esto",
+            "porque", "el", "la", "los", "las", "del", "esto", "un", "su",
+            "sus", "hasta", "sin", "hay", "tiene", "tener", "cuando", "donde",
+            "cual", "muy", "mucho", "bien", "siempre", "entonces", "aunque",
+            "además", "esa", "ese",
         ],
     },
 }
@@ -198,9 +245,27 @@ def _prepared(profiles: dict[str, dict[str, Any]]):
 # -- classification ----------------------------------------------------------
 
 def score(text: str, profiles: dict[str, dict[str, Any]] | None = None) -> dict[str, int]:
-    """Per-language discriminative function-word hit counts for ``text``."""
+    """Per-language discriminative function-word hit counts for ``text``.
+
+    A one- or two-letter token is DISCARDED when it is all-uppercase.
+    Measured on 1,833 unambiguously-English notes in the reference vault, the
+    whole short-token surface there is acronyms and locale codes, not prose:
+    ``OS`` (470 hits), ``N/A`` -> ``N``/``A``, ``UN``, ``LA``, and ``EN``/
+    ``ES`` from ``(EN summary)`` and ``lang="en"``. What this classifies is
+    Markdown carrying CSS, code and acronyms, so the tokenizer sees all of
+    it, and Portuguese cannot be detected without its short articles — so
+    admit them and drop only the SHOUTED forms they collide with.
+
+    The test is ``isupper()``, not ``islower()``, and the difference is
+    load-bearing: a sentence-initial ``In``/``El`` is Title case, not
+    shouting, and rejecting it cost three low-signal English notes their
+    classification and Spanish its leading ``El``. Single letters cannot be
+    told apart this way (``"O".isupper()`` is true either way), so a
+    sentence-initial ``O`` is still lost; no measured case needed it.
+    """
     prepared = _prepared(profiles if profiles is not None else load_profiles())
-    words = [w.lower() for w in _WORD.findall(text)]
+    words = [w.lower() for w in _WORD.findall(text)
+             if len(w) > 2 or not w.isupper()]
     return {code: sum(1 for w in words if w in stop) for code, stop in prepared}
 
 

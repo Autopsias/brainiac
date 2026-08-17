@@ -43,6 +43,11 @@ from typing import Any
 
 from . import config
 from . import overlay as ov
+# The post-seed subprocess steps (index build, audit-chain signing) live in a
+# sibling module so this one stays under its size bound; re-exported because
+# `brain init`'s report and the tests both address them by these names.
+from . import init_seed
+from .init_seed import _build_index, _sign_seeded_notes  # noqa: F401
 
 
 # --------------------------------------------------------------------------
@@ -630,37 +635,6 @@ def _register_tasks(
     return out
 
 
-def _build_index(vault: str | os.PathLike[str] | None) -> dict[str, Any]:
-    """Build the derived index for a freshly-seeded vault via a subprocess.
-
-    ONB fix (2026-07-11): ``seed_sample_notes`` writes notes to ``vault/brain/``
-    but nothing indexed them, so `brain init --full --apply` left a vault where
-    the very first `brain search` returned zero hits (the documented "init then
-    search" quickstart was broken). We shell out to `brain rebuild` rather than
-    constructing a ``BrainCore`` here so this module stays index-free and light
-    (importing BrainCore would pull the embedder into every `brain init`, even a
-    dry-run/scaffold) — matching the module's "filesystem + subprocess only"
-    contract. Invoked via ``python -m brain`` (see ``brain/__main__.py``) so it
-    is PATH-independent. Soft-fails: a rebuild error is reported, never aborts
-    init (a box without the embedder can still scaffold; the user reruns
-    `brain rebuild` once the engine is whole).
-    """
-    argv = [sys.executable, "-m", "brain"]
-    if vault is not None:
-        argv += ["--vault", str(vault)]
-    argv.append("rebuild")
-    try:
-        proc = subprocess.run(argv, capture_output=True, text=True, timeout=600)
-    except Exception as exc:  # subprocess spawn failure, timeout, etc.
-        return {"performed": False, "ok": False,
-                "reason": f"{type(exc).__name__}: {exc}"}
-    if proc.returncode == 0:
-        return {"performed": True, "ok": True}
-    return {"performed": True, "ok": False,
-            "reason": f"rebuild exit {proc.returncode}",
-            "stderr": (proc.stderr or "").strip()[-500:]}
-
-
 def run_full_init(
     *,
     vault: str | os.PathLike[str] | None,
@@ -704,27 +678,12 @@ def run_full_init(
     else:
         steps.append(f"vault seed: skipped ({seed_report['reason']})")
 
-    # ONB fix: a freshly SEEDED vault must be indexed on a real `--apply`
-    # install, or the first `brain search` returns nothing (the documented
-    # "init --apply then search" quickstart). Gated on --apply + host + seed
-    # actually performed: --apply is the "really install this" signal (a bare
-    # `brain init --full` stays a lighter scaffold — its docs carry an explicit
-    # `brain rebuild`), a dry-run builds no index, and a non-empty vault (seed
-    # skipped) keeps its own index rather than eating a surprise full re-embed
-    # on a re-run. Index build is a subprocess (keeps this module BrainCore-free)
-    # and soft-fails — a box without the embedder still inits, with a note to
-    # rerun `brain rebuild`.
-    if apply and client == "host" and seed_report["performed"]:
-        index_report = _build_index(vault)
-        if index_report["ok"]:
-            steps.append("index build: rebuilt (seeded notes are searchable)")
-        else:
-            steps.append(f"index build: FAILED ({index_report['reason']}) "
-                         "— run `brain rebuild` once the engine is available")
-    else:
-        index_report = {"performed": False,
-                        "reason": "no seeded notes to index" if apply
-                                  else "dry-run (no --apply)"}
+    # Index the seeded notes, then put them in the audit chain. Both are
+    # subprocess steps that soft-fail; see brain.init_seed for why each is
+    # gated the way it is.
+    index_report, sign_report, seed_steps = init_seed.finish_seeded_vault(
+        vault, apply=apply, client=client, seed_report=seed_report)
+    steps.extend(seed_steps)
 
     overlay_report: dict[str, Any] = {"overlay_dir": str(ol_dir)}
     if scaffold:
@@ -799,6 +758,11 @@ def run_full_init(
         "repo_root": str(repo_root) if repo_root else None,
         "seed": seed_report,
         "index": index_report,
+        # Deliberately NOT folded into `ok`, unlike the index build above: an
+        # empty index is silent (retrieval just returns nothing), whereas an
+        # unsigned note is already reported loudly by `invariants.unsigned_notes`
+        # and by `brain doctor`. A box with no signing key should still init.
+        "audit_sign": sign_report,
         "overlay": overlay_report,
         "audit_key": key_report,
         "tasks": tasks_report,

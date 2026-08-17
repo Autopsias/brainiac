@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .base import ExtractResult, Handler, density_gate
+from .base import ocr_image as _ocr
 
 try:
     from PIL import Image
@@ -19,27 +20,7 @@ try:
 except ImportError:  # pragma: no cover - exercised via degraded-deps test
     _HAS_PIL = False
 
-try:
-    import pytesseract
-    _HAS_PYTESSERACT = True
-except ImportError:  # pragma: no cover
-    _HAS_PYTESSERACT = False
-
 MAX_IMAGE_BYTES = 100 * 1024 * 1024
-
-
-def _ocr(img: "Image.Image") -> tuple[str, list[str]]:
-    """LOCAL-only OCR. Never raises: missing binding, missing tesseract
-    binary (pytesseract.TesseractNotFoundError), or any other engine failure
-    all degrade to a metadata-only body — there is no cloud fallback to
-    reach for, so failure here is never fatal to the ingest."""
-    if not _HAS_PYTESSERACT:
-        return "", ["ocr_unavailable: pytesseract not installed (metadata-only)"]
-    try:
-        text = pytesseract.image_to_string(img)
-        return text.strip(), []
-    except Exception as exc:
-        return "", [f"ocr_unavailable: {type(exc).__name__}: {exc}"]
 
 
 class ImageHandler(Handler):

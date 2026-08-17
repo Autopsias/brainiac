@@ -353,6 +353,7 @@
     "src/brain/ingest/tierguard.py",
     "src/brain/ingest/transcript.py",
     "src/brain/init.py",
+    "src/brain/init_seed.py",
     "src/brain/invariant_reachability.py",
     "src/brain/invariant_unsigned_notes.py",
     "src/brain/invariants.py",
@@ -464,5 +465,5 @@
     "vault/raw/2026-06-27-arctic-vs-e5-benchmark.md",
     "vault/raw/README.md"
   ],
-  "count": 463
+  "count": 464
 }

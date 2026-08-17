@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 # check. The IMPORT package stays `brain` and the console script stays
 # `brain` — only the distribution/project name changes.
 name = "brainiac-cli"
-version = "0.20.16"
+version = "0.20.18"
 description = "Brainiac — local any-LLM second-brain core engine + brain CLI (Markdown truth, derived SQLite index)."
 readme = "README.md"
 license = "Apache-2.0"
@@ -67,6 +67,13 @@ audit = ["cryptography>=41"]
 # Alternate fastembed-based embedder (NOT installed by default — the default
 # semantic path is the direct-ONNX bge-m3-int8 embedder in the core deps).
 embed = ["fastembed>=0.3"]
+# OCR for SCANNED documents (a PDF with no text layer, a photographed page).
+# NOT in the default install and never a cloud call: this is only the binding —
+# it needs a LOCAL `tesseract` binary plus its traineddata beside it
+# (`brew install tesseract tesseract-lang`, or the distro package). Absent
+# either half, ingestion still runs and says so; a scan is then quarantined
+# with the missing engine NAMED, never silently dropped.
+ocr = ["pytesseract>=0.3.10"]
 # CORPORATE minimal-dep set (DIST-01, S12): bge-m3-int8 via DIRECT ONNX Runtime —
 # NO fastembed, NO PyTorch. This is what the signed Intune build ships. The
 # bge-m3-int8 ONNX model is bundled inline as a data asset (not a pip dep).

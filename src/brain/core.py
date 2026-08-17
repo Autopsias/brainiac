@@ -4384,6 +4384,13 @@ class BrainCore:
                             "drain", str(self.capture_inbox_dir()),
                             f"drained {drain['promoted']} pending capture(s)"))
 
+                    # A quarantined drop is a document the owner MEANT to
+                    # ingest and did not get — reported the run it happens
+                    # (see `ingest_quarantine_findings` for why neither the
+                    # trend metric nor the monthly triage can catch it).
+                    action_required.extend(maint.ingest_quarantine_findings(
+                        sync_res.get("ingest", {}), Path(self.vault)))
+
                     # -- self-organization folds (owner decision 2026-07-11:
                     # metadata, versioning, PARA and navigation are automatic,
                     # never user-gated). Each fold is independent — one
@@ -4729,7 +4736,10 @@ class BrainCore:
                                     f"quarantine-summary:{d.strftime('%Y-%m')}",
                                     maint.render_quarantine_summary_hot_entry(q_summary, d),
                                 )
-                            state["_quarantine_summary"] = {"last_month": d.strftime("%Y-%m")}
+                                # Burn the month's only slot only when the
+                                # summary REPORTED something — an empty 00:07
+                                # run used to blind the rest of the month.
+                                state["_quarantine_summary"] = {"last_month": d.strftime("%Y-%m")}
                     except Exception as exc:
                         blocked.append(maint.blocked_item(
                             f"quarantine triage summary failed: {exc}",

@@ -1219,6 +1219,100 @@ def check_audit_content_drift(vault: Path) -> dict:
     return _row(surface, CURRENT, detail, raw={"total": total, "unexplained": 0})
 
 
+#: Quarantine buckets whose cause is an operator action on THIS host, not a
+#: judgement call about the file. Named in the row so the fix is one step away.
+_RECOVERABLE_BUCKETS = {
+    "pdf_no_text_layer": "scanned PDF — needs the local OCR engine",
+    "empty_or_low_text_density": "no text found — often a picture-only deck, needs OCR",
+    "pdf_encrypted": "needs a password (a permissions-only file now opens by itself)",
+}
+
+
+def check_ingest_capability() -> dict:
+    """Can this host actually READ the formats dropped into `inbox/`?
+
+    A missing handler or a missing local OCR engine does not fail loudly at
+    ingest time — the file is quarantined and the drop zone looks empty. This
+    row makes the capability visible BEFORE anything is dropped, on a new
+    vault as much as an old one."""
+    from .ingest.handlers import capability_report
+    from .ingest.handlers.base import ocr_lang
+
+    surface = "Ingestion capability (handlers + local OCR)"
+    try:
+        caps = capability_report()
+    except Exception as exc:  # noqa: BLE001 — a probe failure is a surface gap
+        return _row(surface, UNKNOWN, f"could not probe handlers: {type(exc).__name__}: {exc}")
+    missing = sorted({c["dependency"] for c in caps.values() if not c["available"]})
+    lang = ocr_lang()
+    raw = {"handlers_missing": missing, "ocr_languages": lang}
+    if missing:
+        return _row(surface, STALE,
+                    f"{len(missing)} extraction dependency missing: {', '.join(missing)} — "
+                    "files of those types will be quarantined, not ingested",
+                    remediation=f"pip install {' '.join(missing)}  # into the engine's venv",
+                    raw=raw)
+    if lang is None:
+        # Reported on every run, never silent — but NOT gating. OCR is an
+        # optional LOCAL engine, so a host without it is unconfigured, not
+        # broken, and gating here would paint every fresh install red before
+        # a single document is dropped. What gates is real loss: the
+        # "Quarantined drops" row above fires the moment a scan is actually
+        # refused, and names this engine as the remedy.
+        return _row(surface, UNMANAGED,
+                    "no local OCR engine — a scanned PDF or a picture-only deck "
+                    "cannot be read, and would be quarantined instead of ingested",
+                    remediation="brew install tesseract tesseract-lang  # or the distro "
+                                "package; then `pip install pytesseract` into the "
+                                "engine's venv",
+                    raw=raw)
+    return _row(surface, CURRENT,
+                f"every handler available; local OCR reads {lang}", raw=raw)
+
+
+def check_quarantine(vault: Path) -> dict:
+    """Documents the owner dropped in and did NOT get.
+
+    A quarantined file is not in the vault and is not retrievable, and until
+    2026-08-17 nothing said so within the month it happened. Any live item
+    gates this row; anything filed under a hand-triaged ``_resolved/`` subtree
+    is a decision already taken and is reported separately, never as debt."""
+    surface = "Quarantined drops (dropped in, not ingested)"
+    qdir = Path(vault) / "inbox" / "_quarantine"
+    if not qdir.is_dir():
+        return _row(surface, CURRENT, "nothing quarantined", raw={"live": 0})
+    live: dict[str, int] = {}
+    resolved = 0
+    try:
+        for f in qdir.rglob("*"):
+            if not f.is_file() or f.name.endswith(".reason.txt"):
+                continue
+            if f.name in {".DS_Store", "DISPOSITION.md"} or f.name.endswith(".RESOLVED.txt"):
+                continue
+            if any(p.name.startswith("_resolved") for p in f.relative_to(qdir).parents):
+                resolved += 1
+                continue
+            live[f.relative_to(qdir).parts[0]] = live.get(f.relative_to(qdir).parts[0], 0) + 1
+    except OSError as exc:
+        return _row(surface, UNKNOWN, f"could not read {qdir}: {exc}")
+    total = sum(live.values())
+    raw = {"live": total, "by_reason": live, "triaged": resolved}
+    if not total:
+        detail = "nothing quarantined"
+        if resolved:
+            detail += f" ({resolved} item(s) hand-triaged under _resolved/)"
+        return _row(surface, CURRENT, detail, raw=raw)
+    parts = ", ".join(f"{n}x {r}" for r, n in sorted(live.items(), key=lambda kv: -kv[1]))
+    hints = [f"`{r}`: {_RECOVERABLE_BUCKETS[r]}" for r in live if r in _RECOVERABLE_BUCKETS]
+    return _row(surface, STALE,
+                f"{total} dropped file(s) never reached the vault — {parts}",
+                remediation=("; ".join(hints) + "; " if hints else "")
+                            + f"inspect {qdir} and its .reason.txt sidecars, fix the "
+                              "cause, then move each file back to `inbox/` and run "
+                              "`brain sync`",
+                raw=raw)
+
+
 def check_query_capture(vault: Path) -> dict:
     """Host-only ADR-0008 S04 ledger liveness without reading query content.
 
@@ -1543,6 +1637,12 @@ def run_doctor(
         # stopped running — checked here precisely because doctor does not
         # depend on the nightly having fired.
         rows.append(check_corpus_invariants(capture_vault))
+        # 2026-08-17: a document dropped in and refused is invisible from
+        # every other surface until the month turns. Per vault, and gating.
+        rows.append(check_quarantine(capture_vault))
+    # Host capability, not per-vault: one engine reads for every vault, and a
+    # missing OCR engine silently refuses every scan dropped into any of them.
+    rows.append(check_ingest_capability())
 
     if registry_fetch is not None:
         rows.append(check_pypi_registry_drift(repo_root, ssot, fetch=registry_fetch))

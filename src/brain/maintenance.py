@@ -1447,6 +1447,64 @@ def retention_fold(vault: Path, today: datetime.date, *, dry_run: bool = False) 
     return report
 
 
+#: Quarantine reasons whose fix is an operator action on THIS host rather than
+#: a judgement call about the file. Each maps to the exact remedy.
+_QUARANTINE_REMEDY = {
+    "pdf_no_text_layer":
+        "this PDF is a SCAN. Install the local OCR engine "
+        "(`brew install tesseract tesseract-lang` + `pip install pytesseract` "
+        "into the engine's venv), then move the file back to `inbox/` and run "
+        "`brain sync` — the ingest OCRs scanned pages once OCR is available",
+    "empty_or_low_text_density":
+        "extraction returned almost no text. Check the file opens, then move it "
+        "back to `inbox/` and run `brain sync`",
+    "pdf_encrypted":
+        "the PDF is password-protected. Save an unlocked copy into `inbox/`",
+}
+
+
+def ingest_quarantine_findings(
+    ingest_report: dict[str, Any], vault: Path
+) -> list[dict[str, Any]]:
+    """One ``action_required`` item per quarantine reason in ONE ingest run.
+
+    A quarantined drop is a document the owner meant to ingest and did not
+    get. Neither existing surface reports it in time: the ``quarantine``
+    health-trend metric compares against a trailing median and returns early
+    on a zero baseline (so a vault's FIRST quarantine — the one that matters
+    most — is structurally unalertable), and the triage summary fires at most
+    once per calendar month. This reports the event on the run it happens.
+    Pure: shapes an already-computed report, reads no files."""
+    quarantined = ingest_report.get("quarantined") or []
+    if not quarantined:
+        return []
+    by_reason: dict[str, list[str]] = {}
+    for entry in quarantined:
+        if isinstance(entry, dict):
+            by_reason.setdefault(str(entry.get("reason", "unknown")), []).append(
+                str(entry.get("file", "?")))
+    findings = []
+    for reason, files in sorted(by_reason.items(), key=lambda kv: -len(kv[1])):
+        shown = ", ".join(sorted(files)[:5])
+        more = f" (+{len(files) - 5} more)" if len(files) > 5 else ""
+        item = action_required_item(
+            f"{len(files)} dropped file(s) quarantined as `{reason}` and NOT "
+            f"ingested: {shown}{more}",
+            "a quarantined file never reaches `raw/` and is never retrievable — "
+            "it is not in the vault, and nothing else reports this within the month",
+            _QUARANTINE_REMEDY.get(
+                reason, "inspect the file and its `.reason.txt` sidecar, fix the "
+                        "cause, then move it back to `inbox/` and run `brain sync`"),
+            str(vault / "inbox" / "_quarantine" / reason),
+        )
+        # Reaches `brain alerts` at session start, not just the maintain log —
+        # a finding only a launchd log carries is a finding nobody reads.
+        # Keyed per REASON so it dedups once a day, not once per file.
+        item["notify_key"] = f"quarantine:{reason}"
+        findings.append(item)
+    return findings
+
+
 def quarantine_summary_due(marker: dict[str, Any] | None, today: datetime.date) -> bool:
     """True when the monthly quarantine-triage summary is due: never fired,
     or last fired in an earlier calendar month than ``today`` — "due since
@@ -2935,6 +2993,11 @@ def degradation_findings(
         finding = str(item.get("finding", ""))
         if finding.startswith("brain-synthesis watchdog:"):
             pairs.append(("synthesis-watchdog", finding))
+        elif item.get("notify_key"):
+            # An action_required item may carry its OWN stable dedup key
+            # (`ingest_quarantine_findings` does). Without one an item stays
+            # in the maintain result and never reaches `brain alerts`.
+            pairs.append((str(item["notify_key"]), finding))
     for f in trend_findings:
         metric = str(f.get("metric") or "")
         if metric == "blocked":

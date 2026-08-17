@@ -15,6 +15,12 @@
 # server for Claude Desktop/Cowork/Code) works out of the box — the console
 # script is defined unconditionally, so without the extra it would exist but
 # crash on a missing `mcp` import.
+#
+# ... and `[ocr]`, so a scanned PDF or a picture-only deck is READ rather than
+# quarantined. That extra is only the pytesseract binding (ADR-0003 keeps a
+# system-binary binding out of the CORE deps); the `tesseract` binary itself
+# is a system package, and `brain doctor`'s "Ingestion capability" row says so
+# when it is missing instead of letting scans fail silently.
 set -euo pipefail
 
 WITH_OCR=0
@@ -85,7 +91,7 @@ if [ "$DEV_MODE" = "1" ]; then
   say "Installing Brainiac into $VENV_DIR (--dev: editable install from this checkout)"
   "$PY" -m venv "$VENV_DIR"
   "$VENV_DIR/bin/pip" install --quiet --upgrade pip
-  "$VENV_DIR/bin/pip" install --quiet -e "$REPO_DIR[mcp]"
+  "$VENV_DIR/bin/pip" install --quiet -e "$REPO_DIR[mcp,ocr]"
   INSTALLED_CHANNEL="editable-checkout"
   BRAIN_BIN="$VENV_DIR/bin/brain"
   mkdir -p "$BIN_DIR"
@@ -99,8 +105,8 @@ else
   say "Installing brainiac-cli from PyPI — trying uv tool install, then pipx, then pip --user"
 
   if command -v uv >/dev/null 2>&1; then
-    say "Attempt 1/3: uv tool install 'brainiac-cli[mcp]'"
-    if uv tool install 'brainiac-cli[mcp]'; then
+    say "Attempt 1/3: uv tool install 'brainiac-cli[mcp,ocr]'"
+    if uv tool install 'brainiac-cli[mcp,ocr]'; then
       INSTALLED_CHANNEL="uv tool"
     else
       say "uv tool install failed — falling back to pipx"
@@ -111,8 +117,8 @@ else
 
   if [ -z "$INSTALLED_CHANNEL" ]; then
     if command -v pipx >/dev/null 2>&1; then
-      say "Attempt 2/3: pipx install 'brainiac-cli[mcp]'"
-      if pipx install 'brainiac-cli[mcp]'; then
+      say "Attempt 2/3: pipx install 'brainiac-cli[mcp,ocr]'"
+      if pipx install 'brainiac-cli[mcp,ocr]'; then
         INSTALLED_CHANNEL="pipx"
       else
         say "pipx install failed — falling back to pip --user"
@@ -123,8 +129,8 @@ else
   fi
 
   if [ -z "$INSTALLED_CHANNEL" ]; then
-    say "Attempt 3/3: python3 -m pip install --user 'brainiac-cli[mcp]'"
-    if "$PY" -m pip install --user --quiet 'brainiac-cli[mcp]'; then
+    say "Attempt 3/3: python3 -m pip install --user 'brainiac-cli[mcp,ocr]'"
+    if "$PY" -m pip install --user --quiet 'brainiac-cli[mcp,ocr]'; then
       INSTALLED_CHANNEL="pip --user"
     else
       fail "Every install channel failed (uv tool install / pipx install / pip install --user).

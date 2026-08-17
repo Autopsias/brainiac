@@ -16,7 +16,7 @@ the four channels is actually live on this host — `uv tool install`, `pipx`,
 `pip --user`, or the legacy editable dev checkout (`~/.brainiac/venv`) — and
 runs THAT channel's own upgrade command (`uv tool upgrade brainiac-cli` /
 `pipx upgrade brainiac-cli` / `pip install --user --upgrade
-'brainiac-cli[mcp]'` / `git pull` + `pip install -e`). Never assumes the
+'brainiac-cli[mcp,ocr]'` / `git pull` + `pip install -e`). Never assumes the
 pre-PyPI editable-venv shape. `brain doctor`'s "Host engine venv" row reports
 the detected channel; relay it verbatim rather than guessing.
 
@@ -226,8 +226,8 @@ tell a human to do by hand. It self-executes, in order (`src/brain/update.py`
 4. **Engine reinstall, channel-aware** — detects the live channel (via the
    PATH-resolved `brain` binary) and runs that channel's own upgrade:
    `uv tool upgrade brainiac-cli`, `pipx upgrade brainiac-cli`, `pip install
-   --user --upgrade 'brainiac-cli[mcp]'`, or (editable-checkout only) `pip
-   install --upgrade -e '<engine-src>[mcp]'` against `~/.brainiac/venv`.
+   --user --upgrade 'brainiac-cli[mcp,ocr]'`, or (editable-checkout only) `pip
+   install --upgrade -e '<engine-src>[mcp,ocr]'` against `~/.brainiac/venv`.
    Never assumes the pre-PyPI editable shape. Captures old → new
    `brain --version`.
 5. **dist-rebuild + workspace re-stage (Cowork only, auto-skipped if no

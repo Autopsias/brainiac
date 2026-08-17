@@ -60,6 +60,63 @@ def density_gate(markdown: str, *, min_chars: int = MIN_CONTENT_CHARS) -> str | 
     return None
 
 
+try:  # LOCAL-only OCR binding. ADR-0003 Ruling 1(g): never a pip dependency,
+    import pytesseract  # never a cloud fallback — absent it, OCR simply degrades.
+    _HAS_PYTESSERACT = True
+except ImportError:  # pragma: no cover - exercised via degraded-deps test
+    _HAS_PYTESSERACT = False
+
+_OCR_LANG: str | None = None
+_OCR_LANG_PROBED = False
+
+
+def ocr_available() -> bool:
+    """True iff the local OCR engine (binding + tesseract binary) answers."""
+    return _HAS_PYTESSERACT and ocr_lang() is not None
+
+
+def ocr_lang() -> str | None:
+    """The traineddata languages to OCR with, or ``None`` when the local
+    tesseract binary is absent/unusable. ``$BRAIN_OCR_LANG`` overrides; the
+    default picks whichever of eng/por this host actually installed, so a
+    Portuguese contract is not read through an English-only model. Probed
+    once per process — the answer cannot change under a running drain."""
+    global _OCR_LANG, _OCR_LANG_PROBED
+    if _OCR_LANG_PROBED:
+        return _OCR_LANG
+    import os
+
+    _OCR_LANG_PROBED = True
+    env = os.environ.get("BRAIN_OCR_LANG")
+    if env:
+        _OCR_LANG = env
+    elif not _HAS_PYTESSERACT:
+        _OCR_LANG = None
+    else:
+        try:
+            installed = set(pytesseract.get_languages(config=""))
+        except Exception:  # no tesseract binary, or it refused to answer
+            installed = set()
+        _OCR_LANG = "+".join(lang for lang in ("eng", "por") if lang in installed) or None
+    return _OCR_LANG
+
+
+def ocr_image(img: Any) -> tuple[str, list[str]]:
+    """LOCAL-only OCR of one PIL image. Never raises: a missing binding, a
+    missing tesseract binary, or any engine failure all degrade to empty text
+    plus a warning — there is no cloud fallback to reach for, so a failure
+    here is reported, never fatal to the ingest."""
+    if not _HAS_PYTESSERACT:
+        return "", ["ocr_unavailable: pytesseract not installed"]
+    lang = ocr_lang()
+    if lang is None:
+        return "", ["ocr_unavailable: no local tesseract binary / traineddata"]
+    try:
+        return pytesseract.image_to_string(img, lang=lang).strip(), []
+    except Exception as exc:
+        return "", [f"ocr_unavailable: {type(exc).__name__}: {exc}"]
+
+
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
 

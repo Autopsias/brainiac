@@ -7,6 +7,110 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.18] — 2026-08-17
+### Fixed
+- **An ingest could finish and leave its sources unreachable.** The
+  `vault-ingestion` skill listed promotion under "What this skill is NOT
+  responsible for" and handed it to the `promote` skill, which nothing
+  required anyone to run. So capture was allowed to end with sources no note
+  cites — reachable only by their own text, absent from the graph, with
+  nothing recording why they matter. Measured on a reference vault the same
+  day the OCR fix landed: five freshly-read contracts went straight to
+  `unlinked_sources` 0 → 5, and the vault sat DEGRADED until the notes were
+  written by hand. The skill now carries a MANDATORY Phase 4 on all three
+  capture paths — the session that captures a source writes the `brain/` note
+  that cites it, before it reports the ingest as done — with the four BAK-04
+  rules (bare `[[id]]` in the body, say something the title does not, group
+  freely, read the whole source first), a copy-paste checklist, and the VM
+  `draft-capture` path for the leg that cannot sign.
+- **The obvious verification command was a false-pass generator.** Phase 4
+  ships a check, and the first two candidates for it were worse than nothing.
+  `brain curate --json` has no `unlinked_sources` field at all and is
+  host-broker only. A plain `brain grep "<id>"` tokenizes, so the invented id
+  `2026-08-17-a-source-that-does-not-exist` came back LINKED by matching a
+  shared date prefix — a check that passes for a source nobody cites. The
+  shipped form is `grep --regex "\[\[<id>\]\]"`, which returns UNLINKED on
+  that same invented id; and because `brain grep` scans note bodies only, it
+  proves the body used the bare form rather than matching a
+  `source: "[[raw/<id>]]"` in frontmatter, which makes no graph edge.
+- Gotchas records three dated failures from that night, including a document
+  whose first 940 lines read as an asset register while it was really
+  Schedules 1–4 — the later ones carrying named individuals, dates of birth
+  and salaries at the ingest-default `Internal` tier.
+
+## [0.20.17] — 2026-08-17
+### Fixed
+- **A scanned PDF was quarantined instead of read.** A scan carries a picture
+  of its text, not the text, so `extract_text()` returned nothing for every
+  page and the handler refused the whole document. Five legal contracts — 157
+  pages — sat in one reference vault's `inbox/_quarantine/pdf_no_text_layer/`
+  for a day while the vault answered from the one document that happened to
+  have a text layer. The handler now reads the page's own embedded raster
+  through the same optional local OCR the image handler already used: pypdf
+  hands over the image, Pillow decodes it, tesseract reads it. No rasterizer,
+  no new system binary, no cloud call. The shared helper moved to
+  `handlers/base.py` so there is ONE OCR path, and it now selects its
+  traineddata (`eng`/`por`, `$BRAIN_OCR_LANG` overrides) instead of reading a
+  Portuguese contract through an English-only model. Measured on the five real
+  files: 156 of 157 pages recovered, 302K characters; the leftover page is
+  genuinely blank. `$BRAIN_PDF_OCR_MAX_PAGES` (default 400) keeps one
+  pathological scan from stalling the hourly nightly. When no OCR engine is
+  installed the file still quarantines — fail closed — but the warning now
+  NAMES the missing engine, so "install OCR" is distinguishable from "this
+  file holds no text".
+- **An "encrypted" PDF is usually not locked.** The handler quarantined on
+  `reader.is_encrypted` alone. Most corporate PDFs encrypt to carry permission
+  flags — no printing, no copying — while the USER password is empty, so every
+  viewer opens them without prompting. Three such files were refused in a
+  reference vault: a 437-page carve-out report, a 231-page red-flag report and
+  a signed 12-page agreement, together 1.5M characters. Ingestion now tries the
+  empty user password first, and is deliberately narrow: only
+  `PasswordType.USER_PASSWORD` counts. An OWNER-password match would mean
+  overriding restrictions on a file the reader cannot open anyway, so it stays
+  refused exactly as before, and the warning then says a real password is
+  required. The permissions-only note is recorded on the ingested source, not
+  only in a quarantine sidecar that is no longer written.
+- **A deck can be a scan.** A slide exported as one rendered image carries all
+  its text inside that picture, and the pptx handler read text frames and
+  tables only — so a two-slide deck comparing five separation scenarios, with
+  their costs and timelines, extracted zero characters and was dropped as
+  `empty_or_low_text_density`. It now OCRs the pictures on any slide with no
+  native text, through the same shared helper. A deck with neither text nor a
+  readable picture still quarantines, and the warning distinguishes "OCR read
+  nothing" from "no OCR engine installed".
+- **A quarantined drop is reported the run it happens.** Three surfaces could
+  each have reported the five contracts above and none did. The `maintain`
+  daily branch read `added`/`updated`/`deleted` off the sync result and never
+  looked at `ingest.quarantined` — it does now, one `action_required` per
+  reason carrying the exact remedy. The monthly triage summary burned its
+  once-a-month marker on an EMPTY quarantine at 00:07, so files quarantined at
+  08:19 could not be reported until the next month — the marker now burns only
+  when the summary actually reported something. And the `quarantine`
+  health-trend metric returns early on a zero baseline, because a percentage
+  off zero is meaningless, which makes a vault's FIRST quarantine — the one
+  that matters most — structurally unalertable; that is left as it stands and
+  pinned by a test, since the per-run report is what catches it.
+
+### Added
+- **`brain doctor` gates on refused documents and on a host that cannot read
+  one.** Two new per-vault/per-host rows, checked on every health readout and
+  at the end of every install, neither depending on the nightly having fired.
+  *Quarantined drops* counts documents sitting in `inbox/_quarantine/` and
+  gates on any of them, naming each recoverable bucket's own cause in the
+  remediation; anything under a hand-triaged `_resolved/` subtree is excluded
+  and reported separately as triaged, so a vault with 522 written-up
+  dispositions does not show a permanently-red row that people learn to
+  ignore. *Ingestion capability* reports every extraction handler plus the
+  local OCR engine and its traineddata, and gates when OCR is absent — while
+  it is, every scanned PDF and every picture-only deck is refused and the
+  vault looks perfectly healthy from outside.
+- **An `[ocr]` extra, installed by default.** `install.sh` and the
+  `brainiac-update` skill now request `brainiac-cli[mcp,ocr]`, so a fresh
+  install carries the pytesseract binding and a channel reinstall does not
+  drop it. ADR-0003 still keeps it out of the CORE dependencies — it is a
+  binding to a system binary — and the `tesseract` package itself remains a
+  system install, which the new doctor row names when it is missing.
+
 ## [0.20.16] — 2026-08-17
 ### Fixed
 - **The built-in Portuguese profile shipped without a single article, so

@@ -159,6 +159,20 @@ indexing scope. `sync`/`rebuild` report the excluded count
 > leaving it behind leaves them at rest forever.
 > Read `cos.capture_corpus` in `brain status`, then keep the directory
 > deliberately or delete it deliberately.
+>
+> **A fourth, and it is evidence like the third: `<index dir>/cos-runs/`
+> (gap-05, `docs/cos-ops.md` §2a).** One directory per vault holding the COS
+> run manifests, the recorded run verdicts and the plan bindings — the
+> authorities a night is judged BY, not artifacts a night writes. They lived at
+> `<vault>/.brain/cos/host/runs` until 2026-08-16 and were called "host-private"
+> and "never VM-writable" in three places: true of the VM's RULES, false of the
+> filesystem, since that path is inside the Cowork workspace. The forged copy a
+> VM could write there decided whether a run's candidates were claimable and
+> which plan its apply was allowed to have dispatched. Existing records are
+> carried forward ONCE; a record present in both places with differing bytes is
+> refused and takes that run to INCONCLUSIVE rather than either copy winning.
+> Not drain-first — losing it makes past nights unverifiable rather than
+> stranding pending work.
 
 ---
 
@@ -990,7 +1004,7 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
 
 | Context | May do | May NOT do |
 |---|---|---|
-| **Cowork Linux VM** (sandbox, EDR-blind) | `search`, `get`, `recent`, `draft_capture` (full VM_ALLOWED list: `init, doctor, alerts, search, hybrid-search, diagnose, grep, bases-query, graph-expand, get, read, recent, status, draft-capture, capture, brief, digest, cos-propose` — `diagnose` is read-only and applies the same egress gate; `alerts` is the degradation digest every harness runs at session start (§9), file-reads only, and names the host-home sources the VM cannot reach instead of skipping them; `cos-propose` is an UNSIGNED drop into a proposal-drop dir `sync` never reads; only the host broker's owner-inbox gate can move it toward signing) | sign, index-commit, WAL write, snapshot, `write_note`, `ingest`, `ingest-transcript`, `supersede`, `unsupersede`, `graphify`, every other `cos-*` verb (broker/correct/evidence/priority-map/hold) |
+| **Cowork Linux VM** (sandbox, EDR-blind) | `search`, `get`, `recent`, `draft_capture` (full VM_ALLOWED list: `init, doctor, alerts, search, hybrid-search, diagnose, grep, bases-query, graph-expand, get, read, recent, status, draft-capture, capture, brief, digest, cos-propose, provision-request` — `diagnose` is read-only and applies the same egress gate; `alerts` is the degradation digest every harness runs at session start (§9), file-reads only, and names the host-home sources the VM cannot reach instead of skipping them; `cos-propose` is an UNSIGNED drop into a proposal-drop dir `sync` never reads; only the host broker's owner-inbox gate can move it toward signing; `provision-request` (PRV-10) stages a NEW-VAULT request marker — a plain-file drop, no key, no launchd, no registry — that the host's `provision-drain` completes, see the protocol below) | sign, index-commit, WAL write, snapshot, `write_note`, `ingest`, `ingest-transcript`, `supersede`, `unsupersede`, `graphify`, every other `cos-*` verb (broker/correct/evidence/priority-map/hold) |
 | **HOST broker** (macOS/Windows, EDR-visible, holds the audit key) | everything: `write_note`, audit signing, WAL writes, snapshot generation, index commit, plus the ADR-0003 host-only verbs `ingest`/`ingest-transcript` (drop-zone → signed `raw/`, originals archived immutably), `supersede`/`unsupersede` (both sides of a version chain, and its audited undo), `graphify` (bounded monthly link-discovery build) | — |
 
 **Why:** the Cowork VM is ephemeral, EDR-blind, and not audit-logged — it must
@@ -1015,6 +1029,25 @@ The VM is a **read + draft** surface only; the host is the **only writer**.
 4. **Snapshot publish** (`brain sync --publish` / `brain snapshot`): the host
    atomically republishes the read-only, generation-stamped snapshot into
    `.brain/snapshot/`. Only now is the note retrievable from the VM.
+
+### VM-request → host-drain vault provisioning (PRV-10, 2026-08-17)
+
+A Cowork session can also create a whole NEW vault, with the same trust
+split. It scaffolds `<workspace>/vault` as plain files and runs
+`brain --role vm provision-request` — which writes ONE marker,
+`vault/.brain/provision-request.json`, and nothing else (no key, no launchd,
+no registry). The host's `provision-drain` (a fold on every registered
+vault's hourly `brain-nightly` daily branch, and a host verb to run it on
+demand) scans the PARENT directories of already-registered workspaces for
+pending markers and completes each: `brain init --full --apply` (key check +
+per-vault nightly registration + seeding), model staging from a local copy,
+`brain sync --publish`, and the registry upsert. The outcome lands beside
+the marker as `provision-result.json`, readable from the VM. Rules: the
+vault path derives from WHERE the marker sits, never from its contents; an
+already-registered vault is never re-provisioned; every provision is
+reported through the maintain results, never silent. Stated limit: the
+FIRST vault on a machine still needs one host `/brainiac-install` — an
+empty registry has no roots to scan and no nightly to ride.
 
 **No capture daemon, no dedicated drain task.** The host drains *on invoke*.
 Scheduled tasks are a **small, curated set, each justified on its own merits —
@@ -1113,6 +1146,63 @@ python3 tools/validate.py vault --okf      # also run the optional OKF lint prof
 ```
 
 A clean validate (exit 0) is the conventions gate.
+
+### Running the test suite
+
+Run the full suite in PARALLEL. Sequentially it takes ~15 minutes; with eight
+workers it takes ~6, and the pass set is identical:
+
+```bash
+.venv/bin/python -B -m pytest -n 8 --dist loadfile --timeout 300 -q \
+  --deselect tests/test_cos_runverify.py::test_corpus_join_zero_false_positives_across_every_real_historical_run \
+  tests
+```
+
+Three parts of that line are load-bearing, and each is a measured lesson:
+
+- **`--dist loadfile`** keeps every test in one FILE on one worker. That is what
+  makes the parallel run stable — the `fcntl` lock tests, the autouse env
+  isolation and the node suite all assume file-local ordering. Do not "improve"
+  it to `--dist load`.
+- **`--timeout 300`** bounds a hung test at five minutes. Without it, one hang
+  blocks a gate until the gate's own timeout, and the run reports nothing.
+- **No `-x`.** For consecutive runs you want the whole failure list, not the
+  first one; a 2026-08-13 run was wasted re-running the suite to see the rest.
+
+The one deselect asserts against LIVE host COS ledgers and is machine-bound by
+design; it is deselected in the sequential gates too, so parallel coverage
+equals sequential coverage. **Any OTHER deselect needs its cause written down
+and re-checked** — two historical ones were blamed on parallelism and turned
+out to be a date-rotted clock read and a live-vault leak (see
+`tests/test_doctor.py::_no_live_cwd_vault`). A deselect that outlives its cause
+is a check that cannot fail.
+
+While working, run only the tests you changed. Run the whole suite ONCE, at the
+gate.
+
+### The quality ratchet at commit time
+
+The pre-commit hooks include three ratchet checkers (file size, function
+length, complexity). They judge ONLY the files you staged, and they block only
+what your commit makes worse than every commit parent. Rules:
+
+- **Never `git commit --no-verify`.** It skips EVERY hook, including semgrep
+  and the packaging gate. No ratchet complaint justifies dropping those.
+- If a ratchet hook still blocks you wrongly, skip that hook alone and say why
+  in the commit body: `SKIP=file-size-ratchet git commit ...` (comma-separate
+  for several: `SKIP=file-size-ratchet,complexity-ratchet`). CI
+  (`quality-ratchet.yml`) re-runs all three checkers whole-project on every
+  push, so a skip is visible, never final.
+- **Merging a long-lived branch:** when the merge warns about inherited debt,
+  re-record the baselines IN the merge commit — run
+  `python3 tools/check_file_sizes.py --generate-baseline` (and the
+  function-length and complexity siblings), review that the diff only admits
+  files the branch already carried, `git add` the three baseline files, and
+  complete the merge. Never regenerate a baseline to absorb debt authored in
+  the commit itself. CI stays red until the re-record lands.
+- The checkers in `tools/` are vendored copies; the source of truth is
+  `~/.claude/scripts/quality/`. Never edit them here — re-sync with
+  `python3 ~/.claude/scripts/quality/vendor_quality.py .`.
 
 ---
 

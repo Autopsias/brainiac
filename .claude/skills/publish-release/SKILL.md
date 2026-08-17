@@ -35,18 +35,43 @@ resistance.
 ## Checklist (copy into the session and tick off)
 
 ```
-[ ] 1. Preflight: [Unreleased] non-empty, WIP identified, prior tag verified
+[ ] 1. Preflight: ONE interpreter imports pytest+build+twine, npm whoami,
+       tag exists, denylist present, [Unreleased] non-empty, WIP identified
 [ ] 2. Cut: release.py bump → scoped commit → local tag
 [ ] 3. Verify: pipeline --dry-run (full suite, export, canary, build, CI signal)
-[ ] 4. Decision card: owner approves acts (AskUserQuestion, one card)
+[ ] 4. Decision card: owner approves acts (AskUserQuestion, one card, FIVE acts)
 [ ] 5. Execute: pipeline with --confirm per approved act + --consent-note
 [ ] 6. Report: evidence transcript + what is now live where
+[ ] 7. Propagate: host, staged workspace, Cowork plugin store, VM leg —
+       then verify each moved (a publish updates none of them)
 ```
 
 ## Steps
 
 ### 1 · Preflight
 
+**Run these four assertions FIRST — each one cost a failed run on 2026-08-16.**
+
+```
+PY=~/.brainiac/venv/bin/python3          # the interpreter that has all three
+$PY -c "import pytest, build, twine"     # must ALL import, from ONE interpreter
+npm whoami                               # must print a user, not E401
+git rev-parse --verify refs/tags/v<X.Y.Z>   # the pipeline needs the tag to exist
+ls ~/brainiac-release-groundtruth.txt    # the denylist
+```
+
+- **One interpreter, all three modules.** The pipeline runs the suite AND
+  twine with the same `sys.executable`. Homebrew's `python3` has pytest but
+  no twine; a bare venv with twine has no pytest. Installing twine into a
+  fresh venv "to fix it" swaps a step-7 failure for a step-3 failure. On this
+  host `~/.brainiac/venv/bin/python3` is the one that satisfies all three —
+  verify, never assume, and invoke the pipeline with it explicitly.
+- **`npm whoami` before anything.** Not logged in reads as `E401` here and as
+  a `404 Not Found — PUT …` at publish time, which looks like a missing
+  package rather than missing auth. It killed v0.20.11's npm phase outright.
+  Fix it up front with `npm login --auth-type=web`, which prints a
+  `https://www.npmjs.com/login?next=/login/cli/<uuid>` URL — relay it to the
+  owner immediately and confirm with `npm whoami` before continuing.
 - `CHANGELOG.md` must have real content under `## [Unreleased]` — an empty
   section means there is nothing to release; stop and say so.
 - `git status --short`: identify anything dirty that is NOT release material.
@@ -95,10 +120,20 @@ then stops before anything uploads. Two expected stops and their meanings:
 
 Present ONE card carrying: the dry-run's verified summary (verbatim from the
 gate output), anything excluded from the release commit (step 1), any
-Windows-CI acceptance reason, and the four acts as a multi-select
-(TestPyPI / PyPI / npm / public git push) with "all four" as the recommended
-option. The owner's selection is the consent — record their exact wording if
-they add notes.
+Windows-CI acceptance reason, and the acts as a multi-select.
+
+**There are FIVE gated acts, not four:** `testpypi`, `pypi`, `npm`,
+`public-git`, `release-asset`. A card offering only the first four stops the
+run at step 11/12 needing a second, separate approval (measured 2026-08-16).
+Include `release-asset` explicitly, and say what it carries: it attaches
+assets to the GitHub release that CI already created on the tag push, and it
+has failed since v0.20.5 on the mcpb handshake gate — so the owner is
+approving something with a known failure history, not a formality.
+
+The owner's selection is the consent — record their exact wording if they add
+notes, and pass one `--confirm` per selected act. If they approve a subset
+now and the rest later, that later approval is its own card and its own
+`--consent-note`; never widen an earlier note to cover a new act.
 
 ### 5 · Execute
 
@@ -131,14 +166,61 @@ owner's to hold, and the tool's own error is the report:
   to the owner immediately** — the publish blocks up to 15 minutes waiting for
   the browser round-trip, so a URL surfaced late is a timeout. Never ask for a
   typed one-time code: it expires before the run reaches the publish step.
-- Run the pipeline where the `build`/`twine` modules actually are (e.g.
-  `uv run --no-project --with twine --with keyring python tools/…`) — a
-  missing module reads as an auth failure otherwise.
+- **A missing module reads as an auth failure.** Measured 2026-08-16: the run
+  died with `No module named twine` on line 1 of its own log, and that was
+  diagnosed twice as a credential problem and once as a missing TTY before
+  anyone read the first line. Step 1's `import pytest, build, twine` assertion
+  exists to make this impossible; if a phase still fails, read the log from
+  the TOP — `interactive=True` phases inherit stdout, so the real error is
+  there, not in the tail.
 
 ### 6 · Report
 
 Lead with what is now live: PyPI version, npm version, public repo tag —
-each from the pipeline's own post-verify output, never assumed. Link the
-evidence transcript (`_evidence/releases/publish-<X.Y.Z>.md`). If any act
-was declined or failed, state plainly what is NOT published and what the
-next command is. End with: Next / Needs you.
+each from the pipeline's own post-verify output, never assumed.
+
+**Check PyPI on the simple index, not the JSON `latest` field.** Measured
+2026-08-16: minutes after a successful upload,
+`https://pypi.org/pypi/<pkg>/json` still reported `latest: 0.20.11` and
+`0.20.13 present: False`, which reads as a failed publish. The authoritative
+surfaces agreed the release was live:
+
+```
+curl -s https://pypi.org/simple/brainiac-cli/ | grep 0.20.13   # installers read this
+curl -s -o /dev/null -w '%{http_code}\n' https://pypi.org/pypi/brainiac-cli/0.20.13/json
+```
+
+Likewise, never report an outcome from a harness "task completed" summary —
+three times on 2026-08-16 one arrived saying exit 0 while the run's own log
+ended `EXIT=1`. Read the log and the transcript.
+
+Link the evidence transcript (`_evidence/releases/publish-<X.Y.Z>.md`). If any
+act was declined or failed, state plainly what is NOT published and what the
+next command is. Then do step 7 — the release is not finished here.
+
+### 7 · Propagate — publishing updates NOTHING that consumes the release
+
+Publishing moves the public artifacts. Every surface that RUNS the engine is
+still on the old version until it is refreshed, and each one hides its
+staleness differently. Walk all four (2026-08-16: Cowork sat two releases
+behind for a day because only the public half had been done).
+
+| Surface | Refresh | Verify it actually moved |
+|---|---|---|
+| Host engine + CLI plugins | `brain update --engine-src <verified checkout>` | `brain --version`; doctor "Host engine venv" row |
+| Staged Cowork workspace (engine, model, skills, **ELF binaries**, vendor, AGENTS.md, prompt) | same `brain update` run | doctor rows: "Staged workspace", "Staged skill bundles", "Staged VM binary" |
+| Cowork plugin store | **manual, inside Cowork** — no host process can drive it | doctor "Desktop/Cowork plugin store" rows, or the `plugin.json` mtimes under `local-agent-mode-sessions/*/*/rpm/plugin_*/` |
+| Cowork VM leg | picks up the staged workspace | `brain doctor` + `brain status` FROM the VM |
+
+- `--engine-src` must be the checkout Step 1 verified. Point it at a stale
+  clone and the re-stage ships an old engine while reporting every step `ok`.
+- **A VM reporting the new version does not prove the plugin store moved** —
+  the VM reads the staged workspace, so it reads new even if the store never
+  budged. Check the store's own files.
+- Never accept a Cowork "Save and Replace" success toast as evidence: it can
+  no-op (Anthropic #46844 / #46836). Re-read the version from the host.
+- If the store says "already updated" while the host is newer, the release was
+  probably never PUBLISHED — Cowork installs from the marketplace, not from
+  this checkout. Re-check the public surfaces before touching Cowork again.
+
+End with: Next / Needs you.

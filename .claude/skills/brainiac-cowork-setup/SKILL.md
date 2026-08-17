@@ -12,7 +12,10 @@ workspace?" (the folder Cowork will mount; the vault lives at
 `<workspace>/vault`).
 
 This skill is standalone — reusable any time, not just as a branch of
-`/brainiac-install`. It assumes the host install already happened
+`/brainiac-install`. (A vault can also be born FROM a Cowork session with no
+host session at all: `brain --role vm provision-request` stages a marker the
+host's hourly nightly completes — PRV-10, see AGENTS.md §6. This skill is
+the host-side path for staging the runtime into a workspace by hand.) It assumes the host install already happened
 (`~/brainiac` cloned, `./install.sh` run); if `~/brainiac` doesn't exist, tell
 the user to run `/brainiac-install` first and stop.
 

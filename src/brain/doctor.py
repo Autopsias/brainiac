@@ -712,9 +712,17 @@ def check_staged_workspaces(registry_entries: list[dict], ssot: str) -> list[dic
         surface = f"Staged workspace ({vault_dir})"
         stamp_path = Path(vault_dir) / ".brain" / "engine" / "brain" / "_version.py"
         if not stamp_path.exists():
-            rows.append(_row(surface, NOT_DETECTABLE,
-                             f"{stamp_path} not found — workspace may be gone or never staged",
-                             remediation="/brainiac-cowork-setup"))
+            # "I cannot see it" vs "I looked, and it is not there": merging
+            # them hid a real defect (2026-08-17) — the registry
+            # claimed a Cowork workspace with no engine in it, so Cowork got
+            # `brain: command not found` while host doctor said not-detectable.
+            exists = Path(vault_dir).is_dir()
+            rows.append(_row(
+                surface, STALE if exists else NOT_DETECTABLE,
+                (f"registry claims a Cowork workspace but NO engine is staged "
+                 f"there ({stamp_path} missing)" if exists
+                 else f"{vault_dir} not found — workspace may be gone"),
+                remediation="/brainiac-cowork-setup"))
             continue
         text = stamp_path.read_text(encoding="utf-8")
         m = re.search(r'(?m)^__version__ = "([^"]+)"$', text)
@@ -752,9 +760,13 @@ def check_staged_skill_bundles(registry_entries: list[dict], ssot: str) -> list[
         surface = f"Staged skill bundles ({vault_dir})"
         skills_dir = Path(vault_dir) / ".brain" / "skills"
         if not skills_dir.is_dir():
-            rows.append(_row(surface, NOT_DETECTABLE,
-                             f"{skills_dir} not found — workspace may be gone or never staged",
-                             remediation="tools/cowork_workspace_install.sh"))
+            # Same distinction as the engine row above.
+            exists = Path(vault_dir).is_dir()
+            rows.append(_row(
+                surface, STALE if exists else NOT_DETECTABLE,
+                f"{skills_dir} not found — "
+                + ("no skill bundles staged" if exists else "workspace may be gone"),
+                remediation="tools/cowork_workspace_install.sh"))
             continue
         zips = sorted(skills_dir.glob("*.skill"))
         if not zips:

@@ -61,6 +61,43 @@ _evidence/eval/*
 !_evidence/eval/heartbeat.txt
 !_evidence/eval/DONE
 !_evidence/eval/capture.lock
+# COS v7 (cos-v7-four-chips-grounded-judge) session evidence: probe transcripts,
+# truth tables and build records. Synthetic/neutral fixtures and run-level counts
+# only — never a subject, sender, body or client name (ADR-0001 clean-room
+# export). Named file by file, like every exception above.
+#
+# THE SCREEN ABOVE IS A CLAIM UNTIL SOMEONE RUNS IT, AND FOR ONE FILE IT WAS
+# FALSE (review 2026-08-15): `s05-review-claude.md` line 59 carried a real
+# client name and the owner's home path, admitted under this very comment. It is
+# neutralised, and the rule is now mechanical — BEFORE adding a line here, run
+# the screen over EVERY file this block admits and probe it with a known
+# positive first (a check that returns "clean" because its pattern is broken is
+# worse than no check):
+#
+#   git ls-files _evidence/cosv7/ | xargs grep -rniE \
+#     "$(cat ~/brainiac-release-groundtruth.txt | paste -sd'|' -)|/Users/[a-z]"
+#
+# `tools/export_cleanroom.py` prefix-excludes `_evidence/` from the public
+# export, which is why this was not a live leak — but neither `gitleaks` nor
+# `gearbox harvest` carries a client-name denylist, so that one prefix rule in
+# one tool is the ONLY thing behind this comment. Do not lean on it.
+!_evidence/cosv7/
+_evidence/cosv7/*
+!_evidence/cosv7/s01-doctrine-v7.md
+!_evidence/cosv7/s01-echeck-probe.txt
+!_evidence/cosv7/s02-implementation.md
+!_evidence/cosv7/s02-probes.txt
+!_evidence/cosv7/s02-truth-table.json
+!_evidence/cosv7/s03-toolgate-probe.txt
+!_evidence/cosv7/s04-fetcher.md
+!_evidence/cosv7/s04-probes.txt
+!_evidence/cosv7/s05-grounded-judgment.md
+!_evidence/cosv7/s05-probes.txt
+!_evidence/cosv7/s05-review-claude.md
+!_evidence/cosv7/s05-review-codex.md
+!_evidence/cosv7/s05-rework.md
+!_evidence/cosv7/s05-narrow-rework.md
+!_evidence/cosv7/s05b-narrowing-flags.md
 # S01 (obs-recovery-2026-07) baseline report: synthetic-vault timings + generic
 # error-string counts only, never real owner/vault content.
 !_evidence/obs-recovery-2026-07/
@@ -166,6 +203,29 @@ _evidence/eval-power/s05-fixtures-pre-merge/codename-map.json
 _evidence/eval-power/s04-fixtures-pre-variants/golden_set.json
 _evidence/eval-power/s04-fixtures-pre-variants/qrels.json
 _evidence/eval-power/s04-fixtures-pre-variants/codename-map.json
+
+# cos-workflow-rebuild s01 (REST-01) exception: the in-page REST read-lane proof.
+# Metadata only — counts, latencies, HTTP/EWS status codes, and SHA-256 digests of
+# conversation ids and message bodies. No mail body text, no subjects, no raw ids
+# (`_evidence/` is prefix-excluded from the public export in any case).
+!_evidence/s01/
+_evidence/s01/*
+!_evidence/s01/rest-read-proof.json
+!_evidence/s01/unread-canary.json
+# The unattended-harness half of the same premise: what Codex's Chrome Plugin
+# will and will not do. Tool names, a permission-refusal message and one
+# public-page result — no mailbox involved.
+!_evidence/s01/codex-surface-probe.json
+# And the cache route it opened, closed: the same evaluator is an ISOLATED
+# world on a frozen global, so there is no page model and no IndexedDB either.
+!_evidence/s01/codex-cache-route-probe.json
+# And the sanctioned escape, closed too: a raw-CDP origin grant is per browser
+# session, so a fresh unattended session never inherits one.
+!_evidence/s01/codex-cdp-persistence-probe.json
+# And the answer: `claude -p --chrome` is an unattended harness that CAN fetch,
+# on a public page and on the signed-in mail origin, from a hidden tab.
+!_evidence/s01/headless-host-probe.json
+!_evidence/s01/headless-mail-origin-probe.json
 # s08 (EVL-01): the PRE-EXPANSION fixture snapshot, same rule and same reason as
 # the two blocks above — byte copies of the private fixtures stay out of the
 # commit, `manifest.txt` beside them (sha256s, byte counts and the proved

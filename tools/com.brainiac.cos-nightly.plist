@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  cos-nightly — the unattended chief-of-staff run.
+
+  INSTALLED BY THE OWNER, NEVER BY AN AGENT. Persistent privileged automation is
+  a human-gated change: copy it in and load it yourself (the two commands are in
+  the session that produced this file, and in tools/cos_nightly.sh's header).
+
+  IT IS A TEMPLATE, NOT AN INSTALLABLE FILE. `__HOME__` and `__COS_REPO__` are
+  placeholders: a tracked file must never bake in the machine path of whoever
+  authored it (tests/test_export_cleanroom.py::test_export_carries_no_operator_home_path
+  — a v0.19.x plist shipped the release operator's own $HOME, and a real owner
+  codename inside it, to the public export). `tools/cos_ctl.sh install` prints
+  the one-line `sed` that renders it into ~/Library/LaunchAgents/.
+
+  RunAtLoad is FALSE on purpose: loading this must not fire a mailbox-mutating
+  run as a side effect of installing it.
+
+  If the Mac is asleep at 06:30 the run fires on the next wake. That is the
+  correct behaviour here — a missed night is a late night, never a lost one,
+  and the run is safe to repeat (its caps, its undo ledger and its idempotency
+  keys are all per-run).
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.brainiac.cos-nightly</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__COS_REPO__/tools/cos_nightly.sh</string>
+  </array>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>6</integer>
+    <key>Minute</key><integer>30</integer>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>BRAIN_VAULT</key>
+    <string>__HOME__/DeveloperFolder/Brainiac/vault</string>
+    <key>BRAIN_LOG_DIR</key>
+    <string>__HOME__/.brain/logs</string>
+    <key>PATH</key>
+    <string>__HOME__/.local/bin:__HOME__/.brainiac/venv/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <!-- THE INTERPRETER IS NAMED, NOT SEARCHED. Under launchd this PATH resolves
+         `python3` to the brainiac ENGINE venv, which has no `websockets` — so
+         the CDP browser lane dies at the prepare step with rc=1 and the whole
+         night exits 5 having done nothing. Measured 2026-08-12: every hand-run
+         that day used the shell's homebrew python and passed; the first run
+         started THROUGH launchd failed in one second. Two interpreters, one
+         PATH, and the failure is invisible to any test run from a terminal.
+         `install` renders this from an interpreter it has PROVEN can import
+         websockets and refuses to print the commands otherwise.
+         NOTE: no double hyphen may appear in this comment. XML forbids it, and
+         `plutil -lint` accepts it anyway while every strict parser (plistlib,
+         expat) rejects the file — a lint that passes a malformed file is the
+         reason `install` now validates with plistlib too. -->
+    <key>COS_PYTHON</key>
+    <string>__PYTHON__</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/.brain/logs/cos-nightly-launchd.out</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/.brain/logs/cos-nightly-launchd.err</string>
+
+  <!-- Without this, `launchctl unload` (what cos_ctl.sh stop runs) SIGKILLs
+       the job about 20 seconds after its SIGTERM, and the interrupt handler's
+       durable evidence (interrupted.json, the status rebuild, exit 14) never
+       runs on exactly the stop path the owner is documented to use (review
+       2026-08-13, round 3). 120s grants the handler its window: marker first,
+       then a bounded wait on the apply. -->
+  <key>ExitTimeOut</key>
+  <integer>120</integer>
+</dict>
+</plist>

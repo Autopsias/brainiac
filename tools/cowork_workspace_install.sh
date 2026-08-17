@@ -124,9 +124,19 @@ echo "[install] model cache -> $BRAIN_DIR/model/ (bundled; VM has no HF egress)"
 # so copying links verbatim (cp -a) stages a model made of dangling symlinks.
 # Replace the directory wholesale: otherwise an e5 -> BGE upgrade retains the
 # old model.onnx beside model_int8.onnx and inflates the VM bundle silently.
-rm -rf "$BRAIN_DIR/model"
-mkdir -p "$BRAIN_DIR/model"
-cp -RL "$MODEL_SRC/." "$BRAIN_DIR/model/"
+# DESTRUCTION GUARD (2026-08-17): the rm -rf below runs BEFORE the copy, so a
+# caller passing the DESTINATION as <model-cache-dir> — the natural "this vault
+# already has its model" case — deletes the model and then copies nothing.
+# Measured: 561 MB of staged bge-m3-int8 destroyed on a live vault, and
+# `cp: … are identical` aborted the run under `set -e` before the snapshot and
+# init phases. Same path in, nothing to do.
+if [ "$MODEL_SRC" -ef "$BRAIN_DIR/model" ]; then
+  echo "[install] model cache -> already in place (source IS the destination); skipping copy"
+else
+  rm -rf "$BRAIN_DIR/model"
+  mkdir -p "$BRAIN_DIR/model"
+  cp -RL "$MODEL_SRC/." "$BRAIN_DIR/model/"
+fi
 DANGLING="$(find -L "$BRAIN_DIR/model" -type l 2>/dev/null)"
 if [ -n "$DANGLING" ]; then
   echo "[install] ERROR: dangling symlinks in staged model cache:" >&2

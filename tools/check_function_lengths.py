@@ -4,6 +4,18 @@
 Reads thresholds from pyproject.toml [tool.claude-quality] section.
 Respects .function-length-exceptions baseline file.
 
+Source of truth: gearbox scripts/quality/ (deployed to ~/.claude/scripts/quality/).
+Adopting repos vendor this file into tools/ via vendor_quality.py — never edit a
+vendored copy; re-sync instead.
+
+Modes:
+  default            whole-project scan (CI, adoption snapshots)
+  --staged           judge only the files staged in git (pre-commit hooks).
+                     A function blocks only when this commit makes it worse:
+                     over its bound AND longer than at every commit parent.
+                     Inherited debt warns and asks for a baseline re-record;
+                     the CI whole-project run stays red until that happens.
+
 Exit codes:
   0 - no blocking violations
   1 - blocking violations found
@@ -113,10 +125,8 @@ def is_excluded(rel_path: Path, exclude: list[str]) -> bool:
 
 
 def iter_python_files(project_path: Path, exclude: list[str] | None = None):
-    # ponytail: prune during the walk, never rglob-then-filter. rglob("*.py")
-    # descends into .git/.venv/node_modules in full before anything is
-    # discarded -- measured on this repo: 69,255 files in 4.02s, against 274
-    # files in 0.02s pruned. Same violation set either way.
+    # ponytail: prune during the walk, never rglob-then-filter (measured:
+    # 69,255 files in 4.02s unpruned, 274 files in 0.02s pruned).
     exclude = exclude or []
     for dirpath, dirnames, filenames in os.walk(project_path):
         rel_dir = Path(dirpath).relative_to(project_path)
@@ -135,13 +145,10 @@ def iter_python_files(project_path: Path, exclude: list[str] | None = None):
             yield project_path / rel
 
 
-def get_functions(filepath: Path) -> list[tuple[int, str, int]]:
-    """Return list of (lineno, name, length) for all functions in file."""
+def functions_in_source(source: str, filename: str = "<source>") -> list[tuple[int, str, int]]:
+    """Return list of (lineno, name, length) for all functions in the source."""
     try:
-        source = filepath.read_text(encoding="utf-8", errors="replace")
-        tree = ast.parse(source, filename=str(filepath))
-    except SyntaxError:
-        return []
+        tree = ast.parse(source, filename=filename)
     except Exception:
         return []
 
@@ -152,6 +159,14 @@ def get_functions(filepath: Path) -> list[tuple[int, str, int]]:
                 length = node.end_lineno - node.lineno + 1
                 results.append((node.lineno, node.name, length))
     return results
+
+
+def get_functions(filepath: Path) -> list[tuple[int, str, int]]:
+    try:
+        source = filepath.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return []
+    return functions_in_source(source, str(filepath))
 
 
 def find_violations(
@@ -183,8 +198,52 @@ def find_violations(
     return blocking, warnings
 
 
+def check_staged(project_path: Path, config: dict, exceptions: dict[str, int]) -> int:
+    """Judge only staged files; block only what THIS commit makes worse."""
+    import ratchetlib
+
+    blocking: list[str] = []
+    inherited: list[str] = []
+    for rel in ratchetlib.staged_py_files(project_path):
+        if is_excluded(Path(rel), config.get("exclude") or []):
+            continue
+        parent_lengths: dict[str, int] = {}
+        for src in ratchetlib.parent_sources(project_path, rel):
+            for _, name, length in functions_in_source(src):
+                parent_lengths[name] = max(parent_lengths.get(name, 0), length)
+        for lineno, name, length in get_functions(project_path / rel):
+            key = exception_key(rel, name)
+            if key in exceptions:
+                bound, label = exceptions[key], "baseline"
+            else:
+                bound, label = config["limit"], "LIMIT"
+            if length <= bound:
+                continue
+            line = f"  {rel}:{lineno}  {name}()  {length} lines [{label}={bound}]"
+            if name in parent_lengths and length <= parent_lengths[name]:
+                inherited.append(line)
+            else:
+                blocking.append(line)
+
+    if blocking:
+        print(f"\n=== Function Length Violations ({len(blocking)} BLOCKING, staged) ===")
+        print("\n".join(blocking))
+        print("\nThis commit grows the function past its bound. Extract helpers.")
+    if inherited:
+        print(f"\n=== Inherited debt ({len(inherited)} WARNING, staged) ===")
+        print("\n".join(inherited))
+        print(
+            "\nOver the bound, but not made worse by this commit (merge or"
+            " pre-existing).\nRe-record the baseline in this commit"
+            " (--generate-baseline); CI stays red until you do."
+        )
+    if not blocking and not inherited:
+        print("✓ Staged functions within length limits")
+    return 1 if blocking else 0
+
+
 def generate_baseline(project_path: Path, config: dict) -> None:
-    blocking, _ = find_violations(project_path, config, set())
+    blocking, _ = find_violations(project_path, config, {})
     exc_file = project_path / ".function-length-exceptions"
 
     # Load existing to preserve any manual entries not in current scan
@@ -210,6 +269,7 @@ def generate_baseline(project_path: Path, config: dict) -> None:
     data = {"exceptions": new_exceptions}
     with open(exc_file, "w") as f:
         json.dump(data, f, indent=2)
+        f.write("\n")
 
     removed = len(existing) - len(new_exceptions)
     print(
@@ -221,6 +281,8 @@ def generate_baseline(project_path: Path, config: dict) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Check Python function lengths")
     parser.add_argument("--project", default=".", help="Project root directory")
+    parser.add_argument("--staged", action="store_true",
+                        help="Judge only git-staged files (pre-commit mode)")
     parser.add_argument("--generate-baseline", action="store_true",
                         help="Write current violations as exceptions baseline")
     parser.add_argument("--json", action="store_true", help="Output as JSON")
@@ -234,6 +296,10 @@ def main() -> None:
         return
 
     exceptions = load_exceptions(project_path)
+
+    if args.staged:
+        sys.exit(check_staged(project_path, config, exceptions))
+
     blocking, warnings = find_violations(project_path, config, exceptions)
 
     if args.json:

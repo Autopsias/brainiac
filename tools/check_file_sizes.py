@@ -4,6 +4,19 @@
 Reads thresholds from pyproject.toml [tool.claude-quality] section.
 Respects .file-size-exceptions baseline file.
 
+Source of truth: gearbox scripts/quality/ (deployed to ~/.claude/scripts/quality/).
+Adopting repos vendor this file into tools/ via vendor_quality.py — never edit a
+vendored copy; re-sync instead.
+
+Modes:
+  default            whole-project scan (CI, adoption snapshots)
+  --staged           judge only the files staged in git (pre-commit hooks).
+                     A file blocks only when this commit makes it worse: over
+                     its bound AND larger than at every commit parent. Debt a
+                     commit merely inherits (a merge, a bypassed past commit)
+                     warns and tells you to re-record the baseline; the CI
+                     whole-project run stays red until that happens.
+
 Exit codes:
   0 - no blocking violations
   1 - blocking violations found
@@ -120,8 +133,8 @@ def is_excluded(rel_path: Path, exclude: list[str]) -> bool:
 def iter_python_files(project_path: Path, exclude: list[str] | None = None):
     # ponytail: prune during the walk, never rglob-then-filter. rglob("*.py")
     # descends into .git/.venv/node_modules in full before anything is
-    # discarded -- measured on this repo: 69,255 files in 4.02s, against 274
-    # files in 0.02s pruned. Same violation set either way.
+    # discarded -- measured: 69,255 files in 4.02s, against 274 files in
+    # 0.02s pruned. Same violation set either way.
     exclude = exclude or []
     for dirpath, dirnames, filenames in os.walk(project_path):
         rel_dir = Path(dirpath).relative_to(project_path)
@@ -179,8 +192,53 @@ def find_violations(
     return blocking, warnings
 
 
+def check_staged(project_path: Path, config: dict, exceptions: dict[str, int]) -> int:
+    """Judge only staged files; block only what THIS commit makes worse."""
+    import ratchetlib
+
+    blocking: list[str] = []
+    inherited: list[str] = []
+    for rel in ratchetlib.staged_py_files(project_path):
+        if is_excluded(Path(rel), config.get("exclude") or []):
+            continue
+        loc = count_lines(project_path / rel)
+        if rel in exceptions:
+            bound, label = exceptions[rel], "baseline"
+        elif is_test_file(rel):
+            bound, label = config["test_limit"], "LIMIT"
+        else:
+            bound, label = config["limit"], "LIMIT"
+        if loc <= bound:
+            continue
+        parents = [
+            len(src.splitlines())
+            for src in ratchetlib.parent_sources(project_path, rel)
+        ]
+        line = f"  {rel}: {loc} LOC [{label}={bound}]"
+        if parents and loc <= max(parents):
+            inherited.append(line)
+        else:
+            blocking.append(line)
+
+    if blocking:
+        print(f"\n=== File Size Violations ({len(blocking)} BLOCKING, staged) ===")
+        print("\n".join(blocking))
+        print("\nThis commit grows the file past its bound. Shrink it, or split it.")
+    if inherited:
+        print(f"\n=== Inherited debt ({len(inherited)} WARNING, staged) ===")
+        print("\n".join(inherited))
+        print(
+            "\nOver the bound, but not made worse by this commit (merge or"
+            " pre-existing).\nRe-record the baseline in this commit"
+            " (--generate-baseline); CI stays red until you do."
+        )
+    if not blocking and not inherited:
+        print("✓ Staged files within size limits")
+    return 1 if blocking else 0
+
+
 def generate_baseline(project_path: Path, config: dict) -> None:
-    blocking, _ = find_violations(project_path, config, set())
+    blocking, _ = find_violations(project_path, config, {})
     exc_file = project_path / ".file-size-exceptions"
 
     existing: set[str] = set()
@@ -194,6 +252,7 @@ def generate_baseline(project_path: Path, config: dict) -> None:
     data = {"exceptions": [{"file": v["file"], "loc": v["loc"]} for v in blocking]}
     with open(exc_file, "w") as f:
         json.dump(data, f, indent=2)
+        f.write("\n")
 
     removed = len(existing - {v["file"] for v in blocking})
     print(
@@ -205,6 +264,8 @@ def generate_baseline(project_path: Path, config: dict) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Check Python file sizes")
     parser.add_argument("--project", default=".", help="Project root directory")
+    parser.add_argument("--staged", action="store_true",
+                        help="Judge only git-staged files (pre-commit mode)")
     parser.add_argument("--generate-baseline", action="store_true",
                         help="Write current violations as exceptions baseline")
     parser.add_argument("--json", action="store_true", help="Output as JSON")
@@ -218,6 +279,10 @@ def main() -> None:
         return
 
     exceptions = load_exceptions(project_path)
+
+    if args.staged:
+        sys.exit(check_staged(project_path, config, exceptions))
+
     blocking, warnings = find_violations(project_path, config, exceptions)
 
     if args.json:

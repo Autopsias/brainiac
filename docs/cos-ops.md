@@ -84,7 +84,7 @@ never-graduable `unclassified` — while that run's own
 proposal id. Facts the host knows are now written by the host.
 
 **The run manifest.** `brain cos-run-begin` (HOST-ONLY, at run LAUNCH) freezes
-`host/runs/<run-id>.json`: the run id, the SKILL.md the executing lane will
+`<run-id>.json` in the run-record store: the run id, the SKILL.md the executing lane will
 load (resolved by `brain.cos_deploy` — the one definition of the lane rules),
 that file's content digest, both producer versions read out of it, and the
 artifacts the run owes. It is IMMUTABLE. Every later claim stamps candidates
@@ -95,6 +95,35 @@ VM-readable `shared/current-run.json`, so the run names its artifacts after it.
 The metrics row takes its stamps from the same manifest
 (`tools/cos_reconcile_metrics.py --append` refuses a row for a run the host
 never began, and refuses one that CONTRADICTS the manifest).
+
+**Where the run records live, and why not under `host/` (gap-05, 2026-08-16).**
+The manifest, the recorded verdict (`<run-id>.validity.json`) and the plan
+binding (`_cos_plan_binding_<run-id>.json`) sat at `host/runs/` until
+2026-08-16, described in three docstrings as "host-private" and "never
+VM-writable". That was true of the VM's RULES (AGENTS.md §9: `.brain/` is
+host-only and no VM_ALLOWED verb writes there) and false of the FILESYSTEM —
+and §2c below had already ruled the same directory out for the approved queue
+in as many words: "`.brain/cos/host/` would NOT do: it is visible on that
+mount, and `0700` is only a boundary if the VM runs as a different uid AND
+VirtioFS honours mode bits (neither is established)". These three files are not
+artifacts a run writes; they are the authorities a run is judged BY — which
+bundle it was allowed to be, whether its candidates may be claimed
+(`CLAIMABLE_VERDICTS`), and which frozen plan its apply dispatched. They now
+resolve through `config.cos_run_records_dir` — off the mount beside the writer
+lock (INT-05) and the supersede journal (ENF-01), same helper, same app-data
+fallback.
+
+Records already on the mount are carried forward ONCE
+(`cos.migrate_run_records`, called from `ensure_layout`, `cos.run_manifest` and
+`cos_runverify.known_run_ids`) — historical runs stay verifiable, and the
+carry-forward is one-time because an always-on import would be a channel for
+writing into the run-validity store from the mount. Two copies of one record
+FAIL CLOSED: identical bytes are the ordinary resumed migration, differing
+bytes are refused, logged as a `run-record-mount-conflict` defect, left in
+place as evidence, and take that run — and only that run — to INCONCLUSIVE in
+`verify_run`. Neither copy is ever preferred. The store is NOT drain-first
+work like the approved queue: it is evidence, and losing it makes historical
+runs unverifiable rather than stranding pending work.
 
 **What the run owes per staged candidate.** `brain cos-propose --json` returns
 `id` and `sha256`; the run copies BOTH into its ingestion-ledger row beside the

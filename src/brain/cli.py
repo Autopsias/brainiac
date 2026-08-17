@@ -1008,6 +1008,12 @@ def build_parser() -> argparse.ArgumentParser:
                          "an unresolvable lane REFUSES rather than guesses)")
     sp.add_argument("--skill", default=None,
                     help="assert the executing SKILL.md path outright")
+    sp.add_argument("--attended", action="store_true",
+                    help="a human is about to approve this run's plan and "
+                         "watch it apply. REFUSES a dirty or non-git working "
+                         "tree: the manifest's `git_commit` is the record of "
+                         "WHICH CODE he approved, and it says nothing if "
+                         "uncommitted edits sat beside it.")
     sp.add_argument("--json", action="store_true")
 
     sp = sub.add_parser(
@@ -1193,6 +1199,22 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--id", default=None, help="note id (default: from frontmatter or content hash)")
     sp.add_argument("--source", action="store_true", help="stage as a raw/ source (vs a brain/ note)")
     sp.add_argument("--content", default=None, help="note text (default: read stdin)")
+    sp.add_argument("--json", action="store_true")
+
+    sp = sub.add_parser(
+        "provision-request",
+        help="VM-side (PRV-10): stage a new-vault provisioning request marker "
+             "for the host to complete (no key, no launchd, no registry)",
+    )
+    sp.add_argument("--json", action="store_true")
+
+    sp = sub.add_parser(
+        "provision-drain",
+        help="HOST-broker (PRV-10): scan registered-workspace parents for "
+             "pending provision requests and complete each (init --full "
+             "--apply + sync --publish + model + registry); also runs as a "
+             "fold on the hourly maintain daily branch",
+    )
     sp.add_argument("--json", action="store_true")
 
     sp = sub.add_parser("rebuild", help="rebuild the derived index from vault/ (always safe)")
@@ -1521,6 +1543,32 @@ def _connect_file_step(plan: "_connect.ConnectPlan", args: Any, *, remove: bool)
             "diff": plan.diff, "confirmed": True}
 
 
+def _cmd_provision(cmd: str, args: Any, role: str) -> int:
+    """PRV-10 dispatch: VM request-marker write, or the host drain."""
+    from . import provision
+
+    if cmd == "provision-request":
+        res = provision.write_request(config.vault_root(args.vault), role=role)
+        _emit(res if args.json else
+              f"provision request: {res['status']}"
+              + (f" — {res['note']}" if res.get("note") else ""), args.json)
+        return 0
+
+    res = provision.drain()
+    if args.json:
+        _emit(res, True)
+    else:
+        lines = [f"provision drain: {len(res['handled'])} request(s) handled, "
+                 f"{len(res['roots'])} root(s) scanned"]
+        for h in res["handled"]:
+            lines.append(f"  {h.get('vault')}: {h.get('status')}"
+                         + ("" if h.get("ok") else " (NOT ok)"))
+        for s in res["stuck_claims"]:
+            lines.append(f"  STUCK claim (crashed drain?): {s}")
+        _emit(None, False, "\n".join(lines))
+    return 0 if all(h.get("ok") for h in res["handled"]) else 1
+
+
 def _cmd_connect(args: Any) -> int:
     from pathlib import Path
 
@@ -1693,6 +1741,10 @@ VM_ALLOWED = frozenset({
     # ingest-sweep (v2.1 host downloads sweeper),
     # priority-map, hold) is host-broker only and refused here.
     "cos-propose",
+    # PRV-10: the new-vault request marker. A plain-file drop the host drain
+    # completes; the VM leg still never signs, registers, or touches the
+    # registry (`provision-drain` stays host-broker only).
+    "provision-request",
 })
 
 
@@ -1963,6 +2015,13 @@ def _main(argv: list[str] | None = None) -> int:
     # VM_ALLOWED gate above, before this line is ever reached.
     if cmd == "connect":
         return _cmd_connect(args)
+
+    # PRV-10 — both dispatched BEFORE BrainCore construction (filesystem +
+    # subprocess only; a brand-new vault has no index yet). `provision-request`
+    # is VM_ALLOWED; `provision-drain` is host-broker and refused on role=vm
+    # by the VM_ALLOWED gate above.
+    if cmd in ("provision-request", "provision-drain"):
+        return _cmd_provision(cmd, args, role)
 
     # `update` is the UP-02 single top-level entry point: it self-executes
     # (never just prints instructions) and is host-broker only — it mutates
@@ -2426,7 +2485,9 @@ def _main(argv: list[str] | None = None) -> int:
     if cmd == "cos-run-begin":
         try:
             res = core.cos_run_begin(run_id=args.run_id, lane=args.lane,
-                                     skill_path=args.skill)
+                                     skill_path=args.skill,
+                                     attended=bool(getattr(args, "attended",
+                                                           False)))
         except Exception as exc:  # RoleError / unresolvable lane -> fail closed
             _emit({"error": type(exc).__name__, "detail": str(exc)} if args.json
                   else f"cos-run-begin refused ({type(exc).__name__}): {exc}",

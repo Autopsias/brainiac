@@ -96,6 +96,70 @@ ATTACHMENT_LANES = {
     "downloads-mounted", "blocked-no-downloads-mount", "not-exercised",
 }
 
+# --- the undo ledger, counted ONCE for everybody (s10, 2026-08-16) -----------
+#
+# WHY THESE THREE LIVE HERE AND NOT IN `cos_mutate.py`, WHERE THEY WERE BORN.
+# `applied_counts` is the one definition of "one mutation is a KEY, not a row"
+# (s08). Two modules now need it: the apply, which WRITES the counters, and the
+# join below, which RECOUNTS them. `cos_mutate.py` cannot be the shared home —
+# it is deliberately NOT in the engine asset mirror (`package_clients.py`
+# ENGINE_ASSET_FILES), so an installed engine resolving this file out of
+# `_assets/tools/` would find no sibling to import and `cos_runverify.checkers()`
+# would report the whole toolchain unloadable, i.e. every nightly INCONCLUSIVE.
+# This module IS mirrored, so the definition lives here and `cos_mutate` imports
+# it back. Nothing about the counting changed in the move; `tests/
+# test_cos_mutate.py`'s existing key-derivation tests are the regression proof.
+MUTATION_VERBS = ("archive", "categorize", "draft")
+
+#: The states that say a mutation MIGHT have reached the server. `sent` counts —
+#: a mutation whose outcome is unknown has already spent its blast radius.
+APPLIED_STATES = ("sent", "confirmed", "reconciled", "unknown")
+
+#: verb -> the metrics-row counter it moves. `captured` is deliberately absent:
+#: no ledger records it, so nothing here may claim to recount it.
+VERB_COUNTER = {"archive": "archived", "categorize": "marked",
+                "draft": "drafts_created"}
+
+
+def applied_counts(rows: list[dict]) -> dict[str, int]:
+    """Per verb, how many of these undo-ledger rows might have reached the
+    server — one count per idempotency KEY, never per row.
+
+    The ledger is append-only with one row per state TRANSITION, so `intent`
+    then `reconciled` for one archive is ONE mutation.
+
+    The key is DERIVED from `(conversation_id, verb)` whenever the row carries a
+    conversation id, and only then falls back to the row's own
+    `idempotency_key`. The reason `check_plan_binding` already gives: the ledger
+    lives in the VM-writable ops zone, and a row carrying SOMEONE ELSE'S key
+    would otherwise collapse two mutations into one count. `_undo_row` always
+    writes the conversation id, so deriving loses nothing on an honest row and
+    refuses the forge. A row with NO conversation id keeps its declared key —
+    and cannot hide behind that, because `check_plan_binding` joins on the same
+    derivation and a keyless row matches no planned mutation at all.
+    """
+    latest: dict[str, dict] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        cid = row.get("conversation_id")
+        key = (f"{cid}|{row.get('verb')}" if cid
+               else str(row.get("idempotency_key")))
+        latest[key] = row
+    counts = {v: 0 for v in MUTATION_VERBS}
+    for row in latest.values():
+        if row.get("state") in APPLIED_STATES and row.get("verb") in counts:
+            counts[row["verb"]] += 1
+    return counts
+
+
+def _undo_counter(verb: str):
+    """A `LEDGERS` counter that reads ONE verb out of an undo ledger."""
+    def count(rows: list[dict]) -> int:
+        return applied_counts(rows)[verb]
+    count.__name__ = f"counts_undo_{verb}"
+    return count
+
 
 def _rows(path: Path) -> list[dict]:
     out: list[dict] = []
@@ -165,11 +229,35 @@ def counts_ingestion(rows: list[dict]) -> int:
     return sum(1 for r in rows if r.get("disposition") == "candidate")
 
 
+#: (glob, counter, row-counter). Several sources may feed ONE counter; the join
+#: sums them per date.
+#:
+#: THE FIRST THREE HAVE NO v7 PRODUCER, AND ARE KEPT ANYWAY (s10, 2026-08-16).
+#: `_cos_drafts_ledger_*`, `_cos_chip_ledger_*` and `_cos_archive_ledger_*` were
+#: written by the MODEL leg of the pre-v7 browser-driven lane. Under v7 the model
+#: legs run `--tools "Read,Glob"` with editing denied and cannot write a file at
+#: all, so nothing has produced one since. They are NOT removed because their
+#: input is not absent — 42 files of each are on disk and this join still reports
+#: real shortfalls off them (measured 2026-08-16 against the reference vault:
+#: 2026-08-01 drafts 12 ledgered / 2 reported, 2026-08-06 marks 38/0, 2026-08-07
+#: marks 50/0). Deleting the globs would silence history.
+#:
+#: THE UNDO LEDGER IS THE v7 SOURCE, and it is what makes this join able to fail
+#: again. Measured on the same day, BEFORE this line existed: 2026-08-16 read
+#: `archived: reported 14, ledgered 0` and `drafts_created: reported 2,
+#: ledgered 0` — the three globs above matched nothing, the ledgered side was 0,
+#: and `shortfall = max(0, ledgered - reported)` is 0 whenever the ledgered side
+#: is empty. An all-clear that equals no input is the failure mode this whole
+#: file exists to catch, so the counter the v7 apply DOES write is now joined
+#: too. One glob per counter because one undo ledger carries all three verbs.
 LEDGERS = (
     ("_cos_drafts_ledger_*.jsonl", "drafts_created", counts_draft),
     ("_cos_chip_ledger_*.jsonl", "marked", counts_mark),
     ("_cos_archive_ledger_*.jsonl", "archived", counts_archive),
     ("_cos_ingestion_ledger_*.jsonl", "ingestion_candidates", counts_ingestion),
+    ("_cos_undo_ledger_*.jsonl", "drafts_created", _undo_counter("draft")),
+    ("_cos_undo_ledger_*.jsonl", "marked", _undo_counter("categorize")),
+    ("_cos_undo_ledger_*.jsonl", "archived", _undo_counter("archive")),
 )
 
 

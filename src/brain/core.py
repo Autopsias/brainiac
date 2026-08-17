@@ -3549,7 +3549,8 @@ class BrainCore:
 
     def cos_run_begin(self, *, run_id: str | None = None,
                       lane: str | None = None,
-                      skill_path: str | None = None) -> dict[str, Any]:
+                      skill_path: str | None = None,
+                      attended: bool = False) -> dict[str, Any]:
         """HOST-ONLY (STA-01): freeze the run manifest at run LAUNCH.
 
         The manifest — run id, resolved SKILL.md path + content digest, both
@@ -3581,7 +3582,8 @@ class BrainCore:
                     f"calendar id, and the metrics row can then be appended for "
                     f"neither. Begin the run on the day it runs.")
         return cos_mod.write_run_manifest(self.vault, run_id=run_id, lane=lane,
-                                          skill_path=skill_path)
+                                          skill_path=skill_path,
+                                          attended=attended)
 
     def cos_corpus_check(self, run_id: str) -> dict[str, Any]:
         """HOST-ONLY (WIR-02): may this run's Phase 1.6 judgment start?
@@ -4245,6 +4247,20 @@ class BrainCore:
                 # attachment reaches its host-private quarantine in time to
                 # join THIS run's owner batch — documents and email text are
                 # decided in the same question, not an hour apart.
+                # PRV-10: drain pending new-vault provision requests written
+                # by a Cowork session (VM-request → host-drain, owner ruling
+                # 2026-08-16: automatic, loudly reported). Rides the hourly
+                # daily branch instead of a new scheduled task (AGENTS.md §6).
+                # Cheap no-op scan when no request is pending.
+                try:
+                    from . import provision as _provision
+                    _provision.maintain_fold(
+                        results, auto_fixed, action_required)
+                except Exception as exc:
+                    blocked.append(maint.blocked_item(
+                        f"provision drain failed: {exc}",
+                        "workspace registry / filesystem", "next maintain run"))
+
                 try:
                     sweep_res = self.cos_ingest_sweep()
                     results["cos_ingest_sweep"] = sweep_res

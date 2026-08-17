@@ -74,6 +74,27 @@ GUARD_STOPS = ("target-identity-mismatch",)
 
 #: Where a recorded guard stop leaves its own trace. The checker DERIVES the
 #: corroboration from these — the `guard_stop` record alone is the run's word.
+#:
+#: THE ACTION LEDGER HAS NO v7 PRODUCER AND IS KEPT ANYWAY (s10, 2026-08-16).
+#: `_cos_action_ledger_*` was written by the MODEL leg of the pre-v7 browser
+#: lane; the v7 model legs run `--tools "Read,Glob"` with editing denied and
+#: cannot write a file at all. It is NOT removed, for two measured reasons:
+#:   1. `cos_runverify.check_contract` RE-EXECUTES this checker over every run
+#:      it scores, including historical ones. Six runs in the reference vault
+#:      declare a `target-identity-mismatch` stop, and for TWO of them
+#:      (2026-08-09-run104, 2026-08-10-run112) the ingestion ledger carries
+#:      ZERO corroborating rows and the action ledger carries all of them.
+#:      Dropping this glob flips those two from PASS to
+#:      `OC-guard-stop-uncorroborated` on the next re-verification — rewriting
+#:      history from a change of reader, not a change of fact.
+#:   2. Its input is not "permanently absent": nine action ledgers are on disk.
+#: Direction check, because a dead reader is only safe when it fails CLOSED:
+#: this glob can only ever ADD corroboration, so its silence on a v7 night
+#: cannot buy a PASS — an uncorroborated stop is refused. The v7 lane declares
+#: no guard stop at all (`cos_driver.build_contract_inputs` writes no
+#: `guard_stop` key), so `guard_stop_corroborated` is not even reached; the
+#: click-era identity risk it scores is the same one `cos_runverify` RETIRED
+#: with `target_identity`, because the REST lane addresses a conversation by id.
 GUARD_STOP_GLOBS = ("_cos_ingestion_ledger_*.jsonl", "_cos_action_ledger_*.jsonl")
 
 CAPABILITIES = ("archives", "drafts", "chip_clears")
@@ -88,6 +109,33 @@ IN_SCOPE = {
     "label-only": {"archives": False, "drafts": False, "chip_clears": True},
 }
 
+#: The OUTPUT side of capability liveness, per capability.
+#:
+#: ALL THREE ARE PRE-v7 MODEL-WRITTEN LEDGERS WITH NO v7 PRODUCER, AND THEY ARE
+#: DELIBERATELY *NOT* REPOINTED AT `_cos_undo_ledger_*` (s10, 2026-08-16).
+#: The reason is the ORDER of the night, not sentiment. The outcome contract is
+#: a READ-lane instrument: `cos_driver` renders PRE/POST and runs this checker
+#: hours before `cos_mutate apply` exists, so the undo ledger is not on disk
+#: when the block is written. `cos_runverify.check_contract` then RE-EXECUTES
+#: this checker after the apply and FAILS the run when the recomputation
+#: disagrees with the recorded block. Reading an artifact written between the
+#: two executions would make a deterministic re-derivation depend on the clock —
+#: which is precisely the property `check_contract` exists to test.
+#:
+#: So under v7 `capability_liveness` reports `output: 0` for all three. That is
+#: NOT a silent all-clear, and the distinction is the whole point of this note:
+#: the FAIL clause is `in_scope and output == 0 and eligible_inputs > 0`, and
+#: the v7 read lane declares EVERY archive candidate ineligible with a stated
+#: `exclusion_reason` ("read-only night: the driver has no mutation lane"), so
+#: `eligible_inputs` is 0 and the clause is unreachable by the run's own honest
+#: declaration rather than by a missing file. Measured on the reference vault:
+#: run 102 (pre-v7) `archives output 1 / eligible 1` — the clause was live and
+#: this glob fed it; runs 145 and 148 (v7) `output 0 / eligible 0`.
+#:
+#: What holds the property under v7 instead: `cos_runverify.check_plan_binding`
+#: joins every dispatched `conversation_id|verb` key to the host-private frozen
+#: plan, and `check_mutation_counters` recounts the metrics row against the undo
+#: ledger. Both run AFTER the apply, where a mutation-liveness question belongs.
 LEDGER_GLOB = {
     "archives": "_cos_archive_ledger_*.jsonl",
     "drafts": "_cos_drafts_ledger_*.jsonl",

@@ -79,7 +79,7 @@ runs the same module.
 | `self_eval` expected-count derivation (MAN-01) | the count is **frozen into the run manifest at launch** from the bytes that ran; a pre-MAN-01 manifest falls back to the digest-verified re-read, undecidable ⇒ DEGRADED | `cos.write_run_manifest`, `cos_deploy.read_skill`, `cos_runverify.expected_check_count` | scoring a run against a bundle it never executed — and, before the freeze, never scoring it at all: the deployed file has ALWAYS changed by validation time, so every run 101-106 read `degraded` and a run reporting ZERO of its 30 checks scored the same as one reporting all 30 | N/A-cls | `tests/test_cos_runverify.py::test_the_check_count_is_frozen_at_launch_and_survives_a_new_bundle` · `::test_a_pre_MAN01_manifest_still_degrades_rather_than_guessing` (fallback stays honest) |
 | instruction sheet (MAN-01) | the host projects `run_id` + `expected_artifacts` + `skill_path`/`skill_sha256` + `lane` into the VM-readable `shared/current-run.json`, so the run **reads** its obligations instead of deriving them; the two producer versions stay host-side | `cos.write_run_manifest`, `cos.current_run_path`, SKILL.md Phase 0 MAN-01 | run 106 named itself off a superseded manifest, composed `_cos_brief_…md` where the manifest declared `_cos_nightly_…md`, and elected `iab` against a `chrome-plugin` pin — one night, three derivations, zero host checks executed | U | `tests/test_cos_runverify.py::test_the_instruction_sheet_carries_what_the_run_must_obey` · `tests/skills/test_chief_of_staff_fixtures.py::test_v558_the_run_id_is_taken_from_the_sheet_never_chosen` · `::test_v558_artifact_names_are_copied_never_composed` · `::test_v558_a_stale_manifest_stops_the_run` |
 | stalled-run alert | a run that **wrote artifacts and never completed** is named; an abandoned stamp (no artifacts) and an in-flight run stay silent; scanned by DATE, not by a 5-run window | `cos_runverify.stalled_runs`, `alert` | the loudest failure the validator has is the one it could not see: `alert` reads recorded verdicts and a run that never completes never gets one — runs 74, 75 and 100 are unscored to this day and nothing said so | U, N/A-cls | `tests/test_cos_runverify.py::test_a_run_that_worked_all_night_and_never_completed_is_named` · `::test_the_stalled_scan_does_not_cry_wolf` (three non-findings) · `::test_the_stalled_scan_is_dated_not_counted` |
-| action-ledger corroboration | an EMPTY action ledger reads as "nothing acted" only when the run's own mutation counters agree; otherwise INCONCLUSIVE | `cos_runverify.unledgered_mutations` (feeds `check_unread_touch` + `check_target_identity`) | run 106 wrote no action ledger while its metrics row recorded 2 verified archives and its report named 5 unrecovered identity mismatches — both controls returned PASS on 0 rows | M | `tests/test_cos_runverify.py::test_a_mutating_run_with_no_action_ledger_is_inconclusive_not_a_pass` · `::test_a_quiet_night_with_no_action_ledger_is_still_a_pass` (non-wolf-cry) |
+| ~~action-ledger corroboration~~ **RETIRED (s08, 2026-08-16)** | was: an EMPTY action ledger reads as "nothing acted" only when the run's own mutation counters agree. **`_cos_action_ledger_*` has no v7 producer** — the model legs run `--tools "Read,Glob"` with editing denied — so `unledgered_mutations` and the two controls it fed (`unread_touch`, `target_identity`) could only ever pass on zero rows, and all three are OFF the 17-control bar (`cos_runverify.RETIRED_CONTROLS`). **Successor: `cos_runverify.check_mutation_counters`**, which recounts the metrics row against `_cos_undo_ledger_<run>.jsonl` — the artifact the v7 apply DOES write — and returns FAIL on a contradiction, INCONCLUSIVE on all-zero counters beside a non-empty ledger. | `cos_runverify.check_mutation_counters` (retired: `unledgered_mutations`) | run 106 wrote no action ledger while its metrics row recorded 2 verified archives and its report named 5 unrecovered identity mismatches — both controls returned PASS on 0 rows; then run 145 applied 16 mutations against an all-zero row and the successor was built | M | `tests/test_cos_runverify.py::test_a_mutating_run_whose_counters_were_never_written_is_inconclusive` · `::test_a_metrics_row_that_contradicts_the_undo_ledger_is_a_fail` · `::test_a_deleted_undo_ledger_can_no_longer_buy_plan_binding_a_pass` · (retired, unscored, still tested: `::test_a_mutating_run_with_no_action_ledger_is_inconclusive_not_a_pass`) |
 | `metrics_row` (b) | the row exists, carries required fields + host stamps, and its ingestion counters **survive a recount from the run's own ledger** | `cos_runverify.check_metrics_row` | a counter quietly disagreeing with the ledger, or going away | U | `tests/test_cos_runverify.py::test_a_missing_metrics_row_fires_b` · `::test_a_dropped_metrics_field_fires_b` · `::test_a_counter_that_disagrees_with_the_ledger_fires_b` · `::test_a_metrics_row_contradicting_the_manifest_fires_b` · `::test_an_unstamped_metrics_row_is_degraded_not_valid` |
 | `ingestion_ledger` (c) | on a mail-live night the ledger exists and is not vacuous (applicability delegated to the observation guard, §3) | `cos_runverify.check_ingestion_ledger` | a silent Phase 1.6 — the original E16 hole | M, N/A-cls | `tests/test_cos_runverify.py::test_a_mail_live_night_with_no_ledger_fires_c` |
 | `body_pass` | a `no-substance` verdict — the one hold reason reachable only by reading the body — is backed by a `body_opened: true` stamp | `cos_runverify.check_body_pass` | run 64's fabricated Phase 1.6: 58 substance verdicts, zero reads. Nothing else could see it — the row count was right and `candidate_stamps` passed vacuously | C | `tests/test_cos_runverify.py::test_a_substance_verdict_without_the_body_read_is_invalid` · `::test_the_other_hold_reasons_do_not_require_a_body_read` (non-wolf-cry) · `::test_substance_verdicts_with_no_body_stamp_at_all_are_degraded` · `::test_run_64_body_pass_against_the_real_ledgers` (real corpus) |
@@ -140,7 +140,7 @@ closed by this sweep).
 
 | Instrument | Checks | Fails how | Cond. | Proof it can fail |
 |---|---|---|---|---|
-| `reconcile` / `shortfalls` | every counter in the metrics row is **recounted from the ledger**; under-report ⇒ non-zero exit | 181 verified archives reported as 0 (2026-07-21) | C | `tests/test_cos_metrics_reconcile.py::test_ledgered_draft_and_zero_counter_can_never_coexist` · `::test_marked_and_archived_share_the_defect_and_the_gate` · `::test_a_mutating_run_with_no_metrics_row_at_all_is_caught` · `::test_reconciler_cli_exits_nonzero_on_a_shortfall` |
+| `reconcile` / `shortfalls` | every counter in the metrics row is **recounted from the ledgers**; under-report ⇒ non-zero exit. **(s10, 2026-08-16) `_cos_undo_ledger_*` joined.** The three globs this join was born for are pre-v7 MODEL-written and have no v7 producer, so on a v7 day it compared a positive reported total against 0 ledgered and `shortfall = max(0, ledgered − reported)` was 0 for every counter — measured 2026-08-16, `archived` reported 14 / ledgered **0**, and 0 shortfalls on any v7 date. With the undo ledger joined the same scan reports 14 real shortfalls across six v7 dates. The pre-v7 globs are KEPT (their files are on disk and still report real historical shortfalls); one mutation is an idempotency KEY, not a row. | 181 verified archives reported as 0 (2026-07-21); 11 archives + 3 marks + 2 drafts reported as 0 (run 145, 2026-08-16) | C | `tests/test_cos_metrics_reconcile.py::test_ledgered_draft_and_zero_counter_can_never_coexist` · `::test_marked_and_archived_share_the_defect_and_the_gate` · `::test_a_mutating_run_with_no_metrics_row_at_all_is_caught` · `::test_reconciler_cli_exits_nonzero_on_a_shortfall` · `::test_a_v7_apply_the_metrics_row_never_reported_is_a_shortfall` · `::test_the_same_undo_ledger_reconciles_once_the_apply_records_it` (known positive) · `::test_an_aborted_mutation_is_not_ledgered_work` · `::test_one_mutation_is_a_key_not_a_row` · `::test_a_read_only_night_writes_no_undo_ledger_and_reports_nothing` (non-wolf-cry) |
 | verified-only counting | only `verified-*` rows count as executed; a re-verification is not a creation | credit for unverified mutations | C | `::test_unverified_rows_never_count_as_executed` · `::test_reverifying_an_earlier_runs_draft_is_not_a_creation` · `::test_a_run_that_reports_its_draft_reconciles_clean` |
 | `_require_ingestion_fields` (refusal) | an append **without** the four Phase-1.6 fields is refused; `null` counts as absent; unknown `attachment_lane` refused | a counter quietly going away (it did, at run 41) | U | `::test_append_refuses_a_row_that_drops_an_ingestion_field` · `::test_append_refuses_an_unknown_attachment_lane` |
 | `append_metric` (refusal) | append is idempotent by `(date, run)` and refuses a **conflicting** row for the same key; date+run required | two contradictory records for one run | U | `::test_metrics_append_is_idempotent_and_refuses_conflicting_run_rows` · `::test_metrics_append_requires_a_date_and_run_key` |
@@ -235,17 +235,41 @@ here.
 
 ---
 
-## 7 · The 29 E-checks — RELABELLED: producer self-report, not host gates
+## 7 · The E-checks
 
-**This is the load-bearing conclusion of the sweep.** The E-checks live in the
-chief-of-staff skill and are executed by the model running the nightly, which
-then writes its own PASS/FAIL. Under the rule in §0 that is not a gate: nothing
-independent can make one fail.
+> **SUPERSEDED FOR THE CURRENT BUNDLE (2026-08-14, DOCTRINE v7 / kernel v7.1).**
+> Everything below describes the THIRTY self-reported E-checks of doctrine v1,
+> and it was the honest reading of them. It is no longer the reading of the
+> checks that run. Doctrine v7 §8 defines **TEN** checks, and both halves of the
+> defect this section named are closed:
+>
+> * **The HOST answers them**, not the producer. `brain.cos_echecks` derives
+>   every one from the run's own artifacts — the ingestion and undo ledgers, the
+>   frozen plan and its binding, the sent baseline, the category-gate
+>   recomputation, the grounding declaration and the run manifest's frozen
+>   capability digest — and writes the answers into `_cos_nightly_<run>.md`
+>   after the apply. No answer is a model self-claim. Each carries its
+>   DENOMINATOR, so a check scored on a run that did nothing says so.
+> * **`check_self_eval` decides on OUTCOMES.** Until 2026-08-14 it captured the
+>   PASS/FAIL/N/A token and discarded it (`for n, _ in ...findall`), so a report
+>   whose every check said FAIL scored the control PASS — probed, not asserted.
+>   It now builds an `id -> result` map: any FAIL fails the control, a
+>   duplicated id with conflicting results fails it, and every `N/A` is
+>   corroborated against a HOST-DERIVED zero denominator (an `N/A` over a
+>   non-zero denominator is a FAIL).
+>
+> Read the rest of this section as the record of what the v1 list WAS, and
+> DOCTRINE.md §8.2 as the authority on what the current ten are.
 
-**What the host actually enforces:**
+**This was the load-bearing conclusion of the sweep.** The v1 E-checks lived in
+the chief-of-staff skill and were executed by the model running the nightly,
+which then wrote its own PASS/FAIL. Under the rule in §0 that is not a gate:
+nothing independent could make one fail.
 
-* `cos_runverify.check_self_eval` proves **a result line exists for every id
-  1..N**. It does not and cannot check that a reported PASS is true.
+**What the host enforced THEN:**
+
+* `cos_runverify.check_self_eval` proved **a result line exists for every id
+  1..N**. It did not and could not check that a reported PASS was true.
 * Seven checks have some clause re-executed host-side: **E1** (zero-send, via
   `cos_contract`), **E5** and **E15** (counters, via `cos_reconcile_metrics`),
   **E10** (metrics row exists + recounts), **E16** (stamps + ledger join),

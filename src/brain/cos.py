@@ -170,6 +170,10 @@ def ensure_layout(vault=None) -> dict[str, str]:
             os.chmod(d, 0o775)  # nosemgrep: insecure-file-permissions -- VM-writable drop zone needs group-write; owner+group only, no world access
         except OSError:
             pass
+    # The run-record store is NOT one of these zones — it is off the mount
+    # entirely (gap-05). Layout time is where its one-time carry-forward runs,
+    # because every host write path already comes through here.
+    migrate_run_records(vault)
     return {str(p): oct(_PERMS[n]) for n, p in zones.items()}
 
 
@@ -401,6 +405,37 @@ MODE_VM_WRITABLE = 0o664     # drop/: VM writes, host reads (dir is 0775)
 #: Bound on waiting for the per-ledger append lock. Every holder writes one
 #: short record and releases, so this is contention relief, not a queue.
 _APPEND_LOCK_SECONDS = 10.0
+
+
+def _reserve_exclusive(path: Path, *, mode: int = MODE_HOST_PRIVATE) -> None:
+    """Claim ``path`` for this process, or raise ``FileExistsError``. NO content.
+
+    THE THIRD SANCTIONED RAW WRITER, and it is deliberately the smallest one
+    that can exist: create-if-absent, nothing written, nothing truncated.
+    `_write_atomic` cannot do this job — it publishes through a rename, which
+    REPLACES whatever is there, so two racing callers both "succeed" and the
+    loser silently overwrites the winner. Reserving a name needs the one
+    operation the filesystem serialises, and that is `O_CREAT|O_EXCL`.
+
+    `O_NOFOLLOW` for the same reason every other opener in this module carries
+    it (INT-05): these paths are mount-resident, and a pre-created symlink at
+    the name would otherwise be followed. `O_EXCL|O_CREAT` already refuses a
+    symlink — even a dangling one — so this is belt and braces on a path where
+    the cost of being wrong is a host process writing through an attacker's
+    link. It is `getattr`-ed (like every OTHER opener here — `_write_atomic`
+    below) because Windows is a supported host and has no `O_NOFOLLOW`; a bare
+    `os.O_NOFOLLOW` raised `AttributeError` there before a manifest was ever
+    written, and `O_EXCL|O_CREAT` still refuses an existing symlink at the name
+    so the fallback loses nothing.
+
+    Sole caller: `write_run_manifest`, reserving the run id — allocated OR
+    explicit, since round 6's H-resv — before it writes the manifest into the
+    same name (C-lock, 2026-08-13). Listed in
+    `tests/test_cos_pathguard.py::_SANCTIONED_RAW_WRITERS` — that guard exists
+    to force this paragraph to be written, not to be edited around.
+    """
+    os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY
+                     | getattr(os, "O_NOFOLLOW", 0), mode))
 
 
 def _write_atomic(path: Path, data: bytes, *, mode: int = MODE_HOST_PRIVATE) -> None:
@@ -1522,8 +1557,156 @@ CLAIMABLE_VERDICTS = (RUN_VALID, RUN_VALID_DEGRADED)
 
 
 def runs_dir(vault=None) -> Path:
-    """HOST-PRIVATE run manifests + validity verdicts (never VM-writable)."""
+    """Run manifests, validity verdicts and plan bindings — OFF THE MOUNT.
+
+    Host-private by PLACEMENT since gap-05 (2026-08-16), not by contract: this
+    returned ``<vault>/.brain/cos/host/runs`` until then, inside the VirtioFS
+    workspace, while this docstring and two others said "never VM-writable".
+    ``config.cos_run_records_dir`` carries the reasoning and the fallback;
+    :func:`migrate_run_records` carries the historical records forward.
+
+    RESOLUTION ONLY — it does not create the directory, for the same reason
+    ``config.host_lock_dir`` does not: a name lookup that materialises host
+    state runs on every read path that merely wanted the name."""
+    return config.cos_run_records_dir(vault)
+
+
+def legacy_runs_dir(vault=None) -> Path:
+    """Where run records lived until 2026-08-16: ON the Cowork mount.
+
+    Read by :func:`migrate_run_records` (once) and by
+    :func:`run_record_intruders` (forever, as EVIDENCE). Nothing else may
+    consult it again — a reader here is a VM-writable authority, which is the
+    whole defect gap-05 closed."""
     return host_dir(vault) / "runs"
+
+
+#: Written into the host-private store the moment the carry-forward completes.
+#: It is what makes the migration ONE-TIME: after it exists, a file appearing
+#: in the legacy directory is not a record to import, it is either an engine
+#: too old to have moved or someone writing into the run-validity store from
+#: the mount — and importing it would launder exactly the forgery this
+#: relocation exists to stop.
+RUNS_MIGRATION_MARKER = ".carried-forward-from-mount.json"
+
+
+def migrate_run_records(vault=None) -> dict[str, Any]:
+    """Carry the pre-2026-08-16 on-mount run records forward, ONCE.
+
+    Returns ``{"carried": [...], "conflicts": [...], "already": bool}``.
+    Idempotent and cheap: after the marker exists it scans the legacy directory
+    and returns without reading a byte of it.
+
+    MOVE, not copy (unlike ``audit.migrate_drift_dispositions``, which carries
+    one small file the operator may still want to read): these 100+ records are
+    now read ONLY from the destination, and leaving a second set of manifests
+    and verdicts lying in a VM-writable directory is the confusion this change
+    exists to remove. Written to the destination and fsynced BEFORE the source
+    is unlinked, so a crash mid-migration strands nothing.
+
+    SAME RUN ID IN BOTH PLACES — FAIL CLOSED. Identical bytes are the ordinary
+    resumed migration and the legacy copy is simply dropped. DIFFERING bytes
+    are never resolved by preferring either side: a manifest or verdict that
+    disagrees with its host-private counterpart is the tampering signal this
+    directory was moved to make impossible, so the legacy file is left exactly
+    where it is, a defect is logged, and :func:`run_record_intruders` keeps
+    reporting it — which is what takes the affected run to INCONCLUSIVE in
+    ``cos_runverify.verify_run``. It is deliberately scoped to the RUN, not to
+    the whole store: one planted file must not be able to stop every other
+    night being verified.
+
+    THE ONE WINDOW, STATED. The migration is gated on the marker, and the
+    marker is stamped the first time this runs on a host whose host-private
+    store exists. A host that has NEVER written a run record and whose legacy
+    directory is created from the mount would import that plant once. It is
+    bounded (a deployment with no run history has no candidates a forged
+    verdict could claim) and it closes the moment the host writes its first
+    record, which every `cos-run-begin` does before anything is judged."""
+    legacy = legacy_runs_dir(vault)
+    try:
+        dest_dir = runs_dir(vault)
+    except Exception:  # noqa: BLE001 — unsafe destination: stay fail-closed
+        return {"carried": [], "conflicts": [], "already": False}
+    marker = dest_dir / RUNS_MIGRATION_MARKER
+    if marker.exists():
+        return {"carried": [], "conflicts": [], "already": True}
+    carried: list[str] = []
+    conflicts: list[str] = []
+    try:
+        names = sorted(p.name for p in legacy.iterdir() if p.is_file())
+    except OSError:
+        names = []
+    # NOTHING ON EITHER SIDE — leave no trace. A vault that never ran the old
+    # layout has no legacy directory (nothing creates one any more), and a name
+    # resolution that mkdirs an app-data directory per throwaway vault is the
+    # side effect `config.host_lock_dir` refuses for the same reason. The
+    # marker gets stamped by the next call after the store exists, which is the
+    # first thing any write path creates.
+    if not names and not dest_dir.is_dir():
+        return {"carried": [], "conflicts": [], "already": False}
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(dest_dir, 0o700)  # nosemgrep: insecure-file-permissions -- host-private run-record store, OWNER-ONLY by design
+    except OSError:
+        pass
+    for name in names:
+        src, dst = legacy / name, dest_dir / name
+        try:
+            data = src.read_bytes()
+        except OSError:
+            conflicts.append(name)
+            continue
+        if dst.exists():
+            try:
+                same = dst.read_bytes() == data
+            except OSError:
+                same = False
+            if not same:
+                conflicts.append(name)
+                log_defect(
+                    vault, "run-record-mount-conflict",
+                    f"{name} exists both in the host-private run store and in "
+                    f"the legacy on-mount {legacy} with DIFFERENT bytes. "
+                    "Neither copy is preferred: the on-mount one is left in "
+                    "place as evidence and its run scores INCONCLUSIVE until a "
+                    "human decides which is real.")
+                continue
+        else:
+            try:
+                _write_atomic(dst, data, mode=0o600)
+            except OSError:
+                conflicts.append(name)
+                continue
+            carried.append(name)
+        try:
+            src.unlink()
+        except OSError:
+            pass
+    if not conflicts:
+        try:
+            _write_atomic(marker, json.dumps({
+                "carried_from": str(legacy), "files": len(carried),
+                "at": _ts()}, indent=2).encode("utf-8"), mode=0o600)
+        except OSError:
+            pass
+    return {"carried": carried, "conflicts": conflicts, "already": False}
+
+
+def run_record_intruders(vault=None, run_id: str | None = None) -> list[str]:
+    """Files still sitting in the legacy on-mount run directory.
+
+    After :func:`migrate_run_records` has run, this is empty on a healthy host.
+    Anything it names is either a refused conflict or a file written into a
+    VM-writable directory that the run validator once trusted — never an input,
+    always a reason to refuse a verdict for the run it names."""
+    try:
+        names = [p.name for p in legacy_runs_dir(vault).iterdir() if p.is_file()]
+    except OSError:
+        return []
+    if run_id is None:
+        return sorted(names)
+    rid = str(run_id)
+    return sorted(n for n in names if rid in n)
 
 
 def run_ops_dir(vault=None) -> Path:
@@ -1542,6 +1725,26 @@ def run_manifest_path(vault, run_id: str) -> Path:
 
 def run_validity_path(vault, run_id: str) -> Path:
     return runs_dir(vault) / f"{_checked_run_id(run_id)}.validity.json"
+
+
+def run_plan_binding_path(vault, run_id: str) -> Path:
+    """Where the APPLY records WHICH plan it dispatched — ONE name, host-private.
+
+    The writer (`tools/cos_mutate.plan_binding_path`) and the reader
+    (`cos_runverify.check_plan_binding`) each spelled this literal for
+    themselves until round 7. A name held in two files is not one fact: the
+    round-6 move out of the VM-writable `cos-ops` zone had to be made twice,
+    and a third caller would have had to guess. It sits beside the manifest and
+    the validity verdict because those are what the validator already trusts.
+
+    NOT `_checked_run_id`, unlike the two siblings above, and deliberately: this
+    file is the PER-RUN ARTIFACT pair of `_cos_undo_ledger_<run>.jsonl`, which
+    `run_ops_dir` composes with the same unchecked id. Rejecting a run id here
+    that the ledger path accepts would make one artifact of a run reachable and
+    the other not — and the guard would be theatre anyway while its sibling is
+    open. The id is checked where it is MINTED (`write_run_manifest`).
+    """
+    return runs_dir(vault) / f"_cos_plan_binding_{run_id}.json"
 
 
 #: A run number wider than this is not a counter, it is a length attack: the id
@@ -1597,7 +1800,14 @@ def next_run_id(vault, now: _dt.datetime | None = None) -> str:
 
 
 def run_manifest(vault, run_id: Any) -> dict[str, Any] | None:
-    """The frozen manifest for ``run_id``, or ``None`` if the host wrote none."""
+    """The frozen manifest for ``run_id``, or ``None`` if the host wrote none.
+
+    A READ entry point, so it carries the one-time mount carry-forward too
+    (same shape as ``audit.load_drift_dispositions``): verification re-executes
+    over historical runs on hosts that may not have written a manifest since
+    the relocation, and a migration that only ran on the write path would make
+    every one of those nights read as "the host recorded nothing"."""
+    migrate_run_records(vault)
     try:
         p = run_manifest_path(vault, run_id)
     except ValueError:
@@ -1612,6 +1822,7 @@ def run_manifest(vault, run_id: Any) -> dict[str, Any] | None:
 def write_run_manifest(vault, *, run_id: str | None = None,
                        lane: str | None = None,
                        skill_path: Path | str | None = None,
+                       attended: bool = False,
                        now: _dt.datetime | None = None) -> dict[str, Any]:
     """HOST-ONLY, at run LAUNCH: freeze WHICH bundle is about to run.
 
@@ -1630,6 +1841,20 @@ def write_run_manifest(vault, *, run_id: str | None = None,
 
     now = now or _utcnow()
     ensure_layout(vault)
+    # WAS THE ID ALLOCATED HERE, OR HANDED TO US? (review 2026-08-13, round 5,
+    # C-lock.) `next_run_id` reads the highest number on disk and returns the
+    # next one, reserving nothing — so two nightlies starting inside the same
+    # second both got `<today>-runN`, both wrote an IDENTICAL manifest (only
+    # `written` differed, and that key is excluded from the equality check
+    # below), and both proceeded under one run id and one evidence directory.
+    # Their applies serialise on the lane lock; their enumeration, judgment,
+    # plan and rehearsal artifacts overwrite each other.
+    #
+    # An EXPLICIT id stays idempotent — fixtures, `cos_run_verify`'s
+    # reconstruction and a retried `cos-run-begin` all legitimately re-assert
+    # one, and re-asserting the id you were given is not a race. An ALLOCATED
+    # id that already has a manifest IS one, and it fails rather than joins.
+    allocated = not run_id
     rid = _checked_run_id(run_id or next_run_id(vault, now))
     skill = (cos_deploy.read_skill(skill_path) if skill_path
              else cos_deploy.deployed_skill(lane=lane))
@@ -1637,6 +1862,23 @@ def write_run_manifest(vault, *, run_id: str | None = None,
         raise ValueError(
             f"{skill['path']} states no `kernel_version` — refusing to write a "
             "run manifest that would stamp every candidate with nothing")
+    from . import cos_echecks                                # noqa: PLC0415
+    _capability_digest = cos_echecks.capability_digest
+    _git = cos_echecks.git_state()
+    # AN ATTENDED RUN REFUSES A DIRTY TREE. Attended means a human is about to
+    # approve a plan and watch it apply, and the record of WHICH CODE he
+    # approved is `git_commit` — which says nothing at all if uncommitted edits
+    # were in the tree beside it. The scheduled lane is unaffected: it never
+    # passes `attended`, and its default behaviour is byte-identical.
+    if attended and _git["clean"] is not True:
+        raise ValueError(
+            "refusing to begin an ATTENDED run from a "
+            + ("dirty" if _git["clean"] is False else "non-git")
+            + " working tree: the manifest would record commit "
+            f"{_git['commit']} while the code that actually runs is something "
+            "else, and assertion (6) of the attended validation — 'the "
+            "capability set is unchanged AT THE COMMIT THAT RAN' — would be "
+            "unprovable. Commit or stash first.")
     manifest = {
         "schema": RUN_MANIFEST_SCHEMA,
         "run_id": rid,
@@ -1650,6 +1892,20 @@ def write_run_manifest(vault, *, run_id: str | None = None,
         # cannot be re-derived later: the file changes, and then the count the
         # run owed is gone with the bytes (`cos_deploy.read_skill`).
         "expected_echecks": skill.get("echecks"),
+        # WHICH CODE RAN, recorded by the HOST at launch (DOCTRINE v7 §8.2
+        # E1/E10). Until this existed the manifest froze the SKILL bundle and
+        # nothing else, so "MODEL_TOOLS and the mutation allowlist were
+        # unchanged at the commit that actually ran" could only ever be
+        # answered by inspecting today's constants — which proves what exists
+        # while you verify, never what mutated the mailbox. `capability_digest`
+        # hashes the tool grant + the two zero-send denylist blocks;
+        # `git_commit`/`git_clean` name the tree they were hashed from. All
+        # three are `None` when the executing tree is not on disk beside the
+        # engine, and E1/E10 then FAIL rather than pass on an absence.
+        "capability_digest": _capability_digest(),
+        "git_commit": _git["commit"],
+        "git_clean": _git["clean"],
+        "attended": bool(attended),
         "expected_artifacts": [
             f"_cos_nightly_{rid}.md",
             f"_cos_ingestion_ledger_{rid}.jsonl",
@@ -1657,9 +1913,23 @@ def write_run_manifest(vault, *, run_id: str | None = None,
             "_cos_metrics.jsonl",
         ],
     }
+    # `written` is the only key that legitimately differs between two honest
+    # assertions of one id (it is the wall-clock of the write), so it is the
+    # one key excluded from the immutability comparison.
+    def _same_manifest(doc: dict[str, Any]) -> bool:
+        return {k: v for k, v in doc.items() if k != "written"} == manifest
+
     existing = run_manifest(vault, rid)
     if existing is not None:
-        if {k: v for k, v in existing.items() if k != "written"} != manifest:
+        if allocated:
+            raise ValueError(
+                f"refusing to begin {rid}: this run ALLOCATED that id (no "
+                "--run-id was given) and a manifest for it already exists, so "
+                "another run took it first. Two runs under one id share one "
+                "evidence directory and overwrite each other's enumeration, "
+                "judgment, plan and rehearsal. Begin again — the allocator "
+                "will hand out the next number.")
+        if not _same_manifest(existing):
             raise ValueError(
                 f"a run manifest for {rid} already exists and differs — a run "
                 "manifest is IMMUTABLE (it is the record of what produced that "
@@ -1667,6 +1937,53 @@ def write_run_manifest(vault, *, run_id: str | None = None,
         return existing
     p = run_manifest_path(vault, rid)
     p.parent.mkdir(parents=True, exist_ok=True)
+    # RESERVE THE NAME — FOR EXPLICIT IDS TOO (review 2026-08-13, round 6,
+    # H-resv). The `existing` check above is a READ, so two callers racing the
+    # SAME id both saw `None`; when the id was EXPLICIT the reservation used to
+    # be skipped, so both reached `_write_atomic` and the second rename replaced
+    # the first — the original C-lock split, reachable by any two explicit
+    # `--run-id` callers (fixtures, `cos_run_verify` reconstruction, a retried
+    # begin). `O_CREAT|O_EXCL` is the one filesystem-serialised operation:
+    # exactly one caller creates the name, the loser gets FileExistsError.
+    # A begin that raises before the real manifest replaces the placeholder
+    # burns the id (it reads back as "no manifest" AND still bumps
+    # `next_run_id`), rather than silently reissuing it.
+    try:
+        _reserve_exclusive(p)
+    except FileExistsError as exc:
+        if allocated:
+            raise ValueError(
+                f"refusing to begin {rid}: another run reserved that id "
+                "between this one allocating it and writing its manifest. "
+                "Begin again — the allocator will hand out the next number."
+            ) from exc
+        # EXPLICIT id. Re-asserting an id is legitimate, so idempotency is
+        # preserved — but ONLY against a COMPLETE manifest already published:
+        # re-read, and a matching manifest is returned, a differing one is the
+        # immutability refusal. A retry that arrives WHILE the reservation is
+        # in flight (the name exists, no manifest yet) does NOT wait and does
+        # NOT succeed — it fails and the caller retries after the manifest is
+        # published (answered open question, round 6). A placeholder from a
+        # crashed begin reads back as `None` here for the same reason and burns
+        # the id, exactly as the allocated path burns it.
+        reread = run_manifest(vault, rid)
+        if reread is None:
+            raise ValueError(
+                f"refusing to begin {rid}: its name is reserved but no manifest "
+                "is published under it yet. Either another writer is mid-begin "
+                "— retry in a moment, after the manifest is published, and do "
+                "NOT wait on the reservation — or a prior begin CRASHED between "
+                "reserving the id and writing the manifest, which BURNS the id "
+                "permanently: no retry can ever clear it, so begin under a "
+                f"different --run-id (the reservation at {rid} is a zero-byte "
+                "placeholder a human may remove once no writer holds it)."
+            ) from exc
+        if not _same_manifest(reread):
+            raise ValueError(
+                f"a run manifest for {rid} already exists and differs — a run "
+                "manifest is IMMUTABLE (it is the record of what produced that "
+                "run's candidates). Start a new run id instead.")
+        return reread
     record = {**manifest, "written": _ts(now)}
     _write_atomic(p, (json.dumps(record, sort_keys=True) + "\n").encode("utf-8"))
     try:
@@ -1941,8 +2258,17 @@ def claim_quarantine_dir(vault=None) -> Path:
 #
 # THE CENSUS (reader -> fields that reach the filesystem -> guard):
 #
-#   quarantined_claims          id                      _safe_meta_id
-#   _pending_metas              id                      _safe_meta_id
+#   _read_receipt_pairs         id                      _safe_meta_id
+#                                                       (the ONE scanner behind
+#                                                       the three below; it also
+#                                                       COUNTS the pairs it
+#                                                       could not read, because
+#                                                       a skipped receipt used
+#                                                       to read as an absence —
+#                                                       H6, 2026-08-13)
+#   quarantined_claims          id                      via _read_receipt_pairs
+#   _pending_metas              id                      via _read_receipt_pairs
+#   run_proposal_drop_record    run_id (never a path)   via _read_receipt_pairs
 #   attachment_metas            id, filename            _safe_meta_id +
 #                                                       _quarantine_payload
 #                                                       (the sidecar's `path` is
@@ -2065,21 +2391,66 @@ def _leaf_in(root: Path, value: Any) -> Path | None:
     return p
 
 
-def quarantined_claims(vault) -> list[dict[str, Any]]:
-    """Every candidate waiting on run attribution/validity, newest reason first."""
-    qdir = claim_quarantine_dir(vault)
+def _read_receipt_pairs(d: Path) -> tuple[list[dict[str, Any]], int]:
+    """Every READABLE ``<id>.json`` + ``<id>.md`` pair in ``d``, and how many
+    pairs were UNREADABLE or INCOMPLETE.
+
+    ONE SCANNER, TWO DIRECTORIES, AND IT COUNTS WHAT IT COULD NOT READ (review
+    2026-08-13, round 5, H6). Both readers used to `continue` past a meta that
+    would not parse, so a corrupt or half-written receipt was indistinguishable
+    from a directory with nothing in it. That absence is what
+    ``run_proposal_drops`` reports as a count, and what K2's
+    ``check_candidate_stamps`` reads as "the HOST's own record agrees: zero
+    drops" — so a run denying a drop it made passed the control by damaging the
+    receipt. Unreadable evidence is not absence; it is unreadable evidence, and
+    the number of it has to come back with the answer.
+
+    Four ways a pair fails, all counted the same because the caller's decision
+    is the same: the meta will not parse, it carries no usable id, its ``.md``
+    half is missing, or its ``.json`` half is missing — BOTH directions of a
+    partially-written or partially-deleted pair.
+
+    SCAN THE UNION OF STEMS, not just ``*.json`` (review 2026-08-13, round 6,
+    H-md). The producer writes the ``.md`` before the ``.json``, so a crash
+    between the two atomic writes leaves a ``.md`` with NO ``.json`` — and
+    iterating ``*.json`` alone never sees it, returning a clean ``0`` that reads
+    as "the HOST's own record agrees: zero drops" and reopens H6's fail-open in
+    that partial-write window. A missing half in either direction is an
+    incomplete pair.
+    """
     out: list[dict[str, Any]] = []
-    if not qdir.is_dir():
-        return out
-    for meta_path in sorted(qdir.glob("*.json")):
+    malformed = 0
+    if not d.is_dir():
+        return out, 0
+    stems = sorted({p.stem for p in d.glob("*.json")}
+                   | {p.stem for p in d.glob("*.md")})
+    for stem in stems:
+        meta_path = d / f"{stem}.json"
         try:
             m = json.loads(meta_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
+            # A `.md`-only orphan (no `.json` to open → FileNotFoundError) or a
+            # `.json` that will not parse — both are an unreadable/incomplete
+            # pair, counted the same.
+            malformed += 1
             continue
         nid = _safe_meta_id(m)
-        if nid and (qdir / f"{nid}.md").exists():
-            out.append({**m, "id": nid})
-    return out
+        # THE PAIR IS ONE STEM, not two files that happen to both exist (review
+        # 2026-08-13, round 7). `a.json` carrying `{"id": "b"}` beside a real
+        # `b.md` used to be ACCEPTED — the `.md` existence test asked about the
+        # EMBEDDED id, so a receipt could claim another receipt's body and be
+        # returned as usable to `_pending_metas`/`quarantined_claims` while its
+        # own body was missing. A receipt names itself or it is malformed.
+        if not nid or nid != stem or not (d / f"{nid}.md").exists():
+            malformed += 1
+            continue
+        out.append({**m, "id": nid})
+    return out, malformed
+
+
+def quarantined_claims(vault) -> list[dict[str, Any]]:
+    """Every candidate waiting on run attribution/validity, newest reason first."""
+    return _read_receipt_pairs(claim_quarantine_dir(vault))[0]
 
 
 def _quarantine_claim(vault, *, nid: str, text: str, sha: str, code: str,
@@ -2609,19 +2980,57 @@ def quarantine_gate_bypass(vault, draft: Path, *, now: _dt.datetime | None = Non
 
 
 def _pending_metas(vault) -> list[dict[str, Any]]:
-    pending = proposals_dir(vault) / "pending"
-    out = []
-    if not pending.is_dir():
-        return out
-    for meta_path in sorted(pending.glob("*.json")):
-        try:
-            m = json.loads(meta_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        nid = _safe_meta_id(m)
-        if nid and (pending / f"{nid}.md").exists():
-            out.append({**m, "id": nid})
-    return out
+    return _read_receipt_pairs(proposals_dir(vault) / "pending")[0]
+
+
+def run_proposal_drops(vault, run_id: str) -> int:
+    """How many proposals THIS run dropped, as the HOST recorded them.
+
+    ONE DEFINITION, TWO CALLERS (review 2026-08-13, round 2, K2). `load_night`
+    used to hardcode `proposals_dropped: False` onto every candidate row, so
+    nothing in production could ever set it True and the only "known positive"
+    for the control that reads it was a hand-built dict. That is
+    `vocabulary-needs-a-producer` one layer up: the flag short-circuits
+    `check_candidate_stamps` BEFORE it inspects a single proposal id or digest,
+    so the day a real drop lane exists, a producer that forgets the flag hides
+    duplicate ids and digest mismatches behind "does not apply".
+
+    So applicability is DERIVED, from the two host-written sidecars that carry
+    a `run_id` — the pending proposal metas the host wrote when it took
+    delivery, and the claims it quarantined for attribution or validity. Both
+    are outside the run's control: a run writes its own ledger and its own
+    markers, never these. The proposal DROP directory itself is deliberately
+    not counted — `propose` records no run there, so a file in it cannot be
+    attributed to a run, which is exactly why an unattributable claim
+    quarantines and is counted here through that route instead.
+
+    A count, not a boolean, because the caller that verifies wants the number
+    and the caller that stamps wants `> 0`.
+    """
+    return run_proposal_drop_record(vault, run_id)["drops"]
+
+
+def run_proposal_drop_record(vault, run_id: str) -> dict[str, Any]:
+    """``{"drops": N, "malformed": M}`` — the host's record AND its damage.
+
+    K2 FAILS CLOSED ON CORRUPTION (review 2026-08-13, round 5, H6). The count
+    above answers "how many drops did the host record for this run", and
+    ``check_candidate_stamps`` reads a zero as the host AGREEING that the run
+    dropped nothing — the branch that makes the whole control inapplicable. A
+    receipt the loaders could not parse produced exactly that zero, so damaging
+    one receipt turned a contradiction into a "does not apply".
+
+    ``malformed`` is deliberately NOT scoped to a run. An unreadable receipt has
+    no readable ``run_id``, so it cannot be attributed to any run — including
+    the one asking. Every run's answer is inconclusive until it is repaired,
+    which is the honest reading and the fail-closed one.
+    """
+    want = str(run_id or "")
+    pending, mal_pending = _read_receipt_pairs(proposals_dir(vault) / "pending")
+    quarantined, mal_quarantined = _read_receipt_pairs(claim_quarantine_dir(vault))
+    return {"drops": sum(1 for m in list(pending) + list(quarantined)
+                         if str(m.get("run_id") or "") == want),
+            "malformed": mal_pending + mal_quarantined}
 
 
 def expire_proposals(vault, now: _dt.datetime | None = None) -> list[str]:
@@ -5786,8 +6195,17 @@ def _auto_capture_fold_locked(vault, now: _dt.datetime) -> dict[str, Any]:
             log_defect(vault, "hold-add-failed",
                        f"{nid}: {type(exc).__name__}: {exc}", ts=_ts(now))
             continue
-        (pending / f"{nid}.json").unlink(missing_ok=True)
+        # `.md` FIRST, like the other two teardown sites (`_quarantine_claim`'s
+        # caller and the journal replay) — review 2026-08-13, round 7. This one
+        # alone unlinked the `.json` first, and since the union receipt scan an
+        # orphan of EITHER half is an incomplete pair that pins K2 INCONCLUSIVE
+        # for every later run with nothing to clean it up. Neither orphan
+        # self-heals, so the tie is broken on WHAT is left behind: the `.md` is
+        # the candidate's mail-derived BODY and the `.json` is metadata about
+        # it. Take the body off the mount first, and make all three teardowns
+        # one order so the next reader has one rule to remember.
         md.unlink(missing_ok=True)
+        (pending / f"{nid}.json").unlink(missing_ok=True)
         record_outcome(vault, pattern=bound.get("pattern"), ident=nid,
                        outcome="auto-captured",
                        bundle_version=bound.get("bundle_version"), ts=_ts(now),

@@ -42,9 +42,67 @@ skill ships from the repo and the absolute path becomes `tools/cos_ctl.sh`.)
 | "take those chips off" | `status` to get the run id, then `unchip <run-id>` |
 | "turn the schedule on/off" | print what `install`/`uninstall` outputs and let the owner paste it |
 
+## A run whose point is GROUNDING — check BEFORE, and read the numbers AFTER
+
+Grounding can come out empty in three different ways, and the preflight sees
+only the first. **Both halves below are required; the check before the run is
+necessary and is not sufficient.**
+
+### 1 · Before the run — can senders even be classed internal?
+
+```bash
+python3 tools/cos_ground.py --vault "$BRAIN_VAULT" --preflight
+```
+
+**Exit 0 (`senders-classifiable`) means exactly one thing: the tenant-domains
+overlay exists and declares at least one usable domain, so a sender can class
+`internal`.** It is the FIRST of grounding's preconditions and the only one this
+command checks — it makes no `brain` call at all, so it cannot know whether a
+lookup will find anything. It is safe to run at any time (no engine call, no
+write, no mailbox).
+
+**Exit 1 means every sender will class `external`, no vault lookup is reachable,
+and the run will declare `ungrounded` — a clean, passing, entirely uninformative
+night.** `ungrounded` is designed behaviour and E10 PASSES it, so a run built to
+exercise the grounded path can execute the whole lane, prove only the failure
+path, and look identical to a success. The cause is almost always one missing
+file: `<vault>/overlay/cos/tenant-domains.md`, whose frontmatter must declare
+`setting: tenant-domains` and whose body lists the owner's own domains as
+`- example.com` lines. **Only the owner can write it** — those domains identify
+them — so surface the exit-1 reason and ask; never invent domains, and never
+treat the resulting `ungrounded` night as a grounding test.
+
+### 2 · After the run — did any vault content actually reach the model?
+
+**A night can declare `grounded` and still have handed the model nothing.**
+`lookup-failed` and `no-vault-content` are downstream of the preflight and it
+never sees them; E10 passes such a night too, and this time without even the
+word `ungrounded` to warn you. So read E10's substance sentence in the run
+report — it is the numbers, not the state word:
+
+```
+N of M delivered id(s) carried vault content; per leg with_content:
+triage 12/50 (used at least 4), staging 3/9 (used at least 0), …
+```
+
+Treat it as a **FAILED grounding exercise, not a pass**, when either:
+
+- **`with_content` is 0 on every leg.** The lane ran, the map was delivered, and
+  no block carried any vault text. Nothing was grounded; the run proves the
+  plumbing and nothing about the judgment.
+- **`used at least 0` on a leg whose `with_content` is NOT 0.** Content was
+  handed over and no verdict on that leg reused a distinctive phrase from it.
+  Read it as the dead-subsystem signal it is — but read the qualification with
+  it: the number is a LOWER BOUND (see `refused_grounding_overlap` on the same
+  sentence, which counts rows refused precisely BECAUSE they quoted their
+  block). A leg that paraphrased everything scores 0 honestly.
+
+Report both numbers to the owner rather than the state word. "E10 PASS" on its
+own does not mean the night was grounded.
+
 The doctrine the nightly runs under is
-`.claude/skills/chief-of-staff/DOCTRINE.md` (chief-of-staff v6.0) — 517
-lines. The 6,339-line `SKILL.md` beside it is SUPERSEDED and binds nothing;
+`.claude/skills/chief-of-staff/DOCTRINE.md` (chief-of-staff v7) — 1,127
+lines. The 6,394-line `SKILL.md` beside it is SUPERSEDED and binds nothing;
 do not answer a question about what the nightly does from that file.
 
 ## Hard rules

@@ -663,6 +663,45 @@ def supersede_journal_path(vault: str | os.PathLike[str] | None = None) -> Path:
     return d / f"supersede-pending-{vault_slug8(vault)}.json"
 
 
+def cos_run_records_dir(vault: str | os.PathLike[str] | None = None) -> Path:
+    """The COS run manifest / validity / plan-binding store.
+
+    OFF THE MOUNT (gap-05, 2026-08-16). It used to be
+    ``<vault>/.brain/cos/host/runs`` — described in three separate docstrings as
+    "host-private" and "never VM-writable", which was true of the VM's RULES
+    (AGENTS.md §9: no VM_ALLOWED verb writes under ``.brain/``) and false of the
+    FILESYSTEM: that path is inside the VirtioFS workspace, and
+    ``docs/cos-ops.md`` §2c had already ruled the same directory out for the
+    approved queue in as many words — "``.brain/cos/host/`` would NOT do: it is
+    visible on that mount, and ``0700`` is only a boundary if the VM runs as a
+    different uid AND VirtioFS honours mode bits (neither is established)".
+
+    Three files live here and each is an authority a run is judged BY, not an
+    artifact a run writes:
+
+    * ``<run>.json`` — the manifest, which freezes which bundle, which commit
+      and which capability digest the run was allowed to be;
+    * ``<run>.validity.json`` — the recorded verdict, and ``CLAIMABLE_VERDICTS``
+      reads it to decide whether that night's candidates may be bound;
+    * ``_cos_plan_binding_<run>.json`` — the record of WHICH frozen plan the
+      apply dispatched, the one control standing between a rebuilt plan and a
+      clean K1 verdict, and (s10) the remaining forgery path against the
+      mutation counters.
+
+    Same treatment, same helper and same fallback as the writer lock (INT-05),
+    the supersede journal (ENF-01) and the drift dispositions: being
+    unreachable is the control, not a mode bit on a mount that may only
+    partially honour POSIX bits. Keyed by vault identity so two vaults never
+    share one store."""
+    try:
+        d = proven_off_mount(host_private_base() / "cos-runs", vault,
+                             what="COS run record store")
+    except HostPathUnsafe:
+        d = proven_off_mount(_app_data_base() / "cos-runs", vault,
+                             what="COS run record store (app-data fallback)")
+    return d / vault_slug8(vault)
+
+
 # The crash journal lived at ``brain_runtime_dir(vault)/supersede-pending.json``
 # until 2026-08-10, and there is deliberately NO resolver for it any more
 # (adversarial review round 4). That path is on the VirtioFS mount the

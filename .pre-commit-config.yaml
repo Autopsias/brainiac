@@ -60,42 +60,47 @@ repos:
         pass_filenames: false
         files: '^(pyproject\.toml|AGENTS\.md|CLAUDE\.md|README\.md|src/brain/_version\.py|src/brain/_assets/.*|packaging/npm/.*|\.claude/skills/.*|\.agents/skills/.*|plugins/.*)$'
 
-      # The size ratchet (7f0451e) committed .file-size-exceptions and
-      # .function-length-exceptions and said "anything new blocks at commit
-      # time" -- but nothing read them. Neither checker ran here, in
-      # .git/hooks/, or in any Claude Code hook, so the baselines were inert
-      # for their whole existence. These three hooks are what makes the
-      # ratchet real.
+      # The quality ratchet, second iteration. The first (--project . at
+      # commit time) died in two days: whole-project judgment refused a
+      # one-file commit for 25 files it never touched, and the only local way
+      # forward was --no-verify -- which also skipped semgrep and the
+      # packaging gate above. Three consecutive bypasses later the ratchet
+      # was dead.
       #
-      # Each checker scans the WHOLE project (pass_filenames: false), because
-      # a baseline is a property of the corpus, not of the staged diff; the
-      # `files` filter only decides whether the hook runs at all. Measured
-      # warm on this repo: 0.5s + 0.8s + 0.2s.
+      # So the hooks now run --staged: each checker judges ONLY the staged
+      # files, and blocks only what THIS commit makes worse than every commit
+      # parent (HEAD, plus MERGE_HEAD mid-merge). Debt a commit merely
+      # inherits -- a merge landing a long-lived branch, a past bypass --
+      # WARNS with a re-record instruction instead of blocking. The
+      # whole-project pass lives in CI (.github/workflows/quality-ratchet.yml),
+      # which re-runs all three checkers on every push; that job is what makes
+      # a local SKIP visible instead of permanent.
       #
-      # The checkers are vendored into tools/ deliberately. They started life
-      # under ~/.claude/scripts/quality/, and a hook pointing at a home
-      # directory fails for every other clone and in CI.
+      # Sanctioned bypass, if a ratchet hook still blocks you wrongly:
+      #   SKIP=file-size-ratchet git commit ...   (comma-separate for several)
+      # NEVER --no-verify: it takes the security and packaging gates down too.
+      #
+      # The checkers are vendored into tools/ (a hook pointing at a home
+      # directory fails for every other clone and in CI). Source of truth is
+      # gearbox scripts/quality/ via ~/.claude; re-sync with:
+      #   python3 ~/.claude/scripts/quality/vendor_quality.py .
       - id: file-size-ratchet
-        name: no new file over the size limit (baseline only shrinks)
-        entry: python3 tools/check_file_sizes.py --project .
+        name: no staged file grows past the size limit (baseline only shrinks)
+        entry: python3 tools/check_file_sizes.py --staged
         language: system
         pass_filenames: false
         files: '\.py$'
 
       - id: function-length-ratchet
-        name: no new function over the length limit (baseline only shrinks)
-        entry: python3 tools/check_function_lengths.py --project .
+        name: no staged function grows past the length limit
+        entry: python3 tools/check_function_lengths.py --staged
         language: system
         pass_filenames: false
         files: '\.py$'
 
-      # Complexity was never baselined by 7f0451e -- ruff C901 has no exception
-      # file of its own, so tools/check_complexity.py adds one. 103 functions
-      # are grandfathered; a NEW one over 12, or a baselined one getting worse,
-      # blocks. Improving a function never blocks.
       - id: complexity-ratchet
-        name: no new function over complexity 12 (baseline only shrinks)
-        entry: python3 tools/check_complexity.py --project .
+        name: no staged function grows past complexity 12
+        entry: python3 tools/check_complexity.py --staged
         language: system
         pass_filenames: false
         files: '\.py$'

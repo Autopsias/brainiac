@@ -193,6 +193,31 @@ _HELD_REASONS = {
     "navigation-refused-row-unreachable",
 }
 
+#: (2026-08-14, run 135) HOST-WRITTEN reasons for a row that reached the ledger
+#: with NO USABLE MODEL VERDICT. Run 135 applied 41 of 41 mutations and still
+#: scored INVALID: its 9 refused verdicts left their rows with `disposition:
+#: null` and `held_reason: null`, outside rule 8's vocabulary — the funnel's own
+#: "counted rather than hidden" rule held for the COUNTERS (`ledger_counts`
+#: reads every non-candidate row as held) and failed for the WORD. This is the
+#: same shape the comment above documents: a real outcome with no approved word
+#: logs as ABSENCE, and a downstream gate reads absence as a fault.
+#:
+#: SEPARATE FROM `_HELD_REASONS` ON PURPOSE, and the separation is the point.
+#: That set is printed INTO the batch prompt (`cos_judge.batch_prompts`) and
+#: validated against the model's own answers, so a word in it is a word the
+#: model may CLAIM. "the host refused my verdict" and "no verdict of mine
+#: arrived" are not the model's statements to make — they are the host's record
+#: of what the host did, written only by `apply_judgment`, and a model that
+#: emits one is still refused by `triage.held_reason_vocabulary`.
+_HOST_HELD_REASONS = {
+    # a verdict ARRIVED and the host would not use it: `validate_verdict`
+    # rejected it, or H3 dropped a conflicting duplicate pair.
+    "judgment-refused",
+    # no verdict arrived for this row at all — an unanswered row, or a chunk
+    # whose model call produced nothing (the coverage floor scores that too).
+    "unjudged",
+}
+
 #: (v5.60) Rule 5's CLOSED dedup vocabulary. Dedup has no drop path at all — a
 #: near-duplicate yields `merge_candidate: <id>` INSTEAD OF a fresh `create`,
 #: an inconclusive probe still stages — so a value here that reports a DROP is
@@ -246,6 +271,62 @@ _MORNING_DATED_PREFIXES = ("_briefing_", "_decision_card_")
 def _row(name: str, status: str, detail: str, *, reexecuted: bool) -> dict[str, Any]:
     return {"check": name, "status": status, "reexecuted": reexecuted,
             "detail": detail}
+
+
+#: THE BAR IS SEVENTEEN CONTROLS (s08, 2026-08-16), and the three that left it
+#: are named here rather than deleted quietly. All three re-execute over a
+#: MODEL-WRITTEN ledger — `_cos_action_ledger_<run>.jsonl`,
+#: `_cos_chip_ledger_<run>.jsonl`, `_cos_hold_ledger_<run>.jsonl` — from the
+#: pre-v7 lane, where the model drove the browser and wrote its own record of
+#: what it had done. Under v7 no producer for those files exists or can exist:
+#: the model legs run `--tools "Read,Glob"` with `Edit(//**)` denied
+#: (`cos_nightly.sh` MODEL_TOOLS), so they cannot write a file at all, and the
+#: mutation lane is a deterministic host program that records what it dispatched
+#: in `_cos_undo_ledger_<run>.jsonl`. Measured on run 145 (2026-08-16): all
+#: three read 0 rows, took their "nothing acted, so nothing could act wrongly"
+#: branch, and reported PASS on a night that applied 16 mutations.
+#:
+#: A control whose all-clear equals no input is the failure mode this validator
+#: exists to prevent, so they are OFF the bar rather than left green. What each
+#: one guarded is held by a live control with a non-zero denominator, named
+#: below — and the anti-vacuity job itself moved to `check_mutation_counters`,
+#: which recounts the metrics row against the artifact this lane DOES write and
+#: is proven able to fail on it.
+#:
+#: The functions and their tests are kept, unscored: they encode the measured
+#: failures of runs 100-111 and are the implementation a browser-driven lane
+#: would need again. Nothing calls them, so nothing can report on them.
+RETIRED_CONTROLS = {
+    "unread_touch": (
+        "re-executes over `_cos_action_ledger_<run>.jsonl` (no v7 producer). "
+        "The unread shield is now a PRE-DISPATCH refusal in `cos_mutate.py` "
+        "(`read_state != 'read'` excludes the row), the only categorize "
+        "primitive is the non-touching `rest-categorize`, and E2 recounts every "
+        "mutated thread's screened read state host-side from the ingestion + "
+        "undo ledgers"),
+    "target_identity": (
+        "re-executes over `_cos_action_ledger_<run>.jsonl` (no v7 producer). It "
+        "scores the CLICK-era identity risk — a virtualized row recycled between "
+        "verify and click — which the REST lane cannot have: it addresses a "
+        "conversation by id, and `check_plan_binding` joins every dispatched "
+        "`conversation_id|verb` key to the frozen plan"),
+    "chip_reeval_draw": (
+        "re-executes over `_cos_chip_ledger_<run>.jsonl` against a population "
+        "recounted from `_cos_hold_ledger_<run>.jsonl` (no v7 producer for "
+        "either). E4 recounts that the chips applied are managed names on the "
+        "correct (bucket, tier) matrix and on bare threads"),
+}
+
+#: Every control `verify_run` scores, in order. PINNED so the size of the bar is
+#: a fact a test can read: an owner ruling that reads "twenty controls" against
+#: a validator that runs seventeen is exactly the drift s08 was dispatched to
+#: close, and a control added or dropped in silence is how it recurs.
+SCORED_CONTROLS = (
+    "completion", "self_eval", "repairs", "metrics_row", "ledger_vocabulary",
+    "category_stamp", "ingestion_ledger", "body_pass", "body_order",
+    "body_open_count", "open_instrumentation", "plan_binding", "corpus_join",
+    "candidate_stamps", "artifact_naming", "degrade_consistency", "contract",
+)
 
 
 # -- the re-execution toolchain ------------------------------------------------
@@ -507,15 +588,13 @@ def host_received_candidates(vault, run_id: str) -> int:
 
     Host-observed, and therefore the corroboration a degrade claim is checked
     against: the run controls its own ledger and its own markers, but not the
-    sidecars the host wrote when it took delivery of a drop."""
-    n = 0
-    for m in cos._pending_metas(vault):
-        if str(m.get("run_id") or "") == run_id:
-            n += 1
-    for q in cos.quarantined_claims(vault):
-        if str(q.get("run_id") or "") == run_id:
-            n += 1
-    return n
+    sidecars the host wrote when it took delivery of a drop.
+
+    DELEGATED to `cos.run_proposal_drops` since s09 (K2), because the judge now
+    derives `proposals_dropped` from the same fact and two spellings of one
+    predicate is the defect that made `category_gate.state` report `armed` from
+    one leg and `not-run` from the other on the same run."""
+    return cos.run_proposal_drops(vault, run_id)
 
 
 # -- the individual controls ---------------------------------------------------
@@ -537,7 +616,19 @@ def check_self_eval(vault, run_id: str, manifest: dict[str, Any]) -> dict[str, A
                     f"the run report {report.name} is unreadable ({exc}) — the "
                     "host cannot tell whether the self-eval ran",
                     reexecuted=False)
-    found = {int(n) for n, _ in _REPORT_ECHECK_RE.findall(text)}
+    # AN OUTCOME DECIDES, NOT A PRINTED ID (DOCTRINE v7 §8.1 rule 3). This line
+    # read `for n, _ in ...findall` until 2026-08-14 — it CAPTURED the verdict
+    # token and threw it away — so a report whose every E-check said FAIL
+    # produced the id set {1..10} and scored this control PASS. Probed, not
+    # assumed (`_evidence/cosv7/s01-echeck-probe.txt`): that is exactly what
+    # today's shipped verifier does. A checker that reads ids instead of
+    # answers is the same defect one level up as a run that grades its own
+    # homework.
+    results: dict[int, set[str]] = {}
+    for n, verdict in _REPORT_ECHECK_RE.findall(text):
+        token = verdict.upper().replace("/", "")
+        results.setdefault(int(n), set()).add("NA" if token == "NA" else token)
+    found = set(results)
 
     expected, why = expected_check_count(manifest)
     if expected is None:
@@ -570,10 +661,74 @@ def check_self_eval(vault, run_id: str, manifest: dict[str, Any]) -> dict[str, A
                     f"missing E{', E'.join(str(m) for m in missing[:12])}"
                     + (" …" if len(missing) > 12 else ""),
                     reexecuted=False)
+
+    # -- now the ANSWERS, which is the half that could not fail before -------
+    conflicting = sorted(i for i, r in results.items() if len(r) > 1)
+    if conflicting:
+        return _row("self_eval", FAIL,
+                    f"{report.name} reports TWO CONFLICTING results for "
+                    f"E{', E'.join(str(i) for i in conflicting[:8])} "
+                    + "; ".join(f"E{i}={sorted(results[i])}"
+                                for i in conflicting[:4])
+                    + ". One check, one outcome — a duplicated id is a FAIL, "
+                      "because whichever line a reader happens to see decides "
+                      "the night",
+                    reexecuted=False)
+    failed = sorted(i for i, r in results.items() if "FAIL" in r)
+    if failed:
+        return _row("self_eval", FAIL,
+                    f"{report.name} reports E"
+                    f"{', E'.join(str(i) for i in failed[:12])}"
+                    + (" …" if len(failed) > 12 else "")
+                    + f" as FAIL ({len(failed)} of {expected}). ANY FAIL fails "
+                      "the self-eval: the checks are the run's own account of "
+                      "what it did to the mailbox, and a night that reports a "
+                      "breach has not passed by reporting it honestly",
+                    reexecuted=False)
+
+    # `N/A` IS CORROBORATED, NEVER BELIEVED. It is legal only against a
+    # MACHINE-DERIVED zero denominator, so the machine derives them here rather
+    # than reading the number the report printed beside its own claim.
+    na = sorted(i for i, r in results.items() if "NA" in r)
+    if na:
+        try:
+            from . import cos_echecks                      # noqa: PLC0415
+            host = cos_echecks.denominators(vault, run_id)
+        except Exception as exc:                           # noqa: BLE001
+            return _row("self_eval", FAIL,
+                        f"{report.name} answers E"
+                        f"{', E'.join(str(i) for i in na[:8])} `N/A`, and the "
+                        f"host could not re-derive their denominators to "
+                        f"corroborate it ({type(exc).__name__}: "
+                        f"{str(exc)[:120]}). An uncorroborated N/A is a check "
+                        "that scored itself",
+                        reexecuted=True)
+        uncorroborated = {i: host.get(i) for i in na if host.get(i)}
+        never = [i for i in na if i in cos_echecks.NEVER_NA]
+        if never:
+            return _row("self_eval", FAIL,
+                        f"{report.name} answers E"
+                        f"{', E'.join(str(i) for i in never)} `N/A`, which "
+                        "those checks may never be — their denominators (the "
+                        "sent baseline, the frozen capability digest) exist on "
+                        "every run",
+                        reexecuted=True)
+        if uncorroborated:
+            return _row("self_eval", FAIL,
+                        f"{report.name} answers "
+                        + ", ".join(f"E{i} `N/A` over a host-derived "
+                                    f"denominator of {n}"
+                                    for i, n in sorted(uncorroborated.items()))
+                        + ". N/A is legal only against a MACHINE-DERIVED ZERO "
+                          "denominator; on a non-zero one it is a FAIL",
+                        reexecuted=True)
     return _row("self_eval", PASS,
-                f"{len(found)} self-eval check result(s) reported, against "
-                f"{why} — never against whatever SKILL.md is deployed now",
-                reexecuted=False)
+                f"{len(found)} self-eval check result(s) reported and DECIDED, "
+                f"against {why} — never against whatever SKILL.md is deployed "
+                f"now. No FAIL, no duplicated or conflicting id"
+                + (f", and {len(na)} N/A corroborated against a host-derived "
+                   "zero denominator" if na else ""),
+                reexecuted=bool(na))
 
 
 #: The self-eval header every run report carries, e.g.
@@ -781,6 +936,10 @@ def check_metrics_row(vault, run_id: str, manifest: dict[str, Any],
                     "run's own ingestion ledger — " + "; ".join(disagree),
                     reexecuted=True)
 
+    mutation, dispatched = check_mutation_counters(vault, run_id, row)
+    if mutation is not None:
+        return mutation
+
     stamps = {"bundle_version": manifest.get("bundle_version"),
               "extraction_rules_version": manifest.get("extraction_rules_version"),
               "skill_sha256": manifest.get("skill_sha256")}
@@ -803,9 +962,84 @@ def check_metrics_row(vault, run_id: str, manifest: dict[str, Any],
                     reexecuted=True)
     return _row("metrics_row", PASS,
                 "present, all four Phase-1.6 fields, host stamps match the run "
-                "manifest, and all three ingestion counters survive a recount "
-                "from the run's ledger" + superseded,
+                "manifest, and both recounts hold — all three ingestion "
+                "counters against the ingestion ledger and all three mutation "
+                f"counters against the undo ledger ({dispatched})"
+                + superseded,
                 reexecuted=True)
+
+
+def check_mutation_counters(vault, run_id: str, row: dict[str, Any]
+                            ) -> tuple[dict[str, Any] | None, str]:
+    """The four MUTATION counters, recounted from the undo ledger.
+
+    ``(problem_row_or_None, the recount as text)`` — the denominator rides back
+    with the verdict so the PASS can NAME what it recounted against. A control
+    that reports "the recount holds" without its numbers is unauditable, and it
+    is what let the all-zero row read as agreement for eleven archives.
+
+    WHY THIS EXISTS (measured, run 145, 2026-08-16). ``check_metrics_row``
+    recounted the three INGESTION counters and nothing recounted the four
+    mutation ones, so run 145's row of record read
+    ``marked 0, archived 0, captured 0, drafts_created 0,
+    mutation_lane "none-read-only"`` after 11 archives, 3 chips and 2 drafts —
+    and PASSED. That is not a cosmetic wrong number. ``mutation_counts()`` is
+    the corroboration ``unledgered_mutations`` and ``check_plan_binding`` use to
+    tell a REMOVED artifact from a quiet night: with the counters stuck at zero,
+    a VM that deleted this run's undo ledger bought a PASS from
+    ``check_plan_binding`` — "this run dispatched no mutation" — on a night that
+    archived eleven threads. The counters ARE the anti-vacuity input, so the one
+    number nothing recounted was the number every absence argument rested on.
+
+    TWO OUTCOMES, AND THE SPLIT IS THE POINT.
+
+    * The row reports counters that CONTRADICT the ledger — a number was written
+      and it is wrong — is a FAIL, on the same terms as the ingestion recount
+      directly above.
+    * The row's mutation counters are ALL ZERO beside an undo ledger that
+      records dispatches: the counters were never written at all. That is
+      INCONCLUSIVE, not FAIL. It is the pre-s08 vintage (the apply did not
+      update the row) and it is also what a truncated apply leaves behind, and
+      the artifacts cannot tell those apart from tampering. Scoring it PASS is
+      the vacuous instrument; scoring it FAIL asserts a cause the evidence does
+      not carry. It is not a pass, and it says why.
+
+    Recounted through ``cos_mutate.dispatched_counters`` — IMPORTED, never
+    restated. The apply writes the counters through the same map and the same
+    per-key ledger fold, so the writer and the recount cannot drift into two
+    notions of "one mutation" (a ledger row is a state TRANSITION; a mutation is
+    a key).
+    """
+    mutate = _cos_mutate()
+    if mutate is None:
+        # `checkers` already scores the absent toolchain as INCONCLUSIVE
+        return None, "toolchain absent, not recounted"
+    did = mutate.dispatched_counters(vault, run_id)
+    dispatched = ", ".join(f"{k}={v}" for k, v in sorted(did.items()))
+    disagree = [f"{k}: row says {row.get(k)!r}, the undo ledger counts {v}"
+                for k, v in sorted(did.items()) if int(row.get(k) or 0) != v]
+    if not disagree:
+        return None, dispatched
+    reported = [int(row.get(k) or 0) for k in mutate.VERB_COUNTER.values()]
+    lane = str(row.get("mutation_lane") or "")
+    if not any(reported):
+        return _row("metrics_row", INCONCLUSIVE,
+                    "this run's metrics row records ZERO mutations of every "
+                    f"kind (mutation_lane {lane!r}) while its own undo ledger "
+                    "records " + ", ".join(disagree)
+                    + ". The row of record was never updated by the apply, so "
+                      "the counters every absence argument corroborates against "
+                      "— `unledgered_mutations`, `check_plan_binding` — are "
+                      "disarmed, and the host cannot tell an un-updated row "
+                      "from a removed one. An instrument that cannot fail is "
+                      "not a pass",
+                    reexecuted=True), dispatched
+    return _row("metrics_row", FAIL,
+                "the metrics row disagrees with a host RECOUNT of this run's "
+                "own undo ledger — " + "; ".join(disagree)
+                + ". Both numbers were written; they cannot both be what "
+                  "reached the mailbox",
+                reexecuted=True), dispatched
 
 
 def check_ledger_vocabulary(run_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -853,7 +1087,7 @@ def check_ledger_vocabulary(run_id: str, rows: list[dict[str, Any]]) -> dict[str
         reason = str(r.get("held_reason") or "").strip()
         if not reason:
             missing_reason += 1
-        elif reason not in _HELD_REASONS:
+        elif reason not in _HELD_REASONS | _HOST_HELD_REASONS:
             bad_reason[reason] = bad_reason.get(reason, 0) + 1
 
     problems: list[str] = []
@@ -1362,8 +1596,35 @@ def action_rows(vault, run_id: str) -> list[dict[str, Any]]:
 _MUTATION_COUNTERS = ("archived", "marked", "drafts_created", "captured")
 
 
+def mutation_counts(vault, run_id: str) -> dict[str, int]:
+    """What this run's OWN metrics row says it did to the mailbox, non-zero only.
+
+    ONE definition, because two controls now corroborate a missing artifact
+    against it — `unledgered_mutations` (the action ledger) and
+    `check_plan_binding` (the undo ledger). Both ask the same question: is this
+    artifact absent because the run did nothing, or because something removed
+    it? A second copy of the answer is how the two drift apart.
+
+    Booleans are excluded on purpose: `True` is an `int` in Python, and
+    `archived: true` is not a count of anything.
+    """
+    row = metrics_row(vault, run_id) or {}
+    did: dict[str, int] = {}
+    for k in _MUTATION_COUNTERS:
+        v = row.get(k)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and int(v) > 0:
+            did[k] = int(v)
+    return did
+
+
 def unledgered_mutations(vault, run_id: str, rows: list[dict[str, Any]]) -> str:
     """Did this run mutate the mailbox with NO action ledger to check? (why, or "")
+
+    RETIRED with the two controls it fed (s08, 2026-08-16): under v7 there is no
+    action-ledger producer at all, so its premise — an absent ledger on a
+    mutating night is a REMOVED record — is false for this lane. The live
+    anti-vacuity control is ``check_mutation_counters``, which corroborates the
+    same counters against the ledger v7 actually writes.
 
     ``check_unread_touch`` and ``check_target_identity`` both re-execute over
     the action ledger, and both read an EMPTY one as "nothing acted, so nothing
@@ -1381,12 +1642,7 @@ def unledgered_mutations(vault, run_id: str, rows: list[dict[str, Any]]) -> str:
     """
     if rows:
         return ""
-    row = metrics_row(vault, run_id) or {}
-    did = {}
-    for k in _MUTATION_COUNTERS:
-        v = row.get(k)
-        if isinstance(v, (int, float)) and not isinstance(v, bool) and int(v) > 0:
-            did[k] = int(v)
+    did = mutation_counts(vault, run_id)
     if not did:
         return ""
     return (f"this run's _cos_action_ledger_{run_id}.jsonl is absent or empty, "
@@ -1401,6 +1657,10 @@ def unledgered_mutations(vault, run_id: str, rows: list[dict[str, Any]]) -> str:
 def check_unread_touch(run_id: str, rows: list[dict[str, Any]],
                        unledgered: str = "") -> dict[str, Any]:
     """(c5) No category was written onto a row the run had screened UNREAD.
+
+    RETIRED from the scored bar (s08, 2026-08-16) — see ``RETIRED_CONTROLS``
+    for why and for what holds this property now. Kept, unscored, because it is
+    the implementation a browser-driven lane would need again.
 
     WHY THIS EXISTS (measured, run 102, 2026-08-09). The run applied
     ``Held · deadline`` through the native lane to a thread whose own action
@@ -1593,6 +1853,8 @@ def _refusal_followups(asserted: list[dict[str, Any]],
 def check_target_identity(run_id: str, rows: list[dict[str, Any]],
                           unledgered: str = "") -> dict[str, Any]:
     """(c6) Every identity mismatch was GUARDED — detected, recovered, inert.
+
+    RETIRED from the scored bar (s08, 2026-08-16) — see ``RETIRED_CONTROLS``.
 
     WHY THIS EXISTS (owner ruling 2026-08-09, on run 104). The safety property
     is *"no wrong action ever happens"*, not *"no mismatch ever occurs"*. On a
@@ -1961,11 +2223,36 @@ def check_open_instrumentation(vault, run_id: str,
                     f"mismatch reason sits on a `target_attempt: 0` row "
                     f"({len(ledger)} ledger row(s))",
                     reexecuted=True)
+    if not attempts:
+        # THE DENOMINATOR IS ZERO, AND THE PASS SAYS SO (s10, 2026-08-16).
+        # Clause (2) reads the ACTION ledger, which the pre-v7 model leg wrote
+        # and which has no v7 producer: the model legs run `--tools
+        # "Read,Glob"` with editing denied, and the mutation lane records what
+        # it dispatched in `_cos_undo_ledger_<run>.jsonl` instead. `gated` still
+        # fires on a v7 night because the INGESTION ledger declares v5.60, so
+        # the old text asserted "every attempt row carries its method, URL …
+        # the in-run control is on disk" over an empty list — two properties it
+        # had not examined (measured, run 145: 246 ingestion rows, 0 action
+        # rows, PASS). This control stays SCORED because clause (1) and the
+        # refusal/cascade clauses above run on that 246-row ledger and can fail
+        # on it; what it may not do is claim the half with no rows.
+        return _row("open_instrumentation", PASS,
+                    f"{len(ledger)} ledger row(s) scored: no mismatch reason "
+                    "sits on a `target_attempt: 0` row, no refusal word sits "
+                    "on a row without the page facts a refusal is defined by, "
+                    "and no pass-ended cascade sits behind a stop nothing "
+                    "triggered. THE PER-ATTEMPT HALF WAS NOT EXAMINED: this "
+                    "run has 0 open-attempt rows (its action ledger is absent "
+                    "or empty — no v7 producer writes one), so the per-attempt "
+                    "instrumentation and the in-run control are not evidenced "
+                    "either way",
+                    reexecuted=True)
     return _row("open_instrumentation", PASS,
-                "every attempt row carries its method, URL, evaluation "
-                "duration, page facts, hour, display state and a hold status "
-                "read from the status file; the in-run control is on disk; and "
-                "no mismatch reason sits on a row that was never attempted",
+                f"all {len(attempts)} attempt row(s) carry their method, URL, "
+                "evaluation duration, page facts, hour, display state and a "
+                "hold status read from the status file; the in-run control is "
+                "on disk; and no mismatch reason sits on a row that was never "
+                "attempted",
                 reexecuted=True)
 
 
@@ -2129,6 +2416,8 @@ def check_chip_reeval_draw(run_id: str, batch: list[dict[str, Any]],
                            held: list[dict[str, Any]], prior: dict[str, str],
                            *, bundle: str = "") -> dict[str, Any]:
     """(c7) The chip re-evaluation batch IS the head of the cycling queue.
+
+    RETIRED from the scored bar (s08, 2026-08-16) — see ``RETIRED_CONTROLS``.
 
     WHY THIS EXISTS (measured, runs 100/103/104, 2026-08-08..09). E26(a) has
     required an oldest-``last_reeval``-first draw since v5.5 and never once got
@@ -2521,17 +2810,436 @@ def check_artifact_naming(vault, run_id: str) -> dict[str, Any]:
                 reexecuted=True)
 
 
-def check_candidate_stamps(run_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+#: The stamps a candidate row carries ONLY because a drop produced them. Any
+#: one of them present is evidence a proposal was dropped, whatever the flag
+#: says — which is what makes `proposals_dropped: false` beside one a
+#: CONTRADICTION rather than an inapplicability.
+_DROP_STAMP_KEYS = ("proposal_id", "id", "content_sha256", "proposal_sha256",
+                    "sha256")
+
+
+def _drop_stamped(row: dict[str, Any]) -> list[str]:
+    return [k for k in _DROP_STAMP_KEYS if str(row.get(k) or "").strip()]
+
+
+def _cos_mutate():
+    """The `tools/cos_mutate.py` module, loaded like the other run checkers, or
+    ``None`` when the toolchain is not on disk beside the engine.
+
+    `check_plan_binding` re-hashes the frozen plan the binding names, and the
+    ONE definition of that hash is `plan_digest`/`load_frozen_plan` in
+    `cos_mutate` — imported, never restated (the engine holds one notion of a
+    plan's identity, ENF-04). An absent toolchain means the join cannot be
+    re-run, and the caller scores the binding INCONCLUSIVE, never PASS."""
+    d = tools_dir()
+    if d is None:
+        return None
+    if str(d) not in sys.path:
+        sys.path.insert(0, str(d))
+    try:
+        return _load_script(d, "cos_mutate")
+    except Exception:                                     # noqa: BLE001
+        return None
+
+
+def check_plan_binding(vault, run_id: str) -> dict[str, Any]:
+    """Did the apply dispatch the FROZEN plan, or one it built for itself?
+
+    K1's whole point is that the plan a human-gated rehearsal validated is the
+    plan the mailbox receives. `apply_pass` records which of the two it did in
+    `plan_binding.source` — and until round 5 (2026-08-13) that field was
+    written and read by NOTHING: `rebuilt-by-the-apply` scored exactly the same
+    as `frozen`, on every report, forever. A field no verdict reads is a
+    comment.
+
+    NO VM-WRITABLE FILE CAN BUY A PASS, OR SKIP THE CHECK (round 6 H-forge,
+    round 7 H-disarm). Round 5 read `source` straight out of
+    `_cos_plan_binding_<run>.json` in the `cos-ops` zone — which is
+    VM-writable — so a `{"source":"frozen"}` written there bought a PASS with
+    no digest, no plan, no rehearsal. The binding now lives beside the run
+    manifest (`cos.runs_dir`) — which round 6 moved out of `cos-ops` and gap-05
+    (2026-08-16) then moved OFF THE VIRTIOFS MOUNT ALTOGETHER, because until
+    then "host-private" named a contract (`.brain/` is host-only by rule) and
+    not a filesystem: the directory sat inside the workspace the VM has, at
+    `<vault>/.brain/cos/host/runs`. It is now
+    `config.cos_run_records_dir` — and this control re-JOINS its digest to
+    the frozen plan it names, the same tamper-evidence the category check uses
+    on its label.
+
+    That is a claim about DIRECTION, not about abstinence, and the round-6
+    wording ("not one word read from a VM-writable file") overstated it while
+    line 1 of the body still read the ops zone. This control does read two
+    VM-writable artifacts — the undo ledger's presence, and its rows for the
+    dispatch join below — and neither can move the verdict toward PASS. A
+    deleted ledger no longer skips the check (the host-private binding decides
+    that, corroborated by the run's own counters); ADDED ledger rows can only
+    produce a FAIL, since the join asks whether the plan COVERS what was
+    dispatched. Read-to-convict is fine; read-to-acquit is the defect.
+
+    The residual, stated rather than papered over: REMOVING rows from the undo
+    ledger can hide an unbound dispatch from the join, because a row that is not
+    there cannot be found outside the plan. What it cannot do is turn this
+    control off — the binding still has to name a real, rehearsed, correctly
+    hashed plan, and the PASS prints the number of mutations it joined, so a
+    ledger emptied down to zero says so on the report rather than reading as
+    clean. `unledgered_mutations` and E1 both bite on the same emptying.
+
+    FAIL, not DEGRADE, and that is a deliberate call. `rebuilt-by-the-apply`
+    means real mutations reached a real mailbox under a plan no rehearsal ever
+    covered — the exact condition the frozen artifact exists to make
+    impossible, and the CLI already refuses. A run that reached it did so
+    through a path that should not exist, and a DEGRADED verdict still lets its
+    candidates be claimed.
+
+    A run that dispatched NOTHING is not scored on this: there was no apply, so
+    there is no binding to have, and a read-only night is the ordinary night.
+    The UNDO ledger is what says so — it is written only by the mutation lane,
+    one row per state transition, and it is absent on every read-only night.
+    The ACTION ledger is not: it carries opens and navigations and exists on
+    nights nothing mutated, so keying this on it would have demanded a plan
+    binding from runs that never applied one.
+
+    AND APPLICABILITY IS NOT DECIDED BY A VM-WRITABLE FILE EITHER (review
+    2026-08-13, round 7, H-disarm). Round 6 moved the binding host-private and
+    joined its digest, which closed FORGERY — but the line that decided whether
+    any of that ran still asked `<vault>/cos-ops` for the undo ledger, a zone
+    `cos.run_ops_dir` documents as "VM-writable by nature". A VM does not have
+    to author a plan, a rehearsal and a digest to beat that: it DELETES one file
+    in a directory it owns, and a run that dispatched real mutations under
+    `rebuilt-by-the-apply` scores PASS. The removed FAIL takes RUN_INVALID with
+    it. It is the same shape `unledgered_mutations` exists to close one screen
+    up — an absent ledger read as "nothing acted" is an instrument that cannot
+    fail (measured, run 106) — so it takes the same two answers:
+
+      * the HOST-PRIVATE binding's own existence makes this control APPLY. The
+        apply writes that file on every mutating pass, into `runs_dir` — which
+        is off the VirtioFS mount since gap-05 (2026-08-16) and so is a
+        directory the VM genuinely cannot reach. Round 7 wrote that sentence
+        while `runs_dir` was still `<vault>/.brain/cos/host/runs`, inside the
+        workspace: true of the VM's RULES, false of the filesystem, and a
+        comment that overstates a protection is how the gap survived.
+      * a missing undo ledger is CORROBORATED against the run's own mutation
+        counters. Counters above zero with no ledger is INCONCLUSIVE — the run
+        says it mutated and the artifact that would say under which plan is
+        gone. Only counters-all-zero AND no binding AND no ledger is the
+        read-only night this clause is for.
+    """
+    binding_p = cos.run_plan_binding_path(vault, run_id)
+    ledger_p = cos.run_ops_dir(vault) / f"_cos_undo_ledger_{run_id}.jsonl"
+    if not binding_p.exists() and not ledger_p.exists():
+        did = mutation_counts(vault, run_id)
+        if did:
+            return _row("plan_binding", INCONCLUSIVE,
+                        "this run has NO plan binding and NO undo ledger, but "
+                        "its own metrics row records "
+                        + ", ".join(f"{k}={v}" for k, v in sorted(did.items()))
+                        + ". The ledger lives in the VM-writable `cos-ops` zone,"
+                          " so its absence beside non-zero mutation counters is"
+                          " a removed artifact, not a quiet night — and which"
+                          " plan reached the mailbox is unknown",
+                        reexecuted=True)
+        return _row("plan_binding", PASS,
+                    "this run dispatched no mutation (no plan binding, no undo "
+                    "ledger, and zero mutation counters), so no plan was bound "
+                    "and there is nothing here to check",
+                    reexecuted=True)
+    # HOST-PRIVATE, and JOINED — nothing a VM can write moves this toward PASS
+    # (review 2026-08-13, round 6 H-forge, wording corrected round 7). The
+    # binding lives beside the run
+    # manifest now (`cos.runs_dir`, off the mount since gap-05 — see the
+    # docstring; before that the phrase "never VM-writable" stood here over a
+    # path inside the workspace), and `source: frozen` is
+    # only the door: this control re-verifies the SUBSTANCE the same way the
+    # category check re-joins its label, by re-hashing the frozen plan the
+    # binding names and confirming the binding's every claim about it. A
+    # one-key `{"source":"frozen"}` is malformed, not a pass. The NAME comes
+    # from `cos.run_plan_binding_path`, the same call `tools/cos_mutate.py`
+    # writes through — round 6 had to move the same literal in two files.
+    path = binding_p
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return _row("plan_binding", INCONCLUSIVE,
+                    "this run dispatched mutations and the apply's plan "
+                    f"binding at {path.name} could not be read "
+                    f"({str(exc)[:120]}). Which plan reached the mailbox is "
+                    "unknown, and an unknown is not a pass",
+                    reexecuted=True)
+    if not isinstance(doc, dict):
+        return _row("plan_binding", FAIL,
+                    f"the plan binding at {path.name} is not a JSON object — a "
+                    "binding that is not even a record cannot say which plan "
+                    "reached the mailbox",
+                    reexecuted=True)
+    source = doc.get("source")
+    if source != "frozen":
+        return _row("plan_binding", FAIL,
+                    f"this run dispatched mutations under plan binding "
+                    f"{source!r}, not `frozen`. The plan that reached the "
+                    "mailbox is not the plan any rehearsal validated — which is "
+                    "the one thing the frozen artifact exists to make "
+                    "impossible",
+                    reexecuted=True)
+    # FULL SCHEMA — a `frozen` source with nothing behind it is the forgery
+    # shape, not a pass. The binding must NAME the plan, the rehearsal, the
+    # digest and the count, or there is nothing to re-join it to.
+    plan_ref = doc.get("plan")
+    reh_ref = doc.get("rehearsal")
+    stamped = doc.get("plan_digest")
+    planned = doc.get("planned")
+    bad = [k for k, v in (("plan", plan_ref), ("rehearsal", reh_ref),
+                          ("plan_digest", stamped))
+           if not isinstance(v, str) or not v.strip()]
+    # `type(... ) is int`, not `isinstance` — `True` IS an `int` in Python, so a
+    # binding carrying `"planned": true` satisfied a one-mutation join (round 7,
+    # Codex LOW). A negative count is not a count either.
+    if type(planned) is not int or planned < 0:
+        bad.append("planned")
+    if bad:
+        return _row("plan_binding", FAIL,
+                    "the plan binding claims `source: frozen` but is missing or "
+                    f"malformed on {', '.join(sorted(bad))} — a frozen binding "
+                    "must carry the plan it dispatched, the rehearsal that "
+                    "validated it, that plan's digest and its planned count, or "
+                    "it is a bare assertion with nothing behind it",
+                    reexecuted=True)
+    # THE JOIN. Re-hash the frozen plan the binding names, through the SAME
+    # loader the apply used (`load_frozen_plan` re-verifies the plan hashes to
+    # its own stamp), and confirm every claim the binding makes about it. The
+    # digest hash is imported, never restated — the engine holds ONE notion of
+    # a plan's identity.
+    mutate = _cos_mutate()
+    if mutate is None:
+        return _row("plan_binding", INCONCLUSIVE,
+                    "this run dispatched mutations but the mutation toolchain is "
+                    "not on disk beside the engine, so the host cannot re-hash "
+                    "the frozen plan to confirm the binding's digest — an "
+                    "unverifiable binding is not a pass",
+                    reexecuted=True)
+    plan_p = Path(plan_ref)
+    if not plan_p.is_file():
+        return _row("plan_binding", INCONCLUSIVE,
+                    f"this run's frozen plan at {plan_ref} is not on disk "
+                    "(evidence pruned, or the path the binding names is wrong), "
+                    "so the host cannot re-hash it to confirm the binding — an "
+                    "unverifiable binding is not a pass",
+                    reexecuted=True)
+    try:
+        plan = mutate.load_frozen_plan(plan_p)
+    except Exception as exc:                              # noqa: BLE001
+        return _row("plan_binding", FAIL,
+                    f"the frozen plan the binding names ({plan_ref}) is on disk "
+                    f"but does not hash to its own stamp: {str(exc)[:160]}. A "
+                    "binding that points at a tampered plan proves nothing about "
+                    "what reached the mailbox",
+                    reexecuted=True)
+    if plan.get("plan_digest") != stamped:
+        return _row("plan_binding", FAIL,
+                    "the plan binding's digest does not match the frozen plan it "
+                    "names — the binding claims a plan the plan file is not, so "
+                    "it is not evidence of which plan was dispatched",
+                    reexecuted=True)
+    if plan.get("run_id") != run_id:
+        return _row("plan_binding", FAIL,
+                    "the frozen plan the binding names was built for run "
+                    f"{plan.get('run_id')!r}, not {run_id!r} — a plan bound to "
+                    "another run is not this run's dispatched plan",
+                    reexecuted=True)
+    if len(plan.get("mutations") or []) != planned:
+        return _row("plan_binding", FAIL,
+                    "the plan binding's planned count disagrees with the frozen "
+                    "plan it names — the two do not describe one plan",
+                    reexecuted=True)
+    # The rehearsal must have named THIS digest — the same equality
+    # `_frozen_todo` enforces in `cos_mutate` before it dispatches.
+    reh_p = Path(reh_ref)
+    if not reh_p.is_file():
+        return _row("plan_binding", INCONCLUSIVE,
+                    f"the rehearsal the binding names ({reh_ref}) is not on disk, "
+                    "so the host cannot confirm the dispatched plan was "
+                    "rehearsed — an unverifiable binding is not a pass",
+                    reexecuted=True)
+    try:
+        reh = json.loads(reh_p.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return _row("plan_binding", FAIL,
+                    f"the rehearsal the binding names ({reh_ref}) could not be "
+                    f"read ({str(exc)[:120]}) — an unreadable rehearsal cannot "
+                    "prove the dispatched plan was rehearsed",
+                    reexecuted=True)
+    if not isinstance(reh, dict) or reh.get("plan_digest") != stamped:
+        return _row("plan_binding", FAIL,
+                    "the rehearsal the binding names validated a different plan "
+                    "digest — it proves nothing about the plan that reached the "
+                    "mailbox",
+                    reexecuted=True)
+    # AND THE PLAN IS JOINED TO WHAT WAS ACTUALLY DISPATCHED (review
+    # 2026-08-13, round 7). Everything above authenticates the binding against
+    # the plan file it NAMES — plan↔digest↔rehearsal, a closed triangle that
+    # never once looks at the mailbox rows. So a binding could name a real,
+    # rehearsed, correctly-hashed plan while the undo ledger recorded
+    # dispatches from a different one, and this control would call it FROZEN.
+    # The undo ledger is the record of what the lane sent, keyed exactly as the
+    # plan is: `conversation_id|verb`, per v4.7 (a move-time ItemId is a
+    # session handle, never an identity). Every dispatched row must be IN the
+    # plan.
+    #
+    # Only the plan's own verbs are joined. `restore` and `unchip` are the
+    # REVERSAL lane (`cos_mutate.undo_pass`/`unchip_pass`), which appends to the
+    # same run's ledger by design and is never in a plan — joining those would
+    # fail every run an operator undid.
+    #
+    # The ledger is append-only with one row per state TRANSITION, so it is
+    # counted in distinct KEYS — `intent` then `reconciled` for one archive is
+    # one mutation, not two.
+    # The key is DERIVED from `(conversation_id, verb)`, never read from the
+    # row's own `idempotency_key` (round 7, Codex). The ledger lives in the
+    # VM-writable ops zone, and preferring a supplied key let a row carry
+    # `conversation_id: cEVIL, idempotency_key: "cA|archive"` — an off-plan
+    # dispatch wearing an in-plan key, joined as covered. The honest producer
+    # writes `idempotency_key = f"{conv}|{verb}"` (cos_mutate.py), so deriving
+    # loses nothing on an honest row and refuses the forge. `verb` is still the
+    # trusted discriminator for the reversal-lane exclusion below, which is fine
+    # — an attacker relabelling a real mutation's verb to `restore` to duck the
+    # join makes it disappear from `plan_keys` too, changing nothing.
+    acted = {f"{r.get('conversation_id')}|{r.get('verb')}"
+             for r in _read_jsonl(ledger_p) if isinstance(r, dict)
+             and str(r.get("verb") or "") in mutate.MUTATION_VERBS}
+    plan_keys = {f"{m.get('conversation_id')}|{m.get('verb')}"
+                 for m in (plan.get("mutations") or []) if isinstance(m, dict)}
+    unbound = sorted(acted - plan_keys)
+    if unbound:
+        return _row("plan_binding", FAIL,
+                    f"{len(unbound)} mutation(s) in this run's undo ledger are "
+                    "NOT in the frozen plan the binding names "
+                    f"({', '.join(unbound[:5])}"
+                    + (", …" if len(unbound) > 5 else "")
+                    + "). The binding is bound to a plan the mailbox did not "
+                      "receive, so what reached the mailbox was never rehearsed",
+                    reexecuted=True)
+    # A frozen binding that PLANNED mutations but whose undo ledger records NONE
+    # of them is not a clean pass (round 7, Codex): the ledger lives in the
+    # VM-writable ops zone, so an empty join beside a >0 planned count and a
+    # run whose own metrics counters say it mutated is a REMOVED record, not a
+    # quiet apply. The join cannot see what a deleted or truncated ledger no
+    # longer holds, so it says so rather than acquitting on absence. A run that
+    # genuinely dispatched nothing (all blocked/449) has zero counters and is a
+    # real pass.
+    if planned > 0 and not acted:
+        did = mutation_counts(vault, run_id)
+        if did:
+            return _row("plan_binding", INCONCLUSIVE,
+                        f"this run's binding claims {planned} planned "
+                        "mutation(s) and its own metrics row records "
+                        + ", ".join(f"{k}={v}" for k, v in sorted(did.items()))
+                        + ", but its undo ledger joins ZERO of them — the "
+                          "record of what reached the mailbox is empty or gone, "
+                          "and an unverifiable dispatch is not a pass",
+                        reexecuted=True)
+    return _row("plan_binding", PASS,
+                f"the apply dispatched the FROZEN plan ({str(stamped)[:16]}…, "
+                f"{planned} planned), re-hashed from the frozen plan file, "
+                "bound by digest to the rehearsal that validated it, and joined "
+                f"to the {len(acted)} mutation(s) its undo ledger records",
+                reexecuted=True)
+
+
+def check_candidate_stamps(vault, run_id: str,
+                           rows: list[dict[str, Any]]) -> dict[str, Any]:
     """E16's stamp clause, checked where v5.39 put it: the LEDGER.
 
     The host joins a claimed drop back to its producing run by proposal id AND
     full content digest, so a candidate row with no id, a duplicate id, a
     malformed digest or an invented category is a candidate the host either
-    cannot attribute or must refuse."""
+    cannot attribute or must refuse.
+
+    AND A RUN THAT DROPPED NO PROPOSAL CANNOT BE CHECKED (review 2026-08-13,
+    round 2). The two stamps are read OFF A DROP: the id is the one
+    `brain cos-propose --json` returns and the digest is that proposal's own
+    content digest, which is what `cos.py`'s claim-time join keys on. A run that
+    staged candidates but dropped nothing has neither, and the round-1 answer —
+    mint an id from the run and hash the evidence span — produced keys the join
+    does not use, turning a truthful FAIL into a PASS naming a proposal that
+    does not exist. So a candidate row that says so (`proposals_dropped: false`,
+    the same fact `staging.candidate_stamps` skips on) makes this control
+    DEGRADED-and-inapplicable rather than green: the run is still valid, and the
+    missing producer stays visible on every report until the lane exists.
+    """
     candidates = [r for r in rows if r.get("disposition") == "candidate"]
     if not candidates:
         return _row("candidate_stamps", PASS,
                     "no candidate rows in this run's ledger — nothing to stamp",
+                    reexecuted=True)
+    # APPLICABILITY IS DERIVED, AND A DENIAL BESIDE EVIDENCE IS A FAIL (review
+    # 2026-08-13, round 2, K2). The flag alone used to decide, and nothing in
+    # production could set it True — so this control short-circuited on a value
+    # that was a constant, before inspecting one proposal id or digest. Now the
+    # HOST's own record answers first (`cos.run_proposal_drops`: the pending
+    # metas and quarantined claims it wrote when it took delivery, neither of
+    # which the run can forge), and the row's own stamps answer beside it.
+    #
+    # Three ways this can go, and only one of them is "does not apply":
+    #   flag false + host silent + no stamps -> inapplicable, and SAID so
+    #   flag false + (host receipt or stamps) -> CONTRADICTION, hard FAIL
+    #   anything else                         -> score the stamps
+    denied = all(r.get("proposals_dropped") is False for r in candidates)
+    host_drops = 0
+    host_why = ""
+    try:
+        record = cos.run_proposal_drop_record(vault, run_id)
+        host_drops = record["drops"]
+        # A DAMAGED RECEIPT IS NOT A ZERO (review 2026-08-13, round 5, H6). The
+        # loaders used to skip a receipt they could not parse, so an unreadable
+        # or half-written one arrived here as "the host recorded no drops" —
+        # the exact branch below that makes this control inapplicable. K2 then
+        # failed OPEN on corruption: damage the receipt, and a candidate row
+        # denying a drop it made is waved through as "does not apply".
+        if record["malformed"]:
+            host_why = (
+                f"{record['malformed']} of the host's drop receipt(s) are "
+                "unreadable or incomplete. An unreadable receipt carries no "
+                "run id, so it can be attributed to no run — including this "
+                "one — and reading it as an absence is how this control "
+                "used to pass on damaged evidence")
+    except Exception as exc:                                      # noqa: BLE001
+        # The host record could not be read, so applicability is UNKNOWN — and
+        # an unknown applicability may not be reported as "does not apply".
+        host_why = f"the host's drop record could not be read: {str(exc)[:120]}"
+    stamped = [r for r in candidates if _drop_stamped(r)]
+    if denied and (host_drops or stamped or host_why):
+        if host_why:
+            return _row("candidate_stamps", INCONCLUSIVE,
+                        f"{len(candidates)} candidate row(s) say this run "
+                        f"dropped no proposal, and {host_why}. Whether this "
+                        "control applies is unknown, and an unknown "
+                        "applicability is not an inapplicability",
+                        reexecuted=False)
+        return _row("candidate_stamps", FAIL,
+                    f"{len(candidates)} candidate row(s) claim "
+                    "`proposals_dropped: false` while the drop they deny is on "
+                    "record: "
+                    + "; ".join(filter(None, [
+                        f"the host took delivery of {host_drops} candidate(s) "
+                        f"for this run" if host_drops else "",
+                        f"{len(stamped)} row(s) carry drop stamps "
+                        f"({', '.join(sorted(set(k for r in stamped for k in _drop_stamped(r))))})"
+                        if stamped else ""]))
+                    + ". The flag short-circuits this whole control, so a "
+                      "producer that denies a drop it made would hide every "
+                      "duplicate id and digest mismatch behind 'does not "
+                      "apply' — that is the failure this refuses",
+                    reexecuted=True)
+    if denied:
+        return _row("candidate_stamps", DEGRADED,
+                    f"{len(candidates)} candidate row(s) staged; this run "
+                    "dropped no proposal and the HOST's own record agrees (0 "
+                    "pending metas, 0 quarantined claims for this run). "
+                    "`proposal_id` and `content_sha256` are read off the drop "
+                    "the host takes delivery of, so there is nothing here to "
+                    "attribute and this control does NOT apply. It is not a "
+                    "pass: minting an id from the run and a digest of the "
+                    "evidence span would name a proposal that does not exist, "
+                    "and the claim-time join would quarantine every one of them",
                     reexecuted=True)
     problems: list[str] = []
     seen: dict[str, int] = {}
@@ -2754,6 +3462,31 @@ def verify_run(vault, run_id: str, *, now: _dt.datetime | None = None,
     out: dict[str, Any] = {"run_id": run_id, "verdict": None, "state": "pending",
                            "reason": "", "checks": [], "inputs_digest": None}
 
+    # A RUN RECORD IN TWO PLACES IS NOT A RUN THIS CAN SCORE (gap-05). The
+    # manifest, the verdict and the plan binding moved off the VirtioFS mount
+    # on 2026-08-16 and were carried forward once; anything left behind is
+    # either a refused conflict (the two copies disagree) or a file written
+    # into a VM-writable directory the validator used to trust. Preferring
+    # either copy is the silent choice this relocation exists to prevent, so
+    # the run is INCONCLUSIVE and says which files did it. Scoped to the RUN:
+    # one planted file must not stop every other night being verified.
+    intruders = cos.run_record_intruders(vault, run_id)
+    if intruders:
+        why = (f"run records for this run also exist in the legacy on-mount "
+               f"directory {cos.legacy_runs_dir(vault)} "
+               f"({', '.join(sorted(intruders))}), disagreeing with the "
+               "host-private copy or written after the carry-forward. That "
+               "directory is inside the Cowork workspace, which is why the "
+               "store was moved out of it — and choosing between two copies of "
+               "a run's own manifest, verdict or plan binding is not this "
+               "validator's call")
+        out.update(state="scored", verdict=cos.RUN_INCONCLUSIVE, reason=why,
+                   checks=[_row("completion", INCONCLUSIVE,
+                                "run records present in BOTH the host-private "
+                                "store and the legacy on-mount directory",
+                                reexecuted=True)])
+        return out
+
     manifest = cos.run_manifest(vault, run_id)
     if manifest is None:
         # NAME WHICH OF THE TWO IT IS. A malformed id (`106` for
@@ -2818,18 +3551,10 @@ def verify_run(vault, run_id: str, *, now: _dt.datetime | None = None,
     checks.append(check_body_order(run_id, rows))
     checks.append(check_body_open_count(run_id, rows, row))
     acts = action_rows(vault, run_id)
-    # Corroborated ONCE and handed to both controls: an empty action ledger is
-    # "nothing acted" only if the run's own counters agree (run 106 did not).
-    unledgered = unledgered_mutations(vault, run_id, acts)
-    checks.append(check_unread_touch(run_id, acts, unledgered))
-    checks.append(check_target_identity(run_id, acts, unledgered))
     checks.append(check_open_instrumentation(vault, run_id, rows, acts))
-    checks.append(check_chip_reeval_draw(
-        run_id, chip_rows(vault, run_id), hold_rows(vault, run_id),
-        prior_reeval_stamps(vault, run_id),
-        bundle=str(manifest.get("bundle_version") or "")))
+    checks.append(check_plan_binding(vault, run_id))
     checks.append(check_corpus_join(vault, run_id, rows))
-    checks.append(check_candidate_stamps(run_id, rows))
+    checks.append(check_candidate_stamps(vault, run_id, rows))
     checks.append(check_artifact_naming(vault, run_id))
     checks.append(check_degrade_consistency(evidence))
     contract_row, _ = check_contract(vault, run_id, contract_mod, recon, evidence)
@@ -2842,7 +3567,13 @@ def verify_run(vault, run_id: str, *, now: _dt.datetime | None = None,
 
 
 def known_run_ids(vault) -> list[str]:
-    """Every run the host has a manifest for, newest run number first."""
+    """Every run the host has a manifest for, newest run number first.
+
+    Carries the on-mount records forward first (gap-05): this is the enumerator
+    the hourly fold and `brain cos-run-verify` start from, and on a host that
+    has not written a manifest since the relocation it would otherwise report
+    an empty history for runs whose manifests are sitting one directory away."""
+    cos.migrate_run_records(vault)
     d = cos.runs_dir(vault)
     if not d.is_dir():
         return []

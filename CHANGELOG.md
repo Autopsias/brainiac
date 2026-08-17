@@ -7,6 +7,26 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.14] — 2026-08-17
+### Added
+- **PRV-10 — a Cowork session can now create a whole new vault** (owner
+  ruling 2026-08-16: automatic, loudly reported). New VM_ALLOWED verb
+  `brain provision-request` stages a plain-file marker
+  (`vault/.brain/provision-request.json`); the new host verb
+  `brain provision-drain` — also a fold on every registered vault's hourly
+  `brain maintain` daily branch — scans registered-workspace parents and
+  completes each request: `init --full --apply` (key check + per-vault
+  nightly + seeding), local model staging, `sync --publish`, registry
+  upsert. Outcome lands beside the marker as `provision-result.json`. The
+  vault path derives from the marker's LOCATION, never its contents;
+  registered vaults are never re-provisioned; the first vault on a machine
+  still needs one host `/brainiac-install`.
+### Changed
+- **S07 gap closed:** the workspace-registry helper moved into the wheel
+  (`brain.workspaces`); `tools/workspace_registry.py` is now a re-export
+  shim, so skill imports keep working and the installed engine (and the
+  provision drain inside it) no longer needs a checkout to reach it.
+
 ## [0.20.13] — 2026-08-16
 ### Fixed
 - **`brain update` ran the OLD code after upgrading the engine underneath

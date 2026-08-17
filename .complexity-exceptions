@@ -71,6 +71,11 @@
       "complexity": 25
     },
     {
+      "file": "tools/cos_batch_chunk.py",
+      "function": "do_split",
+      "complexity": 25
+    },
+    {
       "file": "eval/s09_fusion_drop_trace.py",
       "function": "main",
       "complexity": 24
@@ -106,6 +111,16 @@
       "complexity": 23
     },
     {
+      "file": "tools/cos_mutate.py",
+      "function": "_apply_pass_locked",
+      "complexity": 23
+    },
+    {
+      "file": "tools/cos_mutate.py",
+      "function": "build_plan",
+      "complexity": 23
+    },
+    {
       "file": "eval/capture_run.py",
       "function": "main",
       "complexity": 22
@@ -126,6 +141,21 @@
       "complexity": 21
     },
     {
+      "file": "tools/cos_driver.py",
+      "function": "main",
+      "complexity": 21
+    },
+    {
+      "file": "tools/cos_model_answer.py",
+      "function": "project_row",
+      "complexity": 21
+    },
+    {
+      "file": "src/brain/cos_runverify.py",
+      "function": "check_plan_binding",
+      "complexity": 20
+    },
+    {
       "file": "src/brain/invariants.py",
       "function": "cross_tier_duplicates",
       "complexity": 20
@@ -138,6 +168,11 @@
     {
       "file": "tools/bulk_link_check.py",
       "function": "check_batch",
+      "complexity": 20
+    },
+    {
+      "file": "tools/cos_mutate.py",
+      "function": "main",
       "complexity": 20
     },
     {
@@ -193,6 +228,16 @@
     {
       "file": "src/brain/healthreport.py",
       "function": "collect_health_report_data",
+      "complexity": 18
+    },
+    {
+      "file": "tools/cos_judge.py",
+      "function": "judge_night",
+      "complexity": 18
+    },
+    {
+      "file": "tools/cos_verify_doctrine.py",
+      "function": "audit",
       "complexity": 18
     },
     {
@@ -336,6 +381,16 @@
       "complexity": 15
     },
     {
+      "file": "src/brain/cos.py",
+      "function": "migrate_run_records",
+      "complexity": 15
+    },
+    {
+      "file": "src/brain/cos_runverify.py",
+      "function": "check_open_instrumentation",
+      "complexity": 15
+    },
+    {
       "file": "src/brain/graphify.py",
       "function": "build_inferred_edges",
       "complexity": 15
@@ -353,6 +408,11 @@
     {
       "file": "tools/cos_lane_rehearsal.py",
       "function": "contract_problems",
+      "complexity": 15
+    },
+    {
+      "file": "tools/cos_mutate.py",
+      "function": "shapes_from_capture",
       "complexity": 15
     },
     {
@@ -382,7 +442,7 @@
     },
     {
       "file": "src/brain/cos_runverify.py",
-      "function": "check_open_instrumentation",
+      "function": "check_candidate_stamps",
       "complexity": 14
     },
     {
@@ -416,13 +476,18 @@
       "complexity": 14
     },
     {
-      "file": "src/brain/update.py",
-      "function": "restage_workspaces",
+      "file": "tests/test_cos_pathguard.py",
+      "function": "_raw_write_offenders",
       "complexity": 14
     },
     {
-      "file": "tests/test_cos_pathguard.py",
-      "function": "_raw_write_offenders",
+      "file": "tools/cos_judge.py",
+      "function": "main",
+      "complexity": 14
+    },
+    {
+      "file": "tools/cos_model_answer.py",
+      "function": "extract_answer",
       "complexity": 14
     },
     {
@@ -461,6 +526,11 @@
       "complexity": 13
     },
     {
+      "file": "src/brain/cos_echecks.py",
+      "function": "_e10",
+      "complexity": 13
+    },
+    {
       "file": "src/brain/cos_runverify.py",
       "function": "check_ledger_vocabulary",
       "complexity": 13
@@ -496,13 +566,33 @@
       "complexity": 13
     },
     {
+      "file": "src/brain/update.py",
+      "function": "restage_workspaces",
+      "complexity": 13
+    },
+    {
       "file": "tools/cos_deployed_version.py",
       "function": "main",
       "complexity": 13
     },
     {
+      "file": "tools/cos_ground.py",
+      "function": "extract_domain",
+      "complexity": 13
+    },
+    {
+      "file": "tools/cos_ground.py",
+      "function": "fetch",
+      "complexity": 13
+    },
+    {
       "file": "tools/cos_lane_rehearsal.py",
       "function": "rehearse",
+      "complexity": 13
+    },
+    {
+      "file": "tools/cos_model_answer.py",
+      "function": "extract_objects",
       "complexity": 13
     },
     {

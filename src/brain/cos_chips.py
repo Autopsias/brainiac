@@ -28,13 +28,58 @@ from typing import Any, Iterable, Protocol
 CHIP_P0 = "P0 · Now"          # red
 CHIP_P1 = "P1 · Today"        # orange
 CHIP_P2 = "P2 · This week"    # blue
-CHIPS = (CHIP_P0, CHIP_P1, CHIP_P2)
+CHIP_P3 = "P3 · Read"         # grey — ADDITIVE fourth name (DOCTRINE v7 §4)
+CHIPS = (CHIP_P0, CHIP_P1, CHIP_P2, CHIP_P3)
 LEGACY_ACTION = "Action"
 #: every category this projection owns and may add/remove; anything else on a
 #: message belongs to the owner and must survive every write untouched.
 MANAGED_CATEGORIES = frozenset(CHIPS) | {LEGACY_ACTION}
 
-CHIP_COLORS = {CHIP_P0: "red", CHIP_P1: "orange", CHIP_P2: "blue"}
+CHIP_COLORS = {CHIP_P0: "red", CHIP_P1: "orange", CHIP_P2: "blue",
+               CHIP_P3: "grey"}
+
+# --------------------------------------------------------------------------
+# THE CHIP IS A (bucket, tier) MATRIX, NEVER A TIER LOOKUP (DOCTRINE v7 §4.1)
+# --------------------------------------------------------------------------
+#: A tier-only lookup cannot express the v7 policy at all: `read`/P2 must become
+#: `P3 · Read` while `act`/P2 stays `P2 · This week` — the SAME tier, a
+#: different chip — and it has no answer for `act`/P3, which is legal and real
+#: (`triage.p3_act_needs_direct_ask`: a P3 sender reaches `act` on an unanswered
+#: direct ask). So the axis that decides FIRST is the bucket.
+#:
+#: `act`/P3 is deliberately chipped `P3 · Read`, the ONE cell where the chip's
+#: word is weaker than the verdict, and the reason is a RATCHET: the driver
+#: reads a managed chip back as that chip's tier (`cos_driver.CHIP_TIER`) and
+#: §3.1 keeps that tier when the priority map names none, so chipping a P3 act
+#: row `P2 · This week` would PERMANENTLY promote a P3 sender on the next
+#: night. The action is carried where it cannot ratchet — the brief's REQUIRED
+#: ACTIONS line and the reply draft.
+#:
+#: `noise` gets NO chip at any tier: it is the archive-eligible bucket (§4.2).
+#: THIS IS THE ONE DEFINITION. `tools/cos_mutate.py` imports it rather than
+#: keeping a second copy — a chip policy in two files is one policy and one
+#: rumour, and the rumour is the one the mailbox sees.
+CHIP_FOR: dict[tuple[str, str], str] = {
+    ("act", "P0"): CHIP_P0,
+    ("act", "P1"): CHIP_P1,
+    ("act", "P2"): CHIP_P2,
+    ("act", "P3"): CHIP_P3,
+    ("read", "P0"): CHIP_P0,
+    ("read", "P1"): CHIP_P1,
+    ("read", "P2"): CHIP_P3,
+    ("read", "P3"): CHIP_P3,
+}
+
+
+def chip_for(bucket: Any, tier: Any) -> str | None:
+    """The ONE chip for a (bucket, tier) pair, or ``None`` when the matrix
+    assigns none — every `noise` cell, and any pair outside the closed
+    vocabularies (an unjudged row, an invented bucket, a missing tier).
+
+    Never raises: an unknown pair is "no chip", which is the only safe answer
+    a mutation lane can act on.
+    """
+    return CHIP_FOR.get((str(bucket or ""), str(tier or "")))
 
 
 # --------------------------------------------------------------------------
@@ -56,6 +101,13 @@ def assign_chip(
     P1 · Today     = a direct ask on the owner.
     P2 · This week = every other act row.
     Roster tier alone NEVER makes P0.
+
+    THIS IS THE EVIDENCE LADDER, NOT THE v7 MATRIX. It answers "how urgent is
+    this act row, from deadlines and roster", and it still opens `if bucket !=
+    "act": return None` on purpose — a `read` row has no urgency evidence to
+    rank. The v7 owner-surface policy is `chip_for(bucket, tier)` above, which
+    is what the mutation lane uses; this function keeps its own job, and
+    `P3 · Read` is deliberately outside its range.
     """
     if bucket != "act":
         return None
@@ -185,7 +237,13 @@ def recover_from_journal(
 #: (thread-closed / meeting-passed / handled-by-others) may only de-escalate.
 CLEAR_TRIGGER = "owner_reply_is_latest_no_open_items"
 DEESCALATE_TRIGGERS = frozenset({"thread_closed", "meeting_passed", "handled_by_others"})
-_DEESCALATE_STEP = {CHIP_P0: CHIP_P1, CHIP_P1: CHIP_P2, CHIP_P2: CHIP_P2}
+#: P3 · Read is the FLOOR of the de-escalation ladder, not a step past P2:
+#: de-escalating into it would hand a `read`-bucket word to an `act` row on a
+#: signal (`thread_closed`) that §4.1 says may only lower urgency, never change
+#: what the thread IS. `assign_chip` cannot return it either, so the entry
+#: exists to make the floor explicit rather than to be reached by that path.
+_DEESCALATE_STEP = {CHIP_P0: CHIP_P1, CHIP_P1: CHIP_P2, CHIP_P2: CHIP_P2,
+                    CHIP_P3: CHIP_P3}
 
 
 def desired_chip_and_trigger(

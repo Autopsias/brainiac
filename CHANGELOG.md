@@ -7,6 +7,64 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.15] — 2026-08-17
+
+### Changed
+- **The MCP transport no longer caps retrieval at `Internal`** (owner ruling
+  2026-08-17). `brain-mcp` runs on the host, as the owner, over a
+  single-owner vault — the CLI's trust context, which has resolved the full
+  vault since 2026-07-10 — but it borrowed the VM leg's conservative tier in
+  seven places plus the connector stanza. Measured: a search returning
+  Internal-only now returns Restricted + Internal + MNPI, 0 withheld. Narrow
+  per deployment with `$BRAIN_MAX_EGRESS_TIER`. An UNSET var means the full
+  vault; a SET-BUT-UNRECOGNISED one still fails CLOSED to `Internal`, since
+  the only reason to set it is to narrow the gate.
+- **A vault may raise its own Cowork ceiling** via a staged
+  `<vault>/.brain/vm-egress-tier` file, read by the session bootstrap. The
+  shipped `role=vm` default is unchanged. It records an owner decision rather
+  than enforcing one — the file is on the VM-writable mount, and that limit is
+  documented at both sites.
+### Fixed
+- **Tests could write the developer's live `claude_desktop_config.json`.** The
+  new MCP registration is best-effort and never raises, so the drain's own
+  tests silently added five servers pointing at pytest tmp dirs. Suite-wide
+  guard added; the real path resolver stays reachable for the one test that
+  verifies it.
+
+### Added
+- **A newly provisioned vault now registers its own Claude Desktop MCP
+  server**, named per vault (`brainiac-<workspace>`), merged into the
+  existing `mcpServers` map. Without it a vault staged, indexed and
+  registered correctly and was still unreachable from the Desktop Chat tab
+  and Cowork's MCP-on-host retrieval path.
+- **`doctor` flags an MCP server whose vault path no longer exists.** Such a
+  server does not fail — `index_dir()` hashes the vault PATH, so it keeps
+  answering from whatever index sits at the old hash. Found live: an entry
+  five weeks stale, serving 2266 frozen notes against a live 2552.
+### Added
+- **A client-name gate at COMMIT time** (`tools/check_client_names.py`,
+  pre-commit hook `client-names`). A real client name reached six shipped
+  `tools/cos_*` files between v0.20.13 and v0.20.14 and only the RELEASE
+  contamination scan caught it, a day later — gitleaks finds secrets, not
+  client names. Same whole-word fixed-string semantics as
+  `publish_release.py`'s scan, over staged files only. Skips with an
+  ANNOUNCED message when the external denylist is absent (CI); never
+  silently. Verified against the real pre-fix file: it fires on the exact
+  leaking line.
+### Fixed
+- **An empty corpus is no longer counted as an unguarded ingest (ENF-04).**
+  The tier guard's `unavailable` meant both "could not run" (a defect) and
+  "ran, and the corpus held nothing comparable" (safe — a cross-tier leak
+  needs an existing higher-tier near-duplicate, and there was none). Since
+  `unguarded_ingests` ratchets against a floor of 0, every brand-new vault's
+  FIRST document tripped it: a watchdog firing on the normal case. New
+  `no_corpus` status, stamped on the note and counted on its own row, never
+  inside `value`. The sentinel it keys on is set only after the index opened
+  AND the query succeeded, so a genuine failure can never be silenced —
+  pinned by tests in both directions. Pre-split notes keep their
+  `unavailable` stamp (`raw/` is immutable) and are classified from their own
+  recorded reason.
+
 ## [0.20.14] — 2026-08-17
 ### Added
 - **PRV-10 — a Cowork session can now create a whole new vault** (owner

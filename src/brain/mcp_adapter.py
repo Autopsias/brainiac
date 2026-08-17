@@ -33,18 +33,30 @@ READ_TOOLS = ("search", "get", "recent", "bases_query", "dossier", "vault_langua
 # still request something NARROWER than the ceiling (always honored); it can
 # never request higher.
 EGRESS_CEILING_ENV_VAR = "BRAIN_MAX_EGRESS_TIER"
-DEFAULT_EGRESS_CEILING_TIER = cls.VM_DEFAULT_MAX_TIER
-# MCP is an unattended LLM-facing transport, even when its process runs on the
-# host. Keep its unset ceiling conservative; an operator may raise it only via
-# the out-of-band environment variable.
+DEFAULT_EGRESS_CEILING_TIER = cls.HOST_MCP_DEFAULT_MAX_TIER
+# The ceiling for the HOST MCP transport is the full vault (owner ruling
+# 2026-08-17). `brain-mcp` runs on the host, as the owner, over a
+# single-owner vault — the same trust context the CLI already resolves in
+# full since 2026-07-10. Borrowing the VM leg's conservative tier here was
+# measured starvation: Confidential/Restricted notes are where a curated
+# vault keeps its substance, so Desktop and Cowork's MCP-on-host path saw
+# only scraps. An operator narrows it back with $BRAIN_MAX_EGRESS_TIER; the
+# clamp below still binds whatever that resolves to.
 
 
 def _egress_ceiling_tier() -> str:
-    """The operator-configured hard ceiling for MCP egress. Unset or an
-    unrecognised value falls back to the conservative default — fail-closed,
-    never fail-open on a typo'd env var."""
-    raw = os.environ.get(EGRESS_CEILING_ENV_VAR, DEFAULT_EGRESS_CEILING_TIER).strip()
-    return raw if raw in cls.RANK else DEFAULT_EGRESS_CEILING_TIER
+    """The operator-configured hard ceiling for MCP egress.
+
+    UNSET means the shipped default: the full vault, same as the host CLI
+    (owner ruling 2026-08-17). A SET-BUT-UNRECOGNISED value is different and
+    stays fail-CLOSED at the conservative tier: the only reason to set this
+    var is to NARROW the gate, so a typo must never silently hand back more
+    than the operator asked for — which is exactly what falling back to the
+    permissive default would do."""
+    raw = os.environ.get(EGRESS_CEILING_ENV_VAR, "").strip()
+    if not raw:
+        return DEFAULT_EGRESS_CEILING_TIER
+    return raw if raw in cls.RANK else cls.VM_DEFAULT_MAX_TIER
 
 
 def _clamp_max_tier(requested_tier: str) -> str:
@@ -278,7 +290,7 @@ def serve(vault: str | None = None) -> None:  # pragma: no cover - transport glu
     server = FastMCP("brain")
 
     @server.tool()
-    def vault_languages(max_tier: str = cls.VM_DEFAULT_MAX_TIER) -> dict:  # noqa: ARG001
+    def vault_languages(max_tier: str = cls.HOST_MCP_DEFAULT_MAX_TIER) -> dict:  # noqa: ARG001
         """Which languages this vault holds (the derived language census).
 
         CALL THIS BEFORE YOUR FIRST `search` in a session. When
@@ -290,7 +302,7 @@ def serve(vault: str | None = None) -> None:  # pragma: no cover - transport glu
 
     @server.tool()
     def search(query: str, variants: list[str] | None = None, k: int = 10,
-               max_tier: str = cls.VM_DEFAULT_MAX_TIER) -> dict:
+               max_tier: str = cls.HOST_MCP_DEFAULT_MAX_TIER) -> dict:
         """Hybrid (BM25+dense) retrieval over the vault, egress-filtered.
 
         MULTILINGUAL VAULTS — pass `variants`. `vault_languages` says which
@@ -322,7 +334,7 @@ def serve(vault: str | None = None) -> None:  # pragma: no cover - transport glu
                                    "k": k, "max_tier": max_tier}, core=core)
 
     @server.tool()
-    def get(id: str, max_tier: str = cls.VM_DEFAULT_MAX_TIER) -> dict:
+    def get(id: str, max_tier: str = cls.HOST_MCP_DEFAULT_MAX_TIER) -> dict:
         """Fetch one full note by id, egress-filtered. Inspect
         `superseded_by` / `previous_version` / `is_latest_version` on the
         result to walk a version chain ("previous version", "what replaced
@@ -330,7 +342,7 @@ def serve(vault: str | None = None) -> None:  # pragma: no cover - transport glu
         return dispatch("get", {"id": id, "max_tier": max_tier}, core=core)
 
     @server.tool()
-    def recent(n: int = 10, max_tier: str = cls.VM_DEFAULT_MAX_TIER) -> dict:
+    def recent(n: int = 10, max_tier: str = cls.HOST_MCP_DEFAULT_MAX_TIER) -> dict:
         """List the most recently created/updated notes, egress-filtered —
         the cheapest way to see what entered the vault lately (use after a
         search whose freshness block reported newer sources)."""
@@ -338,7 +350,7 @@ def serve(vault: str | None = None) -> None:  # pragma: no cover - transport glu
 
     @server.tool()
     def dossier(query: str, k: int = 12,
-                max_tier: str = cls.VM_DEFAULT_MAX_TIER) -> dict:
+                max_tier: str = cls.HOST_MCP_DEFAULT_MAX_TIER) -> dict:
         """THE ONE-CALL SWEEP for decision-state questions ("what have we
         decided", "latest decisions", "current state of X"). Returns the
         decision layer and the sources under consideration SEPARATED, with
@@ -352,7 +364,7 @@ def serve(vault: str | None = None) -> None:  # pragma: no cover - transport glu
     @server.tool()
     def bases_query(where: dict | None = None, k: int = 50,
                     latest_only: bool = False, as_of: str = "",
-                    max_tier: str = cls.VM_DEFAULT_MAX_TIER) -> dict:
+                    max_tier: str = cls.HOST_MCP_DEFAULT_MAX_TIER) -> dict:
         """Structured frontmatter query (no embedding), egress-filtered.
         `where` filters exact frontmatter keys (e.g. {"type": "decision"}).
         TEMPORAL ROUTING: for "what's current/latest" use latest_only=True

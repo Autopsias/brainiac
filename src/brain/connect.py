@@ -188,14 +188,21 @@ def _dump_json(data: dict) -> str:
     return json.dumps(data, indent=2) + "\n"
 
 
-def mcp_server_entry(vault: str, name: str = "brainiac", max_tier: str = "Internal") -> dict:
+def mcp_server_entry(vault: str, name: str = "brainiac",
+                     max_tier: str | None = None) -> dict:
     """The SAME entry shape ``brain mcp-config`` prints (cli.py) — the one
     place this shape is built; both the print-only command and this writer
     call it so they can never drift apart."""
     import sys as _sys
 
     brain_mcp = shutil.which("brain-mcp") or str(Path(_sys.executable).parent / "brain-mcp")
-    env = {"BRAIN_VAULT": str(vault), "BRAIN_MAX_EGRESS_TIER": max_tier}
+    # Default = the host full-vault tier (owner ruling 2026-08-17). A stanza
+    # baking "Internal" is what made every freshly connected vault answer
+    # from scraps; the caller may still pass an explicit narrower tier.
+    from .classification import HOST_MCP_DEFAULT_MAX_TIER
+
+    env = {"BRAIN_VAULT": str(vault),
+           "BRAIN_MAX_EGRESS_TIER": max_tier or HOST_MCP_DEFAULT_MAX_TIER}
     model_dir = Path(vault) / ".brain" / "model"
     if model_dir.is_dir():
         env["BRAIN_MODEL_CACHE"] = str(model_dir)
@@ -215,7 +222,7 @@ def claude_desktop_config_path() -> Path:
 
 
 def plan_claude_desktop(config_path: Path, vault: str, name: str = "brainiac",
-                         max_tier: str = "Internal") -> ConnectPlan:
+                         max_tier: str | None = None) -> ConnectPlan:
     old_data = _load_json(config_path)
     entry = mcp_server_entry(vault, name, max_tier)
     new_data = dict(old_data)

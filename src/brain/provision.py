@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -213,6 +214,46 @@ def _stage_cowork_runtime(vault: Path, model_src: Path | None, *,
     return {"status": "staged", "checkout": str(checkout), "elfs": elfs}
 
 
+def mcp_server_name(workspace: Path) -> str:
+    """A per-vault MCP server name derived from the workspace folder.
+
+    NOT the bare default `brainiac`: that name is a single global slot, so a
+    second vault registering under it would silently repoint Claude Desktop
+    away from the first. One vault, one server, one name.
+    """
+    slug = re.sub(r"[^a-z0-9]+", "-", workspace.name.lower()).strip("-")
+    return f"brainiac-{slug}" if slug else "brainiac"
+
+
+def register_mcp(vault: Path, workspace: Path, *,
+                 max_tier: str = "Internal") -> dict[str, Any]:
+    """Register this vault as its own Claude Desktop MCP server.
+
+    Without this a newly provisioned vault is unreachable from the Desktop
+    Chat tab and from Cowork's MCP-on-host retrieval path — the vault
+    installs, stages and indexes correctly and still cannot be queried, which
+    is exactly what a new vault looked like before 2026-08-17.
+
+    Idempotent and additive: `plan_claude_desktop` MERGES into the existing
+    `mcpServers` map and reports `noop` when the entry already matches, so
+    re-running never disturbs another vault's server or any unrelated one.
+    """
+    from . import connect as _connect
+
+    try:
+        cfg = _connect.claude_desktop_config_path()
+        name = mcp_server_name(workspace)
+        plan = _connect.plan_claude_desktop(cfg, str(vault), name, max_tier)
+        if plan.already_connected:
+            return {"status": "already-registered", "name": name, "config": str(cfg)}
+        _connect.apply_json_merge(plan)
+        return {"status": "registered", "name": name, "config": str(cfg),
+                "max_tier": max_tier,
+                "note": "restart Claude Desktop for the new server to appear"}
+    except Exception as exc:  # noqa: BLE001 — never fail a provision over this
+        return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+
+
 def _provision_one(vault: Path, workspace: Path, *, entries: list[dict],
                    registered_vaults: set[Path],
                    registry_path: Path, lock_path: Path,
@@ -258,6 +299,10 @@ def _provision_one(vault: Path, workspace: Path, *, entries: list[dict],
             model_dir=str(vault / ".brain" / "model"),
             registry_path=registry_path, lock_path=lock_path)
         targets = "host + cowork-vm"
+    # The MCP registration is what makes the vault reachable from the Desktop
+    # Chat tab and Cowork's MCP-on-host path. A vault that indexes perfectly
+    # and has no server entry is invisible to both.
+    res["mcp"] = register_mcp(vault, workspace)
     res["registry"] = f"recorded ({targets})"
     res.update({"status": "provisioned", "ok": sync_ok})
     if cowork["status"] != "staged":

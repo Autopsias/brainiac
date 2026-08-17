@@ -393,6 +393,7 @@
     "tools/build_brain_binary.sh",
     "tools/build_brain_binary_linux.sh",
     "tools/bulk_link_check.py",
+    "tools/check_client_names.py",
     "tools/check_complexity.py",
     "tools/check_file_sizes.py",
     "tools/check_function_lengths.py",
@@ -463,5 +464,5 @@
     "vault/raw/2026-06-27-arctic-vs-e5-benchmark.md",
     "vault/raw/README.md"
   ],
-  "count": 462
+  "count": 463
 }

@@ -45,6 +45,20 @@ if DEFAULT_MAX_TIER not in RANK:
 # raise it past the operator-owned VM_EGRESS_CEILING_ENV below.
 VM_DEFAULT_MAX_TIER = "Internal"
 
+# Default egress cap for the HOST MCP transport (owner ruling 2026-08-17).
+# It is the SAME full vault the host CLI resolves, and for the same reason —
+# extended to MCP because the 2026-07-10 ruling fixed only the CLI while
+# `brain-mcp` kept borrowing VM_DEFAULT_MAX_TIER above. That was measured
+# starvation, not caution: a curated vault keeps its load-bearing notes at
+# Confidential/Restricted, so Claude Desktop and Cowork's MCP-on-host path
+# answered from Public+Internal scraps and the vault could not work as a
+# second brain. `brain-mcp` runs ON THE HOST, as the owner, over the owner's
+# own single-owner vault — the same trust context as the CLI, so the same
+# default. A deployment that wants the conservative cap sets
+# $BRAIN_MAX_EGRESS_TIER; the trifecta break is unchanged and still lives at
+# the role=vm boundary below, never on the owner's own host.
+HOST_MCP_DEFAULT_MAX_TIER = DEFAULT_MAX_TIER
+
 # Hard server-side ceiling for the untrusted VM leg (codex 2026-07-19). On
 # role=vm, --max-tier is a caller-controlled argument the LLM can set itself;
 # without a clamp the egress-starvation hint ("re-run with --max-tier

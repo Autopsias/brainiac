@@ -492,6 +492,45 @@ def check_stale_name_plugins(claude_home: Path) -> list[dict]:
 # scheme that a locally side-loaded .mcpb won't share.
 # --------------------------------------------------------------------------
 
+def check_mcp_vault_paths(config_path: Optional[Path] = None) -> list[dict]:
+    """Every brainiac MCP server points at a vault that EXISTS (2026-08-17).
+
+    A stale entry does not fail loudly — it keeps answering, from whatever
+    index still sits at the old path's hash. Measured here: the registered
+    server pointed at a vault moved five weeks earlier, and Claude Desktop had
+    been served from a frozen index with 286 fewer notes the whole time.
+    Results came back, so nothing looked wrong.
+
+    Only `brain-mcp` servers are judged; other MCP servers are none of this
+    engine's business.
+    """
+    from . import connect as _connect
+
+    rows: list[dict] = []
+    cfg = config_path or _connect.claude_desktop_config_path()
+    data = _read_json(cfg) or {}
+    servers = data.get("mcpServers") or {}
+    for name, entry in sorted(servers.items()):
+        if "brain-mcp" not in str((entry or {}).get("command", "")):
+            continue
+        vault = str(((entry or {}).get("env") or {}).get("BRAIN_VAULT") or "")
+        surface = f"MCP server vault ({name})"
+        if not vault:
+            rows.append(_row(surface, UNKNOWN, "entry sets no BRAIN_VAULT",
+                             remediation="brain connect --client claude-desktop"))
+        elif Path(vault).is_dir():
+            rows.append(_row(surface, CURRENT, f"{vault} exists"))
+        else:
+            rows.append(_row(
+                surface, STALE,
+                f"{vault} DOES NOT EXIST — this server still answers, from "
+                "whatever stale index sits at that path's hash",
+                remediation=("brain connect --client claude-desktop --name "
+                             f"{name} (from the vault's real location), or "
+                             "remove the entry")))
+    return rows
+
+
 def check_mcpb_desktop_collision(
     app_support_dir: Path, config_path: Optional[Path] = None, name: str = "brainiac",
 ) -> dict:
@@ -686,121 +725,6 @@ def check_cos_deployed_skill() -> dict:
                      "sha256": info["sha256"], "path": info["path"],
                      "cowork_surface_supported": support["supported"]})
 
-
-# --------------------------------------------------------------------------
-# Surface 8 — staged Cowork workspaces (tools/workspace_registry.py entries)
-# --------------------------------------------------------------------------
-
-def _cowork_vault_dir(entry: dict) -> str:
-    """The dir a cowork-vm entry's `.brain` actually lives under: the
-    registry's ``vault_path`` — the same field ``cowork_workspace_install.sh``
-    treats as ``$VAULT`` and the Cowork VM reads. ``workspace_path`` is the
-    PARENT checkout dir; its own `.brain` (if any) is the unrelated host
-    stage — reading it here is exactly the false-green bug (a stale
-    cowork-vm engine at `vault_path/.brain` hid behind a current
-    `workspace_path/.brain`). Falls back to ``workspace_path`` only if
-    ``vault_path`` is absent (malformed/legacy entry)."""
-    return entry.get("vault_path") or entry.get("workspace_path", "")
-
-
-def check_staged_workspaces(registry_entries: list[dict], ssot: str) -> list[dict]:
-    rows = []
-    for entry in registry_entries:
-        if entry.get("target") == "host":
-            continue  # host entries ARE the checkout; surfaces 1-4 already cover it
-        vault_dir = _cowork_vault_dir(entry)
-        surface = f"Staged workspace ({vault_dir})"
-        stamp_path = Path(vault_dir) / ".brain" / "engine" / "brain" / "_version.py"
-        if not stamp_path.exists():
-            # "I cannot see it" vs "I looked, and it is not there": merging
-            # them hid a real defect (2026-08-17) — the registry
-            # claimed a Cowork workspace with no engine in it, so Cowork got
-            # `brain: command not found` while host doctor said not-detectable.
-            exists = Path(vault_dir).is_dir()
-            rows.append(_row(
-                surface, STALE if exists else NOT_DETECTABLE,
-                (f"registry claims a Cowork workspace but NO engine is staged "
-                 f"there ({stamp_path} missing)" if exists
-                 else f"{vault_dir} not found — workspace may be gone"),
-                remediation="/brainiac-cowork-setup"))
-            continue
-        text = stamp_path.read_text(encoding="utf-8")
-        m = re.search(r'(?m)^__version__ = "([^"]+)"$', text)
-        if not m:
-            rows.append(_row(surface, UNKNOWN, f"{stamp_path}: no __version__ line"))
-            continue
-        staged = m.group(1)
-        if staged == ssot:
-            rows.append(_row(surface, CURRENT, f"staged {staged} == SSOT {ssot}",
-                             raw={"staged": staged}))
-        else:
-            rows.append(_row(surface, STALE, f"staged {staged} != SSOT {ssot}",
-                             remediation="/brainiac-update", raw={"staged": staged}))
-    return rows
-
-
-# --------------------------------------------------------------------------
-# Surface — staged Cowork skill bundles (cw-02): the .brain/skills/*.skill
-# zips landed by cowork_workspace_install.sh each carry a VERSION file
-# (tools/package_clients.py build_cowork_zips). A separate row from the
-# engine stamp above so a version-matched engine with a stale/missing skill
-# bundle is still visible (best-effort — reads whichever zip is alphabetically
-# first; every zip in one install pass is written from the same SSOT, so one
-# representative sample is enough to catch drift).
-# --------------------------------------------------------------------------
-
-def check_staged_skill_bundles(registry_entries: list[dict], ssot: str) -> list[dict]:
-    import zipfile
-
-    rows = []
-    for entry in registry_entries:
-        if entry.get("target") == "host":
-            continue
-        vault_dir = _cowork_vault_dir(entry)
-        surface = f"Staged skill bundles ({vault_dir})"
-        skills_dir = Path(vault_dir) / ".brain" / "skills"
-        if not skills_dir.is_dir():
-            # Same distinction as the engine row above.
-            exists = Path(vault_dir).is_dir()
-            rows.append(_row(
-                surface, STALE if exists else NOT_DETECTABLE,
-                f"{skills_dir} not found — "
-                + ("no skill bundles staged" if exists else "workspace may be gone"),
-                remediation="tools/cowork_workspace_install.sh"))
-            continue
-        zips = sorted(skills_dir.glob("*.skill"))
-        if not zips:
-            rows.append(_row(surface, NOT_DETECTABLE, f"no .skill bundles found in {skills_dir}",
-                             remediation="tools/cowork_workspace_install.sh"))
-            continue
-        sample = zips[0]
-        try:
-            with zipfile.ZipFile(sample) as zf:
-                version_member = f"{sample.stem}/VERSION"
-                if version_member not in zf.namelist():
-                    rows.append(_row(surface, UNKNOWN,
-                                     f"{sample.name}: no VERSION marker (pre-cw-02 bundle?)",
-                                     remediation="tools/cowork_workspace_install.sh"))
-                    continue
-                staged = zf.read(version_member).decode("utf-8").strip()
-        except (OSError, zipfile.BadZipFile) as exc:
-            rows.append(_row(surface, UNKNOWN, f"{sample.name}: unreadable ({exc})"))
-            continue
-        if staged == ssot:
-            rows.append(_row(surface, CURRENT, f"staged {staged} == SSOT {ssot} (sample: {sample.name})",
-                             raw={"staged": staged}))
-        else:
-            rows.append(_row(surface, STALE, f"staged {staged} != SSOT {ssot} (sample: {sample.name})",
-                             remediation="tools/cowork_workspace_install.sh (re-stage engine + skills)",
-                             raw={"staged": staged}))
-    return rows
-
-
-# --------------------------------------------------------------------------
-# Surface 10 — index / snapshot schema (per staged workspace, if a snapshot
-# dir exists there) — separate row from the version stamp so a version-match
-# with a schema skew is still visible.
-# --------------------------------------------------------------------------
 
 def _staged_payload_rows(registry_entries: list[dict], ssot: str) -> list[dict]:
     """Every versioned payload staged INTO a workspace, in report order: the
@@ -1093,7 +1017,14 @@ from .doctor_vendor import (  # noqa: E402  (re-export)
 # Staged VM binaries live in vmstaging.py since 2026-08-16 — same reason and
 # same shape as the doctor_vendor split above (size ratchet). Re-exported so the
 # row reads like every other staged-artifact surface.
-from .vmstaging import check_staged_vm_binaries  # noqa: E402,F401  (re-export)
+from .vmstaging import (  # noqa: E402,F401  (re-exports — callers and
+    # tests import these from `doctor`, which stays their one address
+    # even though the code now lives beside its VM-staging siblings.
+    _cowork_vault_dir,
+    check_staged_skill_bundles,
+    check_staged_vm_binaries,
+    check_staged_workspaces,
+)
 
 
 def check_embedder_liveness() -> dict:
@@ -1310,13 +1241,25 @@ def check_query_capture(vault: Path) -> dict:
                     raw={"capture": info})
     if state in {"error", "stale"} or consecutive:
         reason = info.get("reason") or info.get("last_failure_code") or state
+        # TWO faults, ONE instruction until 2026-08-17: `stale` means only "no
+        # host query in N days" (an idle vault says it of itself), while
+        # `error`/failures mean capture BROKE. Sending an idle vault's owner
+        # after containment/permissions is a hunt for a fault that is not there.
+        if state == "stale" and not failures and not consecutive:
+            fix = (f"no host query captured for this vault in "
+                   f"{info.get('stale_after_days')} day(s) — this is inactivity, "
+                   "NOT a broken ledger. Run a host retrieval query against it, "
+                   "or raise $BRAIN_QUERY_CAPTURE_STALE_DAYS if it is meant to "
+                   "sit idle.")
+        else:
+            fix = ("fix host query-log containment/owner-only permissions, then run "
+                   "three host retrieval queries; the VM never owns this ledger")
         return _row(
             surface, STALE,
             f"state={state}; files={ledger.get('files', 0)}; bytes={ledger.get('bytes', 0)}; "
             f"records={ledger.get('records', 0)}; "
             f"age_seconds={ledger.get('age_seconds')}; failures={failures}; reason={reason}",
-            remediation=("fix host query-log containment/owner-only permissions, then run "
-                         "three host retrieval queries; the VM never owns this ledger"),
+            remediation=fix,
             raw={"capture": info},
         )
     if state == "idle":
@@ -1603,7 +1546,7 @@ def run_doctor(
 
     if registry_fetch is not None:
         rows.append(check_pypi_registry_drift(repo_root, ssot, fetch=registry_fetch))
-    rows.append(check_mcpb_desktop_collision(app_support_dir))
+    rows.extend([check_mcpb_desktop_collision(app_support_dir), *check_mcp_vault_paths()])
     # DEP-02: which COS bundle runs tonight, from the executing lane.
     rows.append(check_cos_deployed_skill())
     # Surface 11 — always LAST, always manual-required, never gates.

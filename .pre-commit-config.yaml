@@ -84,6 +84,16 @@ repos:
       # directory fails for every other clone and in CI). Source of truth is
       # gearbox scripts/quality/ via ~/.claude; re-sync with:
       #   python3 ~/.claude/scripts/quality/vendor_quality.py .
+      # A client name reached six shipped tool files between v0.20.13 and
+      # v0.20.14 and only the RELEASE gate caught it, a day later. Same scan,
+      # at commit time. Skips itself (announced) when the external denylist is
+      # absent, as on CI.
+      - id: client-names
+        name: no staged file carries a denylisted client name
+        entry: python3 tools/check_client_names.py
+        language: system
+        pass_filenames: false
+
       - id: file-size-ratchet
         name: no staged file grows past the size limit (baseline only shrinks)
         entry: python3 tools/check_file_sizes.py --staged

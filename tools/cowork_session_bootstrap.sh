@@ -13,6 +13,22 @@ export BRAIN_ROLE=vm
 export BRAIN_RUNTIME_DIR="${BRAIN_RUNTIME_DIR:-$BRAIN_VAULT/.brain}"
 export BRAIN_MODEL_CACHE="${BRAIN_MODEL_CACHE:-$BRAIN_RUNTIME_DIR/model}"
 
+# OPTIONAL per-vault VM egress ceiling (owner ruling 2026-08-17). The shipped
+# default stays the conservative Internal cap; an owner who wants THIS vault's
+# sandbox to read every tier stages a one-line `vm-egress-tier` file beside the
+# runtime and the ceiling follows it.
+#
+# STATED LIMIT, because it is not a guard: this file sits on the VirtioFS
+# MOUNT, which the VM can write. It therefore RECORDS an owner decision, it
+# does not ENFORCE one — a session in this workspace could write the same file
+# itself. That is acceptable only because the decision it carries is "this
+# owner's own sandbox may read this owner's own vault"; a vault whose owner has
+# NOT made that decision simply has no file and keeps the shipped cap.
+if [ -z "${BRAIN_VM_MAX_EGRESS_TIER:-}" ] && [ -r "$BRAIN_RUNTIME_DIR/vm-egress-tier" ]; then
+  BRAIN_VM_MAX_EGRESS_TIER="$(tr -d '[:space:]' < "$BRAIN_RUNTIME_DIR/vm-egress-tier")"
+  export BRAIN_VM_MAX_EGRESS_TIER
+fi
+
 # --------------------------------------------------------------------------
 # Supply-chain check (hardening pass): verify the shipped binaries against a
 # SHA256SUMS manifest BEFORE they are trusted — i.e. before the arch-matched

@@ -756,7 +756,10 @@ def ingest_guard(vault: Path, *, cap: int = SAMPLE_CAP) -> dict[str, Any]:
     reported beside it, per leg for raises, so "0 raised" can never quietly
     mean "the guard never looked"."""
     from . import frontmatter as fm
-    from .ingest.tierguard import GUARD_KEY, GUARD_LEG_KEY, GUARD_STATUSES
+    from .ingest.tierguard import (
+        _NO_CORPUS_ERROR, GUARD_KEY, GUARD_LEG_KEY, GUARD_REASON_KEY,
+        GUARD_STATUSES, NO_CORPUS,
+    )
 
     by_status = {s: 0 for s in GUARD_STATUSES}
     by_leg: dict[str, int] = {}
@@ -781,6 +784,15 @@ def ingest_guard(vault: Path, *, cap: int = SAMPLE_CAP) -> dict[str, Any]:
         if status not in by_status:
             unknown += 1
             continue
+        # Sources ingested before the 2026-08-17 split carry `unavailable`
+        # even when the guard RAN against an empty corpus — its own reason
+        # line says so, and `raw/` is immutable so the stamp cannot be
+        # corrected in place. Read the recorded evidence rather than leaving a
+        # permanent false alarm on every vault whose first document predates
+        # the split.
+        if status == "unavailable" and _NO_CORPUS_ERROR in str(
+                meta.get(GUARD_REASON_KEY) or ""):
+            status = NO_CORPUS
         by_status[status] += 1
         if status == "raised":
             leg = str(meta.get(GUARD_LEG_KEY) or "unrecorded")
@@ -794,6 +806,10 @@ def ingest_guard(vault: Path, *, cap: int = SAMPLE_CAP) -> dict[str, Any]:
         "raised_by_leg": by_leg,
         "clear": by_status["clear"],
         "subfloor": by_status["subfloor"],
+        # Reported beside `value`, never inside it: the guard looked and the
+        # corpus held nothing comparable, so there was no higher-tier twin to
+        # leak from. Never hidden — a leg that stops working must still show.
+        "no_corpus": by_status[NO_CORPUS],
         "unstamped": unstamped,
         "unknown_status": unknown,
         "sample": sample,

@@ -463,7 +463,13 @@ gates.
    bottom-k sketch of a set smaller than k is the whole set and a body above
    the floor with under 48 distinct words could otherwise never be screened
    in at all. `unguarded_ingests` (metric 5) ratchets on the ONE number that
-   should be zero — sources admitted while the guard was unavailable. Raises
+   should be zero — sources admitted while the guard COULD NOT RUN (no index
+   connection, a read error, disabled). A guard that RAN against a corpus
+   holding nothing comparable is a separate status, `no_corpus`, reported on
+   its own row and never inside that number: a cross-tier leak needs an
+   existing higher-tier near-duplicate, so an empty corpus has nothing to leak
+   from, and counting it made every new vault's FIRST document trip a
+   floor-of-zero ratchet (2026-08-17). Raises
    are trended PER LEG and never alerted on: they are monotone over an
    append-only zone, so a min-ever floor would fire on every firing of a
    working guard, and a per-leg total is the only thing that can tell a clean
@@ -958,6 +964,27 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
   (FileVault/BitLocker); app-level encryption is *conditional* (off-device
   backup / regulated data / multi-user / cyber mandate). The real control is the
   **egress gate**: what `brain` is willing to surface to the model.
+- **The MCP transport resolves the SAME full vault as the CLI (owner ruling
+  2026-08-17).** `brain-mcp` runs ON THE HOST, as the owner, over a
+  single-owner vault, so it is the CLI's trust context and now shares its
+  default. It previously borrowed the VM leg's `Internal` cap in seven places
+  plus the connector stanza, which starved every vault reached through Claude
+  Desktop: a curated vault keeps its substance at Confidential/Restricted, so
+  the answer came from Public+Internal scraps. Narrow it per deployment with
+  `$BRAIN_MAX_EGRESS_TIER`; an UNSET var means the full vault, while a
+  SET-BUT-UNRECOGNISED one still fails CLOSED to `Internal` — the only reason
+  to set it is to narrow the gate, so a typo must never return more than was
+  asked for. The trifecta break is unchanged and still lives at the `role=vm`
+  boundary, never on the owner's own host.
+- **A vault MAY raise its own Cowork ceiling (owner ruling 2026-08-17).** The
+  shipped `role=vm` default stays `Internal`; an owner who wants THIS vault's
+  sandbox to read every tier stages a one-line `<vault>/.brain/vm-egress-tier`
+  file, which `cowork_session_bootstrap.sh` reads into
+  `$BRAIN_VM_MAX_EGRESS_TIER`. **Stated limit, because it is not a guard:**
+  that file sits on the VirtioFS mount, which the VM can write, so it RECORDS
+  an owner decision rather than ENFORCING one. Acceptable only because the
+  decision it carries is "this owner's own sandbox may read this owner's own
+  vault"; a vault whose owner has not made it has no file and keeps the cap.
 - **Classification gate, role-split defaults (owner decision 2026-07-10).**
   `search/get/recent` filter by `classification`. A note with a missing or
   unrecognised `classification` ranks as the most-restrictive tier (MNPI).

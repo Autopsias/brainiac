@@ -108,7 +108,21 @@ CLEAR = "clear"
 RAISED = "raised"
 SUBFLOOR = "subfloor"
 UNAVAILABLE = "unavailable"
-GUARD_STATUSES = (CLEAR, RAISED, SUBFLOOR, UNAVAILABLE)
+#: The guard RAN and the corpus held nothing comparable — distinct from
+#: ``unavailable``, which means it could not run (no connection, read error,
+#: disabled). Split 2026-08-17: a cross-tier leak needs an existing
+#: higher-tier near-duplicate, so a corpus with no comparable document has
+#: nothing to leak FROM — counting that as "unguarded" made every brand-new
+#: vault's FIRST document trip a ratcheting invariant whose floor is 0, which
+#: is a watchdog crying wolf on the safe, normal case. Same distinction as
+#: doctor's "cannot see it" vs "looked, and it is not there".
+NO_CORPUS = "no_corpus"
+#: The sentinel `_table()` sets ONLY after the index opened and the query
+#: SUCCEEDED and every row was filtered out — the two real failure paths ("no
+#: index connection", an exception) return before it, so matching on it can
+#: never silence a genuine guard failure.
+_NO_CORPUS_ERROR = "index holds no comparable notes"
+GUARD_STATUSES = (CLEAR, RAISED, SUBFLOOR, UNAVAILABLE, NO_CORPUS)
 
 
 @dataclass
@@ -142,7 +156,8 @@ class LegCounts:
 
     judged: int = 0            # documents the guard actually compared
     subfloor: int = 0          # refused: body below the ENF-01 floor
-    unavailable: int = 0       # no corpus to compare against (or disabled)
+    unavailable: int = 0       # the guard could NOT run (no conn / read error / disabled)
+    no_corpus: int = 0         # it ran; the corpus held nothing comparable
     top_tier: int = 0          # already MNPI — nothing can outrank it
     screened: int = 0          # leg 1: sketch-screen survivors, summed
     shared_substance: int = 0  # leg 2: pairs passing word-set Jaccard
@@ -155,6 +170,7 @@ class LegCounts:
         return {
             "judged": self.judged, "clear": self.clear, "raised": self.raised,
             "subfloor": self.subfloor, "unavailable": self.unavailable,
+            "no_corpus": self.no_corpus,
             "top_tier": self.top_tier,
             "legs": {"screen": self.screened,
                      "shared_substance": self.shared_substance,
@@ -242,7 +258,7 @@ class CrossTierGuard:
             self._tokens[nid] = toks
         self._pending.clear()
         if not docs:
-            self._error = "index holds no comparable notes"
+            self._error = _NO_CORPUS_ERROR
             return None
         self._docs = docs
         return docs
@@ -290,6 +306,13 @@ class CrossTierGuard:
 
         docs = self._table()
         if docs is None:
+            if self._error == _NO_CORPUS_ERROR:
+                self.counts.no_corpus += 1
+                return Verdict(
+                    tier=base, status=NO_CORPUS,
+                    reason=("the corpus holds no comparable document to check "
+                            "against — nothing could outrank this source, so it "
+                            "is admitted at the declared tier"))
             self.counts.unavailable += 1
             return Verdict(
                 tier=base, status=UNAVAILABLE,

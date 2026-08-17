@@ -30,6 +30,7 @@ marker the host can read WITHOUT executing it, or it cannot be checked at all.
 from __future__ import annotations
 
 import hashlib
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -225,3 +226,137 @@ def check_staged_vm_binaries(registry_entries: list[dict], ssot: str) -> list[di
                              f"staged {ssot} == SSOT {ssot} ({len(seen)} arch(es))",
                              raw={"staged": seen}))
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Staged Cowork WORKSPACES (moved out of doctor.py 2026-08-17)
+#
+# These live beside `check_staged_vm_binaries` because they answer the same
+# question about the same tree: does what we staged into a workspace match
+# SSOT. They were moved here when doctor.py grew past its size ratchet —
+# splitting on the seam the module already had, rather than re-recording a
+# baseline to absorb the growth.
+# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# Surface 8 — staged Cowork workspaces (tools/workspace_registry.py entries)
+# --------------------------------------------------------------------------
+
+def _cowork_vault_dir(entry: dict) -> str:
+    """The dir a cowork-vm entry's `.brain` actually lives under: the
+    registry's ``vault_path`` — the same field ``cowork_workspace_install.sh``
+    treats as ``$VAULT`` and the Cowork VM reads. ``workspace_path`` is the
+    PARENT checkout dir; its own `.brain` (if any) is the unrelated host
+    stage — reading it here is exactly the false-green bug (a stale
+    cowork-vm engine at `vault_path/.brain` hid behind a current
+    `workspace_path/.brain`). Falls back to ``workspace_path`` only if
+    ``vault_path`` is absent (malformed/legacy entry)."""
+    return entry.get("vault_path") or entry.get("workspace_path", "")
+
+
+def check_staged_workspaces(registry_entries: list[dict], ssot: str) -> list[dict]:
+    from .doctor import (
+        CURRENT, NOT_DETECTABLE, STALE, UNKNOWN, _row,
+    )
+
+    rows = []
+    for entry in registry_entries:
+        if entry.get("target") == "host":
+            continue  # host entries ARE the checkout; surfaces 1-4 already cover it
+        vault_dir = _cowork_vault_dir(entry)
+        surface = f"Staged workspace ({vault_dir})"
+        stamp_path = Path(vault_dir) / ".brain" / "engine" / "brain" / "_version.py"
+        if not stamp_path.exists():
+            # "I cannot see it" vs "I looked, and it is not there": merging
+            # them hid a real defect (2026-08-17) — the registry
+            # claimed a Cowork workspace with no engine in it, so Cowork got
+            # `brain: command not found` while host doctor said not-detectable.
+            exists = Path(vault_dir).is_dir()
+            rows.append(_row(
+                surface, STALE if exists else NOT_DETECTABLE,
+                (f"registry claims a Cowork workspace but NO engine is staged "
+                 f"there ({stamp_path} missing)" if exists
+                 else f"{vault_dir} not found — workspace may be gone"),
+                remediation="/brainiac-cowork-setup"))
+            continue
+        text = stamp_path.read_text(encoding="utf-8")
+        m = re.search(r'(?m)^__version__ = "([^"]+)"$', text)
+        if not m:
+            rows.append(_row(surface, UNKNOWN, f"{stamp_path}: no __version__ line"))
+            continue
+        staged = m.group(1)
+        if staged == ssot:
+            rows.append(_row(surface, CURRENT, f"staged {staged} == SSOT {ssot}",
+                             raw={"staged": staged}))
+        else:
+            rows.append(_row(surface, STALE, f"staged {staged} != SSOT {ssot}",
+                             remediation="/brainiac-update", raw={"staged": staged}))
+    return rows
+
+
+# --------------------------------------------------------------------------
+# Surface — staged Cowork skill bundles (cw-02): the .brain/skills/*.skill
+# zips landed by cowork_workspace_install.sh each carry a VERSION file
+# (tools/package_clients.py build_cowork_zips). A separate row from the
+# engine stamp above so a version-matched engine with a stale/missing skill
+# bundle is still visible (best-effort — reads whichever zip is alphabetically
+# first; every zip in one install pass is written from the same SSOT, so one
+# representative sample is enough to catch drift).
+# --------------------------------------------------------------------------
+
+def check_staged_skill_bundles(registry_entries: list[dict], ssot: str) -> list[dict]:
+    from .doctor import (
+        CURRENT, NOT_DETECTABLE, STALE, UNKNOWN, _row,
+    )
+
+    import zipfile
+
+    rows = []
+    for entry in registry_entries:
+        if entry.get("target") == "host":
+            continue
+        vault_dir = _cowork_vault_dir(entry)
+        surface = f"Staged skill bundles ({vault_dir})"
+        skills_dir = Path(vault_dir) / ".brain" / "skills"
+        if not skills_dir.is_dir():
+            # Same distinction as the engine row above.
+            exists = Path(vault_dir).is_dir()
+            rows.append(_row(
+                surface, STALE if exists else NOT_DETECTABLE,
+                f"{skills_dir} not found — "
+                + ("no skill bundles staged" if exists else "workspace may be gone"),
+                remediation="tools/cowork_workspace_install.sh"))
+            continue
+        zips = sorted(skills_dir.glob("*.skill"))
+        if not zips:
+            rows.append(_row(surface, NOT_DETECTABLE, f"no .skill bundles found in {skills_dir}",
+                             remediation="tools/cowork_workspace_install.sh"))
+            continue
+        sample = zips[0]
+        try:
+            with zipfile.ZipFile(sample) as zf:
+                version_member = f"{sample.stem}/VERSION"
+                if version_member not in zf.namelist():
+                    rows.append(_row(surface, UNKNOWN,
+                                     f"{sample.name}: no VERSION marker (pre-cw-02 bundle?)",
+                                     remediation="tools/cowork_workspace_install.sh"))
+                    continue
+                staged = zf.read(version_member).decode("utf-8").strip()
+        except (OSError, zipfile.BadZipFile) as exc:
+            rows.append(_row(surface, UNKNOWN, f"{sample.name}: unreadable ({exc})"))
+            continue
+        if staged == ssot:
+            rows.append(_row(surface, CURRENT, f"staged {staged} == SSOT {ssot} (sample: {sample.name})",
+                             raw={"staged": staged}))
+        else:
+            rows.append(_row(surface, STALE, f"staged {staged} != SSOT {ssot} (sample: {sample.name})",
+                             remediation="tools/cowork_workspace_install.sh (re-stage engine + skills)",
+                             raw={"staged": staged}))
+    return rows
+
+
+# --------------------------------------------------------------------------
+# Surface 10 — index / snapshot schema (per staged workspace, if a snapshot
+# dir exists there) — separate row from the version stamp so a version-match
+# with a schema skew is still visible.
+# --------------------------------------------------------------------------
+

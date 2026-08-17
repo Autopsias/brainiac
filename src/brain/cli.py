@@ -798,10 +798,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--name", default="brainiac",
                     help="server name/key in the config (default: %(default)s) — "
                          "use a distinct name per vault")
-    sp.add_argument("--max-tier", default="Internal",
-                    help="egress ceiling for this MCP server (default: %(default)s "
-                         "= conservative LLM-facing cap; explicitly raise only "
-                         "for an approved server)")
+    sp.add_argument("--max-tier", default=None,
+                    help="egress ceiling for this MCP server (default: the host full-vault tier, same as the CLI — narrow it here for a capped server)")
     sp.add_argument("--json", action="store_true")
 
     sp = sub.add_parser(
@@ -818,10 +816,9 @@ def build_parser() -> argparse.ArgumentParser:
                          "CLAUDE.md/AGENTS.md/.gemini/settings.json live")
     sp.add_argument("--name", default="brainiac",
                     help="MCP server name for --client claude-desktop (default: %(default)s)")
-    sp.add_argument("--max-tier", default="Internal",
+    sp.add_argument("--max-tier", default=None,
                     help="egress ceiling baked into the claude-desktop MCP stanza "
-                         "(default: %(default)s = conservative cap, matches "
-                         "`mcp-config`)")
+                         "(default: the host full-vault tier, matches `mcp-config`)")
     sp.add_argument("--marketplace-source", default=_connect.DEFAULT_MARKETPLACE_SOURCE,
                     help="source passed to `claude plugin marketplace add` for "
                          "--client claude-code (default: %(default)s)")

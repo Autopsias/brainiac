@@ -926,6 +926,54 @@ def looks_like_vm_stage(repo_root: Optional[Path] = None) -> bool:
     return not (root / "tools" / "workspace_registry.py").exists() and _ssot_version(root) is None
 
 
+def _load_registry_entries(repo_root: Path) -> tuple[list[dict], bool]:
+    """(entries, unavailable) for `tools/workspace_registry.py` under repo_root.
+
+    HARDEN: the script is a host-only companion — never part of the staged
+    zero-install engine (cowork_workspace_install.sh copies only src/brain). A
+    staged VM copy invoking `brain doctor` with role=host (the shim doesn't set
+    $BRAIN_ROLE) must degrade to "can't check this surface", never crash with a
+    raw ModuleNotFoundError. Callers pass an ALREADY-CORRECTED repo_root; see
+    the RC4 hoist in run_doctor.
+    """
+    import sys as _sys
+
+    try:
+        _sys.path.insert(0, str(repo_root / "tools"))
+        import workspace_registry as _wr
+
+        return _wr.list_entries(), False
+    except Exception:
+        return [], True
+
+
+def _unreadable_registry_row(repo_root: Path) -> dict:
+    """The row for a `tools/workspace_registry.py` that would not import.
+
+    On a staged VM copy tools/ is absent BY DESIGN, so NOT_DETECTABLE is the
+    honest answer. Anywhere else it means every staged-workspace and
+    skill-bundle row was SKIPPED — and a skipped check must never be summarised
+    as "all required surfaces current" (measured 2026-08-18), so it becomes
+    UNKNOWN, which gates the verdict where NOT_DETECTABLE does not.
+    """
+    if looks_like_vm_stage():
+        return _row(
+            "Workspace registry (tools/workspace_registry.py)", NOT_DETECTABLE,
+            "unavailable in this checkout — looks like a staged zero-install VM "
+            "copy (tools/ is host-only, never staged); staged-workspace/skill-bundle "
+            "rows below are skipped here",
+            remediation="run `brain doctor --role vm` for the VM-appropriate "
+                        "surfaces, or run this on the full host checkout")
+    return _row(
+        "Workspace registry (tools/workspace_registry.py)", UNKNOWN,
+        f"could NOT be loaded from {repo_root / 'tools'} on a host install — every "
+        "staged-workspace and skill-bundle row below was SKIPPED, so this run "
+        "cannot tell you whether your Cowork workspaces are current",
+        remediation="re-run from the engine source checkout, or pass --engine-src "
+                    "<checkout>; until then treat staged-workspace freshness as "
+                    "UNVERIFIED")
+
+
 def _in_site_packages(path: Path) -> bool:
     """True when this module was imported from an installed package tree
     (POSIX ``lib/pythonX.Y/site-packages`` or Windows ``Lib\\site-packages``),
@@ -1503,24 +1551,22 @@ def run_doctor(
         or (claude_home / "plugins" / "marketplaces" / marketplace_name)
     )
 
+    # RC4: a wheel install resolves repo_root inside site-packages, so retry via
+    # the marketplace installLocation — the real checkout on a directory-source
+    # install. HOISTED 2026-08-18: this MUST precede the registry import below.
+    # Sitting after it, every wheel install looked the registry up under the
+    # site-packages root, failed, and reported "unavailable in this checkout"
+    # while this same correction then found the real checkout — so `brain
+    # update` skipped every staged-workspace row and still printed "all
+    # required surfaces current" over two workspaces two releases behind.
+    if not (repo_root / "pyproject.toml").is_file():
+        retry = resolved_marketplace
+        if retry and (retry / "pyproject.toml").is_file() and (retry / "src" / "brain").is_dir():
+            repo_root = retry
+
     registry_unavailable = False
     if registry_entries is None:
-        import sys as _sys
-
-        try:
-            _sys.path.insert(0, str(repo_root / "tools"))
-            import workspace_registry as _wr
-
-            registry_entries = _wr.list_entries()
-        except Exception:
-            # HARDEN: `tools/workspace_registry.py` is a host-only companion
-            # script — never part of the staged zero-install engine
-            # (cowork_workspace_install.sh copies only src/brain). A staged
-            # VM copy invoking `brain doctor` with role=host (e.g. the shim
-            # doesn't set $BRAIN_ROLE) must degrade to "can't check this
-            # surface", never crash with a raw ModuleNotFoundError.
-            registry_entries = []
-            registry_unavailable = True
+        registry_entries, registry_unavailable = _load_registry_entries(repo_root)
 
     # Repo-oriented surfaces (SSOT/stamp/dist/plugin-manifests) only mean
     # anything on a DEV CHECKOUT. From an installed engine (dist venv, uv
@@ -1530,17 +1576,7 @@ def run_doctor(
     # the v0.19.3 pre-restage verification). Without a checkout the honest
     # answer is NOT_DETECTABLE, and drift comparisons fall back to the running
     # engine's own version.
-    # RC4: when __file__-inference lands somewhere without a pyproject (a wheel
-    # install resolves repo_root inside site-packages), retry via the
-    # marketplace installLocation — the real checkout on a directory-source
-    # install. This turns a falsely "installed engine, no checkout" host back
-    # into a full dev-checkout doctor run (staged-workspace rows, SSOT drift).
-    if not (repo_root / "pyproject.toml").is_file():
-        retry = resolved_marketplace
-        if retry and (retry / "pyproject.toml").is_file() and (retry / "src" / "brain").is_dir():
-            repo_root = retry
-
-    is_dev_checkout = (repo_root / "pyproject.toml").is_file() and (repo_root / "src" / "brain").is_dir()
+    is_dev_checkout =(repo_root / "pyproject.toml").is_file() and (repo_root / "src" / "brain").is_dir()
 
     ssot = _ssot_version(repo_root) if is_dev_checkout else None
     rows: list[dict] = []
@@ -1572,13 +1608,7 @@ def run_doctor(
                                             marketplace_dir=marketplace_dir))
     rows.extend(check_stale_name_plugins(claude_home))
     if registry_unavailable:
-        rows.append(_row(
-            "Workspace registry (tools/workspace_registry.py)", NOT_DETECTABLE,
-            "unavailable in this checkout — looks like a staged zero-install VM "
-            "copy (tools/ is host-only, never staged); staged-workspace/skill-bundle "
-            "rows below are skipped here",
-            remediation="run `brain doctor --role vm` for the VM-appropriate surfaces, "
-                        "or run this on the full host checkout"))
+        rows.append(_unreadable_registry_row(repo_root))
     rows.extend(check_staged_workspaces(registry_entries, ssot))
     # 2026-07-18 field report: report staged-vendor ABI vs the PINNED VM
     # interpreter (the host's own python is irrelevant to linux wheels) for

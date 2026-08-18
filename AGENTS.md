@@ -1283,8 +1283,23 @@ entry formats in `docs/session-memory.md`. Rules an agent needs at a glance:
   surfaces the pending count (`ENGINE FEEDBACK: M waiting`) so any session can
   fire them at the engine repo.
 
-Host-only by contract (ADR-0003 Ruling 4): `.brain/` is gitignored wholesale,
-never indexed (so it can't leak through `search`/`get`/`recent`), and a Cowork
-VM session never reads or writes it even though the mount makes it visible —
-`inbox.jsonl` and `engine-feedback/` inherit this posture (host-only, never
-indexed).
+Host-only by contract (ADR-0003 Ruling 4): `.brain/` is gitignored wholesale
+and never indexed, so nothing in it can leak through `search`/`get`/`recent`.
+The **session-memory files** — `handoff.md`, `hot.md`, `lessons.md`,
+`archive/` — are host-only: a Cowork VM session never reads or writes them
+even though the mount makes them visible.
+
+**One deliberate exception, and it is the degradation digest.**
+`brain --role vm alerts` READS three things under `.brain/`:
+`notify-sent/*.marker`, `memory/inbox.jsonl` and `engine-feedback/*.md`. That
+is the whole point of the first bullet above — until 2026-08-14 this logic
+lived only in a Claude Code hook, so a Cowork session worked for days against
+a vault whose invariants had regressed with no surface that could tell it.
+Only the two HOST-HOME sources (`~/.brainiac/update-state.json`,
+`~/.brain/synthesis-state.json`) are out of the VM's reach, and `alerts`
+reports those under `unreachable` rather than skipping them. The reads are
+file-reads of counts and markers; the VM still never WRITES anything here,
+and none of it is ever indexed. This paragraph said "never reads or writes
+it" until 2026-08-18, which contradicted the bullet at the top of this
+section and would have told a Cowork session to refuse the one command that
+section requires of it.

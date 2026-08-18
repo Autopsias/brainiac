@@ -1971,7 +1971,7 @@ def render_autodedup_hot_entry(result: dict[str, Any], today: datetime.date) -> 
     return "\n".join(lines) + "\n"
 
 
-def auto_para(vault: Path) -> dict[str, Any]:
+def auto_para(vault: Path, audit: Any | None = None) -> dict[str, Any]:
     """PAR-01: file brain/ notes into their PARA zone by METADATA, not by a
     human dragging files. Two deliberately small rules:
 
@@ -1981,18 +1981,37 @@ def auto_para(vault: Path) -> dict[str, Any]:
 
     Generated views (``type: index``/``moc``) and everything else stay where
     they are. Moves are by-id-safe: wikilinks target ids, not paths, and the
-    next index sync reconciles paths."""
+    next index sync reconciles paths.
+
+    THE MOVE IS AUDITED (2026-08-18). The audit chain is keyed on PATH, so a
+    bare ``rename`` broke a correctly-signed note in two directions at once:
+    ``content_drift`` reported the old path ``missing`` (unexplained drift, so
+    the health verdict went DEGRADED) and ``unsigned_notes`` counted the new
+    path as never signed (an absolute ratchet, so the invariant regressed and
+    stayed regressed). Measured on a live reference vault, where one note written
+    through ``brain write`` was reported unsigned by the same engine that had
+    just signed it. "The next sync reconciles paths" was true of the INDEX and
+    false of the CHAIN.
+
+    ``audit`` is the host's ``AuditChain``. Signing happens BEFORE the rename
+    and a key failure SKIPS the move (fail closed, exactly like ``write_note``)
+    — a fold that cannot sign must never produce an unsigned note. Called
+    without a chain (tests, the VM leg) it reports every candidate as skipped
+    rather than moving unsigned."""
     from . import frontmatter as fm
+    from .audit import KeyUnavailable
+    from .notes import sha256_text
 
     brain_dir = vault / "brain"
-    report: dict[str, Any] = {"moved": [], "errors": []}
+    report: dict[str, Any] = {"moved": [], "errors": [], "skipped_unsigned": []}
     if not brain_dir.is_dir():
         return report
     for p in sorted(brain_dir.rglob("*.md")):
         if p.name in ("backlinks.md", "catalog.md", "index.md"):
             continue
         try:
-            meta, _ = fm.parse_text(p.read_text(encoding="utf-8"))
+            text = p.read_text(encoding="utf-8")
+            meta, _ = fm.parse_text(text)
         except Exception as exc:  # noqa: BLE001
             report["errors"].append({"file": str(p), "error": str(exc)})
             continue
@@ -2010,9 +2029,33 @@ def auto_para(vault: Path) -> dict[str, Any]:
         if dest.exists():
             report["errors"].append({"file": str(p), "error": f"collision at {dest}"})
             continue
-        p.rename(dest)
-        report["moved"].append({"id": str(meta.get("id") or p.stem),
-                                "to": f"brain/{dest_zone}/"})
+        old_rel = p.relative_to(vault).as_posix()
+        new_rel = dest.relative_to(vault).as_posix()
+        note_id = str(meta.get("id") or p.stem)
+        if audit is None:
+            report["skipped_unsigned"].append(
+                {"id": note_id, "reason": "no audit chain — refusing to move "
+                                          "a signed note to an unsigned path"})
+            continue
+        # Sign the destination FIRST. If this raises, nothing moved.
+        try:
+            audit.append(verb="write", path=new_rel,
+                         reason=f"auto-para: filed {note_id} into {dest_zone}/",
+                         content_sha256=sha256_text(text))
+        except KeyUnavailable as exc:
+            report["skipped_unsigned"].append({"id": note_id, "reason": str(exc)})
+            continue
+        try:
+            p.rename(dest)
+        except OSError as exc:
+            audit.append(verb="write_failed", path=new_rel,
+                         reason=f"auto-para rename failed: {type(exc).__name__}: {exc}")
+            report["errors"].append({"file": str(p), "error": str(exc)})
+            continue
+        # Retire the old path so content_drift stops reporting it `missing`.
+        audit.append(verb="delete", path=old_rel,
+                     reason=f"auto-para: {note_id} moved to {new_rel}")
+        report["moved"].append({"id": note_id, "to": f"brain/{dest_zone}/"})
     return report
 
 

@@ -344,6 +344,22 @@ def _json_default(o: Any) -> Any:
     return str(o)
 
 
+def _render_maintain(res: dict, maint: Any) -> str:
+    """Human rendering of a `maintain` result.
+
+    A SKIPPED run carries no `weekday`/`branches_due`. The caller read both
+    unconditionally, so the human path raised KeyError('weekday') in exactly
+    the case it had something to report — measured 2026-08-18 against a lock
+    held by a dead pid. The --json path was unaffected, which is why the
+    nightly never surfaced it."""
+    if res.get("skipped"):
+        return (f"maintain [dry_run={res['dry_run']}] {res['date']} "
+                f"skipped ({res['skipped']}): {res.get('note', '')}")
+    head = (f"maintain [dry_run={res['dry_run']}] {res['date']} ({res['weekday']}) "
+            f"branches_due={res['branches_due']}")
+    return head + "\n" + maint.render_outcomes_markdown(res["outcomes"])
+
+
 def _emit(obj: Any, as_json: bool, human: str | None = None) -> None:
     if as_json:
         json.dump(obj, sys.stdout, ensure_ascii=False, indent=2, default=_json_default)
@@ -3415,9 +3431,7 @@ def _main(argv: list[str] | None = None) -> int:
         if args.json:
             _emit(res, True)
         else:
-            head = (f"maintain [dry_run={res['dry_run']}] {res['date']} ({res['weekday']}) "
-                    f"branches_due={res['branches_due']}")
-            _emit(None, False, head + "\n" + maint.render_outcomes_markdown(res["outcomes"]))
+            _emit(None, False, _render_maintain(res, maint))
         return 0
 
     if cmd == "graphify":

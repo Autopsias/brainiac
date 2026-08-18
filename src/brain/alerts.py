@@ -68,6 +68,19 @@ def _alert(key: str, text: str, scope: str = "") -> dict[str, str]:
 # Host-home sources — unreachable from the VM leg
 # ---------------------------------------------------------------------------
 
+def _running_version() -> str | None:
+    """This engine's version, or None if it cannot be read.
+
+    Kept to the import floor `brain alerts` promises: a module attribute
+    read, no index, embedder, network or key."""
+    try:
+        from ._version import __version__
+
+        return str(__version__) or None
+    except Exception:  # noqa: BLE001 — an unreadable stamp must not break alerts
+        return None
+
+
 def update_alerts(home: Path, today: datetime.date) -> list[dict[str, str]]:
     """The auto-update marker the hourly maintain writes (``~/.brainiac``)."""
     state = _read_json(home / ".brainiac" / "update-state.json")
@@ -78,7 +91,15 @@ def update_alerts(home: Path, today: datetime.date) -> list[dict[str, str]]:
         return []
     latest = state.get("latest") or "?"
     status = state.get("status")
+    running = _running_version()
     if status == "applied":
+        if running is not None and latest != running:
+            # A LATER update has since landed, so this marker describes a
+            # superseded one. It kept announcing "auto-updated to 0.20.14" for
+            # its whole 7-day window while 0.20.18 was running (measured
+            # 2026-08-18) — an alert that is wrong every session is an alert
+            # nobody reads.
+            return []
         return [_alert("update:applied",
                        f"Brainiac auto-updated to {latest} (if the Cowork Desktop "
                        "skill store is stale, one click finishes it)")]
@@ -88,6 +109,8 @@ def update_alerts(home: Path, today: datetime.date) -> list[dict[str, str]]:
                        f"Brainiac auto-update to {latest} FAILED at {detail} "
                        "— run 'brain update'")]
     if status == "available":
+        if running is not None and latest == running:
+            return []  # already installed since the marker was written
         return [_alert("update:available",
                        f"Brainiac update {latest} available — run 'brain update'")]
     return []

@@ -546,6 +546,13 @@ Enforced by `draft.never_sends`, `draft.original_thread_recipients_only`,
 `draft.voice_or_declared_neutral`, `draft.never_unread_row`,
 `draft.cap_10` (run-scope).
 
+> **[OWNER RULING 2026-08-17]** The rule's `{cap}` is a per-run parameter, and
+> this ruling sets its two values: the unattended nightly keeps its cap of 10;
+> an ATTENDED backfill batch drafts per thread need with no fixed cap. A
+> parameter exception, not a doctrine fork — every rule line above, and the
+> run-scope check that counts against the cap the run actually ran under, is
+> unchanged.
+
 ### 3.5 The morning brief
 
 Composed by the model, validated by `cos_judge.validate_brief()`:

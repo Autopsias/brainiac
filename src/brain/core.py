@@ -3268,13 +3268,25 @@ class BrainCore:
         success, or ``None`` if another live-looking ``maintain`` run holds it
         (caller should skip the run, never block/wait). A lock older than
         ``stale_after_seconds`` — far beyond the ADR's ~60s/5min graphify
-        budget — is treated as an abandoned crash and broken automatically."""
+        budget — is treated as an abandoned crash and broken automatically.
+
+        A lock whose holder is DEAD is broken immediately (2026-08-18). The
+        two-hour timer alone left a crashed run blocking every hourly firing
+        for two hours: measured on a live reference vault, where a dead pid held
+        this lock for 92 minutes and the corpus-invariant metrics went on
+        reporting a regression that was already repaired. Liveness is checked
+        only for a lock written by THIS host — the file sits on the Cowork
+        mount, and a pid number means nothing across machines — and only ever
+        SHORTENS the wait: a reused pid looks alive, so it falls back to the
+        timer rather than breaking a lock someone may still hold."""
         import json as _json
         import os as _os
+        import socket as _socket
         import time as _time
 
         lock_path.parent.mkdir(parents=True, exist_ok=True)
-        info = {"pid": _os.getpid(), "started": _time.time()}
+        info = {"pid": _os.getpid(), "started": _time.time(),
+                "host": _socket.gethostname()}
         try:
             fd = _os.open(str(lock_path), _os.O_CREAT | _os.O_EXCL | _os.O_WRONLY)
             with _os.fdopen(fd, "w") as fh:
@@ -3284,10 +3296,36 @@ class BrainCore:
             pass
         existing = self._read_maintain_lock(lock_path)
         started = existing.get("started")
-        if isinstance(started, (int, float)) and (_time.time() - started) > stale_after_seconds:
+        expired = (isinstance(started, (int, float))
+                   and (_time.time() - started) > stale_after_seconds)
+        if expired or self._maintain_lock_holder_is_dead(existing):
             lock_path.unlink(missing_ok=True)
             return self._acquire_maintain_lock(lock_path, stale_after_seconds=stale_after_seconds)
         return None
+
+    @staticmethod
+    def _maintain_lock_holder_is_dead(existing: dict[str, Any]) -> bool:
+        """True only when THIS host wrote the lock and that pid is gone."""
+        import os as _os
+        import socket as _socket
+
+        pid = existing.get("pid")
+        host = existing.get("host")
+        if not isinstance(pid, int) or pid <= 0:
+            return False  # pre-2026-08-18 lock, or malformed — let the timer rule
+        if host != _socket.gethostname():
+            return False  # another machine's pid number is not ours to interpret
+        if pid == _os.getpid():
+            return False
+        try:
+            _os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            return False  # alive, owned by another user
+        except OSError:
+            return False
+        return False
 
     def _read_maintain_lock(self, lock_path: Path) -> dict[str, Any]:
         import json as _json
@@ -4471,7 +4509,7 @@ class BrainCore:
                             f"auto-dedup fold failed: {exc}",
                             "index/write path", "next maintain run"))
                     try:
-                        pres = maint.auto_para(Path(self.vault))
+                        pres = maint.auto_para(Path(self.vault), audit=self.audit)
                         results["auto_para"] = pres
                         if pres["moved"]:
                             auto_fixed.append(maint.auto_fixed_item(

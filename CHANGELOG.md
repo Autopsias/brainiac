@@ -7,6 +7,73 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.19] — 2026-08-18
+### Fixed
+- **The test suite wrote into every registered live vault.** Running
+  `tests/test_doctor.py` and `tests/test_update.py` in one process made
+  `update.restage_workspaces` walk the real `~/.brainiac/workspaces.json` and
+  stage an 11-byte stub model, the Linux ELFs and the skill bundles into each
+  registered vault. Two live vaults lost their embedder that way — a 568 MB
+  ONNX replaced by 11 bytes, `INVALID_PROTOBUF` on load — and it surfaced only
+  as ordinary test failures. Cause: `test_update.py` binds `workspace_registry`
+  once at import and patches THAT object, while `restage_workspaces` re-imports
+  it per call; a fixture in `test_doctor.py` dropped the name from
+  `sys.modules` and left it dropped, so the re-import built a fresh module the
+  patch had never touched and the real reader took over. The fixture now
+  RESTORES the module (and strips `tools/` from `sys.path` for its duration),
+  and `test_update.py` fails CLOSED to an empty registry for every test in the
+  file by patching the SOURCE module, so a re-import copies the stub rather
+  than the real reader. Reproduced against a canary vault reachable only
+  through a redirected `BRAINIAC_HOME`: 9 failures and a fully staged canary
+  before, zero after, in both collection orders.
+- **A fold moved a signed note and the audit chain never heard about it.**
+  `auto_para` (PAR-01) filed notes with a bare `p.rename()`. The chain is keyed
+  on PATH, so one move broke a correctly-signed note in two directions at once:
+  `content_drift` reported the old path `missing` (unexplained drift, so the
+  health verdict went DEGRADED) and `unsigned_notes` counted the new path as
+  never signed — an absolute ratchet, so it regressed and stayed regressed. The
+  engine reported a note as unsigned that the same engine had just signed
+  through `brain write`. "The next sync reconciles paths" was true of the INDEX
+  and false of the CHAIN. The fold now signs the destination BEFORE the rename
+  and retires the old path after, and SKIPS the move entirely when it cannot
+  sign — a fold that cannot sign must never produce an unsigned note.
+- **A crashed `maintain` blocked its vault for two hours.** `maintain.lock` is
+  a pidfile that only expired on a `stale_after_seconds` timer and never
+  checked whether its holder was alive, so every hourly firing was skipped
+  while a dead pid held it — measured at 92 minutes on a live vault, during
+  which `brain doctor` went on reporting a corpus-invariant regression that had
+  already been repaired. A dead holder is now broken immediately, but only for
+  a lock THIS host wrote: the file sits on the Cowork mount and a pid number
+  means nothing across machines, and a reused pid looks alive, so the check
+  only ever shortens the wait.
+- **`brain maintain` crashed instead of reporting.** A skipped run carries no
+  `weekday`/`branches_due`, and the human renderer read both unconditionally —
+  so the command raised `KeyError('weekday')` in exactly the case it had
+  something to say. The `--json` path was unaffected, which is why the nightly
+  never surfaced it. The rendering moves to `_render_maintain`, which also
+  takes `_main` back under its complexity bound.
+- **The auto-update alert announced a version that was no longer running.** It
+  reported "auto-updated to 0.20.14" every session for its whole 7-day window
+  while 0.20.18 was the running engine: the window bounds how old the MARKER
+  may be, and nothing checked that the marker still described reality. An
+  `applied` alert now goes quiet once a later version is running, and an
+  `available` one once that version is installed. An unreadable version stamp
+  still lets the alert through — a fix for noise must not silence a real
+  finding.
+
+### Changed
+- **AGENTS.md §9 told a Cowork session to refuse the command §9 requires of
+  it.** The section opens by requiring `brain --role vm alerts` at every Cowork
+  session start and closed by stating that a VM session "never reads or writes"
+  `.brain/`, with `inbox.jsonl` and `engine-feedback/` explicitly host-only.
+  The shipped code settles it: `vault_alerts` reads `.brain/notify-sent/*.marker`,
+  `.brain/memory/inbox.jsonl` and `.brain/engine-feedback/*.md`, and on
+  `role=vm` only the two HOST-HOME sources are out of reach — reported under
+  `unreachable`, never skipped. Narrowed to what is actually host-only (the
+  session-memory files), with the alerts exception stated and the VM's
+  never-writes/never-indexed posture kept explicit.
+
+
 ## [0.20.18] — 2026-08-17
 ### Fixed
 - **An ingest could finish and leave its sources unreachable.** The

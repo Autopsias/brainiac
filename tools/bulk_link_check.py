@@ -127,127 +127,6 @@ def _shingles(body: str, n: int = 5) -> set[tuple[str, ...]]:
     return {tuple(toks[i:i + n]) for i in range(max(0, len(toks) - n + 1))}
 
 
-def check_batch(vault: Path, batch: str) -> dict:
-    from brain import frontmatter as fm
-
-    notes: list[dict] = []
-    for path in sorted((vault / "brain").rglob("*.md")):
-        meta, body = fm.parse_text(path.read_text(encoding="utf-8"))
-        if not meta or str(meta.get("bulk_link_batch") or "").strip() != batch:
-            continue
-        notes.append({"path": str(path.relative_to(vault)), "meta": meta, "body": body})
-
-    # classification of every note in the vault, for the tier check
-    tier_of: dict[str, str] = {}
-    for path in sorted(vault.rglob("*.md")):
-        if any(p in {".brain", "inbox", "overlay", "originals"} for p in path.parts):
-            continue
-        try:
-            meta, _ = fm.parse_text(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        if meta and meta.get("id"):
-            tier_of[str(meta["id"])] = str(meta.get("classification") or "MNPI")
-
-    # A cited source is a link that RESOLVES to a raw/-zone note. It is not a
-    # `raw/`-prefixed target: `graph._build_resolver` keys on the bare id/stem,
-    # so `[[raw/x]]` in a body produces NO graph edge at all (the conventions
-    # validator warns about it too). Frontmatter `source:` keeps the
-    # `[[raw/...]]` shape AGENTS.md §2 prescribes; bodies must use the bare id.
-    raw_ids = {str(m["id"]) for m in
-               (fm.parse_text(pp.read_text(encoding="utf-8"))[0] or {}
-                for pp in (vault / "raw").rglob("*.md")
-                if "originals" not in pp.parts) if m.get("id")}
-
-    stop = _function_words()
-    failures: list[str] = []
-    rows: list[dict] = []
-    for n in notes:
-        meta, body, rel = n["meta"], n["body"], n["path"]
-        nid = str(meta.get("id") or rel)
-        title = str(meta.get("title") or "")
-        title_toks = set(_tokens(title))
-        body_toks = _tokens(body)
-        freq_ratio = (sum(1 for t in body_toks if t not in title_toks)
-                      / len(body_toks)) if body_toks else 0.0
-        vocab = {t for t in body_toks if t not in stop}
-        novel_vocab = vocab - title_toks
-        ratio = (len(novel_vocab) / len(vocab)) if vocab else 0.0
-        props = [s for s in _sentences(body)
-                 if _FIGURE.search(s) and any(
-                     t not in title_toks for t in _tokens(s) if _FIGURE.search(t))]
-        cited = [t for ln in _unwrap(body) for t in _LINK.findall(ln)
-                 if t.split("/")[-1] in raw_ids]
-        bare = [ln.strip() for ln in _unwrap(body)
-                if any(t.split("/")[-1] in raw_ids for t in _LINK.findall(ln))
-                and "—" not in ln and " - " not in ln]
-        unresolvable = [t for ln in _unwrap(body) for t in _LINK.findall(ln)
-                        if t.startswith("raw/")]
-        want = max((TIERS.index(tier_of.get(c.split("/", 1)[-1], "MNPI"))
-                    for c in cited), default=0)
-        have = TIERS.index(str(meta.get("classification") or "Public")) \
-            if str(meta.get("classification") or "") in TIERS else -1
-
-        row = {
-            "id": nid, "path": rel, "body_chars": len(body),
-            "propositions": len(props), "novel_token_ratio": round(ratio, 4),
-            "token_frequency_ratio": round(freq_ratio, 4),
-            "cited_sources": cited, "bare_links": bare,
-            "graph_invisible_links": unresolvable,
-            "classification": meta.get("classification"),
-            "min_required_tier": TIERS[want] if cited else None,
-        }
-        rows.append(row)
-
-        if str(meta.get("type") or "") != "source-derived":
-            failures.append(f"{nid}: type is {meta.get('type')!r}, not source-derived")
-        if not str(meta.get("source") or "").strip():
-            failures.append(f"{nid}: no `source:` frontmatter anchor")
-        if len(body) < MIN_BODY_CHARS:
-            failures.append(f"{nid}: body {len(body)}B < {MIN_BODY_CHARS}B floor")
-        if len(props) < MIN_PROPOSITIONS:
-            failures.append(f"{nid}: {len(props)} figure-bearing propositions "
-                            f"absent from the title < {MIN_PROPOSITIONS}")
-        if ratio < MIN_NOVEL_TOKEN_RATIO:
-            failures.append(f"{nid}: only {ratio:.2%} of the body's distinct content "
-                            f"vocabulary is absent from the title "
-                            f"(< {MIN_NOVEL_TOKEN_RATIO:.0%}) — reads as a title paraphrase")
-        if not cited:
-            failures.append(f"{nid}: cites no raw/ source in its body")
-        if unresolvable:
-            failures.append(f"{nid}: {len(unresolvable)} body link(s) written as "
-                            f"[[raw/...]] — these resolve to NOTHING in the graph: "
-                            f"{unresolvable[:2]}")
-        if bare:
-            failures.append(f"{nid}: {len(bare)} raw/ link(s) with no relation "
-                            f"statement: {bare[:2]}")
-        if cited and have < want:
-            failures.append(f"{nid}: classified {meta.get('classification')} while citing "
-                            f"{TIERS[want]} sources — a cross-tier derived note")
-
-    pairs: list[dict] = []
-    for i in range(len(notes)):
-        for j in range(i + 1, len(notes)):
-            a, b = _shingles(notes[i]["body"]), _shingles(notes[j]["body"])
-            sim = len(a & b) / len(a | b) if (a | b) else 0.0
-            pairs.append({"a": notes[i]["meta"].get("id"),
-                          "b": notes[j]["meta"].get("id"), "similarity": round(sim, 4)})
-            if sim > MAX_PAIR_SIMILARITY:
-                failures.append(f"{notes[i]['meta'].get('id')} ~ "
-                                f"{notes[j]['meta'].get('id')}: 5-gram similarity "
-                                f"{sim:.2%} > {MAX_PAIR_SIMILARITY:.0%} — template reuse")
-
-    return {
-        "batch": batch, "notes": len(notes), "rows": rows,
-        "max_pair_similarity": max((p["similarity"] for p in pairs), default=0.0),
-        "pairs": sorted(pairs, key=lambda p: -p["similarity"])[:10],
-        "thresholds": {
-            "MIN_BODY_CHARS": MIN_BODY_CHARS, "MIN_PROPOSITIONS": MIN_PROPOSITIONS,
-            "MIN_NOVEL_TOKEN_RATIO": MIN_NOVEL_TOKEN_RATIO,
-            "MAX_PAIR_SIMILARITY": MAX_PAIR_SIMILARITY,
-        },
-        "failures": failures, "ok": not failures,
-    }
 
 
 def main() -> int:
@@ -275,6 +154,10 @@ def main() -> int:
         print("OK" if res["ok"] else f"FAILED ({len(res['failures'])})")
     return 0 if res["ok"] else 1
 
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.modules.setdefault("tools.bulk_link_check", sys.modules[__name__])
+from tools.bulk_link_batch import check_batch  # noqa: E402
 
 if __name__ == "__main__":
     raise SystemExit(main())

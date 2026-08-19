@@ -13,8 +13,9 @@ import email.policy
 import email.utils
 import html.parser
 import re
+from email.message import Message
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from .base import ExtractResult, Handler, density_gate, strip_control_chars
 
@@ -155,6 +156,123 @@ def _extract_body(msg: "email.message.Message") -> tuple[str, list[str]]:
     return "", warnings
 
 
+def _read_message(path: Path) -> Message | ExtractResult:
+    try:
+        size = path.stat().st_size
+    except OSError:
+        size = 0
+    if size > MAX_EML_BYTES:
+        return ExtractResult.quarantine(
+            "file_too_large",
+            warnings=[f"{size} bytes exceeds cap {MAX_EML_BYTES}"],
+        )
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        return ExtractResult.quarantine(
+            "eml_read_error",
+            warnings=[f"{type(exc).__name__}: {exc}"],
+        )
+    try:
+        return email.message_from_bytes(raw, policy=email.policy.default)
+    except Exception as exc:
+        return ExtractResult.quarantine(
+            "eml_parse_error",
+            warnings=[f"{type(exc).__name__}: {exc}"],
+        )
+
+
+def _attachment_payloads(
+    msg: Message,
+    warnings: list[str],
+) -> tuple[list[dict[str, Any]], list[tuple[str, str, int]]]:
+    try:
+        attachments = list(msg.iter_attachments())
+    except Exception:
+        attachments = []
+    if len(attachments) > MAX_ATTACHMENTS:
+        warnings.append(
+            f"attachments_truncated: {len(attachments)} found, cap {MAX_ATTACHMENTS}"
+        )
+        attachments = attachments[:MAX_ATTACHMENTS]
+    nested: list[dict[str, Any]] = []
+    metadata: list[tuple[str, str, int]] = []
+    total_bytes = 0
+    for index, part in enumerate(attachments, start=1):
+        name = strip_control_chars(part.get_filename() or f"attachment_{index}.bin")
+        data = _decode_attachment(part, name, warnings)
+        if data is None:
+            continue
+        if total_bytes + len(data) > MAX_ATTACHMENT_TOTAL_BYTES:
+            warnings.append(f"attachment_byte_cap_reached: stopped before {name}")
+            break
+        total_bytes += len(data)
+        metadata.append((name, part.get_content_type(), len(data)))
+        nested.append({"name": name, "data": data})
+    return nested, metadata
+
+
+def _decode_attachment(part: Message, name: str, warnings: list[str]) -> bytes | None:
+    try:
+        return part.get_payload(decode=True) or b""
+    except Exception as exc:
+        warnings.append(f"attachment_decode_failed:{name}:{type(exc).__name__}")
+        return None
+
+
+def _render_email(
+    *,
+    subject: str,
+    from_addrs: list[str],
+    to_addrs: list[str],
+    cc_addrs: list[str],
+    sent_raw: str,
+    sent_iso: str | None,
+    body_text: str,
+    attachments: list[tuple[str, str, int]],
+) -> str:
+    lines = [
+        "## Email metadata",
+        "",
+        f"- **Subject:** {subject or '(no subject)'}",
+        f"- **From:** {'; '.join(from_addrs) if from_addrs else _EM_DASH}",
+        f"- **To:** {'; '.join(to_addrs) if to_addrs else _EM_DASH}",
+    ]
+    if cc_addrs:
+        lines.append(f"- **Cc:** {'; '.join(cc_addrs)}")
+    if sent_iso:
+        lines.append(f"- **Sent:** {sent_iso} (raw: {sent_raw})")
+    elif sent_raw:
+        lines.append(f"- **Sent:** {sent_raw}")
+    if attachments:
+        lines.append(f"- **Attachments:** {len(attachments)}")
+    lines += ["", "## Body", "", body_text or "*(empty body)*", ""]
+    if attachments:
+        lines += ["## Attachments", ""]
+        lines.extend(
+            f"- `{name}` — {content_type} ({size / 1024:.1f} KB)"
+            for name, content_type, size in attachments
+        )
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _email_provenance(
+    msg: Message,
+    subject: str,
+    from_addrs: list[str],
+    sent_iso: str | None,
+    sent_raw: str,
+) -> dict[str, str]:
+    values: dict[str, str | None] = {
+        "sender": from_addrs[0] if from_addrs else None,
+        "sent": sent_iso or sent_raw or None,
+        "conversation_id": _conversation_id(msg),
+        "subject": subject or None,
+    }
+    return {key: value for key, value in values.items() if value is not None}
+
+
 class EmailHandler(Handler):
     extensions = (".eml",)
     dependency_name = "stdlib"
@@ -165,23 +283,9 @@ class EmailHandler(Handler):
 
     @classmethod
     def extract(cls, path: Path) -> ExtractResult:
-        try:
-            size = path.stat().st_size
-        except OSError:
-            size = 0
-        if size > MAX_EML_BYTES:
-            return ExtractResult.quarantine(
-                "file_too_large", warnings=[f"{size} bytes exceeds cap {MAX_EML_BYTES}"]
-            )
-        try:
-            raw = path.read_bytes()
-        except OSError as exc:
-            return ExtractResult.quarantine("eml_read_error", warnings=[f"{type(exc).__name__}: {exc}"])
-        try:
-            msg = email.message_from_bytes(raw, policy=email.policy.default)
-        except Exception as exc:
-            return ExtractResult.quarantine("eml_parse_error", warnings=[f"{type(exc).__name__}: {exc}"])
-
+        msg = _read_message(path)
+        if isinstance(msg, ExtractResult):
+            return msg
         subject = strip_control_chars(_decode_header(msg.get("Subject")))
         from_addrs = _addr_list(_decode_header(msg.get("From")))
         to_addrs = _addr_list(_decode_header(msg.get("To")))
@@ -189,74 +293,24 @@ class EmailHandler(Handler):
         sent_raw = _decode_header(msg.get("Date"))
         sent_iso = _sent_date_iso(sent_raw)
         body_text, warnings = _extract_body(msg)
-
-        try:
-            attachments = list(msg.iter_attachments())
-        except Exception:
-            attachments = []
-        if len(attachments) > MAX_ATTACHMENTS:
-            warnings.append(f"attachments_truncated: {len(attachments)} found, cap {MAX_ATTACHMENTS}")
-            attachments = attachments[:MAX_ATTACHMENTS]
-
-        nested: list[dict] = []
-        attach_meta: list[tuple[str, str, int]] = []
-        total_bytes = 0
-        for idx, part in enumerate(attachments, start=1):
-            name = strip_control_chars(part.get_filename() or f"attachment_{idx}.bin")
-            try:
-                data = part.get_payload(decode=True) or b""
-            except Exception as exc:
-                warnings.append(f"attachment_decode_failed:{name}:{type(exc).__name__}")
-                continue
-            if total_bytes + len(data) > MAX_ATTACHMENT_TOTAL_BYTES:
-                warnings.append(f"attachment_byte_cap_reached: stopped before {name}")
-                break
-            total_bytes += len(data)
-            attach_meta.append((name, part.get_content_type(), len(data)))
-            nested.append({"name": name, "data": data})
-
-        from_disp = "; ".join(from_addrs) if from_addrs else _EM_DASH
-        to_disp = "; ".join(to_addrs) if to_addrs else _EM_DASH
-
-        lines = [
-            "## Email metadata", "",
-            f"- **Subject:** {subject or '(no subject)'}",
-            f"- **From:** {from_disp}",
-            f"- **To:** {to_disp}",
-        ]
-        if cc_addrs:
-            lines.append(f"- **Cc:** {'; '.join(cc_addrs)}")
-        if sent_iso:
-            lines.append(f"- **Sent:** {sent_iso} (raw: {sent_raw})")
-        elif sent_raw:
-            lines.append(f"- **Sent:** {sent_raw}")
-        if attach_meta:
-            lines.append(f"- **Attachments:** {len(attach_meta)}")
-        lines += ["", "## Body", "", body_text or "*(empty body)*", ""]
-        if attach_meta:
-            lines.append("## Attachments")
-            lines.append("")
-            for name, ctype, nbytes in attach_meta:
-                lines.append(f"- `{name}` — {ctype} ({nbytes / 1024:.1f} KB)")
-            lines.append("")
-        body_md = "\n".join(lines)
-
+        nested, attach_meta = _attachment_payloads(msg, warnings)
+        body_md = _render_email(
+            subject=subject,
+            from_addrs=from_addrs,
+            to_addrs=to_addrs,
+            cc_addrs=cc_addrs,
+            sent_raw=sent_raw,
+            sent_iso=sent_iso,
+            body_text=body_text,
+            attachments=attach_meta,
+        )
         reason = density_gate(body_md)
         if reason:
             return ExtractResult.quarantine(reason, warnings=warnings)
-        # PRV-02: provenance parsed from the ORIGINAL bytes by the host. This
-        # is the one source the pipeline may stamp `provenance.verified: true`
-        # from — a VM-authored manifest claim never reaches this dict.
-        conversation = _conversation_id(msg)
-        prov = {
-            "sender": from_addrs[0] if from_addrs else None,
-            "sent": sent_iso or sent_raw or None,
-            "conversation_id": conversation,
-            "subject": subject or None,
-        }
+        provenance = _email_provenance(msg, subject, from_addrs, sent_iso, sent_raw)
         return ExtractResult(
             markdown=body_md, warnings=warnings,
             metadata={"nested": nested, "attachment_count": len(attach_meta),
                       "subject": subject,
-                      "provenance": {k: v for k, v in prov.items() if v}},
+                      "provenance": provenance},
         )

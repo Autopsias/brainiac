@@ -66,7 +66,6 @@ real information, not noise to average away.
 """
 from __future__ import annotations
 
-import json
 import re
 import sys
 from pathlib import Path
@@ -178,67 +177,6 @@ def _print_text(res: dict) -> None:
     print(f"\nversions counted: {', '.join(res['versions_seen']) or '(none)'}")
 
 
-def main(argv: list[str]) -> int:
-    def _opt(name: str) -> str | None:
-        val = next((a.split("=", 1)[1] for a in argv[1:]
-                    if a.startswith(f"--{name}=")), None)
-        if val is None and f"--{name}" in argv:
-            i = argv.index(f"--{name}")
-            if i + 1 < len(argv):
-                val = argv[i + 1]
-        return val
-
-    expect, lane = _opt("expect"), _opt("lane")
-    if lane is not None and lane not in LANES:
-        print(f"usage: --lane must be one of {', '.join(LANES)}", file=sys.stderr)
-        return 2
-    args = [a for a in argv[1:]
-            if not a.startswith("--") and a not in (expect, lane)]
-    if not args:
-        print("usage: cos_deployed_version.py [--json] [--lane LANE] "
-              "[--expect VERSION] <vault>", file=sys.stderr)
-        return 2
-    vault = Path(args[0]).expanduser().resolve()
-    if not (vault / "cos-ops").is_dir():
-        print(f"FAIL: no cos-ops dir under {vault}", file=sys.stderr)
-        return 2
-
-    res = report(vault, lane=lane)
-    if "--json" in argv:
-        print(json.dumps(res, indent=2))
-    else:
-        _print_text(res)
-
-    if res["lane"] is None:
-        print("\nREFUSING TO ANSWER: " + res["lane_reason"], file=sys.stderr)
-        return 2
-    if not res["lane_supported"]:
-        # DEP-03: UNSUPPORTED, never a version. Returned before --expect is
-        # even looked at — a retired surface must not be able to satisfy OR
-        # refute an expectation, which is how it manufactured its two false
-        # freeze alarms.
-        print("\nUNSUPPORTED SURFACE: " + res["lane_unsupported_reason"],
-              file=sys.stderr)
-        return 2
-    if not res["deployed"] and not res["run_reports"]:
-        print("FAIL: no readback source available on this lane", file=sys.stderr)
-        return 2
-    if expect:
-        if expect in res["versions_seen"]:
-            print(f"\nOK: {expect!r} is reported by the {res['lane']} lane "
-                  "or by a run report")
-            return 0
-        elsewhere = any(e.get("version") == expect for e in res["other_surfaces"])
-        extra = (f" ({expect!r} IS present on a non-executing surface — that "
-                 "surface does not run, so it does not count)"
-                 if elsewhere else "")
-        print(f"\nMISMATCH: the {res['lane']} lane does not report {expect!r} — "
-              f"counted: {res['versions_seen'] or '(none)'}{extra}. Do NOT move "
-              "the calibration pin: guard 4 is a string equality and a pin "
-              "ahead of the deployment silently freezes every gated phase.",
-              file=sys.stderr)
-        return 1
-    return 0
 
 
 def _selfcheck() -> None:
@@ -306,6 +244,10 @@ def _selfcheck_body() -> None:
         assert main(["x", "--lane", LANE_COWORK, "--expect",
                      "chief-of-staff v5.38", str(vault)]) == 0
 
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.modules.setdefault("tools.cos_deployed_version", sys.modules[__name__])
+from tools.cos_deployed_steps import main  # noqa: E402
 
 if __name__ == "__main__":
     if "--selfcheck" in sys.argv:

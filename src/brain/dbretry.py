@@ -2,7 +2,7 @@
 
 Why this exists, and why a retry loop alone is not enough:
 
-SQLite's ``busy_handler`` (``PRAGMA busy_timeout``, set at index.py's
+SQLite's ``busy_handler`` (``PRAGMA busy_timeout``, set at ``brain.index``'s
 ``conn`` property) does NOT get invoked for every contended case. In
 particular, a connection that opened a DEFERRED transaction (Python's
 sqlite3 default) and only discovers on its first write that it needs to

@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from . import frontmatter
+from .overlay_rules import parse_ingest_rules as parse_ingest_rules_impl
 
 CATEGORIES: tuple[str, ...] = ("voice", "brand", "keywords", "people")
 
@@ -149,57 +150,16 @@ def parse_ingest_rules(body: str) -> dict[str, Any]:
     WARNING rather than an error — the fail-CLOSED direction. A `never` rule
     suppresses candidates outright, so it is never inferred from a typo.
     """
-    rules: dict[str, dict[str, Any]] = {}
-    warnings: list[str] = []
-
-    for line in _strip_noise(body):
-        m = _RULE_RE.match(line.rstrip())
-        if not m:
-            continue
-        cat_id, rest = m.group(1), m.group(2).strip()
-        parts = [p.strip() for p in rest.split("|")]
-        disposition = parts[0].strip().strip("`")
-        if disposition not in DISPOSITIONS:
-            warnings.append(
-                f"{cat_id}: unknown disposition {disposition!r} — "
-                f"treated as {DEFAULT_DISPOSITION!r}"
-            )
-            disposition = DEFAULT_DISPOSITION
-        rule: dict[str, Any] = {"disposition": disposition, "lane": DEFAULT_LANE,
-                                "min_tier": None}
-        for opt in parts[1:]:
-            if not opt:
-                continue
-            key, sep, value = opt.partition("=")
-            key, value = key.strip(), value.strip().strip("`")
-            if not sep:
-                warnings.append(f"{cat_id}: unparseable option {opt!r} — ignored, "
-                                f"rule treated as {DEFAULT_DISPOSITION!r}")
-                rule["disposition"] = DEFAULT_DISPOSITION
-            elif key == "lane":
-                if value in INGEST_LANES:
-                    rule["lane"] = value
-                else:
-                    warnings.append(f"{cat_id}: unknown lane {value!r} — "
-                                    f"treated as {DEFAULT_LANE!r}")
-            elif key == "min_tier":
-                if value in TIERS:
-                    rule["min_tier"] = value
-                else:
-                    warnings.append(f"{cat_id}: unknown min_tier {value!r} — ignored "
-                                    "(a category never lowers a tier)")
-            else:
-                warnings.append(f"{cat_id}: unknown option {key!r} — ignored")
-        if cat_id in rules:
-            warnings.append(f"{cat_id}: duplicate rule — treated as "
-                            f"{DEFAULT_DISPOSITION!r}")
-            rule = {"disposition": DEFAULT_DISPOSITION, "lane": DEFAULT_LANE,
-                    "min_tier": None}
-        rules[cat_id] = rule
-
-    if not rules:
-        warnings.append("no category rules found — the file declares no taxonomy")
-    return {"rules": rules, "warnings": warnings}
+    return parse_ingest_rules_impl(
+        body,
+        strip_noise=_strip_noise,
+        rule_pattern=_RULE_RE,
+        dispositions=DISPOSITIONS,
+        default_disposition=DEFAULT_DISPOSITION,
+        ingest_lanes=INGEST_LANES,
+        default_lane=DEFAULT_LANE,
+        tiers=TIERS,
+    )
 
 
 def _ingest_report(path: Path) -> dict[str, Any]:

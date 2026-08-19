@@ -652,8 +652,8 @@ Three review rounds produced one finding each from a single defect CLASS — a
 value the VM can write used as, or to build, a path the host then opens, moves,
 renames or unlinks — at a different site every time. Guarding reported sites
 failed twice, so the guards are now derived from an ENUMERATION: the census
-block in `src/brain/cos.py` ("MOUNT-RESIDENT DATA THAT BECOMES A FILESYSTEM
-PATH") lists every reader of mount-resident JSON with its path-bearing fields
+banner in `src/brain/cos/_guards.py` ("MOUNT-RESIDENT DATA THAT BECOMES A
+FILESYSTEM PATH") lists every reader of mount-resident JSON with its path-bearing fields
 and its guard. An `id` is not the only field that reaches the filesystem: an
 attachment sidecar's `path` is a MOVE SOURCE, its `filename` is a move
 DESTINATION, and a lifecycle record's `dest`/`src` are unlink targets. One
@@ -677,9 +677,11 @@ attachment lane, whose own accept-to-signature window is closed by the signed
 anchor described in §2c.
 
 **What the structural test actually binds, and what it does not (INT-05).**
-`tests/test_cos_pathguard.py` fails if a `cos.py` function parses JSON off disk
-— `json.loads`, `json.load(fh)`, a `JSONDecoder`, `_read_jsonl` or any other
-`_read_*` helper, at module level too — without being classified in its table.
+`tests/test_cos_pathguard_census.py` (split s16 out of the former
+`test_cos_pathguard.py` monolith) fails if a `brain.cos` function parses JSON
+off disk — `json.loads`, `json.load(fh)`, a `JSONDecoder`, `_read_jsonl` or
+any other `_read_*` helper, at module level too — without being classified in
+its table.
 A `GUARDED` classification is now checked by TAINT rather than by grepping the
 function for a guard's name: the parsed mapping is tainted at its binding,
 cleared by a guard call, and a path expression over a still-tainted field is a
@@ -1411,7 +1413,7 @@ morning brief.
 When a newly committed document looks like a newer version of one already in
 the vault, the broker says so — as a **proposal in the same nightly batch**,
 never an automatic supersede. Signals live in `src/brain/versionlink.py`; the
-broker half (candidate, batch, apply, memory) lives in `src/brain/cos.py`.
+broker half (candidate, batch, apply, memory) lives in `src/brain/cos/`.
 
 **Three tiers, and only the third is new.** sha256-identical duplicates stay
 automatic (`maintenance.auto_dedup_tier1`, DDP-01); explicit `…-vN` id

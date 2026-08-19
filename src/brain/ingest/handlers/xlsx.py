@@ -7,6 +7,7 @@ dropping the cell."""
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from .base import ExtractResult, Handler, density_gate
 from .tables import rows_to_markdown
@@ -21,6 +22,86 @@ MAX_XLSX_BYTES = 100 * 1024 * 1024
 MAX_ROWS_PER_SHEET = 20_000  # cap runaway sheets rather than hang
 
 
+def _open_workbooks(path: Path) -> tuple[Any, Any | None] | ExtractResult:
+    try:
+        size = path.stat().st_size
+    except OSError:
+        size = 0
+    if size > MAX_XLSX_BYTES:
+        return ExtractResult.quarantine("file_too_large")
+    try:
+        values = openpyxl.load_workbook(str(path), data_only=True, read_only=True)
+    except Exception as exc:
+        return ExtractResult.quarantine(
+            "xlsx_extraction_error",
+            warnings=[f"{type(exc).__name__}: {exc}"],
+        )
+    try:
+        formulas = openpyxl.load_workbook(str(path), data_only=False, read_only=True)
+    except Exception:
+        formulas = None
+    return values, formulas
+
+
+def _sheet_rows(
+    values_sheet: Any,
+    formulas_sheet: Any | None,
+    name: str,
+    warnings: list[str],
+) -> list[list[object]]:
+    rows: list[list[object]] = []
+    if formulas_sheet is not None:
+        row_pairs = zip(values_sheet.iter_rows(), formulas_sheet.iter_rows())
+    else:
+        row_pairs = ((row, None) for row in values_sheet.iter_rows())
+    for row_index, (value_row, formula_row) in enumerate(row_pairs, start=1):
+        if row_index > MAX_ROWS_PER_SHEET:
+            warnings.append(f"sheet {name!r} truncated at {MAX_ROWS_PER_SHEET} rows")
+            break
+        rows.append([
+            _cell_value(cell.value, formula_row, column_index)
+            for column_index, cell in enumerate(value_row)
+        ])
+    return rows
+
+
+def _cell_value(value: object, formula_row: Any | None, column_index: int) -> object:
+    if value is not None or formula_row is None or column_index >= len(formula_row):
+        return value
+    formula = formula_row[column_index].value
+    if isinstance(formula, str) and formula.startswith("="):
+        return f"{formula} (formula, uncomputed)"
+    return value
+
+
+def _render_workbooks(values: Any, formulas: Any | None) -> ExtractResult:
+    sections: list[str] = []
+    warnings: list[str] = []
+    try:
+        for name in values.sheetnames:
+            formula_sheet = formulas[name] if formulas is not None else None
+            rows = _sheet_rows(values[name], formula_sheet, name, warnings)
+            sections.append(f"## Sheet: {name}\n\n" + rows_to_markdown(rows))
+    except Exception as exc:
+        return ExtractResult.quarantine(
+            "xlsx_extraction_error",
+            warnings=[f"{type(exc).__name__}: {exc}"],
+        )
+    finally:
+        values.close()
+        if formulas is not None:
+            formulas.close()
+    body = "\n".join(sections)
+    reason = density_gate(body)
+    if reason:
+        return ExtractResult.quarantine(reason)
+    return ExtractResult(
+        markdown=body,
+        warnings=warnings,
+        metadata={"sheet_count": len(sections)},
+    )
+
+
 class XlsxHandler(Handler):
     extensions = (".xlsx",)
     dependency_name = "openpyxl"
@@ -33,68 +114,7 @@ class XlsxHandler(Handler):
     def extract(cls, path: Path) -> ExtractResult:
         if not _HAS_OPENPYXL:
             return ExtractResult.quarantine("missing_dependency:openpyxl")
-        try:
-            size = path.stat().st_size
-        except OSError:
-            size = 0
-        if size > MAX_XLSX_BYTES:
-            return ExtractResult.quarantine("file_too_large")
-
-        try:
-            wb_values = openpyxl.load_workbook(str(path), data_only=True, read_only=True)
-        except Exception as exc:
-            return ExtractResult.quarantine(
-                "xlsx_extraction_error", warnings=[f"{type(exc).__name__}: {exc}"]
-            )
-        try:
-            wb_formulas = openpyxl.load_workbook(str(path), data_only=False, read_only=True)
-        except Exception:
-            wb_formulas = None
-
-        sections: list[str] = []
-        warnings: list[str] = []
-        try:
-            for name in wb_values.sheetnames:
-                ws_v = wb_values[name]
-                ws_f = wb_formulas[name] if wb_formulas is not None else None
-                rows: list[list[object]] = []
-                # C9: ws_f.cell(row=, column=) is RANDOM ACCESS on a
-                # read_only workbook — each call silently re-parses the
-                # whole sheet from the start, and it fired for every single
-                # empty cell (quadratic). Iterate both workbooks' rows in
-                # lockstep instead (each row read exactly once), only
-                # consulting the formula row when the value cell is empty.
-                if ws_f is not None:
-                    row_pairs = zip(ws_v.iter_rows(), ws_f.iter_rows())
-                else:
-                    row_pairs = ((row, None) for row in ws_v.iter_rows())
-                for r_idx, (row, f_row) in enumerate(row_pairs, start=1):
-                    if r_idx > MAX_ROWS_PER_SHEET:
-                        warnings.append(f"sheet {name!r} truncated at {MAX_ROWS_PER_SHEET} rows")
-                        break
-                    out_row = []
-                    for c_idx, cell in enumerate(row):
-                        val = cell.value
-                        if val is None and f_row is not None and c_idx < len(f_row):
-                            f_val = f_row[c_idx].value
-                            if isinstance(f_val, str) and f_val.startswith("="):
-                                val = f"{f_val} (formula, uncomputed)"
-                        out_row.append(val)
-                    rows.append(out_row)
-                sections.append(f"## Sheet: {name}\n\n" + rows_to_markdown(rows))
-        except Exception as exc:
-            return ExtractResult.quarantine(
-                "xlsx_extraction_error", warnings=[f"{type(exc).__name__}: {exc}"]
-            )
-        finally:
-            wb_values.close()
-            if wb_formulas is not None:
-                wb_formulas.close()
-
-        body = "\n".join(sections)
-        reason = density_gate(body)
-        if reason:
-            return ExtractResult.quarantine(reason)
-        return ExtractResult(
-            markdown=body, warnings=warnings, metadata={"sheet_count": len(sections)}
-        )
+        workbooks = _open_workbooks(path)
+        if isinstance(workbooks, ExtractResult):
+            return workbooks
+        return _render_workbooks(*workbooks)

@@ -1,83 +1,5 @@
 {
   "exceptions": {
-    "src/brain/cli.py:_main": {
-      "file": "src/brain/cli.py",
-      "lineno": 1744,
-      "name": "_main",
-      "lines": 1659
-    },
-    "src/brain/core.py:maintain": {
-      "file": "src/brain/core.py",
-      "lineno": 4065,
-      "name": "maintain",
-      "lines": 1391
-    },
-    "src/brain/cli.py:build_parser": {
-      "file": "src/brain/cli.py",
-      "lineno": 584,
-      "name": "build_parser",
-      "lines": 896
-    },
-    "tools/cos_lane_rehearsal.py:_self_check": {
-      "file": "tools/cos_lane_rehearsal.py",
-      "lineno": 1672,
-      "name": "_self_check",
-      "lines": 439
-    },
-    "src/brain/graphreport.py:build_payload": {
-      "file": "src/brain/graphreport.py",
-      "lineno": 218,
-      "name": "build_payload",
-      "lines": 415
-    },
-    "src/brain/index.py:_hybrid_search_impl": {
-      "file": "src/brain/index.py",
-      "lineno": 2754,
-      "name": "_hybrid_search_impl",
-      "lines": 351
-    },
-    "tools/cos_mutate.py:_apply_pass_locked": {
-      "file": "tools/cos_mutate.py",
-      "lineno": 1928,
-      "name": "_apply_pass_locked",
-      "lines": 339
-    },
-    "tools/cos_driver.py:_run_night": {
-      "file": "tools/cos_driver.py",
-      "lineno": 1505,
-      "name": "_run_night",
-      "lines": 326
-    },
-    "src/brain/cos_runverify.py:check_plan_binding": {
-      "file": "src/brain/cos_runverify.py",
-      "lineno": 2845,
-      "name": "check_plan_binding",
-      "lines": 300
-    },
-    "src/brain/ingest/pipeline.py:run_ingest": {
-      "file": "src/brain/ingest/pipeline.py",
-      "lineno": 373,
-      "name": "run_ingest",
-      "lines": 291
-    },
-    "src/brain/core.py:search_multi": {
-      "file": "src/brain/core.py",
-      "lineno": 411,
-      "name": "search_multi",
-      "lines": 285
-    },
-    "tools/cos_lane_rehearsal.py:main": {
-      "file": "tools/cos_lane_rehearsal.py",
-      "lineno": 1327,
-      "name": "main",
-      "lines": 282
-    },
-    "tools/cos_judge.py:judge_night": {
-      "file": "tools/cos_judge.py",
-      "lineno": 2148,
-      "name": "judge_night",
-      "lines": 254
-    },
     "eval/s04_variant_arms.py:main": {
       "file": "eval/s04_variant_arms.py",
       "lineno": 227,
@@ -90,47 +12,11 @@
       "name": "main",
       "lines": 249
     },
-    "src/brain/cos.py:ingest_sweep": {
-      "file": "src/brain/cos.py",
-      "lineno": 6715,
-      "name": "ingest_sweep",
-      "lines": 239
-    },
     "eval/gate.py:main": {
       "file": "eval/gate.py",
       "lineno": 173,
       "name": "main",
       "lines": 234
-    },
-    "tools/cos_hold_visible.py:cmd_hold": {
-      "file": "tools/cos_hold_visible.py",
-      "lineno": 529,
-      "name": "cmd_hold",
-      "lines": 221
-    },
-    "src/brain/cos_runverify.py:check_target_identity": {
-      "file": "src/brain/cos_runverify.py",
-      "lineno": 1853,
-      "name": "check_target_identity",
-      "lines": 214
-    },
-    "src/brain/core.py:drain_drafts": {
-      "file": "src/brain/core.py",
-      "lineno": 1025,
-      "name": "drain_drafts",
-      "lines": 213
-    },
-    "tools/cos_batch_chunk.py:do_split": {
-      "file": "tools/cos_batch_chunk.py",
-      "lineno": 253,
-      "name": "do_split",
-      "lines": 209
-    },
-    "tools/cos_judge.py:main": {
-      "file": "tools/cos_judge.py",
-      "lineno": 2493,
-      "name": "main",
-      "lines": 206
     },
     "eval/capture_run.py:main": {
       "file": "eval/capture_run.py",
@@ -138,29 +24,11 @@
       "name": "main",
       "lines": 206
     },
-    "src/brain/doctor.py:run_doctor": {
-      "file": "src/brain/doctor.py",
-      "lineno": 1403,
-      "name": "run_doctor",
-      "lines": 206
-    },
-    "src/brain/update.py:run_update": {
-      "file": "src/brain/update.py",
-      "lineno": 827,
-      "name": "run_update",
-      "lines": 203
-    },
     "eval/s06_fusion_residual.py:main": {
       "file": "eval/s06_fusion_residual.py",
       "lineno": 321,
       "name": "main",
       "lines": 202
-    },
-    "src/brain/cos.py:write_run_manifest": {
-      "file": "src/brain/cos.py",
-      "lineno": 1822,
-      "name": "write_run_manifest",
-      "lines": 201
     },
     "eval/s02_paired_capture.py:main": {
       "file": "eval/s02_paired_capture.py",
@@ -168,17 +36,17 @@
       "name": "main",
       "lines": 199
     },
+    "tests/_cos_grounding_canary_helpers.py:pipeline": {
+      "file": "tests/_cos_grounding_canary_helpers.py",
+      "lineno": 218,
+      "name": "pipeline",
+      "lines": 196
+    },
     "eval/s06_reachability.py:main": {
       "file": "eval/s06_reachability.py",
       "lineno": 118,
       "name": "main",
       "lines": 196
-    },
-    "tests/test_cos_grounding_canary.py:pipeline": {
-      "file": "tests/test_cos_grounding_canary.py",
-      "lineno": 259,
-      "name": "pipeline",
-      "lines": 193
     },
     "eval/s10_claim_arms.py:main": {
       "file": "eval/s10_claim_arms.py",
@@ -192,77 +60,17 @@
       "name": "main",
       "lines": 192
     },
-    "tools/cos_mutate.py:main": {
-      "file": "tools/cos_mutate.py",
-      "lineno": 2981,
-      "name": "main",
-      "lines": 191
-    },
-    "src/brain/ingest/pipeline.py:_process_claimed": {
-      "file": "src/brain/ingest/pipeline.py",
-      "lineno": 787,
-      "name": "_process_claimed",
-      "lines": 191
-    },
-    "src/brain/maintenance.py:auto_dedup_tier1": {
-      "file": "src/brain/maintenance.py",
-      "lineno": 1702,
-      "name": "auto_dedup_tier1",
-      "lines": 190
-    },
-    "src/brain/core.py:graphify": {
-      "file": "src/brain/core.py",
-      "lineno": 2848,
-      "name": "graphify",
-      "lines": 178
-    },
     "eval/bulk_link_control.py:main": {
       "file": "eval/bulk_link_control.py",
       "lineno": 254,
       "name": "main",
       "lines": 177
     },
-    "tools/cos_contract.py:evaluate": {
-      "file": "tools/cos_contract.py",
-      "lineno": 600,
-      "name": "evaluate",
-      "lines": 174
-    },
-    "tools/cos_mutate.py:build_plan": {
-      "file": "tools/cos_mutate.py",
-      "lineno": 520,
-      "name": "build_plan",
-      "lines": 173
-    },
-    "src/brain/cos.py:_bind_claim": {
-      "file": "src/brain/cos.py",
-      "lineno": 2659,
-      "name": "_bind_claim",
-      "lines": 173
-    },
-    "tools/cos_driver.py:main": {
-      "file": "tools/cos_driver.py",
-      "lineno": 1895,
-      "name": "main",
-      "lines": 171
-    },
     "eval/s09_fusion_drop_trace.py:main": {
       "file": "eval/s09_fusion_drop_trace.py",
       "lineno": 112,
       "name": "main",
       "lines": 170
-    },
-    "src/brain/cos.py:_apply_batch_decision": {
-      "file": "src/brain/cos.py",
-      "lineno": 3868,
-      "name": "_apply_batch_decision",
-      "lines": 166
-    },
-    "src/brain/cos_runverify.py:check_open_instrumentation": {
-      "file": "src/brain/cos_runverify.py",
-      "lineno": 2091,
-      "name": "check_open_instrumentation",
-      "lines": 166
     },
     "eval/harness_direct.py:main": {
       "file": "eval/harness_direct.py",
@@ -276,119 +84,17 @@
       "name": "_invariants",
       "lines": 159
     },
-    "tools/generate_sbom.py:main": {
-      "file": "tools/generate_sbom.py",
-      "lineno": 171,
-      "name": "main",
-      "lines": 158
-    },
-    "src/brain/mcp_adapter.py:dispatch": {
-      "file": "src/brain/mcp_adapter.py",
-      "lineno": 113,
-      "name": "dispatch",
-      "lines": 158
-    },
-    "tools/publish_public.py:main": {
-      "file": "tools/publish_public.py",
-      "lineno": 892,
-      "name": "main",
-      "lines": 156
-    },
-    "src/brain/index.py:sync": {
-      "file": "src/brain/index.py",
-      "lineno": 1488,
-      "name": "sync",
-      "lines": 156
-    },
-    "src/brain/index.py:_rebuild_impl": {
-      "file": "src/brain/index.py",
-      "lineno": 1331,
-      "name": "_rebuild_impl",
-      "lines": 155
-    },
-    "src/brain/index.py:diagnose_target": {
-      "file": "src/brain/index.py",
-      "lineno": 3176,
-      "name": "diagnose_target",
-      "lines": 154
-    },
-    "tools/cos_s02b_verify.py:assertions": {
-      "file": "tools/cos_s02b_verify.py",
-      "lineno": 164,
-      "name": "assertions",
-      "lines": 151
-    },
-    "src/brain/index.py:_collapse_duplicate_families": {
-      "file": "src/brain/index.py",
-      "lineno": 2305,
-      "name": "_collapse_duplicate_families",
-      "lines": 151
-    },
-    "tools/apply_live_migration.py:main": {
-      "file": "tools/apply_live_migration.py",
-      "lineno": 117,
-      "name": "main",
-      "lines": 149
-    },
-    "src/brain/init.py:run_full_init": {
-      "file": "src/brain/init.py",
-      "lineno": 664,
-      "name": "run_full_init",
-      "lines": 143
-    },
-    "src/brain/cos.py:_claim_drops_locked": {
-      "file": "src/brain/cos.py",
-      "lineno": 2505,
-      "name": "_claim_drops_locked",
-      "lines": 142
-    },
-    "src/brain/cos_runverify.py:check_candidate_stamps": {
-      "file": "src/brain/cos_runverify.py",
-      "lineno": 3147,
-      "name": "check_candidate_stamps",
-      "lines": 138
-    },
     "eval/s08_expand_split.py:stage_split": {
       "file": "eval/s08_expand_split.py",
       "lineno": 490,
       "name": "stage_split",
       "lines": 137
     },
-    "src/brain/cos_echecks.py:_grounding_delivery": {
-      "file": "src/brain/cos_echecks.py",
-      "lineno": 779,
-      "name": "_grounding_delivery",
-      "lines": 137
-    },
-    "src/brain/cos_runverify.py:check_chip_reeval_draw": {
-      "file": "src/brain/cos_runverify.py",
-      "lineno": 2415,
-      "name": "check_chip_reeval_draw",
-      "lines": 137
-    },
-    "src/brain/cli.py:_cmd_connect": {
-      "file": "src/brain/cli.py",
-      "lineno": 1530,
-      "name": "_cmd_connect",
-      "lines": 135
-    },
-    "src/brain/cos_runverify.py:check_corpus_join": {
-      "file": "src/brain/cos_runverify.py",
-      "lineno": 2632,
-      "name": "check_corpus_join",
-      "lines": 135
-    },
     "eval/fusion_constant_calibration.py:main": {
       "file": "eval/fusion_constant_calibration.py",
       "lineno": 172,
       "name": "main",
       "lines": 133
-    },
-    "tools/publish_release.py:step_contamination_scan": {
-      "file": "tools/publish_release.py",
-      "lineno": 72,
-      "name": "step_contamination_scan",
-      "lines": 131
     },
     "eval/rebaseline_rerank_capture.py:main": {
       "file": "eval/rebaseline_rerank_capture.py",
@@ -402,9 +108,9 @@
       "name": "main",
       "lines": 131
     },
-    "src/brain/cos_runverify.py:check_self_eval": {
-      "file": "src/brain/cos_runverify.py",
-      "lineno": 602,
+    "src/brain/cos_runverify_selfeval.py:check_self_eval": {
+      "file": "src/brain/cos_runverify_selfeval.py",
+      "lineno": 8,
       "name": "check_self_eval",
       "lines": 130
     },
@@ -414,69 +120,9 @@
       "name": "build",
       "lines": 129
     },
-    "src/brain/cos_runverify.py:check_category_stamp": {
-      "file": "src/brain/cos_runverify.py",
-      "lineno": 1130,
-      "name": "check_category_stamp",
-      "lines": 128
-    },
-    "src/brain/invariants.py:cross_tier_duplicates": {
-      "file": "src/brain/invariants.py",
-      "lineno": 583,
-      "name": "cross_tier_duplicates",
-      "lines": 128
-    },
-    "src/brain/cos_runverify.py:check_body_order": {
-      "file": "src/brain/cos_runverify.py",
-      "lineno": 1456,
-      "name": "check_body_order",
-      "lines": 126
-    },
-    "src/brain/versionlink.py:generate": {
-      "file": "src/brain/versionlink.py",
-      "lineno": 570,
-      "name": "generate",
-      "lines": 126
-    },
-    "tools/cos_mutate.py:build_evidence": {
-      "file": "tools/cos_mutate.py",
-      "lineno": 2812,
-      "name": "build_evidence",
-      "lines": 125
-    },
-    "src/brain/querylog.py:status": {
-      "file": "src/brain/querylog.py",
-      "lineno": 656,
-      "name": "status",
-      "lines": 125
-    },
-    "src/brain/healthreport.py:collect_health_report_data": {
-      "file": "src/brain/healthreport.py",
-      "lineno": 73,
-      "name": "collect_health_report_data",
-      "lines": 124
-    },
-    "src/brain/healthreport.py:_corpus_invariants_html": {
-      "file": "src/brain/healthreport.py",
-      "lineno": 332,
-      "name": "_corpus_invariants_html",
-      "lines": 123
-    },
-    "tools/bulk_link_check.py:check_batch": {
-      "file": "tools/bulk_link_check.py",
-      "lineno": 130,
-      "name": "check_batch",
-      "lines": 121
-    },
-    "tools/cos_mutate.py:shapes_from_capture": {
-      "file": "tools/cos_mutate.py",
-      "lineno": 2666,
-      "name": "shapes_from_capture",
-      "lines": 121
-    },
-    "tests/test_cos_pathguard.py:_tainted_path_uses": {
-      "file": "tests/test_cos_pathguard.py",
-      "lineno": 287,
+    "tests/_pathguard_helpers.py:_tainted_path_uses": {
+      "file": "tests/_pathguard_helpers.py",
+      "lineno": 75,
       "name": "_tainted_path_uses",
       "lines": 121
     },
@@ -486,34 +132,10 @@
       "name": "main",
       "lines": 120
     },
-    "src/brain/cos.py:_enqueue_batch_locked": {
-      "file": "src/brain/cos.py",
-      "lineno": 3511,
-      "name": "_enqueue_batch_locked",
-      "lines": 120
-    },
     "eval/pt_leg_attribution.py:main": {
       "file": "eval/pt_leg_attribution.py",
       "lineno": 37,
       "name": "main",
-      "lines": 119
-    },
-    "src/brain/core.py:status": {
-      "file": "src/brain/core.py",
-      "lineno": 1406,
-      "name": "status",
-      "lines": 119
-    },
-    "src/brain/cos_runverify.py:check_body_pass": {
-      "file": "src/brain/cos_runverify.py",
-      "lineno": 1294,
-      "name": "check_body_pass",
-      "lines": 119
-    },
-    "src/brain/index.py:near_dup": {
-      "file": "src/brain/index.py",
-      "lineno": 3786,
-      "name": "near_dup",
       "lines": 119
     },
     "tests/test_migration_verification.py:test_old_schema_index_upgrades_and_republishes_on_current_code": {
@@ -522,101 +144,11 @@
       "name": "test_old_schema_index_upgrades_and_republishes_on_current_code",
       "lines": 118
     },
-    "src/brain/brief.py:render_brief_html": {
-      "file": "src/brain/brief.py",
-      "lineno": 330,
-      "name": "render_brief_html",
-      "lines": 118
-    },
-    "src/brain/ingest/transcript.py:ingest_transcript": {
-      "file": "src/brain/ingest/transcript.py",
-      "lineno": 48,
-      "name": "ingest_transcript",
-      "lines": 116
-    },
-    "tools/apply_crosstier_ruling.py:main": {
-      "file": "tools/apply_crosstier_ruling.py",
-      "lineno": 309,
-      "name": "main",
-      "lines": 115
-    },
     "eval/zone_prior_calibration.py:analyse": {
       "file": "eval/zone_prior_calibration.py",
       "lineno": 398,
       "name": "analyse",
       "lines": 114
-    },
-    "src/brain/cos.py:_consume_answers_locked": {
-      "file": "src/brain/cos.py",
-      "lineno": 4183,
-      "name": "_consume_answers_locked",
-      "lines": 114
-    },
-    "src/brain/index.py:_rerank_impl": {
-      "file": "src/brain/index.py",
-      "lineno": 3481,
-      "name": "_rerank_impl",
-      "lines": 114
-    },
-    "tools/cos_judge.py:batch_prompts": {
-      "file": "tools/cos_judge.py",
-      "lineno": 1257,
-      "name": "batch_prompts",
-      "lines": 113
-    },
-    "tools/validate.py:check_bitemporal_global": {
-      "file": "tools/validate.py",
-      "lineno": 330,
-      "name": "check_bitemporal_global",
-      "lines": 113
-    },
-    "src/brain/querylog.py:capture_post_egress": {
-      "file": "src/brain/querylog.py",
-      "lineno": 464,
-      "name": "capture_post_egress",
-      "lines": 113
-    },
-    "tools/cos_model_answer.py:main": {
-      "file": "tools/cos_model_answer.py",
-      "lineno": 1268,
-      "name": "main",
-      "lines": 112
-    },
-    "src/brain/maintenance.py:health_trend": {
-      "file": "src/brain/maintenance.py",
-      "lineno": 2772,
-      "name": "health_trend",
-      "lines": 112
-    },
-    "src/brain/cos.py:_auto_capture_fold_locked": {
-      "file": "src/brain/cos.py",
-      "lineno": 6160,
-      "name": "_auto_capture_fold_locked",
-      "lines": 110
-    },
-    "src/brain/cos_runverify.py:verify_run": {
-      "file": "src/brain/cos_runverify.py",
-      "lineno": 3457,
-      "name": "verify_run",
-      "lines": 110
-    },
-    "tools/cos_verify_doctrine.py:audit": {
-      "file": "tools/cos_verify_doctrine.py",
-      "lineno": 78,
-      "name": "audit",
-      "lines": 108
-    },
-    "src/brain/core.py:_run_golden_probe": {
-      "file": "src/brain/core.py",
-      "lineno": 3154,
-      "name": "_run_golden_probe",
-      "lines": 108
-    },
-    "src/brain/cos.py:_hold_release_due_locked": {
-      "file": "src/brain/cos.py",
-      "lineno": 5252,
-      "name": "_hold_release_due_locked",
-      "lines": 108
     },
     "tests/test_cos_s02b_verify.py:_build": {
       "file": "tests/test_cos_s02b_verify.py",
@@ -624,89 +156,17 @@
       "name": "_build",
       "lines": 106
     },
-    "src/brain/golden_probe.py:run_probes": {
-      "file": "src/brain/golden_probe.py",
-      "lineno": 481,
-      "name": "run_probes",
-      "lines": 106
-    },
-    "tests/test_cos_mutate.py:test_only_a_validated_category_answer_arms_the_gate": {
-      "file": "tests/test_cos_mutate.py",
-      "lineno": 2551,
+    "tests/test_cos_mutate_rehearsal.py:test_only_a_validated_category_answer_arms_the_gate": {
+      "file": "tests/test_cos_mutate_rehearsal.py",
+      "lineno": 239,
       "name": "test_only_a_validated_category_answer_arms_the_gate",
       "lines": 104
-    },
-    "tools/cos_judge.py:apply_judgment": {
-      "file": "tools/cos_judge.py",
-      "lineno": 1415,
-      "name": "apply_judgment",
-      "lines": 103
-    },
-    "tools/cos_model_answer.py:extract_objects": {
-      "file": "tools/cos_model_answer.py",
-      "lineno": 683,
-      "name": "extract_objects",
-      "lines": 103
-    },
-    "tools/migrate_corpus.py:main": {
-      "file": "tools/migrate_corpus.py",
-      "lineno": 158,
-      "name": "main",
-      "lines": 103
     },
     "eval/s06_addendum.py:main": {
       "file": "eval/s06_addendum.py",
       "lineno": 37,
       "name": "main",
       "lines": 103
-    },
-    "tools/cos_lane_rehearsal.py:rehearse": {
-      "file": "tools/cos_lane_rehearsal.py",
-      "lineno": 1223,
-      "name": "rehearse",
-      "lines": 102
-    },
-    "src/brain/core.py:_run_bounded_graphify": {
-      "file": "src/brain/core.py",
-      "lineno": 3051,
-      "name": "_run_bounded_graphify",
-      "lines": 102
-    },
-    "src/brain/maintenance.py:collect_health_metrics": {
-      "file": "src/brain/maintenance.py",
-      "lineno": 2377,
-      "name": "collect_health_metrics",
-      "lines": 102
-    },
-    "tools/cos_driver.py:load_categories": {
-      "file": "tools/cos_driver.py",
-      "lineno": 773,
-      "name": "load_categories",
-      "lines": 101
-    },
-    "tools/cos_mutate.py:canary_drill": {
-      "file": "tools/cos_mutate.py",
-      "lineno": 2519,
-      "name": "canary_drill",
-      "lines": 101
-    },
-    "src/brain/core.py:_maybe_auto_update": {
-      "file": "src/brain/core.py",
-      "lineno": 3963,
-      "name": "_maybe_auto_update",
-      "lines": 101
-    },
-    "src/brain/cos.py:_accept_attachment": {
-      "file": "src/brain/cos.py",
-      "lineno": 6507,
-      "name": "_accept_attachment",
-      "lines": 101
-    },
-    "src/brain/ingest/tierguard.py:verdict": {
-      "file": "src/brain/ingest/tierguard.py",
-      "lineno": 265,
-      "name": "verdict",
-      "lines": 101
     }
   }
 }

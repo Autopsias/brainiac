@@ -1,44 +1,14 @@
 {
   "exceptions": [
     {
-      "file": "src/brain/cli.py",
-      "function": "_main",
-      "complexity": 249
-    },
-    {
-      "file": "src/brain/core.py",
-      "function": "maintain",
-      "complexity": 138
-    },
-    {
-      "file": "src/brain/index.py",
-      "function": "_hybrid_search_impl",
-      "complexity": 50
-    },
-    {
       "file": "eval/s05_merge_split.py",
       "function": "main",
       "complexity": 36
     },
     {
-      "file": "tests/test_cos_pathguard.py",
+      "file": "tests/_pathguard_helpers.py",
       "function": "_tainted_path_uses",
       "complexity": 32
-    },
-    {
-      "file": "src/brain/graphreport.py",
-      "function": "build_payload",
-      "complexity": 31
-    },
-    {
-      "file": "src/brain/ingest/pipeline.py",
-      "function": "run_ingest",
-      "complexity": 31
-    },
-    {
-      "file": "tools/validate.py",
-      "function": "check_bitemporal_global",
-      "complexity": 30
     },
     {
       "file": "eval/s06_reachability.py",
@@ -46,47 +16,7 @@
       "complexity": 28
     },
     {
-      "file": "src/brain/maintenance.py",
-      "function": "auto_dedup_tier1",
-      "complexity": 28
-    },
-    {
-      "file": "src/brain/core.py",
-      "function": "drain_drafts",
-      "complexity": 27
-    },
-    {
-      "file": "tools/cos_hold_visible.py",
-      "function": "cmd_hold",
-      "complexity": 27
-    },
-    {
-      "file": "tools/cos_contract.py",
-      "function": "evaluate",
-      "complexity": 26
-    },
-    {
-      "file": "src/brain/versionlink.py",
-      "function": "generate",
-      "complexity": 25
-    },
-    {
-      "file": "tools/cos_batch_chunk.py",
-      "function": "do_split",
-      "complexity": 25
-    },
-    {
       "file": "eval/s09_fusion_drop_trace.py",
-      "function": "main",
-      "complexity": 24
-    },
-    {
-      "file": "src/brain/cli.py",
-      "function": "_cmd_connect",
-      "complexity": 24
-    },
-    {
-      "file": "tools/validate.py",
       "function": "main",
       "complexity": 24
     },
@@ -96,93 +26,13 @@
       "complexity": 23
     },
     {
-      "file": "src/brain/cos.py",
-      "function": "ingest_sweep",
-      "complexity": 23
-    },
-    {
-      "file": "src/brain/doctor.py",
-      "function": "run_doctor",
-      "complexity": 23
-    },
-    {
-      "file": "tools/cos_lane_rehearsal.py",
-      "function": "main",
-      "complexity": 23
-    },
-    {
-      "file": "tools/cos_mutate.py",
-      "function": "_apply_pass_locked",
-      "complexity": 23
-    },
-    {
-      "file": "tools/cos_mutate.py",
-      "function": "build_plan",
-      "complexity": 23
-    },
-    {
       "file": "eval/capture_run.py",
       "function": "main",
       "complexity": 22
     },
     {
-      "file": "src/brain/querylog.py",
-      "function": "status",
-      "complexity": 22
-    },
-    {
-      "file": "src/brain/update.py",
-      "function": "run_update",
-      "complexity": 22
-    },
-    {
-      "file": "src/brain/index.py",
-      "function": "_collapse_duplicate_families",
-      "complexity": 21
-    },
-    {
-      "file": "tools/cos_driver.py",
-      "function": "main",
-      "complexity": 21
-    },
-    {
-      "file": "tools/cos_model_answer.py",
-      "function": "project_row",
-      "complexity": 21
-    },
-    {
-      "file": "src/brain/cos_runverify.py",
-      "function": "check_plan_binding",
-      "complexity": 20
-    },
-    {
-      "file": "src/brain/invariants.py",
-      "function": "cross_tier_duplicates",
-      "complexity": 20
-    },
-    {
-      "file": "tools/apply_crosstier_ruling.py",
-      "function": "main",
-      "complexity": 20
-    },
-    {
-      "file": "tools/bulk_link_check.py",
-      "function": "check_batch",
-      "complexity": 20
-    },
-    {
-      "file": "tools/cos_mutate.py",
-      "function": "main",
-      "complexity": 20
-    },
-    {
       "file": "eval/pt_leg_attribution.py",
       "function": "main",
-      "complexity": 19
-    },
-    {
-      "file": "src/brain/querylog.py",
-      "function": "_validate_record",
       "complexity": 19
     },
     {
@@ -201,81 +51,6 @@
       "complexity": 18
     },
     {
-      "file": "src/brain/conventions.py",
-      "function": "discover_creation_sites",
-      "complexity": 18
-    },
-    {
-      "file": "src/brain/core.py",
-      "function": "search_multi",
-      "complexity": 18
-    },
-    {
-      "file": "src/brain/cos.py",
-      "function": "_apply_batch_decision",
-      "complexity": 18
-    },
-    {
-      "file": "src/brain/cos.py",
-      "function": "_consume_answers_locked",
-      "complexity": 18
-    },
-    {
-      "file": "src/brain/cos_runverify.py",
-      "function": "check_target_identity",
-      "complexity": 18
-    },
-    {
-      "file": "src/brain/healthreport.py",
-      "function": "collect_health_report_data",
-      "complexity": 18
-    },
-    {
-      "file": "tools/cos_judge.py",
-      "function": "judge_night",
-      "complexity": 18
-    },
-    {
-      "file": "tools/cos_verify_doctrine.py",
-      "function": "audit",
-      "complexity": 18
-    },
-    {
-      "file": "src/brain/cos_runverify.py",
-      "function": "check_category_stamp",
-      "complexity": 17
-    },
-    {
-      "file": "src/brain/index.py",
-      "function": "diagnose_target",
-      "complexity": 17
-    },
-    {
-      "file": "src/brain/index.py",
-      "function": "sync",
-      "complexity": 17
-    },
-    {
-      "file": "src/brain/ingest/handlers/email.py",
-      "function": "extract",
-      "complexity": 17
-    },
-    {
-      "file": "src/brain/mcp_adapter.py",
-      "function": "dispatch",
-      "complexity": 17
-    },
-    {
-      "file": "tools/cos_contract.py",
-      "function": "validate",
-      "complexity": 17
-    },
-    {
-      "file": ".claude/hooks/block-vault-recursive-scan.py",
-      "function": "_check_grep",
-      "complexity": 16
-    },
-    {
       "file": ".codex/hooks/block-vault-recursive-scan.py",
       "function": "_check_grep",
       "complexity": 16
@@ -291,138 +66,13 @@
       "complexity": 16
     },
     {
-      "file": "src/brain/cos.py",
-      "function": "_hold_release_due_locked",
-      "complexity": 16
-    },
-    {
-      "file": "src/brain/golden_probe.py",
-      "function": "run_probes",
-      "complexity": 16
-    },
-    {
-      "file": "src/brain/healthreport.py",
-      "function": "_corpus_invariants_html",
-      "complexity": 16
-    },
-    {
-      "file": "src/brain/ingest/handlers/xlsx.py",
-      "function": "extract",
-      "complexity": 16
-    },
-    {
-      "file": "src/brain/maintenance.py",
-      "function": "refresh_navigation",
-      "complexity": 16
-    },
-    {
-      "file": "src/brain/querylog.py",
-      "function": "capture_post_egress",
-      "complexity": 16
-    },
-    {
-      "file": "src/brain/spine.py",
-      "function": "_reduce",
-      "complexity": 16
-    },
-    {
-      "file": "src/brain/spine.py",
-      "function": "render_grounding_pack",
-      "complexity": 16
-    },
-    {
-      "file": "tools/apply_crosstier_ruling.py",
-      "function": "plan_pair",
-      "complexity": 16
-    },
-    {
-      "file": "tools/apply_live_migration.py",
-      "function": "main",
-      "complexity": 16
-    },
-    {
-      "file": "tools/cos_contract.py",
-      "function": "_validate_sent_snapshot",
-      "complexity": 16
-    },
-    {
-      "file": "tools/cos_reconcile_metrics.py",
-      "function": "main",
-      "complexity": 16
-    },
-    {
-      "file": "tools/cos_retro.py",
-      "function": "find_patterns",
-      "complexity": 16
-    },
-    {
-      "file": ".agents/skills/brainiac-health/scripts/health_report.py",
-      "function": "build_vault_report",
-      "complexity": 15
-    },
-    {
-      "file": ".claude/skills/brainiac-health/scripts/health_report.py",
-      "function": "build_vault_report",
-      "complexity": 15
-    },
-    {
       "file": "eval/s06_fusion_residual.py",
       "function": "fuse",
       "complexity": 15
     },
     {
-      "file": "plugins/brainiac-manager/skills/brainiac-health/scripts/health_report.py",
-      "function": "build_vault_report",
-      "complexity": 15
-    },
-    {
-      "file": "src/brain/cos.py",
-      "function": "_claim_drops_locked",
-      "complexity": 15
-    },
-    {
-      "file": "src/brain/cos.py",
-      "function": "migrate_run_records",
-      "complexity": 15
-    },
-    {
-      "file": "src/brain/cos_runverify.py",
-      "function": "check_open_instrumentation",
-      "complexity": 15
-    },
-    {
-      "file": "src/brain/graphify.py",
-      "function": "build_inferred_edges",
-      "complexity": 15
-    },
-    {
-      "file": "src/brain/ingest/pipeline.py",
-      "function": "_process_claimed",
-      "complexity": 15
-    },
-    {
-      "file": "src/brain/versionlink.py",
-      "function": "analyze",
-      "complexity": 15
-    },
-    {
-      "file": "tools/cos_lane_rehearsal.py",
-      "function": "contract_problems",
-      "complexity": 15
-    },
-    {
-      "file": "tools/cos_mutate.py",
-      "function": "shapes_from_capture",
-      "complexity": 15
-    },
-    {
-      "file": "tools/publish_public.py",
-      "function": "main",
-      "complexity": 15
-    },
-    {
-      "file": "tools/vendor_semantic_deps.py",
-      "function": "_verify_record",
+      "file": "src/brain/ingest/handlers/pptx.py",
+      "function": "extract",
       "complexity": 15
     },
     {
@@ -436,69 +86,9 @@
       "complexity": 14
     },
     {
-      "file": "src/brain/cos.py",
-      "function": "_auto_capture_fold_locked",
-      "complexity": 14
-    },
-    {
-      "file": "src/brain/cos_runverify.py",
-      "function": "check_candidate_stamps",
-      "complexity": 14
-    },
-    {
-      "file": "src/brain/embed.py",
-      "function": "get_embedder",
-      "complexity": 14
-    },
-    {
-      "file": "src/brain/golden_probe.py",
-      "function": "_probe_decision_state",
-      "complexity": 14
-    },
-    {
-      "file": "src/brain/ingest/handlers/docx.py",
-      "function": "extract",
-      "complexity": 14
-    },
-    {
-      "file": "src/brain/ingest/tierguard.py",
-      "function": "verdict",
-      "complexity": 14
-    },
-    {
-      "file": "src/brain/ingest/transcript.py",
-      "function": "ingest_transcript",
-      "complexity": 14
-    },
-    {
-      "file": "src/brain/init.py",
-      "function": "render_human",
-      "complexity": 14
-    },
-    {
-      "file": "tests/test_cos_pathguard.py",
+      "file": "tests/_pathguard_helpers.py",
       "function": "_raw_write_offenders",
       "complexity": 14
-    },
-    {
-      "file": "tools/cos_judge.py",
-      "function": "main",
-      "complexity": 14
-    },
-    {
-      "file": "tools/cos_model_answer.py",
-      "function": "extract_answer",
-      "complexity": 14
-    },
-    {
-      "file": ".claude/hooks/block-vault-recursive-scan.py",
-      "function": "_check_find",
-      "complexity": 13
-    },
-    {
-      "file": ".claude/hooks/block-vault-recursive-scan.py",
-      "function": "main",
-      "complexity": 13
     },
     {
       "file": ".codex/hooks/block-vault-recursive-scan.py",
@@ -513,96 +103,6 @@
     {
       "file": "eval/s08_expand_split.py",
       "function": "stage_digest",
-      "complexity": 13
-    },
-    {
-      "file": "src/brain/cos.py",
-      "function": "_gc_compact_locked",
-      "complexity": 13
-    },
-    {
-      "file": "src/brain/cos.py",
-      "function": "_hold_undo_locked",
-      "complexity": 13
-    },
-    {
-      "file": "src/brain/cos_echecks.py",
-      "function": "_e10",
-      "complexity": 13
-    },
-    {
-      "file": "src/brain/cos_runverify.py",
-      "function": "check_ledger_vocabulary",
-      "complexity": 13
-    },
-    {
-      "file": "src/brain/index.py",
-      "function": "_do_sync",
-      "complexity": 13
-    },
-    {
-      "file": "src/brain/index.py",
-      "function": "conn",
-      "complexity": 13
-    },
-    {
-      "file": "src/brain/ingest/handlers/pdf.py",
-      "function": "extract",
-      "complexity": 13
-    },
-    {
-      "file": "src/brain/ingest/handlers/zip.py",
-      "function": "extract",
-      "complexity": 13
-    },
-    {
-      "file": "src/brain/maintenance.py",
-      "function": "health_trend",
-      "complexity": 13
-    },
-    {
-      "file": "src/brain/overlay.py",
-      "function": "parse_ingest_rules",
-      "complexity": 13
-    },
-    {
-      "file": "src/brain/update.py",
-      "function": "restage_workspaces",
-      "complexity": 13
-    },
-    {
-      "file": "tools/cos_deployed_version.py",
-      "function": "main",
-      "complexity": 13
-    },
-    {
-      "file": "tools/cos_ground.py",
-      "function": "extract_domain",
-      "complexity": 13
-    },
-    {
-      "file": "tools/cos_ground.py",
-      "function": "fetch",
-      "complexity": 13
-    },
-    {
-      "file": "tools/cos_lane_rehearsal.py",
-      "function": "rehearse",
-      "complexity": 13
-    },
-    {
-      "file": "tools/cos_model_answer.py",
-      "function": "extract_objects",
-      "complexity": 13
-    },
-    {
-      "file": "tools/cos_retro.py",
-      "function": "_collect_chip_events",
-      "complexity": 13
-    },
-    {
-      "file": "tools/cos_retro.py",
-      "function": "scan_vault",
       "complexity": 13
     }
   ]

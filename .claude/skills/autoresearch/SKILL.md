@@ -22,7 +22,7 @@ cron/schedule entry.**
 **This skill never edits `src/brain/`.** Its output is evidence (scorecards +
 a decision record per iteration). Turning a KEPT change into the actual
 shipped default (e.g. `hybrid_search`'s `rrf_k=60` default in
-`src/brain/core.py`, or `--rrf-k`'s default in `src/brain/cli.py`) is a
+`src/brain/core/_retrieval.py`, or `--rrf-k`'s default in `src/brain/cli.py`) is a
 normal, reviewed code change a human makes afterward, citing the evidence
 artifact — this skill stops at "here is what the data says," on purpose.
 
@@ -140,7 +140,7 @@ starting params.
 ## Evidence artifact contract (every iteration, no exceptions)
 
 Every capture and every decision lands under `eval/runs/autoresearch-*.json`
-— `src/brain/core.py`'s `_autoresearch_status` globs exactly that pattern for
+— `src/brain/core/_briefing.py`'s `_autoresearch_status` globs exactly that pattern for
 the newest top-level `captured` ISO field to drive the morning brief's
 staleness line (`docs/adr/0003-parity-architecture.md` Amendment,
 2026-07-05/s09). `eval/capture_run.py`'s own output already carries
@@ -178,7 +178,7 @@ Public-equivalent).
 
 Summarize for the operator: which dimension(s) moved, the evidence path(s),
 the measured delta. Applying a KEPT change to the actual shipped default
-(`src/brain/core.py` / `src/brain/cli.py`) is a normal code edit + review +
+(`src/brain/core/` / `src/brain/cli.py`) is a normal code edit + review +
 test cycle the operator does next — this skill's job ends at "here's the
 evidence a change helps."
 
@@ -202,7 +202,7 @@ evidence a change helps."
   Ruling e (overlay-data egress tier), and the 2026-07-05/s09 Amendment
   (the `eval/runs/autoresearch-*.json` filename + `captured`-field contract
   the brief's staleness line depends on)
-- `src/brain/core.py` `_autoresearch_status` / `src/brain/maintenance.py`
+- `src/brain/core/_briefing.py` `_autoresearch_status` / `src/brain/maintenance.py`
   `autoresearch_staleness` — the reader this skill's evidence artifacts feed
 - `eval/capture_run.py`, `eval/harness_direct.py`, `eval/gate.py` — the real,
   verified interface this loop drives

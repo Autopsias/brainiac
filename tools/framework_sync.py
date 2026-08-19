@@ -20,7 +20,7 @@ Usage:
     python3 tools/framework_sync.py --json     # machine-readable report
 
 Folded into the Monday ``health`` branch of ``brain maintain``
-(``src/brain/core.py`` / ADR-0003 Ruling 5) as a health FINDING — it never
+(``src/brain/core/`` / ADR-0003 Ruling 5) as a health FINDING — it never
 auto-fixes; the remedy is always "re-run tools/package_clients.py".
 """
 from __future__ import annotations

@@ -38,6 +38,16 @@
 #      the pass. A recurring 16 is a lane whose envelope life is shorter than
 #      its apply, which is a different morning from an ordinary partial plan
 #      and used to file under 13 (review 2026-08-13, round 1).
+#   18 the ingest bridge aborted or refused, and nothing was dispatched. TWO
+#      paths reach it and they leave the vault in DIFFERENT states, so read
+#      the bridge report before assuming anything: an open proposal batch
+#      (backpressure) aborts before the first candidate, so nothing at all was
+#      dropped; a refused candidate or a quarantine overflow stops the night
+#      AFTER the drops this pass already wrote — those drops are real, stamped
+#      and idempotent, and `dropped`/`quarantined` in the report say how many.
+#   19 the ingest bridge could not take the vault writer lock — contention with
+#      the hourly brain-nightly rebuild, NOT a bad candidate. Nothing dropped,
+#      nothing dispatched; re-run once the holder finishes.
 #
 # THE BROWSER. It drives a COPIED Chrome profile with a debug port
 # (`~/Library/Application Support/Google/Chrome-COS`) — never the owner's own
@@ -338,15 +348,33 @@ cd "$REPO" || die "no repo at $REPO"
 log "=== cos-nightly start (dry=$DRY model=$MODEL scope=$SCOPE_DESC, lanes uncapped) ==="
 
 # --- 1. the browser ---------------------------------------------------------
-# Exit 4 from --prepare means the tab is up but never got its seed envelope,
-# which in practice means the mailbox session lapsed and wants a human.
-PREP="$($PY tools/cos_cdp_capture.py --prepare 2>&1)"; RC=$?
-log "prepare: $(printf '%s' "$PREP" | tr -d '\n ')"
-if [ "$RC" -eq 4 ]; then
-  die "the automation browser is up but captured no authorized call — the
+# COS_TRANSPORT picks the lane (owner ruling 2026-08-18: ego is the DEFAULT —
+# the immediate cutover; export COS_TRANSPORT=chrome for the old Chrome-COS
+# lane). Both prepare tools share one exit contract: 4 means the tab is up but
+# never proved its seed envelope — the mailbox session lapsed and wants a
+# human. The recorded attended command line stays valid verbatim across the
+# cutover precisely because the default lives HERE, not in the command.
+COS_TRANSPORT="${COS_TRANSPORT:-ego}"
+if [ "$COS_TRANSPORT" = "ego" ]; then
+  TFLAG="--ego"
+  PREP="$($PY tools/cos_ego_arm.py 2>&1)"; RC=$?
+  log "prepare(ego): $(printf '%s' "$PREP" | tr -d '\n ')"
+  if [ "$RC" -eq 4 ]; then
+    die "the ego mail tab is up but not signed in — open ego lite's cos space,
+ sign in to the mailbox once, then re-run." 4
+  fi
+  [ "$RC" -eq 0 ] || die "the ego tab could not be armed (rc=$RC) — see
+ the prepare(ego) log line above" 5
+else
+  TFLAG="--cdp"
+  PREP="$($PY tools/cos_cdp_capture.py --prepare 2>&1)"; RC=$?
+  log "prepare: $(printf '%s' "$PREP" | tr -d '\n ')"
+  if [ "$RC" -eq 4 ]; then
+    die "the automation browser is up but captured no authorized call — the
  mailbox session has lapsed. Open Chrome-COS, sign in once, then re-run." 4
+  fi
+  [ "$RC" -eq 0 ] || die "the automation browser did not come up (rc=$RC)" 5
 fi
-[ "$RC" -eq 0 ] || die "the automation browser did not come up (rc=$RC)" 5
 
 # --- 2. the doctrine, then the run manifest ---------------------------------
 # DOCTRINE v2 is a QUOTATION of tools/cos_judge.py. If the two have drifted, the
@@ -453,7 +481,7 @@ EV="$REPO/_evidence/nightly/$RUN_ID"
 CATEGORIES=""
 DRAW_BINDING=""
 if [ "$MODEL" -eq 1 ]; then
-  $PY tools/cos_driver.py --cdp --enumerate-only --out "$EV/enumeration.json" \
+  $PY tools/cos_driver.py $TFLAG --enumerate-only --out "$EV/enumeration.json" \
       >> "$LOG" 2>&1 || die "the enumeration stopped — see $EV/enumeration.json" 6
   $PY tools/cos_judge.py --category-batch --vault "$BRAIN_VAULT" \
       --enumeration "$EV/enumeration.json" --out "$EV/batches/batch-category.md" \
@@ -659,7 +687,7 @@ file and must not try. Do not run any brain or cos command." "${MODEL_TOOLS[@]}"
   fi
 fi
 
-$PY tools/cos_driver.py --cdp --cap "$BODY_CAP" $CATEGORIES $DRAW_BINDING \
+$PY tools/cos_driver.py $TFLAG --cap "$BODY_CAP" $CATEGORIES $DRAW_BINDING \
     --out "$EV/read-night.json" \
     >> "$LOG" 2>&1 || die "the read night stopped — see $EV/read-night.json" 6
 log "category gate: $($PY -c "
@@ -1003,6 +1031,80 @@ log "judged: $($PY -c "
 import json;d=json.load(open('$EV/judgment.json'))
 print(json.dumps(d.get('counters')), '| rejected', len(d.get('rejected') or []))")"
 
+# --- BEGIN ingest bridge (s03 ING-01..03) -------------------------------------
+# THE CANDIDATES THE JUDGE JUST STAGED GO NOWHERE WITHOUT THIS (ING-01). The
+# judgment leg writes `_cos_ingestion_ledger_<run>.jsonl` rows with
+# `disposition: candidate` and, before this bridge, nothing picked them up: a
+# night triaged and archived mail while the vault gained none of it — the
+# signature failure this plan exists to end. The bridge turns each candidate
+# into a cos-propose drop (host context) + a manifest line per attachment,
+# joining the ledger to the run's capture corpus for the message text.
+#
+# DEFAULT OFF: nothing runs unless COS_INGEST_BRIDGE=1. The attended backfill
+# command exports it deliberately; a scheduled night that does not keeps the
+# pre-s03 behaviour byte-for-byte (and its candidates stay ledgered-only,
+# visible as the bridge's zero — never silently "ingested").
+#
+# THE ORDER IS THE SAFETY STORY: this block sits AFTER the judgment leg (the
+# ledger exists) and BEFORE the re-prime and the whole mutation lane, so a
+# bridge that cannot ingest KILLS THE NIGHT before any mailbox mutation. A
+# night that archived mail whose ingestion bridge refused/aborted is exactly
+# the failure ordering forbids. Backpressure (an already-open proposal batch)
+# aborts every drop and dies here — never silently queues batches 2-4 of a
+# four-evening backfill behind an unanswered batch 1.
+#
+# A `--dry` REHEARSAL REHEARSES THIS TOO. `--dry` stops before the apply, but
+# it runs everything up to it, and an unqualified bridge here wrote REAL,
+# owner-facing proposal drops from a rehearsal — which the next real night then
+# hit as an open batch and died 18 on (backpressure). `--dry-run` decides every
+# candidate and reports, writing nothing and taking no lock.
+#
+# Read as a block by `tests/test_cos_ingest_bridge.py`, which SLICES THESE
+# LINES OUT AND RUNS THEM against a stub bridge tool — the same marker trick
+# the re-prime gate and the apply-outcome gate use. It depends on $PY,
+# $BRAIN_VAULT, $RUN_ID, $DRY, $LOG and log()/die(), and nothing else.
+if [ "${COS_INGEST_BRIDGE:-0}" = "1" ]; then
+  BRIDGE_DRY=""
+  [ "${DRY:-0}" -eq 1 ] && BRIDGE_DRY="--dry-run"
+  BRIDGE_OUT="$($PY tools/cos_ingest_bridge.py --vault "$BRAIN_VAULT" \
+      --run-id "$RUN_ID" $BRIDGE_DRY --json 2>>"$LOG")"; BRIDGE_RC=$?
+  log "ingest bridge: $(printf '%s' "$BRIDGE_OUT" | tr -d '\n')"
+  if [ "$BRIDGE_RC" -eq 3 ]; then
+    die "the ingest bridge ABORTED on backpressure: a proposal batch is
+ already open, so NOTHING was dropped and nothing was dispatched — answer or
+ expire the open batch, then re-run the night. See $LOG" 18
+  fi
+  # 4 IS CONTENTION, NOT A REFUSAL. The hourly `brain-nightly` rebuild holds
+  # the same single-writer lock, legitimately, for up to 90 minutes. Reported
+  # as a refusal it sends the morning looking at the mail; it is the clock.
+  if [ "$BRIDGE_RC" -eq 4 ]; then
+    die "the ingest bridge could not take the vault writer lock — another
+ writer (normally the hourly brain-nightly rebuild) holds it. NOTHING was
+ dropped, nothing is wrong with the candidates, and nothing was dispatched:
+ re-run the night once the holder finishes. See $LOG" 19
+  fi
+  [ "$BRIDGE_RC" -eq 0 ] || die "the ingest bridge refused the run
+ (rc=$BRIDGE_RC — a missing ingestion ledger, or quarantined conversations at
+ or over the BRAIN_COS_BRIDGE_QUARANTINE_MAX threshold; see the REFUSED and
+ QUARANTINED lines in $LOG): a night that cannot ingest does not go on to
+ archive the mail it failed to preserve. Nothing was dispatched" 18
+  # QUARANTINE IS NOT A CLEAN NIGHT, but it is not a dead one either: under
+  # the threshold the run completed and the anomalies are parked with their
+  # evidence. Surface the count loudly so the morning reads it here, not by
+  # diffing claim-quarantine/.
+  BRIDGE_Q="$(printf '%s' "$BRIDGE_OUT" | $PY -c 'import json,sys
+try:
+    print(int(json.load(sys.stdin).get("quarantined") or 0))
+except Exception:
+    print(0)')"
+  if [ "${BRIDGE_Q:-0}" -gt 0 ]; then
+    log "ingest bridge QUARANTINED $BRIDGE_Q conversation(s) — the night
+ carries on; each reason is in the report line above and the parked evidence
+ is in the claim-quarantine store"
+  fi
+fi
+# --- END ingest bridge (s03 ING-01..03) ---------------------------------------
+
 # --- 5. RE-PRIME, then plan and rehearse (still nothing dispatched) ---------
 # THE SEED CAPTURED AT THE TOP OF THE RUN IS DEAD BY NOW. Measured, not
 # inferred: run 126 (which applied) ran 15m31s between `--prepare` and the
@@ -1023,7 +1125,11 @@ print(json.dumps(d.get('counters')), '| rejected', len(d.get('rejected') or []))
 # nothing else. The test also asserts WHERE the block sits: a re-prime after the
 # apply would pass every executable assertion and fix nothing.
 # --- BEGIN reprime gate ---
-REPRIME="$($PY tools/cos_cdp_capture.py --prepare 2>&1)"; RC=$?
+if [ "${COS_TRANSPORT:-ego}" = "ego" ]; then
+  REPRIME="$($PY tools/cos_ego_arm.py 2>&1)"; RC=$?
+else
+  REPRIME="$($PY tools/cos_cdp_capture.py --prepare 2>&1)"; RC=$?
+fi
 log "re-prime before the mutation lane: $(printf '%s' "$REPRIME" | tr -d '\n ')"
 if [ "$RC" -eq 4 ]; then
   die "the mutation lane could not be re-primed — the browser is up but
@@ -1068,7 +1174,7 @@ cap=[e for e in d['excluded'] if 'cap reached' in e['reason']]
 print(d['planned_by_verb'], '| held back by a cap:', len(cap),
       '| frozen as', (d.get('plan_digest') or '<unstamped>')[:16])")"
 
-$PY tools/cos_mutate.py dry-run --run-id "$RUN_ID" --cdp $SCOPE_ARGS \
+$PY tools/cos_mutate.py dry-run --run-id "$RUN_ID" $TFLAG $SCOPE_ARGS \
     --plan "$EV/plan.json" --out "$EV/dry-run.json" \
     >> "$LOG" 2>&1 || die "the dry run stopped — nothing was dispatched" 12
 # --- END one frozen plan ---
@@ -1189,7 +1295,7 @@ fi
 # means the handler above would run long after the operator gave up; `wait` is
 # interruptible, so this is what makes the interrupt contract real rather than
 # declared.
-$PY tools/cos_mutate.py apply --run-id "$RUN_ID" --cdp \
+$PY tools/cos_mutate.py apply --run-id "$RUN_ID" $TFLAG \
     --plan "$EV/plan.json" --rehearsal "$EV/dry-run.json" \
     $SCOPE_ARGS --out "$EV/apply.json" >> "$LOG" 2>&1 &
 APPLY_PID=$!

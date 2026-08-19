@@ -66,6 +66,13 @@ import os
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cos_batch_chunk_compose import ChunkSources  # noqa: E402
+from cos_batch_chunk_merge import (  # noqa: E402,F401  merge modes, batch-2 drain
+    _chunk_answers, _chunk_index, _enumerated_ids, do_merge,
+    do_merge_category)
+from cos_batch_chunk_write import fit, write_chunks, write_join  # noqa: E402
+
 # The four judgment batches. batch-category.md is the PRE-DRAW category leg and
 # is judged in one call elsewhere — it is never chunked or copied here.
 BATCH_TYPES = ("triage", "staging", "hold", "draft")
@@ -300,125 +307,20 @@ def do_split(batches_dir: Path, out_dir: Path, size: int, *,
                         if instruction else None)
     closing_text = closing.read_text(encoding="utf-8") if closing else ""
 
-    def bodies_for(group: list[str]) -> dict[str, str]:
-        gset = set(group)
-        out = {}
-        for t in BATCH_TYPES:
-            header, rows = parsed[t]
-            # Rows this file holds for this group, in the FILE's own order. A type
-            # with none still gets a file with `[]`, so every batch is present.
-            # Staging text/offset rows are per-row self-contained, so slicing by
-            # id keeps each span valid — no renumber.
-            sub = [r for r in rows if r.get("conversation_id") in gset]
-            out[t] = header + json.dumps(sub, indent=1, ensure_ascii=False)
-        return out
-
-    def map_text_for(group: list[str], chunk_name: str) -> tuple[dict, str] | None:
-        if not grounded:
-            return None
-        cmap = chunk_map(payload, group, chunk_name)
-        return cmap, _ground().map_text(cmap)
-
-    def written_map(chunk_dir: Path, group: list[str],
-                    chunk_name: str) -> tuple[dict, str] | None:
-        """Write the chunk's map, then READ IT BACK — and compose part 2 from
-        the bytes that are actually on disk.
-
-        THE PROBE THAT FOUND THIS. Composing from the in-memory string made the
-        writer and the composer the same expression, so D2a's join compared a
-        value against itself: a serializer that wrote something else to disk
-        would still have joined clean. Reading back makes "the map arrived byte
-        for byte" a claim about the FILE the design names, which is the only
-        version of that claim worth making."""
-        mt = map_text_for(group, chunk_name)
-        if mt is None:
-            return None
-        # 0600 + atomic, through the SAME writer the run map uses.
-        path = _ground().write_text_0600(chunk_dir / "grounding.json", mt[1])
-        return mt[0], path.read_text(encoding="utf-8")
-
-    # THE MEASUREMENT USES A PLACEHOLDER NAME, and the bound is stated rather
-    # than hidden: `chunk-XX` is the same width as every real `chunk-NN` up to
-    # 99 chunks, so the re-split DECISION is exact there and understates by one
-    # byte per extra digit beyond that. The RECORDED `prompt_bytes` is always
-    # re-measured on the written text, so the artifact is exact either way.
-    def compose(group: list[str], chunk_name: str = "chunk-XX") -> str:
-        mt = map_text_for(group, chunk_name)
-        return compose_prompt(instruction_text or "", mt[1] if mt else None,
-                              bodies_for(group), closing_text)
-
-    def fed_bytes(group: list[str]) -> int:
-        """THE quantity D9 asserts on: the exact UTF-8 size of everything the leg
-        is fed in one call — instruction + map + ALL FOUR batch files + closing.
-        Bytes, not characters: a multi-byte body measures what it costs."""
-        return len(compose(group).encode("utf-8"))
-
-    def fit(group: list[str], depth: int) -> list[tuple[list[str], int, bool, bool]]:
-        """(group, bytes, oversize, resplit_bound_hit) after D9a's bounded halving.
-
-        NEVER TRUNCATED AND NEVER DROPPED, at either terminal: a truncated prompt
-        is a short batch wearing a full one's row count, and a row the model
-        never sees is a coverage hole. A single oversized row means one document
-        blew the body budget; a MULTI-ROW group still over at the bound means the
-        arithmetic is wrong — the ceiling and the per-row budget disagree — and
-        it is the ceiling that must be revisited, not the input. So the two are
-        distinguished by `resplit_bound_hit` rather than merged.
-        """
-        n = fed_bytes(group)
-        if n <= prompt_max or len(group) <= 1 or depth >= RESPLIT_MAX_HALVINGS:
-            over = n > prompt_max
-            return [(group, n, over, over and len(group) > 1
-                     and depth >= RESPLIT_MAX_HALVINGS)]
-        mid = (len(group) + 1) // 2          # 50 → 25 → 13 → 7 → 4
-        return fit(group[:mid], depth + 1) + fit(group[mid:], depth + 1)
+    src = ChunkSources(parsed=parsed, payload=payload, grounded=grounded,
+                       required=required, instruction=instruction_text,
+                       closing=closing_text, ground=_ground,
+                       chunk_map=chunk_map, compose_prompt=compose_prompt,
+                       batch_types=BATCH_TYPES)
 
     if instruction_text is None:
         placed = [(g, 0, False, False) for g in groups]
     else:
-        placed = [rec for g in groups for rec in fit(g, 0)]
+        placed = [rec for g in groups
+                  for rec in fit(src, g, 0, prompt_max, RESPLIT_MAX_HALVINGS)]
 
-    per_chunk, chunk_records, join_records = [], [], []
-    covered_by_chunks: set[str] = set()
-    for k, (group, nbytes, oversize, bound_hit) in enumerate(placed):
-        # ponytail: :02d sorts lexically for <=99 chunks (4950 rows at size 50);
-        # widen the pad if a run ever exceeds that. Numbering is re-derived from
-        # the FINAL group list, so a re-split leaves `chunk-NN` contiguous.
-        chunk_name = f"chunk-{k:02d}"
-        chunk_dir = out_dir / chunk_name
-        chunk_dir.mkdir(parents=True, exist_ok=True)
-        bodies = bodies_for(group)
-        for t in BATCH_TYPES:
-            (chunk_dir / f"batch-{t}.md").write_text(bodies[t], encoding="utf-8")
-        mt = written_map(chunk_dir, group, chunk_name)
-        if mt is not None:
-            covered_by_chunks |= set(mt[0]["blocks"])
-        per_chunk.append(len(group))
-        rec = {"chunk": chunk_name, "rows": len(group)}
-        if instruction_text is not None:
-            prompt_text = compose_prompt(instruction_text,
-                                         mt[1] if mt else None, bodies,
-                                         closing_text)
-            # 0600, THROUGH THE SAME WRITER THE MAPS USE. `prompt.txt` is the
-            # single most concentrated artifact this pipeline produces — the
-            # whole chunk's vault context plus every mail body it will judge —
-            # and its own mode is the second belt behind the run directory's
-            # 0700 (`cos_nightly.sh`). A default `write_text` here would be
-            # umask-derived 0644.
-            _ground().write_text_0600(chunk_dir / "prompt.txt", prompt_text)
-            nbytes = len(prompt_text.encode("utf-8"))
-            _ground().write_text_0600(chunk_dir / "prompt.bytes", f"{nbytes}\n")
-            rec.update(prompt_bytes=nbytes, oversize=oversize,
-                       resplit_bound_hit=bound_hit)
-            batch_ids: set[str] = set()
-            for t in BATCH_TYPES:
-                _h, rows_t = split_batch(bodies[t])
-                batch_ids |= {r.get("conversation_id") for r in rows_t
-                              if isinstance(r, dict)}
-            join_records.append(join_chunk(chunk_name, prompt_text,
-                                           mt[0] if mt else None,
-                                           mt[1] if mt else None,
-                                           batch_ids, required))
-        chunk_records.append(rec)
+    per_chunk, chunk_records, join_records, covered_by_chunks = write_chunks(
+        src, placed, out_dir, split_batch, join_chunk)
 
     summary = {"chunks": len(placed), "size": size,
                "rows_total": len(order), "per_chunk": per_chunk,
@@ -431,32 +333,10 @@ def do_split(batches_dir: Path, out_dir: Path, size: int, *,
                                         for r in chunk_records), default=0)}
 
     if instruction_text is not None and join_out is not None:
-        # THE DENOMINATOR JOIN, and it is between two INDEPENDENTLY produced
-        # artifacts: `required` comes from the fetcher's frozen map, and
-        # `batch_ids` comes from the batch files `cos_judge.py --batches`
-        # rendered. D13's guarantee is that they are the same set; a fetcher
-        # that under-required is exactly what scores a clean `grounded` when
-        # nothing joins its own word to anything else.
-        all_batch_ids: set[str] = set()
-        for t in BATCH_TYPES:
-            all_batch_ids |= {r.get("conversation_id") for r in parsed[t][1]
-                              if isinstance(r, dict)}
-        join = {"run_id": (payload or {}).get("run_id"),
-                "chunks": join_records,
-                "required": len(required),
-                "required_covered_by_chunks": len(covered_by_chunks),
-                "required_not_in_batches": sorted(required - all_batch_ids),
-                "batch_ids_not_required": sorted(all_batch_ids - required)}
-        # ONE predicate, called by the producer, `cos_echecks` and the shell.
-        bad = short_chunks(join)
-        # `ok` is a claim about DELIVERY, so an ungrounded night — which claims
-        # no delivery — is never `ok` here and E10 never reads this file for one.
-        join["ok"] = (grounded and not bad
-                      and not join["required_not_in_batches"]
-                      and join["required_covered_by_chunks"] >= join["required"])
-        _ground().write_text_0600(join_out, json.dumps(join, indent=2) + "\n")
-        summary["join_ok"] = join["ok"]
-        summary["required_covered_by_chunks"] = join["required_covered_by_chunks"]
+        join_ok, covered = write_join(src, join_out, join_records,
+                                      covered_by_chunks, short_chunks)
+        summary["join_ok"] = join_ok
+        summary["required_covered_by_chunks"] = covered
 
     return summary
 
@@ -483,131 +363,6 @@ def do_split_category(batch: Path, out_dir: Path, size: int) -> dict:
         per_chunk.append(len(group))
     return {"chunks": len(groups), "size": size,
             "rows_total": len(rows), "per_chunk": per_chunk}
-
-
-def _chunk_index(chunk_dir: Path) -> int:
-    return int(chunk_dir.name.split("-")[-1])
-
-
-def _chunk_answers(chunks_dir: Path, prefix: str,
-                   name: str) -> tuple[list[list], list[int], int]:
-    """(arrays, skipped indices, chunks found) for one merge mode.
-
-    Shared by both merges: a chunk whose answer file is missing, unreadable or
-    not a JSON array is SKIPPED and its index recorded, never silently dropped.
-    """
-    chunk_dirs = sorted((p for p in chunks_dir.glob(f"{prefix}-*") if p.is_dir()),
-                        key=_chunk_index)
-    arrays: list[list] = []
-    skipped: list[int] = []
-    for cd in chunk_dirs:
-        try:
-            rows = json.loads((cd / name).read_text(encoding="utf-8"))
-            if not isinstance(rows, list):
-                raise ValueError(f"{name} is not a JSON array")
-        except (OSError, ValueError, json.JSONDecodeError):
-            skipped.append(_chunk_index(cd))
-            continue
-        arrays.append(rows)
-    return arrays, skipped, len(chunk_dirs)
-
-
-def do_merge(chunks_dir: Path, out: Path) -> tuple[dict, int]:
-    # A dropped chunk's rows go unjudged; the H4 coverage floor is the backstop.
-    arrays, skipped, expected = _chunk_answers(chunks_dir, "chunk", "verdicts.json")
-    merged = [r for rows in arrays for r in rows]
-
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(merged, indent=1, ensure_ascii=False), encoding="utf-8")
-    summary = {"chunks_merged": len(arrays),
-               "chunks_expected": expected,
-               "rows": len(merged), "skipped": skipped}
-    # ZERO usable chunks is the leg producing nothing — exit nonzero so the caller
-    # dies 9 READ-ONLY. Keyed on chunks_merged, not rows: a chunk that legitimately
-    # judged an empty group returns `[]`, which IS a merged chunk (rc 0, a quiet
-    # night), while zero parseable chunk files is the leg that produced nothing.
-    rc = 0 if arrays else 1
-    return summary, rc
-
-
-def _enumerated_ids(enumeration: Path) -> set[str]:
-    """The conversation ids THIS run enumerated, from the driver's own file."""
-    data = json.loads(enumeration.read_text(encoding="utf-8"))
-    rows = data.get("rows") if isinstance(data, dict) else data
-    if not isinstance(rows, list):
-        raise ValueError(f"{enumeration.name} carries no `rows` array")
-    return {str(r.get("conversation_id")) for r in rows if isinstance(r, dict)}
-
-
-def do_merge_category(chunks_dir: Path, out: Path,
-                      enumeration: Path | None = None) -> tuple[dict, int]:
-    """Concatenate the per-chunk category answers, dropping what cannot be real.
-
-    TWO ROW-LEVEL DROPS, AND NEITHER IS SILENT (run 133):
-
-    * A row naming a conversation THIS RUN DID NOT ENUMERATE is dropped. Run 133
-      invented `22aa30e88a5902de` — a short fake among real long EWS ids — and
-      `load_categories` refused all 261 rows because of it. The count and a
-      sample id are reported so a leg that hallucinates is visible rather than
-      quietly trimmed.
-    * An EXACT re-emission of the same `(conversation_id, category)` pair is
-      collapsed. Chunking makes the run-132 shape more likely, not less: the
-      multi-turn reassembly re-emits a boundary object, and now there are N
-      boundaries instead of one. `load_categories` already collapses this, but
-      only WITHIN one file — doing it here keeps the merged file honest.
-
-    A CONFLICTING duplicate (one id, two different categories) is deliberately
-    left in place: that is genuine ambiguity about a real thread, and
-    `load_categories` refusing the file is the correct outcome. This function
-    never decides which of two answers wins.
-
-    Rows that are not objects, or that carry no usable `conversation_id`, pass
-    through UNTOUCHED so the validator still refuses them. Dropping a malformed
-    row here would make a broken answer look like a complete one, which is the
-    exact class of defect the round-4 `load_categories` review closed.
-    """
-    in_scope = _enumerated_ids(enumeration) if enumeration is not None else None
-    arrays, skipped, expected = _chunk_answers(chunks_dir, "catchunk",
-                                               "categories.json")
-    merged: list = []
-    dropped_not_enumerated = 0
-    dropped_sample: str | None = None
-    dedup_reemissions = 0
-    seen: dict[str, str] = {}
-    for rows in arrays:
-        for row in rows:
-            cid = row.get("conversation_id") if isinstance(row, dict) else None
-            cid = cid.strip() if isinstance(cid, str) else ""
-            if in_scope is not None and cid and cid not in in_scope:
-                dropped_not_enumerated += 1
-                if dropped_sample is None:
-                    dropped_sample = cid
-                continue
-            if cid and isinstance(row, dict) and "category" in row:
-                # EXACT value equality, not the validator's normalisation: `null`
-                # and `""` are different answers and must stay two rows, so the
-                # validator can refuse the blank one.
-                value = json.dumps(row["category"], sort_keys=True)
-                if cid in seen:
-                    if seen[cid] == value:
-                        dedup_reemissions += 1
-                        continue
-                else:
-                    seen[cid] = value
-            merged.append(row)
-
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(merged, indent=1, ensure_ascii=False), encoding="utf-8")
-    summary = {"chunks_merged": len(arrays), "chunks_expected": expected,
-               "rows": len(merged), "skipped": skipped,
-               "dropped_not_enumerated": dropped_not_enumerated,
-               "dropped_sample": dropped_sample,
-               "dedup_reemissions": dedup_reemissions}
-    # Same rule as the judgment merge: zero usable chunks is the leg producing
-    # nothing. For categories that is the SURVIVABLE path — no `--categories`, an
-    # ungated draw, `category_gate` reading `not-run` — never a die.
-    rc = 0 if arrays else 1
-    return summary, rc
 
 
 def main(argv: list[str]) -> int:

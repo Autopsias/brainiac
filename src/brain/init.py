@@ -48,6 +48,11 @@ from . import overlay as ov
 # `brain init`'s report and the tests both address them by these names.
 from . import init_seed
 from .init_seed import _build_index, _sign_seeded_notes  # noqa: F401
+from .init_steps import (
+    InitStepCallbacks,
+    render_human as render_human_impl,
+    run_full_init as run_full_init_impl,
+)
 
 
 # --------------------------------------------------------------------------
@@ -195,399 +200,6 @@ def scaffold_overlay(overlay_dir: Path, template_dir: Path | None) -> dict[str, 
             "created": created, "skipped": skipped}
 
 
-# --------------------------------------------------------------------------
-# ONB-02: seed a brand-new (empty) vault with generic sample notes
-# --------------------------------------------------------------------------
-# Fully generic content -- zero proper nouns (the release contamination scan
-# is a hard gate). Plain filesystem writes, same posture as scaffold_overlay
-# above: installer scaffolding, not captured content, so it never needs to go
-# through the audited write_note path (a hand-authored note added directly to
-# vault/brain/ is always valid -- Markdown+YAML is the substrate's single
-# source of truth, the index is a derived cache). Host-only: the VM leg never
-# writes directly into vault/brain/ even out-of-band (AGENTS.md §6 write
-# split) -- run_full_init below skips this on client == "cowork".
-_GENERATED_BRAIN_FILENAMES = {"backlinks.md", "catalog.md"}
-
-
-def _existing_brain_note_count(vault: str | os.PathLike[str] | None) -> int:
-    """Notes under ``vault/brain/`` excluding the top-level index.md and any
-    generated file (backlinks.md, catalog.md) -- the "is this vault actually
-    empty" check ``seed_sample_notes`` gates on."""
-    brain_dir = config.vault_root(vault, allow_missing=True) / "brain"
-    if not brain_dir.is_dir():
-        return 0
-    count = 0
-    for p in brain_dir.rglob("*.md"):
-        if p.name in _GENERATED_BRAIN_FILENAMES:
-            continue
-        if p.name == "index.md" and p.parent == brain_dir:
-            continue
-        count += 1
-    return count
-
-
-def _sample_notes(today: str) -> dict[str, str]:
-    """``id -> full Markdown content`` for the 3 seeded sample notes: a
-    welcome note (shape), a ``concept`` note (type + Counter-Arguments
-    section), and their wikilinked partner (the "linked pair")."""
-    return {
-        "welcome-to-your-second-brain": f"""---
-id: welcome-to-your-second-brain
-title: "Welcome to your second brain"
-type: note
-classification: Internal
-created: {today}
-updated: {today}
-tags: []
----
-
-# Welcome to your second brain
-
-This is a sample note showing the note shape every file under `vault/brain/`
-follows: YAML frontmatter (an `id`, a `title`, a `type`, a `classification`,
-and `created`/`updated` dates) up top, then a Markdown body below the second
-`---`.
-
-Notes stay flat inside their PARA folder (`projects/`, `areas/`,
-`resources/`, `archive/`) -- no nesting, no numbering. Structure comes from
-**wikilinks**, not folders or tags: see [[example-linked-note]] for a small
-worked pair, and [[example-concept]] for the `concept` note type.
-
-Delete these three sample notes whenever you like -- they exist only to show
-the shape before you write your own.
-""",
-        "example-concept": f"""---
-id: example-concept
-title: "Example concept note"
-type: concept
-classification: Internal
-created: {today}
-updated: {today}
-tags: []
----
-
-# Example concept note
-
-## Definition
-
-A `concept` note captures one idea worth naming and reusing across other
-notes -- a definition, a mental model, a recurring pattern.
-
-## Context & Application
-
-Link to a concept from wherever the idea applies, instead of re-explaining it
-each time. See [[welcome-to-your-second-brain]] for the note-shape overview
-this sample set demonstrates.
-
-## Counter-Arguments
-
-Reasons this concept might be wrong, incomplete, or context-dependent -- a
-concept note without this section is warn-flagged by the validator as a
-quality nudge. This sample note's own counter-argument: it isn't a real
-concept, just a placeholder.
-
-## Related Concepts
-
-[[example-linked-note]]
-
-## Sources
-""",
-        "example-linked-note": f"""---
-id: example-linked-note
-title: "Example linked note"
-type: note
-classification: Internal
-created: {today}
-updated: {today}
-tags: []
----
-
-# Example linked note
-
-This note and [[welcome-to-your-second-brain]] link to each other -- a small
-worked example of the wikilink-first structure this vault uses instead of
-folders or tags. It also links to [[example-concept]] to show a `note`
-pointing at a `concept`.
-""",
-    }
-
-
-def _sample_index(today: str) -> str:
-    """A minimal top-level ``brain/index.md`` -- ``tools/validate.py`` hard-
-    requires this file to exist (``vault/brain/index.md missing`` is an
-    error, not a warning), and nothing else in the install path creates it
-    for a genuinely brand-new vault, so seeding is the one place that can
-    satisfy that gate. Create-if-absent only (see ``seed_sample_notes``) --
-    never overwrites an owner's own index.md."""
-    return f"""---
-id: index
-title: "Index"
-type: index
-classification: Internal
-created: {today}
-updated: {today}
-tags: []
----
-
-# Index
-
-Map of this vault. Start here, then follow the wikilinks.
-
-## Sample notes
-
-- [[welcome-to-your-second-brain]] -- the note shape (frontmatter, PARA folders, wikilinks)
-- [[example-concept]] -- the `concept` note type
-- [[example-linked-note]] -- a small wikilinked pair
-"""
-
-
-def seed_sample_notes(vault: str | os.PathLike[str] | None) -> dict[str, Any]:
-    """Write the 3 sample notes into ``vault/brain/resources/`` -- ONLY when
-    the vault carries no real notes yet (idempotent: a second run against a
-    now-populated vault is always a no-op, never a clobber). Also writes a
-    minimal top-level ``brain/index.md`` create-if-absent (never overwrites
-    an existing one) so the freshly seeded vault passes
-    ``tools/validate.py``'s hard ``index.md missing`` gate."""
-    v = config.vault_root(vault, allow_missing=True)
-    existing = _existing_brain_note_count(v)
-    if existing > 0:
-        return {"performed": False,
-                "reason": f"vault/brain/ already has {existing} note(s)",
-                "created": []}
-    today = _dt.date.today().isoformat()
-    brain_dir = v / "brain"
-    dest_dir = brain_dir / "resources"
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    # tools/validate.py hard-requires vault/raw/ to exist too (`vault/raw/
-    # missing` is an error) -- an empty dir is a no-op to create and nothing
-    # else in the install path creates it for a genuinely brand-new vault.
-    (v / "raw").mkdir(parents=True, exist_ok=True)
-    created: list[str] = []
-
-    index_path = brain_dir / "index.md"
-    if not index_path.exists():
-        index_path.write_text(_sample_index(today), encoding="utf-8")
-        created.append("index.md")
-
-    for note_id, content in _sample_notes(today).items():
-        path = dest_dir / f"{note_id}.md"
-        if path.exists():  # defensive: the emptiness gate above already
-            continue        # implies these shouldn't exist yet
-        path.write_text(content, encoding="utf-8")
-        created.append(f"resources/{note_id}.md")
-    return {"performed": True, "created": created}
-
-
-# --------------------------------------------------------------------------
-# ONB-01: brain init --full --import-from <dir> -- guided first ingest
-# --------------------------------------------------------------------------
-# Stages an external folder (e.g. an existing Obsidian vault) into
-# vault/inbox/ and drives the STANDARD host ingest drain
-# (brain.ingest.pipeline.run_ingest via BrainCore.ingest_dropzone) -- reuses
-# the existing pipeline verbatim, never forks it. Host-only: refused
-# (role_forbidden) before any filesystem side effect -- ingest_dropzone would
-# refuse a VM leg anyway (BrainCore._require_host), but the check here runs
-# BEFORE even the read-only dry-run scan, so a VM leg never touches the
-# import folder at all.
-#
-# [HARDENED:codex] import safety: realpath-resolved overlap check in BOTH
-# directions, symlinks never followed, a dry-run manifest gate (file count +
-# bytes + per-extension breakdown) that requires explicit confirmation before
-# anything is staged, and a default file-count/byte-size cap.
-DEFAULT_IMPORT_FILE_CAP = 5000
-DEFAULT_IMPORT_BYTES_CAP = 500 * 1024 * 1024
-
-
-class ImportSafetyError(ValueError):
-    """``--import-from`` failed a pre-flight safety check; nothing was staged."""
-
-
-def _realpath(p: str | os.PathLike[str]) -> Path:
-    return Path(os.path.realpath(str(Path(p).expanduser())))
-
-
-def validate_import_overlap(
-    import_dir: str | os.PathLike[str], vault: str | os.PathLike[str] | None,
-) -> None:
-    """Reject either direction of overlap between ``import_dir`` and the
-    resolved vault root.
-
-    - ``import_dir`` inside (or equal to) the vault: would re-ingest the
-      vault's own content (including its own ``inbox/``).
-    - the vault inside ``import_dir``: the self-copy bomb -- the moment
-      staging starts writing into ``vault/inbox/``, that new content becomes
-      part of the very traversal source being walked.
-    """
-    imp = _realpath(import_dir)
-    vlt = _realpath(config.vault_root(vault, allow_missing=True))
-    if not imp.is_dir():
-        raise ImportSafetyError(f"--import-from {imp} is not a directory")
-    try:
-        imp.relative_to(vlt)
-    except ValueError:
-        pass
-    else:
-        raise ImportSafetyError(
-            f"--import-from {imp} is inside (or equal to) the vault {vlt}; refusing")
-    try:
-        vlt.relative_to(imp)
-    except ValueError:
-        pass
-    else:
-        raise ImportSafetyError(
-            f"the vault {vlt} is inside --import-from {imp}; refusing -- this "
-            "is the self-copy bomb (vault/inbox/ would become part of the "
-            "traversal source once staging starts writing into it)")
-
-
-def scan_import_dir(import_dir: str | os.PathLike[str]) -> dict[str, Any]:
-    """Read-only walk of ``import_dir``: never follows a symlinked file or
-    directory (HARDENED:codex). Returns a dry-run manifest -- file count,
-    total bytes, per-extension breakdown -- plus the internal file list
-    ``stage_import_files`` consumes to actually copy."""
-    imp = Path(import_dir)
-    files: list[tuple[Path, int]] = []
-    total_bytes = 0
-    by_extension: dict[str, int] = {}
-    for root, dirnames, filenames in os.walk(imp, followlinks=False):
-        root_path = Path(root)
-        dirnames[:] = [d for d in dirnames if not (root_path / d).is_symlink()]
-        for name in filenames:
-            fp = root_path / name
-            if fp.is_symlink():
-                continue
-            try:
-                size = fp.stat().st_size
-            except OSError:
-                continue
-            rel = fp.relative_to(imp)
-            files.append((rel, size))
-            total_bytes += size
-            ext = fp.suffix.lower() or "(none)"
-            by_extension[ext] = by_extension.get(ext, 0) + 1
-    return {
-        "import_dir": str(imp), "file_count": len(files), "total_bytes": total_bytes,
-        "by_extension": by_extension, "_files": files,
-    }
-
-
-def check_import_caps(
-    manifest: dict[str, Any], *, force: bool,
-    file_cap: int | None = None, bytes_cap: int | None = None,
-) -> None:
-    # Resolved from the module globals AT CALL TIME (not as bound default
-    # values) so a caller (or a test) can monkeypatch
-    # DEFAULT_IMPORT_FILE_CAP/DEFAULT_IMPORT_BYTES_CAP and have it take effect.
-    if file_cap is None:
-        file_cap = DEFAULT_IMPORT_FILE_CAP
-    if bytes_cap is None:
-        bytes_cap = DEFAULT_IMPORT_BYTES_CAP
-    if force:
-        return
-    if manifest["file_count"] > file_cap:
-        raise ImportSafetyError(
-            f"{manifest['file_count']} files exceeds the default cap ({file_cap}); "
-            "pass --import-force to override")
-    if manifest["total_bytes"] > bytes_cap:
-        raise ImportSafetyError(
-            f"{manifest['total_bytes']} bytes exceeds the default cap ({bytes_cap}); "
-            "pass --import-force to override")
-
-
-def build_import_dry_run(
-    import_from: str | os.PathLike[str], vault: str | os.PathLike[str] | None,
-    *, force: bool = False,
-) -> dict[str, Any]:
-    """Pre-flight: overlap + symlink-safe scan + cap check. Pure read-only
-    filesystem inspection -- never stages or ingests anything."""
-    validate_import_overlap(import_from, vault)
-    manifest = scan_import_dir(import_from)
-    check_import_caps(manifest, force=force)
-    return manifest
-
-
-def _flatten_relpath(rel: Path) -> str:
-    """The ingest drain only scans the inbox ROOT (never recurses), so a
-    nested import (e.g. an Obsidian vault's subfolders) is flattened into one
-    filename per file -- joined with '__' so the original path stays visible
-    and collisions across sibling subfolders are vanishingly unlikely (the
-    dest-uniquification below is the actual guarantee)."""
-    return "__".join(rel.parts) if len(rel.parts) > 1 else rel.parts[0]
-
-
-def _unique_inbox_dest(inbox: Path, name: str) -> Path:
-    stem, suffix = Path(name).stem, Path(name).suffix
-    dest = inbox / name
-    i = 0
-    while dest.exists():
-        i += 1
-        dest = inbox / f"{stem}.{i}{suffix}"
-    return dest
-
-
-def stage_import_files(
-    manifest: dict[str, Any], import_from: str | os.PathLike[str],
-    vault: str | os.PathLike[str] | None,
-) -> list[str]:
-    """Copy (never move) every file the dry-run manifest found into
-    ``vault/inbox/``. The user's original folder is never touched."""
-    v = config.vault_root(vault, allow_missing=True)
-    imp = Path(import_from)
-    inbox = v / "inbox"
-    inbox.mkdir(parents=True, exist_ok=True)
-    staged: list[str] = []
-    for rel, _size in manifest["_files"]:
-        src = imp / rel
-        if src.is_symlink():
-            continue
-        dest = _unique_inbox_dest(inbox, _flatten_relpath(rel))
-        shutil.copy2(src, dest)
-        staged.append(dest.name)
-    return staged
-
-
-def stage_and_ingest_import(
-    import_from: str | os.PathLike[str], vault: str | os.PathLike[str] | None,
-    role: str, *, force: bool = False,
-) -> dict[str, Any]:
-    """Stage ``import_from`` into ``vault/inbox/`` then run the STANDARD host
-    ingest drain (``BrainCore.ingest_dropzone`` -> ``ingest.pipeline.run_ingest``).
-
-    Refused on ``role != host`` BEFORE any filesystem side effect --
-    ``ingest_dropzone`` would refuse a VM leg on its own
-    (``BrainCore._require_host``), but that only fires after staging already
-    copied bytes into ``inbox/``; this check runs first so a VM leg never
-    touches the import folder or the vault at all (same fail-closed shape as
-    every other host-broker verb).
-    """
-    if role != config.ROLE_HOST:
-        raise PermissionError(
-            f"role={role!r} may not import + ingest a folder; this is a "
-            "host-broker privilege (the VM leg is read + draft only). "
-            "Run on the host.")
-    manifest = build_import_dry_run(import_from, vault, force=force)
-    staged = stage_import_files(manifest, import_from, vault)
-
-    from .core import BrainCore
-
-    core = BrainCore(vault=vault, role=role)
-    ingest_report = core.ingest_dropzone()
-    return {
-        "import_dir": manifest["import_dir"], "file_count": manifest["file_count"],
-        "total_bytes": manifest["total_bytes"], "by_extension": manifest["by_extension"],
-        "staged": len(staged), "ingest": ingest_report,
-    }
-
-
-def render_import_dry_run(manifest: dict[str, Any]) -> str:
-    lines = [
-        f"import dry-run: {manifest['import_dir']}",
-        f"  {manifest['file_count']} file(s), {manifest['total_bytes']} bytes total",
-    ]
-    for ext, n in sorted(manifest["by_extension"].items()):
-        lines.append(f"    {ext}: {n}")
-    lines.append("re-run with --yes to stage into vault/inbox/ and run the ingest drain")
-    return "\n".join(lines)
 
 
 # --------------------------------------------------------------------------
@@ -654,189 +266,67 @@ def run_full_init(
     task-registration failure). Never raises on a malformed overlay or a missing
     manifest — those surface as ``ok: false`` / a task note.
     """
-    repo_root = discover_repo_root()
-    client = detect_client(role)
-    ol_dir = ov.overlay_dir(vault, overlay_dir)
-    tmpl = resolve_template_dir(template_dir, repo_root)
+    from . import audit
 
-    steps: list[str] = [f"client detected: {client} (role={role})"]
-
-    # ONB-02: seed 2-3 generic sample notes on a genuinely EMPTY vault, host
-    # only (the VM leg never writes directly into vault/brain/ -- AGENTS.md
-    # §6). Runs before the overlay scaffold; order between the two doesn't
-    # matter, both are idempotent filesystem-only steps.
-    if seed_vault and client == "host":
-        seed_report = seed_sample_notes(vault)
-    else:
-        seed_report = {"performed": False,
-                        "reason": "disabled (--no-seed-vault)" if not seed_vault
-                                  else "seeding is host-only (vm role never writes "
-                                       "directly into vault/brain/)",
-                        "created": []}
-    if seed_report["performed"]:
-        steps.append(f"vault seed: wrote {len(seed_report['created'])} sample note(s)")
-    else:
-        steps.append(f"vault seed: skipped ({seed_report['reason']})")
-
-    # Index the seeded notes, then put them in the audit chain. Both are
-    # subprocess steps that soft-fail; see brain.init_seed for why each is
-    # gated the way it is.
-    index_report, sign_report, seed_steps = init_seed.finish_seeded_vault(
-        vault, apply=apply, client=client, seed_report=seed_report)
-    steps.extend(seed_steps)
-
-    overlay_report: dict[str, Any] = {"overlay_dir": str(ol_dir)}
-    if scaffold:
-        sc = scaffold_overlay(ol_dir, tmpl)
-        overlay_report["scaffold"] = sc
-        if sc["performed"]:
-            steps.append(
-                f"overlay scaffold: created {len(sc['created'])} file(s), "
-                f"skipped {len(sc['skipped'])} filled category(ies)")
-        else:
-            steps.append(f"overlay scaffold: skipped ({sc.get('reason')})")
-    else:
-        overlay_report["scaffold"] = {"performed": False, "reason": "disabled (--no-scaffold-overlay)",
-                                      "created": [], "skipped": []}
-        steps.append("overlay scaffold: disabled")
-
-    validation = ov.validate_overlay(ol_dir)
-    overlay_report["validation"] = validation
-    steps.append(f"overlay validation: {'valid' if validation['valid'] else 'INVALID'}")
-
-    # Provision the audit signing key BEFORE task registration so the nightly
-    # plist render resolves a real key instead of MISSING_KEY_DRAIN_WILL_SKIP.
-    # Create-if-absent only — provision_signing_key() never rotates. Host-only;
-    # soft-fails (reported, never aborts init) so a storeless CI box still inits.
-    key_report: dict[str, Any]
-    if client == "host" and apply:
-        from . import audit
-        try:
-            key_report = audit.provision_signing_key()
-        except Exception as exc:
-            key_report = {"status": "unavailable", "error": str(exc)}
-        steps.append(f"audit key: {key_report['status']}")
-    else:
-        key_report = {"status": "skipped (vm role or dry-run)"}
-
-    tasks_report: dict[str, Any]
-    if register_tasks:
-        manifest_path = resolve_manifest_path(manifest, repo_root, vault)
-        registrar = load_registrar(repo_root)
-        tasks_report = _register_tasks(
-            client=client, registrar=registrar, manifest_path=manifest_path,
-            apply=apply, save_cowork_prompt=save_cowork_prompt)
-        steps.append(f"task registration ({client}): registrar={tasks_report.get('registrar')}")
-    else:
-        tasks_report = {"registrar": "disabled"}
-        steps.append("task registration: disabled (--no-register-tasks)")
-
-    # `ok` is driven by overlay validity + a HARD task failure only. Registrar
-    # "unavailable"/"skipped" is a SOFT degradation (the report carries a hint to
-    # finish registration by hand) — the common case for the bundled binary
-    # running far from the repo, and NOT a reason to fail the whole install.
-    host_leg = tasks_report.get("host") or {}
-    apply_result = host_leg.get("apply_result")
-    task_hard_fail = (
-        isinstance(apply_result, dict) and apply_result.get("exit_code") not in (0, None)
+    callbacks = InitStepCallbacks(
+        discover_repo_root=discover_repo_root,
+        detect_client=detect_client,
+        overlay_dir=ov.overlay_dir,
+        resolve_template_dir=resolve_template_dir,
+        seed_sample_notes=seed_sample_notes,
+        # Late-bound on purpose: tests monkeypatch `init_seed._build_index`
+        # by name; capturing the function object here would freeze the
+        # pre-patch one and run a REAL rebuild against the fixture vault.
+        build_index=lambda vault: init_seed._build_index(vault),
+        scaffold_overlay=scaffold_overlay,
+        validate_overlay=ov.validate_overlay,
+        provision_signing_key=audit.provision_signing_key,
+        resolve_manifest_path=resolve_manifest_path,
+        load_registrar=load_registrar,
+        register_tasks=_register_tasks,
     )
-    # An index build that was ATTEMPTED and FAILED is a hard failure, not a
-    # soft degradation. `--apply` promises the seeded notes are searchable; if
-    # the rebuild died, `brain search` returns zero hits forever with no error
-    # anywhere. That combination -- install reports success, retrieval is
-    # silently empty -- is exactly how three Windows I/O bugs reached a pilot
-    # user in 0.19.11 without anyone noticing for five minutes (enterprise
-    # pilot, 2026-07-29). A skipped build (dry-run, nothing seeded) stays neutral.
-    index_hard_fail = bool(index_report.get("performed")) and not index_report.get("ok")
-    ok = bool(validation["valid"]) and not task_hard_fail and not index_hard_fail
-
-    return {
-        "action": "init-full",
-        "ok": ok,
-        "client": client,
-        "role": role,
-        "repo_root": str(repo_root) if repo_root else None,
-        "seed": seed_report,
-        "index": index_report,
-        # Deliberately NOT folded into `ok`, unlike the index build above: an
-        # empty index is silent (retrieval just returns nothing), whereas an
-        # unsigned note is already reported loudly by `invariants.unsigned_notes`
-        # and by `brain doctor`. A box with no signing key should still init.
-        "audit_sign": sign_report,
-        "overlay": overlay_report,
-        "audit_key": key_report,
-        "tasks": tasks_report,
-        "steps": steps,
-    }
+    return run_full_init_impl(
+        vault=vault,
+        overlay_dir=overlay_dir,
+        role=role,
+        scaffold=scaffold,
+        template_dir=template_dir,
+        register_tasks=register_tasks,
+        apply=apply,
+        manifest=manifest,
+        save_cowork_prompt=save_cowork_prompt,
+        seed_vault=seed_vault,
+        callbacks=callbacks,
+    )
 
 
 def render_human(report: dict[str, Any]) -> str:
     """Compact human rendering of a run_full_init report."""
-    lines = [
-        f"brain init (full) — client={report['client']} role={report['role']}",
-        f"ok: {report['ok']}",
-        "",
-    ]
-    seed = report.get("seed") or {}
-    if seed.get("performed"):
-        lines.append(f"seed: wrote {len(seed['created'])} sample note(s)")
-        for c in seed["created"]:
-            lines.append(f"  + {c}")
-    else:
-        lines.append(f"seed: not performed ({seed.get('reason')})")
-    imp = report.get("import")
-    if imp:
-        lines.append("")
-        lines.append(f"import: {imp['import_dir']}")
-        lines.append(f"  staged {imp['staged']}/{imp['file_count']} file(s), "
-                     f"{imp['total_bytes']} bytes")
-        ing = imp.get("ingest", {})
-        lines.append(f"  ingest: {len(ing.get('processed', []))} processed, "
-                     f"{len(ing.get('duplicates', []))} duplicate(s), "
-                     f"{len(ing.get('quarantined', []))} quarantined")
-    lines.append("")
-    lines.append(f"overlay: {report['overlay']['overlay_dir']}")
-    sc = report["overlay"].get("scaffold", {})
-    if sc.get("performed"):
-        lines.append(f"  scaffold: +{len(sc['created'])} created, "
-                     f"{len(sc['skipped'])} category(ies) already filled")
-        for c in sc["created"]:
-            lines.append(f"    + {c}")
-    else:
-        lines.append(f"  scaffold: not performed ({sc.get('reason')})")
-    val = report["overlay"]["validation"]
-    lines.append(f"  valid: {val['valid']}")
-    for cat, info in val["categories"].items():
-        status = "ok" if not info["issues"] else "ISSUES"
-        lines.append(f"    {cat}/: {status} ({info['file_count']} file(s))")
-        for issue in info["issues"]:
-            lines.append(f"      - {issue}")
+    return render_human_impl(report)
 
-    t = report["tasks"]
-    lines.append("")
-    lines.append(f"tasks: registrar={t.get('registrar')}")
-    if t.get("manifest"):
-        lines.append(f"  manifest: {t['manifest']}")
-    if "host" in t:
-        h = t["host"]
-        lines.append(f"  host leg ({h.get('detected_os')}): task={h.get('task_id')} "
-                     f"action={h.get('action')} apply={t.get('apply')}")
-        lines.append(f"    already_registered: {h.get('already_registered')}")
-        lines.append(f"    result: {h.get('apply_result')}")
-        s = h.get("synthesis")
-        if s:
-            lines.append(f"  host leg task 2/2: task={s.get('task_id')}")
-            lines.append(f"    already_registered: {s.get('already_registered')} "
-                         f"({s.get('probe_detail')})")
-    if "cowork" in t:
-        c = t["cowork"]
-        lines.append(f"  cowork leg: {len(c['vm_eligible_tasks'])} poke-only "
-                     f"trigger(s) to register: {', '.join(c['vm_eligible_tasks'])}")
-        if c.get("saved_to"):
-            lines.append(f"    paste-prompt saved to: {c['saved_to']}")
-        else:
-            lines.append("    (paste-prompt in the --json report; re-run with "
-                         "--save-cowork-prompt <path> to write it out)")
-    if t.get("hint"):
-        lines.append(f"  hint: {t['hint']}")
-    return "\n".join(lines)
+# The seeded sample notes live in init_samples.py and the ``--import-from``
+# safety/staging leg in init_import.py since the 2026-08-16 size ratchet;
+# re-exported so every `brain.init.<name>` caller is unchanged.
+from .init_import import (  # noqa: E402,F401  (facade re-export)
+    DEFAULT_IMPORT_BYTES_CAP as DEFAULT_IMPORT_BYTES_CAP,
+    DEFAULT_IMPORT_FILE_CAP as DEFAULT_IMPORT_FILE_CAP,
+    ImportSafetyError as ImportSafetyError,
+    _flatten_relpath as _flatten_relpath,
+    _realpath as _realpath,
+    _unique_inbox_dest as _unique_inbox_dest,
+    build_import_dry_run as build_import_dry_run,
+    check_import_caps as check_import_caps,
+    render_import_dry_run as render_import_dry_run,
+    scan_import_dir as scan_import_dir,
+    stage_and_ingest_import as stage_and_ingest_import,
+    stage_import_files as stage_import_files,
+    validate_import_overlap as validate_import_overlap,
+)
+from .init_samples import (  # noqa: E402,F401  (facade re-export)
+    _GENERATED_BRAIN_FILENAMES as _GENERATED_BRAIN_FILENAMES,
+    _existing_brain_note_count as _existing_brain_note_count,
+    _sample_index as _sample_index,
+    _sample_notes as _sample_notes,
+    seed_sample_notes as seed_sample_notes,
+)
+

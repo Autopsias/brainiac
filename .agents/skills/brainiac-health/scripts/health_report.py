@@ -288,6 +288,78 @@ def _hot_queue_tail(vault: Path, n: int = HOT_QUEUE_TAIL_ENTRIES) -> list[str]:
     return headings[-n:]
 
 
+def _surface_problems(doctor: Any, doctor_err: str, status: Any,
+                      status_err: str) -> list[tuple[str, str, str]]:
+    """Doctor/status error rows + heartbeat findings, as report problems."""
+    problems: list[tuple[str, str, str]] = []
+    if doctor_err:
+        problems.append(("broken", f"brain doctor failed: {doctor_err}",
+                         "check `brain doctor` manually for the raw error"))
+    if status_err:
+        problems.append(("broken", f"brain status failed: {status_err}",
+                         "check `brain status` manually for the raw error"))
+    if doctor:
+        for row in doctor.get("rows", []):
+            if row.get("status") in ("stale", "unmanaged"):
+                problems.append((
+                    "degraded", f"{row['surface']}: {row['detail']}",
+                    row.get("remediation") or "see `brain doctor --json` for detail"))
+    if status:
+        hb = status.get("maintain_heartbeat") or {}
+        if hb.get("status") == "repeated_failures":
+            problems.append((
+                "broken",
+                f"maintain heartbeat: repeated failures in {hb.get('repeated_failure_branches')}",
+                "check `~/.brain/logs` / launchctl for the brain-nightly task, "
+                "then re-run `brain maintain` manually"))
+        elif hb.get("status") == "stale":
+            problems.append((
+                "degraded", f"maintain heartbeat: stale branch(es) {hb.get('stale_branches')}",
+                "confirm the brain-nightly scheduled task is still registered "
+                "(`brain doctor`), then re-run `brain maintain` manually"))
+    return problems
+
+
+_EMPTY_DELTA = {k: {"current": None, "baseline": None, "lookback_days": None}
+                for k in ("notes", "quarantine", "selftest_ms",
+                          "golden_score", "synthesis_cost_usd")}
+
+
+def _fill_trend_section(m: Any, vault: Path, today: Any, report: dict) -> None:
+    """Trend findings, synthesis heartbeat and gauge deltas into ``report``.
+
+    Defensive by design: a sibling helper missing on a future engine version
+    degrades the trend surface, never the whole readout (doctor/status stay)."""
+    try:
+        history = m.read_health_history(vault)
+        sparse = m.read_sparse_history(vault)
+        trend = m.health_trend(history, today, sparse_history=sparse)
+        report["trend_findings"] = trend
+        for f in trend:
+            sev = "broken" if f["metric"] == "blocked" else "degraded"
+            report["problems"].append((sev, f["summary"], _trend_remediation(f["metric"])))
+
+        hb_finding = m.synthesis_heartbeat_finding(vault, today)
+        if hb_finding:
+            report["problems"].append((
+                "degraded", hb_finding["finding"], hb_finding["proposed_action"]))
+        report["synthesis_cost"] = m.latest_synthesis_cost(vault)
+
+        report["deltas"] = {
+            "notes": _gauge_delta(history, "notes", today),
+            "quarantine": _gauge_delta(history, "quarantine", today),
+            "selftest_ms": _gauge_delta(history, "selftest_ms", today),
+            "golden_score": _sparse_delta(history, sparse, "golden_score"),
+            "synthesis_cost_usd": _sparse_delta(history, sparse, "synthesis_cost_usd"),
+        }
+    except AttributeError as exc:
+        report["problems"].append((
+            "degraded", f"trend/heartbeat partially unavailable: {exc}",
+            "run /brainiac-update to refresh the engine, then re-run /brainiac-health"))
+        report.setdefault("synthesis_cost", None)
+        report.setdefault("deltas", dict(_EMPTY_DELTA))
+
+
 def build_vault_report(brain_exe: str, vault_path: str, m: Any, maintenance_source: str) -> dict:
     vault = Path(vault_path)
     today = datetime.date.today()
@@ -295,39 +367,11 @@ def build_vault_report(brain_exe: str, vault_path: str, m: Any, maintenance_sour
 
     doctor, doctor_err = _run_brain_json(brain_exe, vault_path, "doctor")
     status, status_err = _run_brain_json(brain_exe, vault_path, "status")
-    if doctor_err:
-        report["problems"].append(("broken", f"brain doctor failed: {doctor_err}",
-                                    "check `brain doctor` manually for the raw error"))
-    if status_err:
-        report["problems"].append(("broken", f"brain status failed: {status_err}",
-                                    "check `brain status` manually for the raw error"))
     report["doctor"] = doctor
     report["status"] = status
-
-    if doctor:
-        for row in doctor.get("rows", []):
-            if row.get("status") == "stale":
-                report["problems"].append((
-                    "degraded", f"{row['surface']}: {row['detail']}",
-                    row.get("remediation") or "see `brain doctor --json` for detail"))
-            elif row.get("status") == "unmanaged":
-                report["problems"].append((
-                    "degraded", f"{row['surface']}: {row['detail']}",
-                    row.get("remediation") or "see `brain doctor --json` for detail"))
+    report["problems"].extend(_surface_problems(doctor, doctor_err, status, status_err))
 
     if status:
-        hb = status.get("maintain_heartbeat") or {}
-        if hb.get("status") == "repeated_failures":
-            report["problems"].append((
-                "broken",
-                f"maintain heartbeat: repeated failures in {hb.get('repeated_failure_branches')}",
-                "check `~/.brain/logs` / launchctl for the brain-nightly task, "
-                "then re-run `brain maintain` manually"))
-        elif hb.get("status") == "stale":
-            report["problems"].append((
-                "degraded", f"maintain heartbeat: stale branch(es) {hb.get('stale_branches')}",
-                "confirm the brain-nightly scheduled task is still registered "
-                "(`brain doctor`), then re-run `brain maintain` manually"))
         pending = status.get("pending_drafts")
         if isinstance(pending, (int, float)) and pending > 0:
             report["pending_drafts"] = pending
@@ -337,45 +381,9 @@ def build_vault_report(brain_exe: str, vault_path: str, m: Any, maintenance_sour
             "degraded", f"trend/heartbeat unavailable: {maintenance_source}",
             "run /brainiac-update to refresh the engine, then re-run /brainiac-health"))
         report["synthesis_cost"] = None
-        report["deltas"] = {k: {"current": None, "baseline": None, "lookback_days": None}
-                             for k in ("notes", "quarantine", "selftest_ms",
-                                       "golden_score", "synthesis_cost_usd")}
+        report["deltas"] = dict(_EMPTY_DELTA)
     else:
-        try:
-            history = m.read_health_history(vault)
-            sparse = m.read_sparse_history(vault)
-            trend = m.health_trend(history, today, sparse_history=sparse)
-            report["trend_findings"] = trend
-            for f in trend:
-                sev = "broken" if f["metric"] == "blocked" else "degraded"
-                report["problems"].append((sev, f["summary"], _trend_remediation(f["metric"])))
-
-            hb_finding = m.synthesis_heartbeat_finding(vault, today)
-            if hb_finding:
-                report["problems"].append((
-                    "degraded", hb_finding["finding"], hb_finding["proposed_action"]))
-            report["synthesis_cost"] = m.latest_synthesis_cost(vault)
-
-            report["deltas"] = {
-                "notes": _gauge_delta(history, "notes", today),
-                "quarantine": _gauge_delta(history, "quarantine", today),
-                "selftest_ms": _gauge_delta(history, "selftest_ms", today),
-                "golden_score": _sparse_delta(history, sparse, "golden_score"),
-                "synthesis_cost_usd": _sparse_delta(history, sparse, "synthesis_cost_usd"),
-            }
-        except AttributeError as exc:
-            # Defensive: _load_maintenance already checks for health_trend
-            # before returning a module, but a SIBLING helper (e.g. a future
-            # engine version renaming synthesis_heartbeat_finding) could
-            # still be missing — never crash the whole readout over one
-            # missing trend surface when doctor/status are still useful.
-            report["problems"].append((
-                "degraded", f"trend/heartbeat partially unavailable: {exc}",
-                "run /brainiac-update to refresh the engine, then re-run /brainiac-health"))
-            report.setdefault("synthesis_cost", None)
-            report.setdefault("deltas", {k: {"current": None, "baseline": None, "lookback_days": None}
-                                          for k in ("notes", "quarantine", "selftest_ms",
-                                                    "golden_score", "synthesis_cost_usd")})
+        _fill_trend_section(m, vault, today, report)
     report["hot_queue"] = _hot_queue_tail(vault)
     return report
 

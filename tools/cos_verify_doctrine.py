@@ -42,8 +42,16 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cos_verify_doctrine_text import (  # noqa: E402
+    anchor_findings, mirror_digest_problem, skill_pin_warnings,
+    unquoted_rule_findings, zip_copy_warnings)
+
 REPO = Path(__file__).resolve().parents[1]
 JUDGE = REPO / "tools" / "cos_judge.py"
+#: batch-2 drain: the batch templates moved out of `cos_judge.py` into the
+#: sibling prompts module; the doctrine reads them wherever they live.
+PROMPTS = REPO / "tools" / "cos_judge_prompts.py"
 MIRRORS = (
     REPO / ".claude" / "skills" / "chief-of-staff",
     REPO / ".agents" / "skills" / "chief-of-staff",
@@ -61,6 +69,13 @@ EXT_RE = re.compile(r'^\s*extraction_rules_version:\s*["\']([^"\']+)["\']', re.M
 ECHECK_RE = re.compile(r"^- \*\*E(\d{1,2})\*\*\s*·", re.MULTILINE)
 
 
+def templates_src(repo: Path) -> str:
+    """The batch templates' source text — `cos_judge.py` + its prompts sibling."""
+    return ((repo / "tools" / "cos_judge.py").read_text(encoding="utf-8")
+            + "\n" + (repo / "tools" / "cos_judge_prompts.py").read_text(
+                encoding="utf-8"))
+
+
 def rule_blocks(judge_src: str) -> dict[str, str]:
     """The `RULES THAT BIND` body of each batch template, as written."""
     out: dict[str, str] = {}
@@ -76,7 +91,7 @@ def rule_blocks(judge_src: str) -> dict[str, str]:
 
 
 def audit(repo: Path = REPO) -> dict:
-    judge = (repo / "tools" / "cos_judge.py").read_text(encoding="utf-8")
+    judge = templates_src(repo)
     mirrors = [repo / p.relative_to(REPO) for p in MIRRORS]
     doctrine_paths = [d / "DOCTRINE.md" for d in mirrors]
     findings: list[str] = []   # FATAL — the night must not run on these
@@ -89,92 +104,19 @@ def audit(repo: Path = REPO) -> dict:
 
     texts = [p.read_text(encoding="utf-8") for p in doctrine_paths]
     digests = [hashlib.sha256(t.encode("utf-8")).hexdigest() for t in texts]
-    if len(set(digests)) != 1:
-        findings.append(
-            "the three DOCTRINE.md mirrors are NOT byte-identical: "
-            + "; ".join(f"{p.parent.parent.parent.name}/…={d[:12]}…"
-                        for p, d in zip(doctrine_paths, digests)))
+    mirror_problem = mirror_digest_problem(doctrine_paths, digests)
+    if mirror_problem is not None:
+        findings.append(mirror_problem)
 
     doctrine = texts[0]
-    quoted = 0
-    for name, block in rule_blocks(judge).items():
-        for line in block.splitlines():
-            if not line.strip():
-                continue
-            quoted += 1
-            if line not in doctrine:
-                findings.append(
-                    f"{name}: this rule line is in cos_judge.py and NOT in "
-                    f"DOCTRINE.md — {line.strip()[:90]!r}")
-
-    km, em = KERNEL_RE.search(doctrine), EXT_RE.search(doctrine)
-    if not km:
-        findings.append("DOCTRINE.md states no `kernel_version` — "
-                        "`brain cos-run-begin --skill` refuses such a bundle")
-    if not em:
-        findings.append("DOCTRINE.md states no `extraction_rules_version`")
-    echecks = sorted({int(n) for n in ECHECK_RE.findall(doctrine)})
-    if not echecks:
-        findings.append(
-            "DOCTRINE.md defines ZERO `- **EN** ·` self-eval checks — "
-            "`cos_deploy.read_skill` then freezes `None` as the run's expected "
-            "count, `expected_check_count` can derive nothing, and "
-            "`check_self_eval` can only ever score DEGRADED. A control that "
-            "cannot pass is not a control")
-    elif echecks != list(range(1, len(echecks) + 1)):
-        findings.append(
-            f"DOCTRINE.md's E-check ids are NOT contiguous from 1: {echecks}. "
-            f"`check_self_eval` demands a result for every id in 1..{len(echecks)} "
-            "(the COUNT is what the manifest freezes), so a gap makes every "
-            "night unpassable")
-
-    # THE FOURTH COPY, and it is a ZIP (review 2026-08-15). `dist/cowork-skills/
-    # chief-of-staff.skill` is what a COWORK session uploads and reads, it
-    # carries its own `chief-of-staff/DOCTRINE.md` member, and this file bound
-    # exactly three paths — so the round that corrected the doctrine left a
-    # Cowork session loading the UNCORRECTED text, with no gate anywhere able to
-    # see it. Measured then: the member was 62,229 bytes at a pre-rework digest
-    # while the mirrors were 63,983.
-    #
-    # A WARNING, NOT A FINDING, and deliberately: the zip is a BUILD ARTIFACT
-    # (gitignored, rebuilt by `tools/package_clients.py`), so a stale one means
-    # "rebuild the zips", not "the rules handed to the model are not the rules
-    # the validator applies". `cos_nightly.sh` dies at exit 3 on anything this
-    # returns 1 for, and a doc-build drift must not have the blast radius of a
-    # mailbox guard — the same call SKILL.md's pin already gets, for the same
-    # reason. An ABSENT zip is silent: not every checkout has built one.
-    zip_path = repo / "dist" / "cowork-skills" / "chief-of-staff.skill"
-    if zip_path.exists():
-        import zipfile                                        # noqa: PLC0415
-        try:
-            with zipfile.ZipFile(zip_path) as z:
-                members = [n for n in z.namelist() if n.endswith("DOCTRINE.md")]
-                if not members:
-                    warnings.append(
-                        f"{zip_path.name} carries no DOCTRINE.md member — a "
-                        "Cowork session installing it gets no doctrine at all")
-                for name in members:
-                    zdig = hashlib.sha256(z.read(name)).hexdigest()
-                    if zdig != digests[0]:
-                        warnings.append(
-                            f"{zip_path.name}!{name} is STALE: {zdig[:12]}… vs "
-                            f"the mirrors' {digests[0][:12]}…. A Cowork session "
-                            "loads this copy, and no other gate can see it — "
-                            "rebuild with `python3 tools/package_clients.py`")
-        except (OSError, zipfile.BadZipFile) as exc:
-            warnings.append(f"{zip_path.name} could not be read ({exc})")
-
-    skill = (mirrors[0] / "SKILL.md")
-    if skill.exists():
-        sk = KERNEL_RE.search(skill.read_text(encoding="utf-8"))
-        if km and (not sk or sk.group(1) != km.group(1)):
-            warnings.append(
-                f"SKILL.md pins kernel_version "
-                f"{sk.group(1) if sk else None!r} but DOCTRINE.md is "
-                f"{km.group(1)!r} — the calibration pin reads SKILL.md and the "
-                "run manifest reads DOCTRINE.md, so they should not disagree. "
-                "SKILL.md is superseded and binds nothing, so this does NOT "
-                "stop the night")
+    quoted_findings, quoted = unquoted_rule_findings(judge, doctrine,
+                                                     rule_blocks)
+    findings.extend(quoted_findings)
+    anchor, km, em, echecks = anchor_findings(doctrine, KERNEL_RE, EXT_RE,
+                                              ECHECK_RE)
+    findings.extend(anchor)
+    warnings.extend(zip_copy_warnings(repo, digests[0]))
+    warnings.extend(skill_pin_warnings(mirrors[0] / "SKILL.md", km, KERNEL_RE))
 
     return {"ok": not findings, "findings": findings, "warnings": warnings,
             "doctrine_sha256": digests[0], "mirrors": [str(p) for p in doctrine_paths],
@@ -194,6 +136,7 @@ def _selfcheck() -> int:
         repo = Path(td) / "repo"
         (repo / "tools").mkdir(parents=True)
         shutil.copy2(JUDGE, repo / "tools" / "cos_judge.py")
+        shutil.copy2(PROMPTS, repo / "tools" / "cos_judge_prompts.py")
         for m in MIRRORS:
             d = repo / m.relative_to(REPO)
             d.mkdir(parents=True)
@@ -223,7 +166,7 @@ def _selfcheck() -> int:
             first.write_text(good, encoding="utf-8")
 
         # 1. a quoted rule line altered by ONE character
-        line = next(l for l in rule_blocks(JUDGE.read_text(encoding="utf-8"))
+        line = next(l for l in rule_blocks(templates_src(REPO))
                     ["TRIAGE_PROMPT"].splitlines() if l.strip())
         probe(good.replace(line, line[:-1] + "X", 1), "NOT in DOCTRINE.md")
         # 2. the mirrors drift apart

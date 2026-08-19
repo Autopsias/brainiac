@@ -63,18 +63,11 @@ current. If it is stale, missing, or reports a regression, queue a hot.md
 entry naming it — a fold that stopped running after an engine restage looks
 exactly like a healthy vault from every other surface. For retrieval,
 use only the read-only brainiac MCP tools; do not try to execute CLI/shell
-snippets from the general-purpose skill. Then the synthesis scope:
-(1) refresh any state/MOC note whose content lags this week's raw/ ingests
-(check the MCP recent tool and the freshness signal on MCP search); supersede
-rather than edit when the old claim was true-then; (2) review the Sunday
-promote-scan candidates in .brain/memory/hot.md and promote the ones that meet
-the one-idea-per-note bar into typed brain/ notes; (3) LINK WORK (owner
-ruling 2026-07-20, budget raised): if .brain/curation/link-candidates-*.json
-exists, work the top ${BRAIN_SYNTHESIS_LINK_BUDGET:-25} pairs — read both
-notes, add a wikilink under "## Related" ONLY where genuinely related (skip
-freely; forced links are worse than none), and fix any knowledge-layer
-orphans the graph_hygiene fold logged in hot.md the same way; (4) update
-index.md zone stamps; (5) STANDING LINKING LANE (BAK-04): read
+snippets from the general-purpose skill. Then the synthesis scope,
+IN THIS ORDER — the linking lane runs FIRST (owner ruling 2026-08-18: it sat
+last for a month, the turn cap starved it to ~7 of 40 candidates a week, and
+the backlog grew behind a lane that looked switched on):
+(1) STANDING LINKING LANE (BAK-04): read
 .brain/curation/unlinked-sources.json — the nightly corpus-invariants fold
 writes it, worst-first (most sensitive tier first, then longest-unlinked),
 already capped at that file's own "budget" value. Every id under "candidates"
@@ -90,9 +83,22 @@ edge, so it inflates the metric while linking nothing); put the [[raw/<id>]]
 form in the note's `source:` frontmatter as usual; set the note's
 classification to at least the HIGHEST classification among the sources it
 cites, read live off each source; and NEVER append these links into an
-existing hand-curated note — always a new note. Work the list in order and
-stop when the candidates are done or you run short of turns; whatever is left
-is simply next week's list. Follow AGENTS.md conventions exactly (frontmatter, wikilinks,
+existing hand-curated note — always a new note. Work the list in order; in
+your final summary state HOW MANY of the file's candidates you covered (the
+file's own "consumed_today" field is the fold's count — quote yours beside
+it). Whatever is left is next week's list, but a week you covered zero
+candidates while candidates existed must say so in one plain line;
+(2) refresh any state/MOC note whose content lags this week's raw/ ingests
+(check the MCP recent tool and the freshness signal on MCP search); supersede
+rather than edit when the old claim was true-then; (3) review the Sunday
+promote-scan candidates in .brain/memory/hot.md and promote the ones that meet
+the one-idea-per-note bar into typed brain/ notes; (4) LINK WORK (owner
+ruling 2026-07-20, budget raised): if .brain/curation/link-candidates-*.json
+exists, work the top ${BRAIN_SYNTHESIS_LINK_BUDGET:-25} pairs — read both
+notes, add a wikilink under "## Related" ONLY where genuinely related (skip
+freely; forced links are worse than none), and fix any knowledge-layer
+orphans the graph_hygiene fold logged in hot.md the same way; (5) update
+index.md zone stamps. Follow AGENTS.md conventions exactly (frontmatter, wikilinks,
 classification explicit on every new note). Finish with a one-paragraph
 summary of what changed. The trusted host wrapper publishes after you exit
 successfully; do not attempt a host-role command. Stay inside this workspace.
@@ -268,64 +274,84 @@ doctor: $DOCTOR_DIAG"
   # this while-read loop it would otherwise inherit (and eat) the registry pipe
   RC=$?
   rm -f -- "$SETTINGS_JSON" "$MCP_JSON"
-  if [ "$RC" -eq 0 ]; then
-    if [ -z "$BRAIN_BIN" ] || [ ! -x "$BRAIN_BIN" ]; then
-      log "FAIL synthesis: brain CLI not found for trusted host publish"
-      RC=127
-    else
-      # -- SIGN-DRAIN (2026-08-15). The confined session CANNOT sign: it denies
-      # Bash, runs BRAIN_ROLE=vm, and holds no key — deliberately, because it
-      # reads untrusted vault content and must never hold the audit key at the
-      # same time (AGENTS.md §5 trifecta break). It writes brain/ notes with the
-      # Write/Edit grants above, so before this drain every note BAK-04's linking
-      # lane created was indexed and retrievable with NO audit-chain entry, and
-      # every note it edited drifted. Measured 2026-08-15 on the reference vault:
-      # 24 unsigned brain/ notes, up to MNPI, going back to 2026-07-09.
-      #
-      # `verify-audit` could not see it. That check compares SIGNED notes against
-      # disk, so an unsigned note produces no drift record at all — it is absent
-      # from the population, not flagged. `invariants.unsigned_notes` (metric 8)
-      # is the number that makes it visible; this drain is what holds it at 0.
-      #
-      # Same shape as the VM-draft -> host-commit protocol (AGENTS.md §6): the
-      # untrusted leg proposes, the HOST signs, on its own side of the boundary.
-      # Runs BEFORE `sync --publish` so the reindex sees signed notes.
-      SIGN_LIST="$(mktemp -t brain-synthesis-signlist)"
-      # -newer beats -mmin: an exact marker, no clock arithmetic. The generated
-      # maps are excluded — `brain maintain` rewrites them every run by design,
-      # so signing them would add churn to the chain forever.
-      find "$VAULT/brain" -type f -name '*.md' \
-           ! -name 'backlinks.md' ! -name 'catalog.md' \
-           -newer "$SIGN_MARKER" > "$SIGN_LIST" 2>/dev/null || true
-      SIGNED=0; SIGN_FAIL=0
-      # fd 3, not stdin: `brain write` reads the note body FROM STDIN, so a
-      # plain `while read` loop would feed it the file list instead.
-      while IFS= read -r NOTE <&3; do
-        [ -n "$NOTE" ] || continue
-        REL="${NOTE#"$VAULT"/}"
-        if BRAIN_VAULT="$VAULT" BRAIN_ROLE=host "$BRAIN_BIN" write "$REL" \
-             --reason "weekly synthesis sign-drain: signed on the host after the confined session wrote it" \
-             >>"$LOG" 2>&1 < "$NOTE"; then
-          SIGNED=$((SIGNED + 1))
-        else
-          SIGN_FAIL=$((SIGN_FAIL + 1))
-          log "sign-drain: FAILED to sign $REL"
-        fi
-      done 3< "$SIGN_LIST"
-      rm -f -- "$SIGN_LIST" "$SIGN_MARKER"
-      log "sign-drain: signed=$SIGNED failed=$SIGN_FAIL vault=$VAULT"
-      # A note the session wrote but the host could not sign is the exact gap
-      # this drain exists to close, so it fails the run rather than logging a
-      # number nobody reads.
-      if [ "$SIGN_FAIL" -ne 0 ]; then
-        log "FAIL synthesis: $SIGN_FAIL note(s) left unsigned"
-        RC=75
+  # THE DRAIN RUNS WHATEVER THE SESSION'S EXIT CODE WAS (2026-08-19). It used
+  # to sit behind `[ "$RC" -eq 0 ]`, which meant a session that did all its
+  # work and then died on the way out left every note it wrote UNSIGNED — the
+  # exact gap the drain below exists to close, reintroduced by the guard in
+  # front of it. Measured: the 2026-08-19 02:00 run worked the whole BAK-04
+  # lane (29 of 29 candidates), refreshed the state note, then hit the model
+  # provider's session limit at the final step and exited 1; 11 real notes sat
+  # in brain/ with no audit-chain entry until a human noticed the invariant.
+  # A note on disk is a note that must be signed: the session's failure says
+  # nothing about the bytes it already wrote, and `brain write` validates each
+  # note on its own, so a half-written one fails closed by itself. RC is still
+  # the run's verdict — signing does not launder a failed session into a
+  # successful one.
+  if [ "$RC" -ne 0 ]; then
+    log "session exited rc=$RC — draining anyway so nothing it wrote stays unsigned"
+  fi
+  if [ -z "$BRAIN_BIN" ] || [ ! -x "$BRAIN_BIN" ]; then
+    log "FAIL synthesis: brain CLI not found for trusted host publish"
+    RC=127
+  else
+    # -- SIGN-DRAIN (2026-08-15). The confined session CANNOT sign: it denies
+    # Bash, runs BRAIN_ROLE=vm, and holds no key — deliberately, because it
+    # reads untrusted vault content and must never hold the audit key at the
+    # same time (AGENTS.md §5 trifecta break). It writes brain/ notes with the
+    # Write/Edit grants above, so before this drain every note BAK-04's linking
+    # lane created was indexed and retrievable with NO audit-chain entry, and
+    # every note it edited drifted. Measured 2026-08-15 on the reference vault:
+    # 24 unsigned brain/ notes, up to MNPI, going back to 2026-07-09.
+    #
+    # `verify-audit` could not see it. That check compares SIGNED notes against
+    # disk, so an unsigned note produces no drift record at all — it is absent
+    # from the population, not flagged. `invariants.unsigned_notes` (metric 8)
+    # is the number that makes it visible; this drain is what holds it at 0.
+    #
+    # Same shape as the VM-draft -> host-commit protocol (AGENTS.md §6): the
+    # untrusted leg proposes, the HOST signs, on its own side of the boundary.
+    # Runs BEFORE `sync --publish` so the reindex sees signed notes.
+    SIGN_LIST="$(mktemp -t brain-synthesis-signlist)"
+    # -newer beats -mmin: an exact marker, no clock arithmetic. The generated
+    # maps are excluded — `brain maintain` rewrites them every run by design,
+    # so signing them would add churn to the chain forever.
+    find "$VAULT/brain" -type f -name '*.md' \
+         ! -name 'backlinks.md' ! -name 'catalog.md' \
+         -newer "$SIGN_MARKER" > "$SIGN_LIST" 2>/dev/null || true
+    SIGNED=0; SIGN_FAIL=0
+    # fd 3, not stdin: `brain write` reads the note body FROM STDIN, so a
+    # plain `while read` loop would feed it the file list instead.
+    while IFS= read -r NOTE <&3; do
+      [ -n "$NOTE" ] || continue
+      REL="${NOTE#"$VAULT"/}"
+      if BRAIN_VAULT="$VAULT" BRAIN_ROLE=host "$BRAIN_BIN" write "$REL" \
+           --reason "weekly synthesis sign-drain: signed on the host after the confined session wrote it" \
+           >>"$LOG" 2>&1 < "$NOTE"; then
+        SIGNED=$((SIGNED + 1))
+      else
+        SIGN_FAIL=$((SIGN_FAIL + 1))
+        log "sign-drain: FAILED to sign $REL"
       fi
+    done 3< "$SIGN_LIST"
+    rm -f -- "$SIGN_LIST" "$SIGN_MARKER"
+    log "sign-drain: signed=$SIGNED failed=$SIGN_FAIL vault=$VAULT"
+    # A note the session wrote but the host could not sign is the exact gap
+    # this drain exists to close, so it fails the run rather than logging a
+    # number nobody reads.
+    if [ "$SIGN_FAIL" -ne 0 ]; then
+      log "FAIL synthesis: $SIGN_FAIL note(s) left unsigned"
+      RC=75
     fi
-    if [ "$RC" -eq 0 ]; then
-      BRAIN_VAULT="$VAULT" BRAIN_ROLE=host "$BRAIN_BIN" sync --publish >>"$LOG" 2>&1
-      RC=$?
-    fi
+  fi
+  # Publish when the run succeeded OR when the drain just signed something:
+  # a signed note that is not indexed is not retrievable, and leaving the
+  # index behind after a partial run recreates the same invisible gap one
+  # layer down. A publish failure only sets RC when RC was otherwise clean —
+  # it must never overwrite the session's own non-zero verdict.
+  if [ "$RC" -eq 0 ] || [ "${SIGNED:-0}" -ne 0 ]; then
+    BRAIN_VAULT="$VAULT" BRAIN_ROLE=host "$BRAIN_BIN" sync --publish >>"$LOG" 2>&1
+    SYNC_RC=$?
+    if [ "$RC" -eq 0 ]; then RC=$SYNC_RC; fi
   fi
   # The drain removes the marker on its own path; this catches every other exit
   # (model failure, missing brain CLI) so /tmp does not collect one per run.

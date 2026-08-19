@@ -1,0 +1,398 @@
+"""Link-coverage exclusions, the unlinked-sources metric, and the standing link lane."""
+from __future__ import annotations
+
+import datetime
+import json
+import os
+import re
+from pathlib import Path
+from typing import Any
+
+from .invariant_shared import SAMPLE_CAP
+
+# ---------------------------------------------------------------------------
+# G12 — the exclusion set, defined ONCE here and imported by every consumer
+# (the s05/s06/s07 backfills and the weekly lane import these, they never
+# re-derive "which sources are linkable"). Some sources are unlinkable BY
+# DESIGN; counting them keeps a "drive it to zero" population from ever
+# reaching zero, and silently dropping them makes "0 unlinked" mean "0 except
+# the ones we skip". So they are excluded AND counted, per reason.
+# ---------------------------------------------------------------------------
+QUARANTINE_PATH_SEGMENTS = ("_quarantine", "_duplicate", "_candidates")
+NON_KNOWLEDGE_ZONES = ("inbox", "overlay", ".brain")
+GENERATED_MAP_BASENAMES = frozenset({"backlinks.md", "catalog.md"})
+
+# ENF-06 — a vault's OWN operational output, re-ingested as a `raw/` source.
+# These arrive carrying the frontmatter they were written with, so they declare
+# their own kind in the FIRST block of their body, while the ingest wrapper
+# stamps every one of them `type: source`. That embedded type is the only
+# signal separating "an audit record this vault emitted" from "a client
+# document that happens to be about an audit": the wrapper frontmatter of the
+# two is byte-identical, and `generated_by:` — which would have been the honest
+# marker — is present on 5 sources out of 2,217.
+#
+# The set is deliberately CONSERVATIVE and explicit, never a prefix match. Kinds
+# a human might author about the business — report, review, analysis, proposal,
+# memo — are NOT here, and neither are the Chief-of-Staff briefs: those are
+# machine-produced but they are about the business, so they stay in the
+# knowledge population where a reader can reach them.
+OPERATIONAL_SOURCE_TYPES = frozenset({
+    "alert",
+    "audit",
+    "cos-nightly",
+    "cos-nightly-companion",
+    "eval",
+    "graph-health-alert",
+    "log",
+    "runbook",
+    "workspace",
+})
+
+EXCLUSION_REASONS = (
+    "quarantined",       # verification or signing FAILED — never expected to be linked
+    "superseded",        # is_latest_version: false — the successor carries the links
+    "non_knowledge_zone",  # inbox/ overlay/ .brain/ — not knowledge, never indexed
+    "generated_map",     # backlinks.md / catalog.md — generated, not authored
+    "operational_artifact",  # this vault's own audit/log/alert output, re-ingested
+)
+
+
+# The body prefix `_unlinked_rows` pulls out of the index to read that block.
+# One source in this corpus is 4.2MB, so the whole body is never loaded here.
+EMBEDDED_FRONTMATTER_HEAD = 8000
+
+
+def embedded_source_type(head: str) -> str:
+    """The ``type:`` a re-ingested source declares in its OWN leading
+    frontmatter block, lowercased, or ``""`` when it declares none.
+
+    Reads the body prefix the index already holds, so this costs no file I/O.
+    Scanning the frontmatter of every raw source off disk instead measured 4.4s
+    per fold on a 2,217-source corpus, which would have made this check the
+    dominant cost of the whole nightly invariants fold.
+
+    Deliberately does NOT require the closing ``---`` to be present. An earlier
+    regex did, and a 600-char prefix silently missed 262 of the 531 sources
+    that declare a type — the longest leading block in this corpus is 23,611
+    characters. Scanning line by line until the closing fence OR the end of the
+    prefix means a truncated block still yields its type, which sits in the
+    first few lines of every artifact this has been measured against.
+    """
+    s = (head or "").lstrip()
+    if not s.startswith("---"):
+        return ""
+    for line in s.split("\n")[1:]:
+        if line.strip() == "---":
+            break
+        m = re.match(r"type:\s*(\S+)", line)
+        if m:
+            return m.group(1).strip().strip("\"'").lower()
+    return ""
+
+
+def link_coverage_exclusion(
+    *, path: str = "", zone: str = "", is_latest_version: Any = None,
+    embedded_type: str = "",
+) -> str | None:
+    """The reason ``path`` is excluded from the link-coverage population, or
+    ``None`` when it counts. One definition, four callers (G12).
+
+    ``embedded_type`` is opt-in per caller and defaults to "": the reasons do
+    not all transfer between metrics (see the cross-tier metric, where a
+    superseded twin still leaks and must still count), so a caller passes it
+    only when "this vault wrote it" genuinely removes the row from ITS
+    population.
+    """
+    parts = (path or "").replace("\\", "/").split("/")
+    basename = parts[-1] if parts else ""
+    if any(seg in QUARANTINE_PATH_SEGMENTS for seg in parts):
+        return "quarantined"
+    if str(zone or "") in NON_KNOWLEDGE_ZONES:
+        return "non_knowledge_zone"
+    if basename in GENERATED_MAP_BASENAMES:
+        return "generated_map"
+    if str(is_latest_version or "").strip().lower() == "false":
+        return "superseded"
+    if str(embedded_type or "").strip().lower() in OPERATIONAL_SOURCE_TYPES:
+        return "operational_artifact"
+    return None
+
+
+def _resolve(resolver: dict[str, str], target: str) -> str | None:
+    """Resolve one wikilink target to a note id. Beyond
+    ``graph._build_resolver``'s id/stem/title keys this also strips a leading
+    zone directory (``[[raw/2026-06-27-foo]]``), which is the shape AGENTS.md
+    §2 prescribes for a ``source:`` link and which the plain resolver misses."""
+    t = (target or "").strip()
+    if not t:
+        return None
+    from .link_targets import resolve_target
+    hit = resolve_target(resolver, t)
+    if hit:
+        return hit
+    if "/" in t:
+        return resolve_target(resolver, t.rsplit("/", 1)[-1])
+    return None
+
+
+def _frontmatter_links(vault: Path, paths: list[str]) -> list[str]:
+    """Every ``[[...]]`` target appearing in the FRONTMATTER of ``paths``.
+
+    The index stores the post-frontmatter body only, so a ``source:
+    "[[raw/…]]"`` provenance link — the canonical way a ``brain/`` note cites
+    the raw source it derives from — is invisible to a body-only scan and
+    would make every properly-cited source read as "unlinked". Reading the
+    frontmatter block back off disk is the cheap fix.
+
+    ponytail: only the ``brain/`` zone is read (a few hundred small files);
+    ``raw/`` sources do not cite each other and are the large ones. If that
+    ever stops holding, widen the caller's path list, not this function.
+    """
+    from . import frontmatter as fm
+    from .graph import parse_wikilinks
+
+    out: list[str] = []
+    for p in paths:
+        path = Path(p)
+        if not path.is_absolute():
+            path = vault / p
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        meta, _body = fm.parse_text(text)
+        if not meta:
+            continue
+        # Scan the rendered frontmatter mapping, not the raw text: values may
+        # be lists (`aliases`) or scalars, and json.dumps flattens both.
+        out.extend(parse_wikilinks(json.dumps(meta, default=str)))
+    return out
+
+
+def _unlinked_rows(
+    conn: Any, vault: Path,
+) -> tuple[list[dict[str, Any]], dict[str, int], int]:
+    """The shared derivation behind metric 1 and the weekly linking lane:
+    ``(unlinked rows sorted by id, excluded_by_reason, population size)``.
+
+    A source counts as REFERENCED when any note's body wikilinks it, when a
+    ``brain/`` note's frontmatter cites it (``source:``/``replaces:``/…), or
+    when it sits on either end of an indexed supersession link."""
+    from .graph import _build_resolver, parse_wikilinks
+
+    # substr, not the whole body: only the leading frontmatter block is read
+    # here, and one source in this corpus is 4.2MB.
+    rows = conn.execute(
+        "SELECT id, title, path, zone, is_latest_version, superseded_by, "
+        f"previous_version, classification, created, substr(body, 1, {EMBEDDED_FRONTMATTER_HEAD}) "
+        "FROM notes"
+    ).fetchall()
+    resolver = _build_resolver([(r[0], r[1] or "", r[2] or "") for r in rows])
+
+    population: list[dict[str, Any]] = []
+    excluded_by_reason: dict[str, int] = {}
+    brain_paths: list[str] = []
+    referenced: set[str] = set()
+    for nid, title, path, zone, is_latest, sup_by, prev, cls, created, head in rows:
+        if str(zone or "") == "brain":
+            brain_paths.append(str(path or ""))
+        for link in (sup_by, prev):
+            tgt = _resolve(resolver, str(link or ""))
+            if tgt and tgt != nid:
+                referenced.add(tgt)
+        if str(zone or "") != "raw":
+            continue
+        reason = link_coverage_exclusion(
+            path=str(path or ""), zone=str(zone or ""), is_latest_version=is_latest,
+            embedded_type=embedded_source_type(head or ""))
+        if reason:
+            excluded_by_reason[reason] = excluded_by_reason.get(reason, 0) + 1
+            continue
+        population.append({
+            "id": str(nid), "title": str(title or ""), "path": str(path or ""),
+            "classification": str(cls or ""), "created": str(created or ""),
+        })
+
+    for (nid, body) in conn.execute("SELECT id, body FROM notes"):
+        for target in parse_wikilinks(body or ""):
+            tgt = _resolve(resolver, target)
+            if tgt and tgt != nid:
+                referenced.add(tgt)
+    for target in _frontmatter_links(vault, brain_paths):
+        tgt = _resolve(resolver, target)
+        if tgt:
+            referenced.add(tgt)
+
+    unlinked = sorted(
+        (rec for rec in population if rec["id"] not in referenced),
+        key=lambda rec: rec["id"])
+    return unlinked, excluded_by_reason, len(population)
+
+
+def unlinked_sources(conn: Any, vault: Path, *, cap: int = SAMPLE_CAP) -> dict[str, Any]:
+    """``raw/``-zone sources nothing references (metric 1)."""
+    unlinked, excluded_by_reason, population = _unlinked_rows(conn, vault)
+    return {
+        "value": len(unlinked),
+        "population": population,
+        "excluded": sum(excluded_by_reason.values()),
+        "excluded_by_reason": excluded_by_reason,
+        "sample": [rec["id"] for rec in unlinked[:cap]],
+    }
+
+
+# ---------------------------------------------------------------------------
+# BAK-04 — the standing weekly linking lane.
+#
+# The s05-s07 backfills clear the accumulated unlinked-source backlog by hand.
+# Steady state is the weekly Sunday synthesis session (`brain-synthesis.sh`,
+# AGENTS.md §6): each week it links the worst N sources that arrived since it
+# last ran, so a normal week's intake never becomes a new backlog. There is NO
+# new scheduled task — the nightly `corpus_invariants` fold, which already
+# derives this exact population every day, drops a worst-first candidate file
+# where the synthesis session reads it.
+# ---------------------------------------------------------------------------
+LINK_LANE_BUDGET_ENV = "BRAIN_WEEKLY_LINK_BUDGET"
+# 40, from measurement rather than taste: the reference vault's raw/ intake
+# over the last 12 ISO weeks runs a median of 33.5 sources/week (the one 1,232
+# outlier is the corpus migration, not a week of work). 40 clears a normal
+# week with headroom; a backlog-clearing week is a deliberate override, not
+# the default.
+DEFAULT_LINK_LANE_BUDGET = 40
+LINK_LANE_RELPATH = ".brain/curation/unlinked-sources.json"
+# Worst-first = most sensitive first, then longest-unlinked. The plan's whole
+# premise is that the most sensitive content is the least findable, so tier
+# outranks age; `created` ascending breaks the tie so a source that has sat
+# unlinked for months outranks one that arrived yesterday.
+_TIER_ORDER = {"Public": 0, "Internal": 1, "Confidential": 2, "Restricted": 3, "MNPI": 4}
+LINK_LANE_SELECTION = (
+    "classification descending (unlabelled ranks MNPI), then trusted before "
+    "untrusted drafts, then created ascending, then id"
+)
+
+
+def _untrusted_draft(vault: Path, rel_path: str) -> bool:
+    """True when the source's OWN frontmatter carries BOTH ``status: draft``
+    and ``provenance.trust: untrusted`` — the shape of a swept working memo
+    or machine daily record (F4, 2026-08-18). Such sources stay in the
+    population and the metric; they only stop outranking substantive trusted
+    documents of the same tier at the top of the weekly slice (ranks 2-4 of
+    the reference slice were COS nightly run reports, a 7.5% tax on a
+    40-item budget). Reads only the frontmatter head; any read failure means
+    "not a draft" — a guess here only affects ordering, never membership."""
+    path = Path(rel_path)
+    if not path.is_absolute():
+        path = vault / rel_path
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            head = fh.read(4096)
+    except OSError:
+        return False
+    if not head.lstrip().startswith("---"):
+        return False
+    block = head.lstrip().split("\n---", 1)[0]
+    return (re.search(r"^status:\s*draft\b", block, re.M) is not None
+            and re.search(r"^provenance\.trust:\s*untrusted\b", block, re.M) is not None)
+
+
+def link_lane_budget() -> int:
+    try:
+        n = int(os.environ.get(LINK_LANE_BUDGET_ENV, "").strip())
+    except ValueError:
+        return DEFAULT_LINK_LANE_BUDGET
+    return n if n > 0 else DEFAULT_LINK_LANE_BUDGET
+
+
+def link_lane_candidates(
+    conn: Any, vault: Path, *, limit: int | None = None,
+) -> dict[str, Any]:
+    """The worst-first slice of the unlinked-source population the weekly
+    synthesis session should link next.
+
+    Same population and the SAME exclusion set as metric 1 (G12) — this never
+    re-derives "which sources are linkable".
+
+    ponytail: re-runs the metric-1 derivation rather than threading its result
+    through the fold (~1s/day on the reference vault). If the fold ever gets
+    latency-sensitive, pass `_unlinked_rows`' output in instead of recomputing.
+    """
+    budget = link_lane_budget() if limit is None else limit
+    unlinked, excluded_by_reason, population = _unlinked_rows(conn, vault)
+    # ponytail: one frontmatter-head read per unlinked source per fold run
+    # (~0.5s at 500 sources) — cache per-call only; membership never depends
+    # on it, so a stale read cannot hide a source.
+    draft_flag = {rec["id"]: _untrusted_draft(vault, rec["path"]) for rec in unlinked}
+    ranked = sorted(
+        unlinked,
+        key=lambda rec: (
+            # An unlabelled note ranks as the most restrictive tier, exactly as
+            # the egress gate treats it (AGENTS.md §5) — so it sorts FIRST.
+            -_TIER_ORDER.get(rec["classification"], _TIER_ORDER["MNPI"]),
+            draft_flag[rec["id"]],
+            rec["created"] or "", rec["id"],
+        ),
+    )
+    return {
+        "schema_version": 1,
+        "generated": datetime.date.today().isoformat(),
+        "budget": budget,
+        "selection": LINK_LANE_SELECTION,
+        "total_unlinked": len(unlinked),
+        "population": population,
+        "excluded_by_reason": excluded_by_reason,
+        "candidates": ranked[:budget],
+        # popped by write_link_lane before serialization — consumption test
+        # only, never written to disk (503 ids would triple the file).
+        "_all_unlinked_ids": {rec["id"] for rec in unlinked},
+    }
+
+
+def lane_consumption(previous: dict[str, Any] | None,
+                     current_unlinked_ids: set[str],
+                     today_iso: str) -> dict[str, Any]:
+    """How many lane candidates left the unlinked population TODAY (linked,
+    superseded, or newly excluded — the lane does not distinguish; leaving
+    the worklist is what it measures).
+
+    Exists because a correct worklist consumed by nobody was invisible for a
+    week (2026-08-18): ``unlinked_sources`` alone cannot tell "worked and
+    hard" from "never opened". The fold runs HOURLY, so the count is
+    CUMULATIVE within one generated day (a once-consumed candidate is no
+    longer a candidate next hour, so nothing double-counts); it resets when
+    the generated date rolls over. A week of daily records reading 0 while
+    candidates exist is the stalled-consumer signal."""
+    if not isinstance(previous, dict):
+        return {"previous_generated": None, "consumed_today": 0}
+    prev_ids = [str(c.get("id", "")) for c in previous.get("candidates") or []
+                if isinstance(c, dict)]
+    newly = sum(1 for i in prev_ids if i and i not in current_unlinked_ids)
+    base = previous.get("consumed_today")
+    carried = base if (isinstance(base, int)
+                       and previous.get("generated") == today_iso) else 0
+    return {"previous_generated": previous.get("generated"),
+            "consumed_today": carried + newly}
+
+
+def write_link_lane(conn: Any, vault: Path, *, limit: int | None = None) -> dict[str, Any]:
+    """Compute the lane and drop it at ``LINK_LANE_RELPATH``. Returns the
+    payload (minus the candidate bodies) so the fold can report it."""
+    payload = link_lane_candidates(conn, vault, limit=limit)
+    all_ids = payload.pop("_all_unlinked_ids")
+    out = Path(vault) / LINK_LANE_RELPATH
+    out.parent.mkdir(parents=True, exist_ok=True)
+    previous: dict[str, Any] | None = None
+    try:
+        previous = json.loads(out.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        previous = None
+    payload.update(lane_consumption(previous, all_ids, payload["generated"]))
+    tmp = out.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, indent=1), encoding="utf-8")
+    tmp.replace(out)
+    return {"path": str(out), "written": len(payload["candidates"]),
+            "total_unlinked": payload["total_unlinked"], "budget": payload["budget"],
+            "previous_generated": payload["previous_generated"],
+            "consumed_today": payload["consumed_today"]}
+
+# Parent-namespace binds, deferred past this module's own defs.
+from .invariants import STATE_KEY as STATE_KEY  # noqa: E402

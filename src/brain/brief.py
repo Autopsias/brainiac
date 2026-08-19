@@ -10,8 +10,25 @@ it is visible next morning rather than silently losing notes.
 from __future__ import annotations
 
 import datetime
-import html as _html
 from typing import Any
+
+from .brief_render import (
+    _NEUTRAL_BRAND,
+    _ZONE_ORDER,
+    _esc,
+    _html_page,
+    _maintain_alert_html,
+    _section,
+    _zone_rank,
+    render_brief_html,
+)
+
+__all__ = [
+    "build_brief", "format_brief", "build_digest", "format_digest",
+    "parse_hot_entries", "render_brief_html", "render_digest_html",
+    "_NEUTRAL_BRAND", "_ZONE_ORDER", "_esc", "_html_page",
+    "_maintain_alert_html", "_section", "_zone_rank",
+]
 
 
 def _today() -> str:
@@ -218,233 +235,6 @@ def parse_hot_entries(text: str) -> list[str]:
     wanting the most-recent head takes ``[-n:]``."""
     return [line[3:].strip() for line in (text or "").splitlines()
             if line.strip().startswith("## ")]
-
-
-# ---------------------------------------------------------------------------
-# HTML brief/digest renderers (AUT-01/AUT-03, ADR-0003 Ruling c).
-#
-# PURE RENDER ONLY: every function below takes an already-assembled,
-# already-egress-gated data structure and formats it. No index queries, no
-# note reads, no overlay reads, no filesystem access of any kind — the caller
-# (BrainCore.brief_html / digest_html) does every read and every
-# egress.apply_gate call BEFORE handing data in here. This is what makes a
-# renderer smoke test possible with plain dicts and no fixtures.
-#
-# Every piece of dynamic text (note ids/titles, snippets, hot-queue lines,
-# recommendation text, overlay brand fields) goes through ``_esc`` before it
-# touches the returned string. No <script>, no inline event handlers, no
-# external assets — self-contained, light+dark safe via
-# ``prefers-color-scheme``.
-# ---------------------------------------------------------------------------
-_NEUTRAL_BRAND: dict[str, Any] = {
-    "present": False, "title": "Brain Brief", "owner_name": None,
-    "accent_color": "#2563eb",
-}
-_ZONE_ORDER = ("projects", "areas", "resources", "archive")
-
-
-def _esc(value: Any) -> str:
-    """Centralised HTML-escaping chokepoint — every dynamic value rendered
-    into the brief/digest HTML MUST pass through this (codex-verify-r2)."""
-    return _html.escape(str(value if value is not None else ""), quote=True)
-
-
-def _section(title: str, inner_html: str) -> str:
-    """``inner_html`` must already be composed of ``_esc``-safe pieces — this
-    helper only escapes the section title, never the body it is handed."""
-    return f'<section class="card"><h2>{_esc(title)}</h2>{inner_html}</section>'
-
-
-def _zone_rank(zone: Any) -> int:
-    z = str(zone or "").strip().lower()
-    return _ZONE_ORDER.index(z) if z in _ZONE_ORDER else len(_ZONE_ORDER)
-
-
-def _html_page(*, title: str, accent: str, body: str) -> str:
-    """The shared self-contained HTML5 shell: inline CSS only, zero external
-    assets, zero <script>, light+dark via ``prefers-color-scheme``."""
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{_esc(title)}</title>
-<style>
-  :root {{ --accent: {_esc(accent)}; --bg: #ffffff; --fg: #111827; --muted: #6b7280;
-           --card: #f9fafb; --border: #e5e7eb; }}
-  @media (prefers-color-scheme: dark) {{
-    :root {{ --bg: #0b0f19; --fg: #e5e7eb; --muted: #9ca3af; --card: #131a29; --border: #232a3b; }}
-  }}
-  * {{ box-sizing: border-box; }}
-  body {{ margin: 0; padding: 2rem 1rem; background: var(--bg); color: var(--fg);
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-          line-height: 1.5; }}
-  .wrap {{ max-width: 720px; margin: 0 auto; }}
-  header.brief-header h1 {{ margin: 0 0 0.25rem; color: var(--accent); font-size: 1.6rem; }}
-  header.brief-header .meta {{ margin: 0 0 1.5rem; color: var(--muted); font-size: 0.9rem; }}
-  section.card {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px;
-                  padding: 1rem 1.25rem; margin-bottom: 1rem; }}
-  section.card h2 {{ margin: 0 0 0.6rem; font-size: 1.05rem; border-left: 4px solid var(--accent);
-                     padding-left: 0.5rem; }}
-  h3 {{ font-size: 0.95rem; margin: 0.8rem 0 0.4rem; }}
-  ul.list {{ list-style: none; margin: 0; padding: 0; }}
-  ul.list li {{ padding: 0.35rem 0; border-bottom: 1px solid var(--border); font-size: 0.92rem;
-                overflow-wrap: anywhere; }}
-  ul.list li:last-child {{ border-bottom: none; }}
-  .id, .zone {{ font-weight: 600; }}
-  .tag {{ display: inline-block; font-size: 0.75rem; color: var(--muted); border: 1px solid var(--border);
-          border-radius: 999px; padding: 0.05rem 0.5rem; margin-left: 0.3rem; }}
-  .date {{ color: var(--muted); font-size: 0.85rem; }}
-  .ok {{ color: #059669; }}
-  .warn {{ color: #b45309; font-weight: 600; }}
-  .empty {{ color: var(--muted); font-style: italic; }}
-</style>
-</head>
-<body>
-<div class="wrap">
-{body}
-</div>
-</body>
-</html>
-"""
-
-
-def _maintain_alert_html(maintain_alert: dict[str, Any] | None) -> str:
-    """ES-01 HTML banner — same escalation data as the text banner, shared
-    by ``render_brief_html`` and ``render_digest_html``. Every dynamic value
-    goes through ``_esc`` (codex-verify-r2 chokepoint)."""
-    if not maintain_alert or not maintain_alert.get("escalate"):
-        return ""
-    items = "".join(
-        f'<li><span class="id">{_esc(b["branch"])}</span> — '
-        f'{_esc("; ".join(b["reasons"]))}</li>'
-        for b in maintain_alert.get("branches", [])
-    )
-    return (
-        '<p class="warn">&#9888; MAINTENANCE ALERT — data below may be stale; '
-        'run <code>brain doctor</code>:</p>'
-        f'<ul class="list">{items}</ul>'
-    )
-
-
-def render_brief_html(
-    brief: dict[str, Any],
-    *,
-    stale_links: list[dict[str, Any]] | None = None,
-    revisit_sample: list[dict[str, Any]] | None = None,
-    open_recommendations: list[dict[str, Any]] | None = None,
-    hot_head: list[str] | None = None,
-    autoresearch: dict[str, Any] | None = None,
-    brand: dict[str, Any] | None = None,
-) -> str:
-    """Render the branded HTML morning brief (AUT-01).
-
-    Sections: pending capture drafts, notes added/updated, revisit/stale
-    sample, open recommendations + hot-queue head, index health (snapshot
-    age + stats). All list arguments default to empty — a bare ``brief``
-    dict (from ``build_brief``) still renders a valid, complete page.
-    """
-    brand = brand or _NEUTRAL_BRAND
-    title = brand.get("title") or _NEUTRAL_BRAND["title"]
-    owner = brand.get("owner_name")
-    accent = brand.get("accent_color") or _NEUTRAL_BRAND["accent_color"]
-
-    stale_links = stale_links or []
-    revisit_sample = revisit_sample or []
-    open_recommendations = open_recommendations or []
-    hot_head = hot_head or []
-
-    subtitle = f" for {_esc(owner)}" if owner else ""
-    header = (
-        f'<header class="brief-header"><h1>{_esc(title)}</h1>'
-        f'<p class="meta">Morning brief &middot; {_esc(brief.get("date", ""))}{subtitle}</p>'
-        f"</header>"
-    )
-
-    alert_html = _maintain_alert_html(brief.get("maintain_alert"))
-
-    maintenance_line = ""
-    if autoresearch and autoresearch.get("stale"):
-        if autoresearch.get("never_run"):
-            maintenance_line = (
-                '<p class="warn">&#9888; autoresearch has never run yet — '
-                "the quarterly self-tuning convention has not started.</p>"
-            )
-        else:
-            maintenance_line = (
-                f'<p class="warn">&#9888; last autoresearch run was '
-                f'{_esc(autoresearch.get("age_days"))} day(s) ago '
-                f'({_esc(autoresearch.get("last_run"))}) — overdue for its quarterly poke.</p>'
-            )
-
-    pending = int(brief.get("pending_before_drain", 0) or 0)
-    drain = brief.get("drain") or {}
-    if drain.get("stalled"):
-        pending_html = f'<p class="warn">&#9888; {_esc(brief.get("tripwire", ""))}</p>'
-    elif brief.get("drain_note"):
-        pending_html = f'<p class="ok">&#10003; {_esc(brief["drain_note"])}</p>'
-    elif pending == 0:
-        pending_html = '<p class="ok">&#10003; no pending captures</p>'
-    else:
-        pending_html = f"<p>{_esc(pending)} capture(s) pending</p>"
-    sec_pending = _section("Pending captures", pending_html)
-
-    recent = brief.get("recent") or []
-    if recent:
-        rows = "".join(
-            f'<li><span class="id">{_esc(n.get("id", ""))}</span> '
-            f'<span class="tag">{_esc(n.get("classification") or "UNLABELLED")}</span> '
-            f'<span class="date">{_esc(str(n.get("updated", ""))[:10])}</span></li>'
-            for n in recent
-        )
-        recent_html = f'<ul class="list">{rows}</ul>'
-    else:
-        recent_html = '<p class="empty">no recent notes</p>'
-    sec_recent = _section("Notes added / updated", recent_html)
-
-    stale_items = "".join(
-        f'<li>stale link: <span class="id">{_esc((s.get("from") or {}).get("id", ""))}</span> '
-        f'&rarr; <span class="target">{_esc(s.get("target_text", ""))}</span> '
-        f'<span class="tag">{_esc(s.get("reason", ""))}</span></li>'
-        for s in stale_links[:10]
-    )
-    revisit_items = "".join(
-        f'<li>revisit: <span class="id">{_esc(r.get("id", ""))}</span> '
-        f'(updated {_esc(str(r.get("updated", ""))[:10])}, age {_esc(r.get("age_days", ""))}d, '
-        f'score {_esc(r.get("score", ""))})</li>'
-        for r in revisit_sample[:10]
-    )
-    if stale_items or revisit_items:
-        revisit_html = f'<ul class="list">{stale_items}{revisit_items}</ul>'
-    else:
-        revisit_html = '<p class="empty">nothing overdue for a re-read</p>'
-    sec_revisit = _section("What needs a re-read", revisit_html)
-
-    rec_items = "".join(
-        f'<li>{_esc((r.get("text") or "").splitlines()[0][:120] if r.get("text") else r.get("id", ""))} '
-        f'<span class="tag">{_esc(r.get("status", "open"))}</span></li>'
-        for r in open_recommendations[:10]
-    )
-    hot_items = "".join(f"<li>{_esc(h)}</li>" for h in hot_head[:5])
-    recs_parts = []
-    if rec_items:
-        recs_parts.append(f'<h3>Open recommendations</h3><ul class="list">{rec_items}</ul>')
-    if hot_items:
-        recs_parts.append(f'<h3>Hot queue (recent)</h3><ul class="list">{hot_items}</ul>')
-    recs_html = "".join(recs_parts) or '<p class="empty">nothing queued</p>'
-    sec_recs = _section("Open recommendations", recs_html)
-
-    stats_html = (
-        f'<p>{_esc(brief.get("notes", 0))} notes &middot; {_esc(brief.get("chunks", 0))} chunks</p>'
-        f'<p>snapshot age: {_esc(brief.get("snapshot_age") or "n/a")}</p>'
-    )
-    sec_stats = _section("Index health", stats_html)
-
-    body = (
-        header + alert_html + maintenance_line + sec_pending + sec_recent + sec_revisit
-        + sec_recs + sec_stats
-    )
-    return _html_page(title=f"{title} · {brief.get('date', '')}", accent=accent, body=body)
 
 
 def render_digest_html(

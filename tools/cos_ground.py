@@ -52,7 +52,6 @@ import sys
 import threading
 import time
 import unicodedata
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -60,12 +59,24 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "src"))
 
+import cos_ground_domain                                    # noqa: E402
+import cos_ground_fanout                                    # noqa: E402
 import cos_judge  # noqa: E402
+# batch-2 drain: the three extracted sub-steps, moved verbatim and re-imported
+# so every one of these names keeps its `cos_ground` module path (the tests,
+# `cos_batch_chunk`'s `src.ground()` route and `cos_ground_fanout` name them
+# there; the exception identities stay single objects).
+from cos_ground_brain import (  # noqa: E402,F401
+    CALL_RETRIES, CALL_TIMEOUT_S, Brain, LookupFailed, brain_cmd)
+from cos_ground_tenants import (  # noqa: E402,F401
+    GroundingRefused, classify_sender, extract_address, extract_domain,
+    list_lines, load_tenant_domains, normalize_tenant_entry)
+from cos_ground_write import map_text, write_map, write_text_0600  # noqa: E402,F401
 
 # --- D3, the budgets. Every one of these is an ALLOCATION with its reason in
-# the design record; none is derived from the others. -------------------------
-CALL_TIMEOUT_S = 8.0      # a STALL cutoff, not a working budget (~200ms-1s median)
-CALL_RETRIES = 1          # so one call's worst case is 16s, not 8
+# the design record; none is derived from the others. The caller's own two
+# (CALL_TIMEOUT_S, CALL_RETRIES) moved WITH the caller into
+# `cos_ground_brain` and are re-imported below. -------------------------------
 WORKERS = 8               # `brain` READ paths never take the writer lock (§6)
 DEADLINE_S = 360.0        # 6 min out of the OWA bearer's life, allocated
 
@@ -115,258 +126,6 @@ GROUNDING_BLOCK_MAX = GROUNDING_ROW_MAX + _envelope_max()
 #: visible, unique full alias/title owner. `probable`, `unknown`, a collision or
 #: a withheld owner is NO SENDER NOTE, never a best guess.
 SENDER_NOTE_TYPES = ("person", "company")
-
-
-class GroundingRefused(Exception):
-    """A pre-flight condition that makes the whole fetch dishonest to attempt."""
-
-
-# ---------------------------------------------------------------------------
-# D7b · the domain extractor — eight rules, every refusal yielding `external`
-# ---------------------------------------------------------------------------
-def extract_domain(sender: str | None) -> str | None:
-    """The domain part of a `From` string, or `None` — which classes external.
-
-    Deliberately narrow. `cos_driver_page.js` computes `sender` as
-    `From.Mailbox.EmailAddress || From.Mailbox.Name`, so the value may be a
-    DISPLAY NAME with no `@` at all; and the string is attacker-chosen either
-    way. Refusing to parse ~0 real rows is cheaper than parsing them wrongly,
-    and the cheap direction (external) is the one that spends least vault.
-    """
-    if not sender:
-        return None
-    s = str(sender).strip()
-    if "@" not in s:                                    # 1. display-name case
-        return None
-    if "<" in s and ">" in s:                           # 2. angle-address wins
-        _head, _, tail = s.rpartition("<")
-        s = tail.split(">", 1)[0].strip() if ">" in tail else ""
-    if '"' in s:                                        # 3. quoted local part
-        return None
-    if s.count("@") != 1:                               # 4. exactly one `@`…
-        return None
-    local, _, domain = s.partition("@")
-    if not local.strip():                               # …and a non-empty local
-        return None
-    domain = domain.strip()
-    if domain.endswith("."):
-        domain = domain[:-1]
-    domain = unicodedata.normalize("NFC", domain).casefold()   # 5. NFC + casefold
-    if not domain:
-        return None
-    # 6. Literal ASCII labels only. This closes the punycode/homograph hole in
-    #    BOTH directions: a Unicode homograph domain is refused outright, and an
-    #    `xn--…` label is compared LITERALLY, so it can only ever equal a tenant
-    #    domain an owner wrote in that same literal form.
-    if any(ch not in "abcdefghijklmnopqrstuvwxyz0123456789.-" for ch in domain):
-        return None
-    if domain.startswith((".", "-")) or domain.endswith((".", "-")) or ".." in domain:
-        return None
-    for label in domain.split("."):
-        if not label or label.startswith("-") or label.endswith("-"):
-            return None
-    return domain
-    # 7. The caller compares by EXACT string equality against the normalized
-    #    overlay entries — never a suffix match, which would make
-    #    `evil-example.com` internal. Subdomains are never implied.
-    # 8. Plus-addressing lives in the LOCAL part and so cannot affect the
-    #    domain. Recorded so nobody later "fixes" a non-bug on the wrong side.
-
-
-def extract_address(sender: str | None) -> str | None:
-    """The bare `local@domain` out of a `From` string, or `None`.
-
-    D1's L1 query is the SENDER ADDRESS, not the display string: the exact
-    alias/title leg answers when the owner has put the address in a person
-    note's `aliases:`, and `Alice <alice@example.com>` is not that alias. Same
-    parse as `extract_domain`, so the two can never disagree about which
-    strings are addresses at all.
-    """
-    if not sender:
-        return None
-    s = str(sender).strip()
-    if "@" not in s:
-        return None
-    if "<" in s and ">" in s:
-        _head, _, tail = s.rpartition("<")
-        s = tail.split(">", 1)[0].strip() if ">" in tail else ""
-    domain = extract_domain(s)
-    if not domain:
-        return None
-    local = s.partition("@")[0].strip()
-    return f"{local}@{domain}" if local else None
-
-
-def normalize_tenant_entry(raw: str) -> str | None:
-    """One overlay tenant-domain list entry, normalized — or `None` to drop it.
-
-    A malformed entry is a WARNING and is dropped, matching `ingest.md`'s
-    documented fail-closed posture: an unparseable rule never infers the
-    permissive answer. A leading `.` is rejected outright — this is an exact
-    domain list, not a suffix matcher.
-    """
-    e = str(raw or "").strip()
-    if e.startswith("@"):
-        e = e[1:]
-    e = unicodedata.normalize("NFC", e).casefold().strip()
-    if not e or e.startswith("."):
-        return None
-    return extract_domain("x@" + e)
-
-
-def list_lines(body: str) -> list[str]:
-    """`body`'s lines, minus the two places a `- ` line is DOCUMENTATION.
-
-    WHY THIS EXISTS (measured on the SHIPPED template, 2026-08-16). The reader
-    scanned every `- ` line in the body, and the starter template
-    (`overlay/template/cos/tenant-domains.md`) ends with its worked example
-    inside an HTML comment. An UNTOUCHED copy therefore yielded
-    `['example.com', 'example.co.uk']` — so `domains` was non-empty, the
-    fail-closed `ungrounded-by-construction` branch never fired, and
-    `--preflight` reported `senders-classifiable` on a fresh install that had
-    declared no tenant domain at all. A commented-out example is the one thing
-    in a template GUARANTEED not to be the owner's own answer.
-
-    A fenced block is skipped for the same reason and it matters just as much:
-    the template's `One list line per domain:` example sits in one.
-
-    Only line-leading `<!--` opens a comment. That is the shape a template
-    writes, and a parser that hunts the marker mid-line starts guessing about
-    quoted text — this list is small enough that "the documentation is set off
-    on its own lines" is the whole rule.
-    """
-    out: list[str] = []
-    fence = ""
-    in_comment = False
-    for raw in body.splitlines():
-        line = raw.strip()
-        if in_comment:
-            in_comment = "-->" not in line
-            continue
-        if fence:
-            if line.startswith(fence):
-                fence = ""
-            continue
-        if line.startswith("```") or line.startswith("~~~"):
-            fence = line[:3]
-            continue
-        if line.startswith("<!--"):
-            in_comment = "-->" not in line
-            continue
-        out.append(line)
-    return out
-
-
-def load_tenant_domains(vault: Path) -> tuple[list[str], list[str]]:
-    """`(domains, warnings)` from the overlay `cos/` file whose frontmatter
-    declares `setting: tenant-domains` (D7a).
-
-    ABSENT is not an empty list — the caller must tell them apart, because with
-    the key absent every sender classes external and grounding would be a shadow
-    of itself while still calling itself grounded. Absent raises.
-    """
-    from brain import frontmatter                                # noqa: PLC0415
-    from brain import overlay as ov                              # noqa: PLC0415
-
-    cos_dir = ov.overlay_dir(vault) / "cos"
-    warnings: list[str] = []
-    if not cos_dir.is_dir():
-        raise GroundingRefused("tenant-domains overlay missing: sender classes "
-                               "cannot be computed")
-    for f in sorted(cos_dir.glob("*.md")):
-        try:
-            meta, body = frontmatter.parse_text(f.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        if str((meta or {}).get("setting") or "") != "tenant-domains":
-            continue
-        domains: list[str] = []
-        for line in list_lines(body):
-            if not line.startswith("- "):
-                continue
-            entry = line[2:].split("#", 1)[0].strip()
-            if not entry:
-                continue
-            norm = normalize_tenant_entry(entry)
-            if norm is None:
-                warnings.append(f"dropped malformed tenant-domain entry {entry!r}")
-            elif norm not in domains:
-                domains.append(norm)
-        return domains, warnings
-    raise GroundingRefused("tenant-domains overlay missing: sender classes "
-                           "cannot be computed")
-
-
-# ---------------------------------------------------------------------------
-# the `brain` calls — one place, one timeout, one retry
-# ---------------------------------------------------------------------------
-def brain_cmd() -> list[str]:
-    """How to invoke the engine. `$COS_BRAIN_CMD` overrides, which is what lets
-    the offline tests drive a STUB instead of the real vault."""
-    override = os.environ.get("COS_BRAIN_CMD")
-    if override:
-        return shlex.split(override)
-    return [sys.executable, "-m", "brain.cli"]
-
-
-class Brain:
-    """A bounded, counted `brain` caller. Never `--role vm` (D6)."""
-
-    def __init__(self, vault: Path, *, timeout: float = CALL_TIMEOUT_S,
-                 retries: int = CALL_RETRIES) -> None:
-        self.vault = vault
-        self.timeout = timeout
-        self.retries = retries
-        self.calls = 0
-        self._lock = threading.Lock()
-
-    def _run(self, args: list[str]) -> Any:
-        argv = brain_cmd() + ["--vault", str(self.vault), *args]
-        # D6, asserted rather than asserted-in-prose: the fetcher never hands a
-        # role to the engine, so it can never hand it the VM one.
-        assert "--role" not in argv, "the fetcher never passes --role (D6)"
-        last = ""
-        for _attempt in range(self.retries + 1):
-            with self._lock:
-                self.calls += 1
-            try:
-                proc = subprocess.run(argv, capture_output=True, text=True,
-                                      timeout=self.timeout,
-                                      env=dict(os.environ, BRAIN_ROLE="host"))
-            except subprocess.TimeoutExpired:
-                last = "timeout"
-                continue
-            except OSError as exc:
-                last = f"could not run the engine: {exc}"
-                continue
-            if proc.returncode != 0:
-                last = f"exit {proc.returncode}"
-                continue
-            try:
-                return json.loads(proc.stdout)
-            except json.JSONDecodeError:
-                last = "unparseable JSON"
-                continue
-        raise LookupFailed(last or "no answer")
-
-    def search(self, query: str, k: int) -> list[dict[str, Any]]:
-        doc = self._run(["search", query, "--json", "--max-tier", "MNPI",
-                         "-k", str(k), "--no-rerank"])
-        return list((doc or {}).get("results") or [])
-
-    def get(self, note_id: str) -> dict[str, Any]:
-        doc = self._run(["get", note_id, "--json", "--max-tier", "MNPI"])
-        return doc if isinstance(doc, dict) and not doc.get("error") else {}
-
-    def dossier(self, query: str, k: int) -> list[dict[str, Any]]:
-        doc = self._run(["dossier", query, "--json", "--max-tier", "MNPI",
-                         "-k", str(k)])
-        return list((doc or {}).get("decisions") or [])
-
-
-class LookupFailed(Exception):
-    """One thread's lookup did not answer. That thread goes uncovered; the rest
-    of the run is unaffected (D5)."""
 
 
 # ---------------------------------------------------------------------------
@@ -433,21 +192,6 @@ def compose_block(sender: dict[str, Any] | None, matter: dict[str, Any] | None,
 # ---------------------------------------------------------------------------
 # D1 + D7 · one thread
 # ---------------------------------------------------------------------------
-def classify_sender(domain: str | None, *, tenant_domains: list[str],
-                    sender_note: dict[str, Any] | None, tracked_domain: bool
-                    ) -> str:
-    """`internal` | `counterparty` | `external` (D7).
-
-    Exact string equality against the normalized overlay entries. Never a suffix
-    match: a suffix matcher makes `evil-example.com` internal.
-    """
-    if domain and domain in tenant_domains:
-        return "internal"
-    if sender_note or tracked_domain:
-        return "counterparty"
-    return "external"
-
-
 def ground_one(brain: Brain, cid: str, ctx: dict[str, Any], *,
                tenant_domains: list[str], tracked: "TrackedMatters"
                ) -> dict[str, Any]:
@@ -560,48 +304,6 @@ class TrackedMatters:
 
 
 # ---------------------------------------------------------------------------
-# 0600-atomic write (D6a)
-# ---------------------------------------------------------------------------
-def map_text(payload: dict[str, Any]) -> str:
-    """THE canonical serialization of a grounding map — one function, because
-    D2a's join compares `$CHUNK/grounding.json`'s bytes against the composed
-    prompt, and a composer that re-serialized the map would compare two
-    encodings of the same data. `ensure_ascii=False` is load-bearing for the
-    same reason: the per-block needles are
-    `json.dumps(text, ensure_ascii=False)` against these very bytes."""
-    return json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
-
-
-def write_text_0600(path: Path, text: str) -> Path:
-    """Owner-only and atomic, on TEXT. `cos_batch_chunk.py` writes the per-chunk
-    map through this so both maps take exactly the same route to disk."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    if tmp.exists():
-        tmp.unlink()
-    fd = os.open(str(tmp), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    try:
-        data = text.encode("utf-8")
-        view = memoryview(data)
-        while view:
-            n = os.write(fd, view)
-            if n <= 0:
-                raise OSError(f"write made no progress on {tmp.name}")
-            view = view[n:]
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-    os.replace(tmp, path)          # same directory, so this is atomic
-    return path
-
-
-def write_map(path: Path, payload: dict[str, Any]) -> Path:
-    """Owner-only and atomic. Never a partially written map a leg could be
-    handed, and never a world-readable one."""
-    return write_text_0600(path, map_text(payload))
-
-
-# ---------------------------------------------------------------------------
 # the run
 # ---------------------------------------------------------------------------
 def fetch(vault: Path, run_id: str, *,
@@ -654,35 +356,14 @@ def fetch(vault: Path, run_id: str, *,
 
     tracked = TrackedMatters(vault)
     ctx_by_id = night["ctx_by_id"]
-    covered: list[str] = []
-    with_content: list[str] = []
-    failed: list[str] = []
-    exhausted = False
-
-    # THE DEADLINE IS CHECKED WHEN A THREAD IS PICKED UP, not mid-flight: a
-    # `brain` call cannot be interrupted, so the real ceiling is the deadline
-    # plus one thread's worst case (64s at the internal class). Stated rather
-    # than papered over — 6 minutes is an allocation out of the OWA bearer's
-    # life, and an allocation that pretends to be exact is the worse lie.
-    def work(cid: str) -> dict[str, Any] | None:
-        if time.monotonic() - started > deadline:
-            return None
-        return ground_one(brain, cid, ctx_by_id.get(cid) or {},
-                          tenant_domains=tenant_domains, tracked=tracked)
-
-    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        for res in pool.map(work, sorted(required)):
-            if res is None:
-                exhausted = True
-                continue
-            payload["blocks"][res["cid"]] = res["entry"]
-            payload["classes"][res["class"]] += 1
-            if res["entry"]["status"] == "lookup-failed":
-                failed.append(res["cid"])
-            else:
-                covered.append(res["cid"])
-                if res["entry"]["status"] == "ok":
-                    with_content.append(res["cid"])
+    # THE FAN-OUT (deadline-checked per pickup, worker-pooled) lives in
+    # `cos_ground_fanout.fan_out`, which writes each result's block entry and
+    # class count into the payload as it lands — the deadline's own reasoning
+    # moved with it.
+    covered, with_content, failed, exhausted = cos_ground_fanout.fan_out(
+        ground_one, brain, ctx_by_id, required, payload,
+        tenant_domains=tenant_domains, tracked=tracked, workers=workers,
+        deadline=deadline, started=started)
 
     payload["covered"] = sorted(covered)
     payload["covered_with_content"] = sorted(with_content)

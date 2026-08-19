@@ -29,7 +29,6 @@ from pathlib import Path
 from typing import Any
 
 from . import brief as brief_mod
-from .healthreport_unsigned import _unsigned_notes_context
 
 VERDICT_HEALTHY = "HEALTHY"
 VERDICT_DEGRADED = "DEGRADED"
@@ -68,132 +67,6 @@ def _read_trend_rows(vault: Path, *, limit: int = TREND_ROWS) -> list[dict[str, 
     rows = maint.parse_recommendation_lines(text)
     rows.sort(key=lambda r: str(r.get("ts") or ""))
     return list(reversed(rows))[:limit]
-
-
-def collect_health_report_data(core: Any, *, today: datetime.date | None = None) -> dict[str, Any]:
-    """Gather every render input from data the engine already collects
-    elsewhere. Read-only, best-effort per section — one section failing
-    (e.g. doctor raising on an odd install) degrades that section, never
-    aborts the whole report."""
-    from . import __version__ as engine_version
-    from . import doctor as brain_doctor
-    from . import maintenance as maint
-
-    d = today or datetime.date.today()
-    vault = Path(core.vault)
-
-    try:
-        state = core._load_maintain_state()
-    except Exception:
-        state = {}
-    escalation = maint.maintain_escalation(state, d)
-
-    try:
-        doctor_report = brain_doctor.run_doctor()
-    except Exception as exc:  # noqa: BLE001 — doctor failing must not sink the report
-        doctor_report = {"ok": False, "rows": [], "stale_count": None,
-                          "error": f"{type(exc).__name__}: {exc}"}
-    doctor_rows = doctor_report.get("rows") or []
-    doctor_gating = [r for r in doctor_rows if r.get("status") in ("stale", "unknown")]
-
-    try:
-        status = core.status()
-    except Exception as exc:  # noqa: BLE001
-        status = {"error": f"{type(exc).__name__}: {exc}"}
-
-    trend_rows = _read_trend_rows(vault)
-
-    act_now: list[str] = []
-    for b in escalation.get("branches", []):
-        act_now.append(
-            f"maintain branch '{b['branch']}': {'; '.join(b['reasons'])} — "
-            f"run `brain doctor` / check ~/.brain/logs/"
-        )
-    # dedup: run_doctor() re-checks per registered workspace, so one vault
-    # registered twice yields identical rows
-    seen_rows: set[tuple] = set()
-    for r in doctor_gating:
-        key = (r.get("surface"), r.get("status"), r.get("detail"))
-        if key in seen_rows:
-            continue
-        seen_rows.add(key)
-        act_now.append(
-            f"doctor: {r.get('surface')} is {r.get('status')} — "
-            f"{r.get('detail')} — run `brain doctor`"
-        )
-    idx = status.get("index") if isinstance(status.get("index"), dict) else {}
-    if isinstance(idx, dict) and idx.get("error"):
-        act_now.append(f"index unreadable: {idx['error']} — run `brain status`")
-
-    # WAT-01 dead-man's switch, lane 1: a stale/missing corpus-invariants row
-    # is DEGRADED here in its own right, not only via the doctor row — this
-    # report is run ad hoc against THIS vault, while `run_doctor()` only
-    # reaches vaults present in the workspace registry.
-    from . import invariants as inv
-
-    inv_live = inv.liveness_finding(state, d)
-    if inv_live:
-        act_now.append(f"{inv_live[1]} — run `brain maintain`")
-    for reg in inv.state_regressions(state):
-        act_now.append(f"{reg.get('summary')} — see the Corpus invariants section")
-
-    if len(trend_rows) >= 2:
-        cur_q, prev_q = trend_rows[0].get("quarantine"), trend_rows[1].get("quarantine")
-        if isinstance(cur_q, (int, float)) and isinstance(prev_q, (int, float)) and cur_q > prev_q:
-            act_now.append(
-                f"quarantine growing ({prev_q} -> {cur_q}) — "
-                f"inspect `vault/inbox/_quarantine/`"
-            )
-
-    snap = status.get("snapshot") if isinstance(status.get("snapshot"), dict) else {}
-    age_s = snap.get("age_seconds") if isinstance(snap, dict) else None
-    stale_hours = maint.DEFAULT_OFFHOST_DAILY_STALE_HOURS  # reuse — no new magic number
-    if isinstance(age_s, (int, float)) and (age_s / 3600) > stale_hours:
-        act_now.append(
-            f"snapshot age {age_s / 3600:.1f}h (> {stale_hours}h) — "
-            f"run `brain sync --publish`"
-        )
-
-    escalated_branches = {b["branch"] for b in escalation.get("branches", [])}
-    for branch, entry in state.items():
-        if str(branch).startswith("_") or not isinstance(entry, dict) or branch in escalated_branches:
-            continue
-        skips = int(entry.get("consecutive_skips", 0) or 0)
-        # s05 contract: a short skip streak is a legitimate long write holding
-        # the lock (e.g. a 90-min rebuild ~= 2 hourly skips) and must stay
-        # SILENT; only a streak at the escalation threshold pages. Escalated
-        # branches are already reported above via branch_escalation.
-        if skips >= maint.SKIP_ESCALATE_THRESHOLD:
-            act_now.append(
-                f"branch '{branch}': {skips} consecutive writer-busy skip(s) — "
-                f"run `brain doctor`"
-            )
-
-    # BROKEN = the system is failing to do work (maintain escalation: repeated
-    # failures, a stuck writer lock, stale liveness). Doctor STALE rows alone —
-    # e.g. a staged workspace a version behind — mean "wants attention, still
-    # working": DEGRADED. Field lesson 2026-07-20: version-drift rows drove a
-    # BROKEN banner while Cowork search worked fine.
-    if escalation.get("escalate"):
-        verdict = VERDICT_BROKEN
-    elif act_now:
-        verdict = VERDICT_DEGRADED
-    else:
-        verdict = VERDICT_HEALTHY
-
-    return {
-        "date": d.isoformat(),
-        "verdict": verdict,
-        "act_now": act_now,
-        "escalation": escalation,
-        "doctor": {"ok": doctor_report.get("ok"), "stale_count": doctor_report.get("stale_count"),
-                   "error": doctor_report.get("error")},
-        "state": state,
-        "status": status,
-        "trend": trend_rows,
-        "vault": str(vault),
-        "engine_version": engine_version,
-    }
 
 
 def _branches_table_html(state: dict[str, Any], escalation: dict[str, Any]) -> str:
@@ -329,131 +202,6 @@ def _report_date(data: dict[str, Any]) -> datetime.date | None:
         return None
 
 
-def _corpus_invariants_html(state: dict[str, Any], trend: list[dict[str, Any]],
-                            today: datetime.date | None = None) -> str | None:
-    """WAT-01: corpus invariants against their RATCHETED floors, plus the
-    fold's liveness and a trend table. ``None`` when it has never run."""
-    from . import invariants as inv
-
-    entry = state.get(inv.STATE_KEY)
-    if not isinstance(entry, dict):
-        return None
-    metrics = entry.get("metrics")
-    if not isinstance(metrics, dict):
-        return None
-    floors = entry.get("floors") if isinstance(entry.get("floors"), dict) else {}
-    regressed = {r.get("metric") for r in inv.state_regressions(state)}
-
-    rows = []
-    for name in inv.INVARIANT_METRICS:
-        m = metrics.get(name) if isinstance(metrics.get(name), dict) else {}
-        value = m.get("value")
-        floor = floors.get(name)
-        tol = inv.metric_tolerance(name)
-        threshold = f"&le; {brief_mod._esc(floor)}" if isinstance(floor, int) else "(baselining)"
-        if isinstance(floor, int) and tol:
-            threshold += f" (+{tol})"
-        extra = _unsigned_notes_context(m) if name == "unsigned_notes" else ""
-        if name == "unlinked_sources":
-            extra = (f"{brief_mod._esc(m.get('population', '?'))} in population, "
-                     f"{brief_mod._esc(m.get('excluded', 0))} excluded by design")
-        elif name == "cross_tier_twins":
-            extra = f"of {brief_mod._esc(m.get('pairs', '?'))} name-twin pair(s)"
-        elif name in ("cross_tier_duplicates", "cross_tier_candidates"):
-            # ENF-03: coverage is reported ON THE ROW, with its denominator,
-            # because a conflict count without it is the number s12 rejected.
-            extra = (f"coverage {brief_mod._esc(m.get('coverage', '?'))} "
-                     f"({brief_mod._esc(m.get('comparable', '?'))}/"
-                     f"{brief_mod._esc(m.get('population', '?'))} documents "
-                     "comparable)")
-            if name == "cross_tier_duplicates":
-                # Only the SKIPPED reasons are "excluded by design". Superseded
-                # notes are counted by the same shared definition but RETAINED
-                # (they still leak), so folding them into one total would
-                # overstate what this metric cannot see — the exact
-                # "0 except the ones we skip" ambiguity the row exists to deny.
-                by_reason = m.get("excluded_by_reason") or {}
-                skipped = sum(v for k, v in by_reason.items()
-                              if k in inv.CROSS_TIER_SKIP_REASONS)
-                extra += (f", {brief_mod._esc(m.get('candidates', '?'))} undecided, "
-                          f"{brief_mod._esc(m.get('subfloor', '?'))} sub-floor, "
-                          f"{brief_mod._esc(m.get('retained_superseded', 0))} superseded "
-                          f"retained, {brief_mod._esc(skipped)} excluded by design")
-        elif name == "unguarded_ingests":
-            # ENF-04: the RAISES are the proof the guard is alive, and they are
-            # broken out PER LEG on purpose — an aggregate cannot tell a clean
-            # corpus from a dead leg, which is how ENF-02's 138 filename
-            # matches / 0 content matches survived review. `unstamped` keeps
-            # the denominator honest: those predate the guard and were never
-            # checked, so they are never folded into `clear`.
-            legs = m.get("raised_by_leg") or {}
-            legs_txt = (", ".join(f"{brief_mod._esc(k)} {brief_mod._esc(v)}"
-                                  for k, v in sorted(legs.items()))
-                        or "none yet")
-            extra = (f"{brief_mod._esc(m.get('raised', '?'))} raised to a twin's "
-                     f"tier (by leg: {legs_txt}), "
-                     f"{brief_mod._esc(m.get('clear', '?'))} clear, "
-                     f"{brief_mod._esc(m.get('subfloor', '?'))} too short to judge, "
-                     f"{brief_mod._esc(m.get('unstamped', '?'))} predate the guard, "
-                     f"of {brief_mod._esc(m.get('sources', '?'))} raw source(s)")
-        elif name == "subfloor_families":
-            extra = (f"of {brief_mod._esc(m.get('families', '?'))} supersession "
-                     f"family/families, floor {brief_mod._esc(m.get('floor', '?'))}B")
-        elif name == "unreachable_gold":
-            extra = (f"of {brief_mod._esc(m.get('labels', '?'))} gold label(s), "
-                     f"measured {brief_mod._esc(m.get('generated') or 'never')}"
-                     if m.get("available") else "no reachability artifact yet")
-        if m.get("error"):
-            extra = f"ERROR: {brief_mod._esc(m['error'])}"
-        cls = ' class="warn"' if name in regressed else ""
-        rows.append(
-            f"<tr{cls}><td>{brief_mod._esc(_INVARIANT_LABELS[name])}</td>"
-            f"<td>{brief_mod._esc('—' if value is None else value)}</td>"
-            f"<td>{threshold}</td><td>{extra}</td></tr>"
-        )
-    head = ("<tr><th>invariant</th><th>now</th><th>threshold (best recorded)</th>"
-            "<th>context</th></tr>")
-    lines = [f'<table class="tbl">{head}{"".join(rows)}</table>']
-
-    # WAT-01: the report's own date, never the wall clock — a caller that pins
-    # `today` (a test, a replay, a backdated render) must get the age AS OF that
-    # date, or the liveness line silently disagrees with the rest of the report.
-    age = inv.invariants_age_days(state, today)
-    limit = inv.max_age_days()
-    if age is None or age > limit:
-        lines.append(
-            f'<p class="warn">&#9888; watchdog liveness: last successful run '
-            f'{brief_mod._esc("never" if age is None else str(age) + "d ago")} '
-            f'(max {limit}d) — the counts above are UNWATCHED</p>')
-    else:
-        lines.append(f'<p class="meta">watchdog liveness: last successful run '
-                      f'{age}d ago (max {limit}d) &middot; '
-                      f'{brief_mod._esc(entry.get("last_run", "?"))}</p>')
-    if regressed:
-        lines.append('<p class="warn">&#9888; regression(s) this run: '
-                      + brief_mod._esc(", ".join(sorted(str(r) for r in regressed)))
-                      + '</p>')
-
-    cols = (("ts", "ts"), ("invariant_unlinked_sources", "unlinked"),
-            ("invariant_cross_tier_twins", "twins"),
-            ("invariant_cross_tier_duplicates", "x-tier dup"),
-            ("invariant_cross_tier_candidates", "x-tier undecided"),
-            ("invariant_unguarded_ingests", "unguarded"),
-            ("invariant_ingest_guard_raises", "guard raises"),
-            ("invariant_subfloor_families", "sub-floor"),
-            ("invariant_unreachable_gold", "unreachable gold"),
-            ("invariant_age_days", "age (d)"))
-    trend_rows = [r for r in trend
-                  if any(r.get(c) is not None for c, _ in cols if c != "ts")]
-    if trend_rows:
-        thead = "<tr>" + "".join(f"<th>{lbl}</th>" for _, lbl in cols) + "</tr>"
-        tbody = "".join(
-            "<tr>" + "".join(f"<td>{brief_mod._esc(r.get(c, ''))}</td>" for c, _ in cols)
-            + "</tr>" for r in trend_rows)
-        lines.append(f'<table class="tbl">{thead}{tbody}</table>')
-    return "".join(lines)
-
-
 def _curated_coverage_html(state: dict[str, Any]) -> str | None:
     """CUR-01: how much of the vault carries REAL supersession frontmatter,
     and — reported separately, never added to it — how many notes are sitting
@@ -544,3 +292,6 @@ def render_health_report_html(data: dict[str, Any]) -> str:
     )
     html = brief_mod._html_page(title=f"Brain Health Report — {verdict} — {date}", accent=color, body=body)
     return html.replace("</head>", extra_css + "</head>")
+
+
+from .healthreport_sections import _corpus_invariants_html as _corpus_invariants_html, collect_health_report_data as collect_health_report_data  # noqa: E402

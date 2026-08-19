@@ -532,7 +532,7 @@ has put the address in a person note's `aliases:`, and honestly does not when th
 have not.
 
 **The `brain grep` fallback of revision 1 is WITHDRAWN.** `BrainCore.grep`
-(`src/brain/core.py:520`) delegates to `index.grep`, which returns body-scan
+(`src/brain/core/_retrieval.py`) delegates to `index.grep`, which returns body-scan
 matches carrying neither `type` nor `create_safety`. D1's own acceptance rule is
 therefore **inapplicable** to its own fallback: a rule that cannot be evaluated is
 not a rule. L1 is the two calls above and nothing else. An address that does not

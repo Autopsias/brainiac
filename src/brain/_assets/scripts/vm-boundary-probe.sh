@@ -67,7 +67,7 @@ must_refuse(){
   say ""
 }
 
-# AGENTS.md §9 + src/brain/cos.py `_PERMS`: `.brain/` is host-only BY CONTRACT
+# AGENTS.md §9 + src/brain/cos/_constants.py `_PERMS`: `.brain/` is host-only BY CONTRACT
 # and "never indexed", but the Cowork workspace is mounted wholesale over
 # VirtioFS, which "may only partially honour POSIX bits". So a readable
 # host-private file is an EXPECTED condition on this platform, not a breach —

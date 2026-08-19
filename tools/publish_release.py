@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import argparse
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -69,137 +68,6 @@ def step_export(output_dir: Path) -> Path:
     return output_dir
 
 
-def step_contamination_scan(export_dir: Path, denylist: Path) -> dict:
-    """Runbook §5 — HARD GATE on the export tree (no override); the companion
-    ``_evidence/`` pass is informational-only (`_evidence` never ships) and is
-    NOT gated — it carries known-benign synthetic-fixture/eval-golden-set
-    terms that a hard gate would trip on every release. Redacted counts only,
-    never the matched term or line (same posture as the runbook's own scan
-    command)."""
-    if not denylist.exists():
-        raise PublishError(f"denylist not found: {denylist} (external, never committed — see runbook §5)")
-    # CRITICAL (fixed 2026-07-12): the raw denylist is an ANNOTATED file — it
-    # carries `#` comment lines and blank separators. Passed straight to
-    # `grep -F -f`, a single EMPTY pattern line makes grep emit ZERO output for
-    # the WHOLE scan (empirically reproduced: bare-term `-f` finds 46 hits, the
-    # full annotated denylist finds 0) — a SILENT FALSE PASS that shipped a real
-    # term to PyPI before this was caught by hand. Feed grep ONLY the bare
-    # terms: strip blank lines and `#`-comments into a temp file first.
-    terms = [ln for ln in denylist.read_text(encoding="utf-8").splitlines()
-             if ln.strip() and not ln.lstrip().startswith("#")]
-    if not terms:
-        raise PublishError(f"denylist {denylist} has no usable terms after stripping comments/blanks")
-    with tempfile.NamedTemporaryFile("w", suffix=".denylist", delete=False,
-                                     encoding="utf-8") as tf:
-        tf.write("\n".join(terms) + "\n")
-        clean_denylist = tf.name
-    # -I skips binary files: _evidence/ carries multi-GB benchmark/eval
-    # artifacts (indexes, model caches) that a binary-unaware grep chokes on
-    # for minutes with zero signal (see docs/release-runbook.md §5). -f takes
-    # its own argument (not bundled into -rFoiI) — this repo's `grep` resolves
-    # to ugrep on macOS, which parses a bundled "-f<path>" as flag "-f" +
-    # filename "I"; splitting -f out is portable across both.
-    #
-    # Prefer ripgrep when installed (2026-07-22): BSD grep matches line-by-
-    # line, and _evidence/ carries multi-MB SINGLE-LINE JSON dumps — 530
-    # case-insensitive fixed patterns against a 35 MB line effectively never
-    # terminates (observed: a release run wedged >40 min at 100% CPU). rg's
-    # matcher is line-length-insensitive and finishes the same sweep in
-    # seconds. Same semantics for our purpose: -F fixed strings, -o one hit
-    # per match, -i case-insensitive; hidden files included to match grep -r.
-    # -w (owner decision 2026-07-22): a denylist term hits only as a whole
-    # word — short entries otherwise fire as substrings inside ordinary
-    # English words (and quoting an example here would itself trip the gate —
-    # this comment stays abstract). Hyphen/slash/dot still bound words, so
-    # "term-vault" slug forms keep matching.
-    #
-    # THE SPLIT PASS (owner decision 2026-08-07, from the Codex cloud review).
-    # `-w` alone left two real hiding places open, because `_` is a word
-    # character and a case transition is not a word boundary: a term joined by
-    # an underscore, and a term inside a camelCase identifier, both scored ZERO
-    # while sitting in the export. Measured on a planted synthetic term in six
-    # positions: `-w` alone caught 3 of 5 real embeddings, plain substring
-    # caught all 5 but also fired on an innocent longer word, and this pass
-    # caught all 5 with no false alarm.
-    #
-    # So every scan runs TWICE: once over the bytes as they are, and once over
-    # a copy where `_` and camelCase boundaries are rewritten to spaces.
-    #
-    # WHAT THE SPLIT PASS COSTS (measured on the first real run, 2026-08-07 —
-    # an earlier version of this comment claimed it cost nothing, and that was
-    # wrong). It does not reintroduce the ORIGINAL noise: a term inside an
-    # ordinary longer word still does not match, because splitting only ADDS
-    # word boundaries. But it creates a DIFFERENT false-positive class — an
-    # ordinary word sitting in the denylist now matches when it appears as an
-    # identifier COMPONENT. The first real run found exactly one export hit: a
-    # numpy keyword argument whose two halves split into an ordinary maths word
-    # that happened to be a denylist entry. 214 of that denylist's 275 terms are
-    # <= 9 characters, so this class is not rare.
-    #
-    # (This comment deliberately does NOT quote the offending identifier. The
-    # same rule as .gitleaksignore: naming the flagged text inside a scanned
-    # file makes the file itself a finding — which is precisely what the first
-    # draft of this comment did, turning 1 hit into 3.)
-    #
-    # That is why the two passes are COUNTED SEPARATELY rather than unioned into
-    # one number. Both still block the release — a gate with an override is not
-    # a gate — but the operator can tell in one line whether they are looking at
-    # a term present as written (treat as a leak) or a denylist entry that is
-    # really just an English word (fix the denylist).
-    #
-    # NOTE the rg-vs-grep asymmetry, unchanged and deliberate: the fallback
-    # `grep -rFoiI` has no `-w`, so it is a pure substring scan. It is STRICTER
-    # than the rg path (more noise, no misses), which is the safe direction for
-    # a fallback. The split pass runs on both.
-    def _rg_scan(target: Path) -> list[str]:
-        proc = subprocess.run(
-            ["rg", "-Foiw", "--hidden", "--no-ignore", "-f", clean_denylist,
-             str(target)],
-            capture_output=True, text=True,
-        )
-        return [line for line in proc.stdout.splitlines() if line.strip()]
-
-    def _grep_scan(target: Path) -> list[str]:
-        proc = subprocess.run(
-            ["grep", "-rFoiI", "-f", clean_denylist, str(target)],
-            capture_output=True, text=True,
-        )
-        return [line for line in proc.stdout.splitlines() if line.strip()]
-
-    _one_pass = _rg_scan if shutil.which("rg") else _grep_scan
-
-    def _scan(target: Path) -> tuple[int, int]:
-        """(direct hits, split-pass-only hits). Reported SEPARATELY because
-        they need different triage, learned the first time this ran for real
-        (2026-08-07): the split pass broke a numpy keyword argument into two
-        words and matched an ordinary maths word sitting in the denylist.
-        A direct hit is a term present as written — treat it as a leak until
-        proven otherwise. A split-pass hit means a denylist term appeared as a
-        COMPONENT of an identifier: either a real term buried in a name, or an
-        ordinary English word that should not have been a denylist entry. Both
-        still block the release; the breakdown is what makes triage a minute
-        instead of an afternoon."""
-        if not target.exists():
-            return (0, 0)
-        direct = len(_one_pass(target))
-        with tempfile.TemporaryDirectory(prefix="contamination-split-") as tmp:
-            mirror = _write_split_mirror(target, Path(tmp))
-            split_total = len(_one_pass(mirror))
-        # The split mirror is a superset: it only ADDS word boundaries, so
-        # every direct hit reappears there. Report the delta as split-only.
-        return (direct, max(0, split_total - direct))
-
-    try:
-        export_direct, export_split = _scan(export_dir)
-        evidence_direct, evidence_split = _scan(REPO_ROOT / "_evidence")
-    finally:
-        Path(clean_denylist).unlink(missing_ok=True)
-    return {
-        "export_hit_count": export_direct + export_split,   # the hard gate
-        "export_direct_hits": export_direct,
-        "export_split_hits": export_split,
-        "evidence_hit_count": evidence_direct + evidence_split,
-    }
 
 
 #: A case transition inside a word: the boundary camelCase hides a term behind.
@@ -288,7 +156,7 @@ def main() -> int:
             export_dir = Path(scratch) / "export"
             print("[2/3] export_cleanroom.py --output <scratch> ...")
             step_export(export_dir)
-            print(f"  exported to a scratch dir (discarded on exit)")
+            print("  exported to a scratch dir (discarded on exit)")
 
             if args.check:
                 print("  (--check: skipping contamination scan + tag)")
@@ -333,6 +201,10 @@ def main() -> int:
           "(migration doc already current, HUMAN publish, yank procedure if ever needed).")
     return 0
 
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.modules.setdefault("tools.publish_release", sys.modules[__name__])
+from tools.publish_release_steps import step_contamination_scan  # noqa: E402
 
 if __name__ == "__main__":
     raise SystemExit(main())

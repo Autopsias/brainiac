@@ -18,6 +18,7 @@ import posixpath
 import re
 import zipfile
 from pathlib import Path
+from typing import Any
 
 from .base import ExtractResult, Handler, density_gate, strip_control_chars
 
@@ -78,6 +79,97 @@ def _read_member_bounded(zf: "zipfile.ZipFile", info: "zipfile.ZipInfo", cap: in
     return b"".join(chunks)
 
 
+def _open_zip(path: Path) -> zipfile.ZipFile | ExtractResult:
+    try:
+        return zipfile.ZipFile(path)
+    except zipfile.BadZipFile as exc:
+        return ExtractResult.quarantine(
+            "zip_corrupt",
+            warnings=[f"{type(exc).__name__}: {exc}"],
+        )
+    except OSError as exc:
+        return ExtractResult.quarantine(
+            "zip_read_error",
+            warnings=[f"{type(exc).__name__}: {exc}"],
+        )
+
+
+def _validated_members(zf: zipfile.ZipFile) -> list[zipfile.ZipInfo] | ExtractResult:
+    infos = [info for info in zf.infolist() if not info.is_dir()]
+    if not infos:
+        return ExtractResult.quarantine("zip_empty")
+    if len(infos) > MAX_MEMBERS:
+        return ExtractResult.quarantine(
+            "zip_too_many_members",
+            warnings=[f"{len(infos)} members exceeds cap {MAX_MEMBERS}"],
+        )
+    total_declared = 0
+    for info in infos:
+        reason = _unsafe_zip_member_reason(info)
+        if reason:
+            return ExtractResult.quarantine(
+                "zip_unsafe_member",
+                warnings=[f"{strip_control_chars(info.filename)}: {reason}"],
+            )
+        if info.file_size > MAX_MEMBER_BYTES:
+            return ExtractResult.quarantine(
+                "zip_member_too_large",
+                warnings=[
+                    f"{strip_control_chars(info.filename)}: declared {info.file_size} bytes"
+                ],
+            )
+        total_declared += info.file_size
+        if total_declared > MAX_TOTAL_DECLARED_BYTES:
+            return ExtractResult.quarantine(
+                "zip_bomb_suspected",
+                warnings=[
+                    f"declared total {total_declared} bytes exceeds cap "
+                    f"{MAX_TOTAL_DECLARED_BYTES}"
+                ],
+            )
+    return infos
+
+
+def _extract_members(
+    zf: zipfile.ZipFile,
+    infos: list[zipfile.ZipInfo],
+) -> tuple[list[dict[str, Any]], list[str]] | ExtractResult:
+    nested: list[dict[str, Any]] = []
+    listing: list[str] = []
+    for info in infos:
+        try:
+            data = _read_member_bounded(zf, info, MAX_MEMBER_BYTES)
+        except Exception as exc:
+            return ExtractResult.quarantine(
+                "zip_extraction_error",
+                warnings=[
+                    f"{strip_control_chars(info.filename)}: {type(exc).__name__}: {exc}"
+                ],
+            )
+        if data is None:
+            return ExtractResult.quarantine(
+                "zip_bomb_suspected",
+                warnings=[
+                    f"{strip_control_chars(info.filename)}: decompressed beyond declared size"
+                ],
+            )
+        basename = strip_control_chars(Path(info.filename).name) or "member"
+        nested.append({"name": basename, "data": data})
+        listing.append(f"- `{basename}` ({len(data)} bytes)")
+    return nested, listing
+
+
+def _archive_listing(nested: list[dict[str, Any]], listing: list[str]) -> ExtractResult:
+    body = "## Archive contents\n\n" + "\n".join(listing) + "\n"
+    reason = density_gate(body, min_chars=1)
+    if reason:
+        return ExtractResult.quarantine(reason)
+    return ExtractResult(
+        markdown=body,
+        metadata={"nested": nested, "member_count": len(nested)},
+    )
+
+
 class ZipHandler(Handler):
     extensions = (".zip",)
     dependency_name = "stdlib"
@@ -88,76 +180,14 @@ class ZipHandler(Handler):
 
     @classmethod
     def extract(cls, path: Path) -> ExtractResult:
-        try:
-            zf = zipfile.ZipFile(path)
-        except zipfile.BadZipFile as exc:
-            return ExtractResult.quarantine("zip_corrupt", warnings=[f"{type(exc).__name__}: {exc}"])
-        except OSError as exc:
-            return ExtractResult.quarantine("zip_read_error", warnings=[f"{type(exc).__name__}: {exc}"])
-
+        zf = _open_zip(path)
+        if isinstance(zf, ExtractResult):
+            return zf
         with zf:
-            infos = [i for i in zf.infolist() if not i.is_dir()]
-            if not infos:
-                return ExtractResult.quarantine("zip_empty")
-            if len(infos) > MAX_MEMBERS:
-                return ExtractResult.quarantine(
-                    "zip_too_many_members",
-                    warnings=[f"{len(infos)} members exceeds cap {MAX_MEMBERS}"],
-                )
-
-            # Pre-scan BEFORE any decompression: Zip-Slip safety + declared-size caps.
-            total_declared = 0
-            for info in infos:
-                reason = _unsafe_zip_member_reason(info)
-                if reason:
-                    return ExtractResult.quarantine(
-                        "zip_unsafe_member",
-                        warnings=[f"{strip_control_chars(info.filename)}: {reason}"],
-                    )
-                if info.file_size > MAX_MEMBER_BYTES:
-                    return ExtractResult.quarantine(
-                        "zip_member_too_large",
-                        warnings=[f"{strip_control_chars(info.filename)}: declared {info.file_size} bytes"],
-                    )
-                total_declared += info.file_size
-                if total_declared > MAX_TOTAL_DECLARED_BYTES:
-                    return ExtractResult.quarantine(
-                        "zip_bomb_suspected",
-                        warnings=[f"declared total {total_declared} bytes exceeds cap {MAX_TOTAL_DECLARED_BYTES}"],
-                    )
-
-            nested: list[dict] = []
-            listing: list[str] = []
-            for info in infos:
-                try:
-                    data = _read_member_bounded(zf, info, MAX_MEMBER_BYTES)
-                except Exception as exc:
-                    return ExtractResult.quarantine(
-                        "zip_extraction_error",
-                        warnings=[f"{strip_control_chars(info.filename)}: {type(exc).__name__}: {exc}"],
-                    )
-                if data is None:
-                    return ExtractResult.quarantine(
-                        "zip_bomb_suspected",
-                        warnings=[f"{strip_control_chars(info.filename)}: decompressed beyond declared size"],
-                    )
-                # Member names NEVER become filesystem paths directly — only
-                # the sanitized BASENAME (no directory components) is even
-                # offered to the pipeline, which further wraps it in a
-                # synthetic generated filename before it ever touches disk.
-                basename = strip_control_chars(Path(info.filename).name) or "member"
-                nested.append({"name": basename, "data": data})
-                listing.append(f"- `{basename}` ({len(data)} bytes)")
-
-        body = "## Archive contents\n\n" + "\n".join(listing) + "\n"
-        # ponytail: min_chars=1, not the shared 40-char default — this body is
-        # a member LISTING (quantity of entries, not extracted prose), so the
-        # prose-density threshold doesn't fit; a non-empty listing already
-        # proves real content. Still routed through the same shared gate
-        # function per the "same gate applies to every handler" rule, just
-        # tuned to this content's shape — this only guards a truly-empty
-        # listing that somehow slipped past the `zip_empty` check above.
-        reason = density_gate(body, min_chars=1)
-        if reason:
-            return ExtractResult.quarantine(reason)
-        return ExtractResult(markdown=body, metadata={"nested": nested, "member_count": len(nested)})
+            infos = _validated_members(zf)
+            if isinstance(infos, ExtractResult):
+                return infos
+            extracted = _extract_members(zf, infos)
+            if isinstance(extracted, ExtractResult):
+                return extracted
+        return _archive_listing(*extracted)

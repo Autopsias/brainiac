@@ -1,236 +1,12 @@
 {
   "exceptions": [
     {
-      "file": "src/brain/cos.py",
-      "loc": 7102
-    },
-    {
-      "file": "tests/skills/test_chief_of_staff_fixtures.py",
-      "loc": 5517
-    },
-    {
-      "file": "src/brain/core.py",
-      "loc": 5455
-    },
-    {
-      "file": "tests/test_cos_mutate.py",
-      "loc": 4846
-    },
-    {
-      "file": "src/brain/index.py",
-      "loc": 4014
-    },
-    {
-      "file": "src/brain/cos_runverify.py",
-      "loc": 3761
-    },
-    {
-      "file": "src/brain/cli.py",
-      "loc": 3406
-    },
-    {
-      "file": "tools/cos_mutate.py",
-      "loc": 3175
-    },
-    {
-      "file": "src/brain/maintenance.py",
-      "loc": 3116
-    },
-    {
-      "file": "tests/test_cos_runverify.py",
-      "loc": 2819
-    },
-    {
-      "file": "tests/test_maintenance.py",
-      "loc": 2720
-    },
-    {
-      "file": "tools/cos_judge.py",
-      "loc": 2702
-    },
-    {
-      "file": "tools/cos_lane_rehearsal.py",
-      "loc": 2114
-    },
-    {
-      "file": "tests/test_cos_learning.py",
-      "loc": 2087
-    },
-    {
-      "file": "tools/cos_driver.py",
-      "loc": 2069
-    },
-    {
-      "file": "tests/test_cos_grounding_wire.py",
-      "loc": 1989
-    },
-    {
-      "file": "tests/test_cos_pathguard.py",
-      "loc": 1839
-    },
-    {
-      "file": "tests/test_cos_judge.py",
-      "loc": 1731
-    },
-    {
-      "file": "src/brain/doctor.py",
-      "loc": 1678
-    },
-    {
-      "file": "tests/test_cos_grounding_canary.py",
-      "loc": 1556
-    },
-    {
-      "file": "tests/test_doctor.py",
-      "loc": 1520
-    },
-    {
-      "file": "tests/test_cos_approved_queue.py",
-      "loc": 1489
-    },
-    {
-      "file": "tests/test_ingest.py",
-      "loc": 1489
-    },
-    {
-      "file": "tests/test_cos.py",
-      "loc": 1483
-    },
-    {
-      "file": "tools/cos_model_answer.py",
-      "loc": 1383
-    },
-    {
-      "file": "tests/test_retrieval.py",
-      "loc": 1256
-    },
-    {
-      "file": "src/brain/ingest/pipeline.py",
-      "loc": 1205
-    },
-    {
-      "file": "tests/test_cos_driver.py",
-      "loc": 1111
-    },
-    {
-      "file": "src/brain/cos_echecks.py",
-      "loc": 1105
-    },
-    {
-      "file": "tests/test_cos_contract.py",
-      "loc": 1076
-    },
-    {
-      "file": "src/brain/embed.py",
-      "loc": 1071
-    },
-    {
-      "file": "tests/test_update.py",
-      "loc": 1065
-    },
-    {
-      "file": "tests/test_graphify.py",
-      "loc": 1063
-    },
-    {
-      "file": "src/brain/invariants.py",
-      "loc": 1058
-    },
-    {
-      "file": "src/brain/update.py",
-      "loc": 1057
-    },
-    {
-      "file": "src/brain/querylog.py",
-      "loc": 1052
-    },
-    {
-      "file": "tools/publish_public.py",
-      "loc": 1051
-    },
-    {
-      "file": "tests/test_cos_ground.py",
-      "loc": 1020
-    },
-    {
-      "file": "tests/test_corpus_invariants.py",
-      "loc": 1019
-    },
-    {
-      "file": "tests/test_cos_versionlink.py",
-      "loc": 928
-    },
-    {
-      "file": "tests/test_supersede_engine.py",
-      "loc": 896
-    },
-    {
-      "file": "tools/cos_contract.py",
-      "loc": 885
-    },
-    {
-      "file": "tools/cos_hold_visible.py",
-      "loc": 881
-    },
-    {
-      "file": "src/brain/init.py",
-      "loc": 878
-    },
-    {
-      "file": "tests/test_cos_corpus.py",
-      "loc": 860
-    },
-    {
-      "file": "src/brain/config.py",
-      "loc": 842
-    },
-    {
-      "file": "tools/cos_reconcile_metrics.py",
-      "loc": 840
-    },
-    {
-      "file": "tests/test_golden_probe.py",
-      "loc": 836
-    },
-    {
-      "file": "tools/cos_ground.py",
-      "loc": 802
-    },
-    {
       "file": "eval/s02_paired_capture.py",
       "loc": 798
     },
     {
-      "file": "src/brain/cos_corpus.py",
-      "loc": 741
-    },
-    {
-      "file": "tools/package_clients.py",
-      "loc": 730
-    },
-    {
-      "file": "src/brain/versionlink.py",
-      "loc": 695
-    },
-    {
-      "file": "tools/validate.py",
-      "loc": 694
-    },
-    {
-      "file": "tools/cos_batch_chunk.py",
-      "loc": 690
-    },
-    {
-      "file": "src/brain/golden_probe.py",
-      "loc": 678
-    },
-    {
       "file": "eval/s10_claim_arms.py",
       "loc": 656
-    },
-    {
-      "file": "src/brain/graphreport.py",
-      "loc": 654
     },
     {
       "file": "eval/s08_expand_split.py",
@@ -241,16 +17,8 @@
       "loc": 638
     },
     {
-      "file": "src/brain/audit.py",
-      "loc": 635
-    },
-    {
       "file": "eval/pt_capacity_fixture.py",
       "loc": 629
-    },
-    {
-      "file": "tools/cos_retro.py",
-      "loc": 615
     },
     {
       "file": "eval/cos_replay.py",
@@ -265,12 +33,16 @@
       "loc": 590
     },
     {
-      "file": "src/brain/spine.py",
-      "loc": 585
+      "file": "tools/cos_driver_transport.py",
+      "loc": 581
     },
     {
-      "file": "src/brain/healthreport.py",
-      "loc": 546
+      "file": "src/brain/doctor_plugins.py",
+      "loc": 562
+    },
+    {
+      "file": "tools/cos_mutate.py",
+      "loc": 543
     },
     {
       "file": "eval/ne_upgrade_gate.py",
@@ -281,16 +53,8 @@
       "loc": 526
     },
     {
-      "file": "src/brain/graph.py",
-      "loc": 516
-    },
-    {
-      "file": "tools/cos_s02b_verify.py",
+      "file": "src/brain/doctor.py",
       "loc": 515
-    },
-    {
-      "file": "src/brain/brief.py",
-      "loc": 504
     }
   ]
 }

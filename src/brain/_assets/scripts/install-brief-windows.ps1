@@ -65,7 +65,7 @@ $logFile = "$LogDir\brief-$(Get-Date -Format 'yyyy-MM-dd').log"
 # date-gated branches (Mon=health, Tue=integrity, Sun=digest,
 # 1st=graphify-documented-only). This is THE single sanctioned OS task
 # (`brain-nightly`, persistence-budget.md THE LOCK) -- see
-# src/brain/core.py BrainCore.maintain. routines/manifest.json id "brain-nightly".
+# src/brain/core/ BrainCore.maintain. routines/manifest.json id "brain-nightly".
 $scriptBlock = @"
 `$env:BRAIN_VAULT = '$VaultPath'
 `$log = '$LogDir\brief-' + (Get-Date -Format 'yyyy-MM-dd') + '.log'

@@ -10,7 +10,7 @@
   `tools/package_clients.py`, `.claude-plugin/marketplace.json`, the three
   `plugins/*/.claude-plugin/plugin.json`, `plugins/brainiac-manager/skills/
   brainiac-{install,update,uninstall}/SKILL.md`, `tools/workspace_registry.py`,
-  `src/brain/index.py` (`SCHEMA_VERSION`), `src/brain/snapshot.py`
+  `src/brain/index/` (`SCHEMA_VERSION`), `src/brain/snapshot.py`
   (`schema_version`), `CHANGELOG.md`.
 
 ## Context — the current version landscape, stated as fact

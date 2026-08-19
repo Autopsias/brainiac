@@ -568,7 +568,7 @@ metadata:
   # keying the engine's category-graduation evidence to it means no category
   # ever reaches min-volume at ~8 candidates a night, so every bundle bump
   # would silently wipe the learning evidence. `extraction_rules_version` is
-  # the NARROW key (`src/brain/cos.py`, HARDENED:claude-1): it moves ONLY when
+  # the NARROW key (`src/brain/cos/_constants.py`, HARDENED:claude-1): it moves ONLY when
   # Phase 1.5's read-tier classification rules or Phase 1.6's extraction rules
   # actually change. It is spelled in its OWN namespace — `ext-<n>`, a plain
   # serial, exactly like `versionlink.RULES_VERSION`'s `vl-1` — so it can

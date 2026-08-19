@@ -58,6 +58,7 @@ import math
 from typing import Any
 
 from .graph import LinkGraph
+from .graphify_edges import build_inferred_edges as build_inferred_edges_impl
 
 GRAPH_SCHEMA_VERSION = 1
 PROVENANCE = "graphify-derived (discovery-only)"
@@ -184,69 +185,20 @@ def build_inferred_edges(
     without being in its own — inbound proposals are capped exactly like
     outbound ones.
     """
-    vecs = note_vectors(conn, backend)
-    ids = sorted(vecs)
-    if len(ids) < 2:
-        return []
-
-    chunk_to_note = {
-        int(crid): nid
-        for nid, crid in conn.execute(
-            "SELECT n.id, c.rowid FROM chunks c JOIN notes n ON n.rowid = c.note_rowid"
-        ).fetchall()
-    }
-    updated_by_id = dict(conn.execute("SELECT id, updated FROM notes").fetchall())
-
-    probe_k = max(topk * 4, topk + 10)
-    seen_pairs: dict[tuple[str, str], dict[str, Any]] = {}
-    for a in ids:
-        hits = backend.search(conn, vecs[a], probe_k)
-        best_per_neighbour: dict[str, float] = {}
-        for chunk_rowid, _backend_score in hits:
-            b = chunk_to_note.get(int(chunk_rowid))
-            if b is None or b == a or b not in vecs:
-                continue
-            cosine = _cosine(vecs[a], vecs[b])
-            if cosine > best_per_neighbour.get(b, -1.0):
-                best_per_neighbour[b] = cosine
-        # This node's own top-`topk` neighbours by raw cosine, above the floor.
-        ranked = sorted(best_per_neighbour.items(), key=lambda kv: -kv[1])[:topk]
-        for b, cosine in ranked:
-            if cosine < score_floor:
-                continue
-            if b in link_graph.undirected_adj.get(a, set()):
-                continue  # already linked — no INFERRED duplicate of a real edge
-            key = (a, b) if a < b else (b, a)
-            if key in seen_pairs and seen_pairs[key]["cosine"] >= cosine:
-                continue
-            boost, shared = _bridge_boost(link_graph, a, b)
-            recency = _recency_boost(today, updated_by_id.get(a), updated_by_id.get(b))
-            score = cosine * (1.0 + boost + recency)
-            reason = f"embedding cosine {cosine:.3f}"
-            if shared:
-                reason += f"; {shared} shared wikilink neighbour(s)"
-            if recency > 0:
-                reason += "; both recently updated"
-            seen_pairs[key] = {
-                "kind": "INFERRED", "from": key[0], "to": key[1],
-                "cosine": round(cosine, 6), "score": round(score, 6),
-                "reason": reason,
-            }
-
-    global_cap = int(global_cap_multiplier * explicit_edge_count)
-    ordered = sorted(seen_pairs.values(), key=lambda e: -e["score"])
-    degree: dict[str, int] = {}
-    selected: list[dict[str, Any]] = []
-    for edge in ordered:
-        if len(selected) >= global_cap:
-            break
-        a, b = edge["from"], edge["to"]
-        if degree.get(a, 0) >= topk or degree.get(b, 0) >= topk:
-            continue
-        degree[a] = degree.get(a, 0) + 1
-        degree[b] = degree.get(b, 0) + 1
-        selected.append(edge)
-    return selected
+    return build_inferred_edges_impl(
+        conn,
+        backend,
+        link_graph,
+        today=today,
+        topk=topk,
+        score_floor=score_floor,
+        global_cap_multiplier=global_cap_multiplier,
+        explicit_edge_count=explicit_edge_count,
+        note_vectors=note_vectors,
+        cosine=_cosine,
+        bridge_boost=_bridge_boost,
+        recency_boost=_recency_boost,
+    )
 
 
 def build_graph_artifact(

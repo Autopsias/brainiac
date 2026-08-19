@@ -48,6 +48,19 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cos_contract_ledger_scan import (  # noqa: E402,F401  batch-2 drain
+    GUARD_STOPS, GUARD_STOP_GLOBS, TOOLSETS, _file_run, _guard_stop_shape,
+    _run_token, counts_chip_clear, guard_stop_corroborated, lane_pin,
+    run_scoped_rows)
+from cos_contract_provenance import (  # noqa: E402,F401  batch-2 drain
+    Malformed, _complete_enumeration, _counts, _load, _require,
+    _sent_zero_send, _timestamp, _uses_new_count_schema,
+    _validate_browser_election, _validate_browser_provenance,
+    _validate_scan_provenance, _validate_sent_snapshot)
+from cos_contract_snapshot_shape import candidate_shape_problem  # noqa: E402
+from cos_contract_verdict_clauses import (  # noqa: E402
+    accounting_reasons, candidate_scan, capability_liveness, degenerate_reasons,
+    provenance_reasons)
 from cos_reconcile_metrics import _rows, counts_archive, counts_draft  # noqa: E402
 
 BUCKETS = ("archived", "held_non_drafted", "held_drafted", "chipped",
@@ -67,39 +80,7 @@ ACCOUNTED = {
                              "stopped_by_guard"}),
 }
 
-#: The CLOSED vocabulary of stops that may excuse a row from its disposition.
-#: A run may not invent one: doctrine names the guard, and the guard's own
-#: ledger reason word is what corroborates it (E30(c)).
-GUARD_STOPS = ("target-identity-mismatch",)
-
-#: Where a recorded guard stop leaves its own trace. The checker DERIVES the
-#: corroboration from these — the `guard_stop` record alone is the run's word.
-#:
-#: THE ACTION LEDGER HAS NO v7 PRODUCER AND IS KEPT ANYWAY (s10, 2026-08-16).
-#: `_cos_action_ledger_*` was written by the MODEL leg of the pre-v7 browser
-#: lane; the v7 model legs run `--tools "Read,Glob"` with editing denied and
-#: cannot write a file at all. It is NOT removed, for two measured reasons:
-#:   1. `cos_runverify.check_contract` RE-EXECUTES this checker over every run
-#:      it scores, including historical ones. Six runs in the reference vault
-#:      declare a `target-identity-mismatch` stop, and for TWO of them
-#:      (2026-08-09-run104, 2026-08-10-run112) the ingestion ledger carries
-#:      ZERO corroborating rows and the action ledger carries all of them.
-#:      Dropping this glob flips those two from PASS to
-#:      `OC-guard-stop-uncorroborated` on the next re-verification — rewriting
-#:      history from a change of reader, not a change of fact.
-#:   2. Its input is not "permanently absent": nine action ledgers are on disk.
-#: Direction check, because a dead reader is only safe when it fails CLOSED:
-#: this glob can only ever ADD corroboration, so its silence on a v7 night
-#: cannot buy a PASS — an uncorroborated stop is refused. The v7 lane declares
-#: no guard stop at all (`cos_driver.build_contract_inputs` writes no
-#: `guard_stop` key), so `guard_stop_corroborated` is not even reached; the
-#: click-era identity risk it scores is the same one `cos_runverify` RETIRED
-#: with `target_identity`, because the REST lane addresses a conversation by id.
-GUARD_STOP_GLOBS = ("_cos_ingestion_ledger_*.jsonl", "_cos_action_ledger_*.jsonl")
-
 CAPABILITIES = ("archives", "drafts", "chip_clears")
-
-TOOLSETS = ("iab", "chrome-plugin")
 
 #: A guard may only be evaluated for a capability IN SCOPE for the profile —
 #: under `label-only` archiving and drafting are forbidden BY DEFINITION, so
@@ -143,358 +124,13 @@ LEDGER_GLOB = {
 }
 
 
-class Malformed(Exception):
-    """Input the checker cannot read as a contract report at all (exit 2)."""
-
-
-def _timestamp(value: object, label: str) -> datetime:
-    if not isinstance(value, str):
-        raise Malformed(f"{label} must be an ISO-8601 timestamp")
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise Malformed(f"{label} must be an ISO-8601 timestamp") from exc
-    if parsed.tzinfo is None:
-        raise Malformed(f"{label} must include a timezone")
-    return parsed
-
-
-def _validate_sent_snapshot(obj: dict, label: str) -> None:
-    proof = obj.get("sent_zero_send")
-    if not isinstance(proof, dict):
-        raise Malformed(f"{label}: new-schema full run requires `sent_zero_send`")
-    if proof.get("identity_field") != "item_id":
-        raise Malformed(f"{label}: sent_zero_send.identity_field must be item_id")
-    if proof.get("sort") != "newest-first":
-        raise Malformed(f"{label}: sent_zero_send.sort must be newest-first")
-    if not isinstance(proof.get("complete"), bool):
-        raise Malformed(f"{label}: sent_zero_send.complete must be bool")
-
-    window = _timestamp(proof.get("window_start"), f"{label}: sent_zero_send.window_start")
-    captured = _timestamp(proof.get("captured_at"), f"{label}: sent_zero_send.captured_at")
-    if captured < window:
-        raise Malformed(f"{label}: sent proof was captured before its window")
-
-    boundary = proof.get("boundary")
-    boundary_value = proof.get("boundary_timestamp")
-    if boundary == "older-than-window":
-        if _timestamp(boundary_value, f"{label}: sent_zero_send.boundary_timestamp") >= window:
-            raise Malformed(f"{label}: sent boundary must be older than window_start")
-    elif boundary == "list-end":
-        if boundary_value is not None:
-            raise Malformed(f"{label}: list-end boundary_timestamp must be null")
-    else:
-        raise Malformed(
-            f"{label}: sent_zero_send.boundary must be older-than-window or list-end")
-
-    items = proof.get("items")
-    if not isinstance(items, list):
-        raise Malformed(f"{label}: sent_zero_send.items must be a list")
-    seen: set[str] = set()
-    for item in items:
-        if not isinstance(item, dict):
-            raise Malformed(f"{label}: each sent item must be an object")
-        item_id = item.get("item_id")
-        if not isinstance(item_id, str) or not item_id:
-            raise Malformed(f"{label}: each sent item needs a non-empty item_id")
-        if item_id in seen:
-            raise Malformed(f"{label}: duplicate sent item_id {item_id!r}")
-        seen.add(item_id)
-        timestamp = _timestamp(
-            item.get("timestamp"), f"{label}: sent item {item_id!r} timestamp")
-        if timestamp < window or timestamp > captured:
-            raise Malformed(
-                f"{label}: sent item {item_id!r} falls outside the captured window")
-
-
-def _sent_zero_send(pre: dict, post: dict) -> tuple[dict, list[str]]:
-    before, after = pre["sent_zero_send"], post["sent_zero_send"]
-    pre_ids = {item["item_id"] for item in before["items"]}
-    post_ids = {item["item_id"] for item in after["items"]}
-    new_ids = sorted(post_ids - pre_ids)
-    reasons: list[str] = []
-    if before["window_start"] != after["window_start"]:
-        reasons.append("ZS-window-mismatch")
-    if not before["complete"] or not after["complete"]:
-        reasons.append("ZS-incomplete")
-    if new_ids:
-        reasons.append("ZS-new-sent-item")
-    return {
-        "identity_field": "item_id",
-        "window_start": before["window_start"],
-        "pre_item_count": len(pre_ids),
-        "post_item_count": len(post_ids),
-        "new_item_ids": new_ids,
-        "complete": not reasons,
-    }, reasons
-
-
-def _counts(pre: dict, post: dict) -> tuple[int, int, int, int, bool]:
-    """Return conversation/item counts before/after and whether input is legacy."""
-    new_keys = (
-        (pre, "inbox_conversation_count_before", "pre"),
-        (pre, "owa_folder_item_count_before", "pre"),
-        (post, "inbox_conversation_count_after", "post"),
-        (post, "owa_folder_item_count_after", "post"),
-    )
-    if any(key in obj for obj, key, _ in new_keys):
-        values = [_require(obj, key, int, label) for obj, key, label in new_keys]
-        if any(value < 0 for value in values):
-            raise Malformed("conversation and folder-item counts must be non-negative")
-        return (*values, False)
-
-    # Legacy v5.28 inputs used one ambiguous Inbox count for both units.
-    before = _require(pre, "inbox_count_before", int, "pre")
-    after = _require(post, "inbox_count_after", int, "post")
-    folder_after = _require(post, "owa_folder_count", int, "post")
-    if min(before, after, folder_after) < 0:
-        raise Malformed("Inbox counts must be non-negative")
-    return before, before, after, folder_after, True
-
-
-def _complete_enumeration(obj: dict, expected: int) -> bool:
-    evidence = obj.get("enumeration_evidence")
-    return (
-        obj.get("enumeration_complete") is True
-        and isinstance(evidence, dict)
-        and evidence.get("unique_ids") == expected
-        and evidence.get("list_declared_size") == expected
-        and isinstance(evidence.get("stagnant_scans"), int)
-        and evidence["stagnant_scans"] >= 3
-        and evidence.get("scroll_at_end") is True
-    )
-
-
-def _uses_new_count_schema(pre: dict, post: dict) -> bool:
-    return any(
-        key in obj
-        for obj, key in (
-            (pre, "inbox_conversation_count_before"),
-            (pre, "owa_folder_item_count_before"),
-            (post, "inbox_conversation_count_after"),
-            (post, "owa_folder_item_count_after"),
-        )
-    )
-
-
-def _validate_browser_election(pre: dict, pin: str | None = None) -> str:
-    election = pre.get("browser_election")
-    if not isinstance(election, dict):
-        raise Malformed("pre: new-schema snapshot requires browser_election")
-    attempted = election.get("attempted")
-    elected = election.get("elected")
-    if (not isinstance(attempted, list) or not attempted or
-            not all(isinstance(toolset, str) for toolset in attempted)):
-        raise Malformed("pre: browser_election.attempted must be a non-empty string list")
-    # Under an owner pin the pinned toolset is attempted first instead of iab.
-    # Whether the pin was HONOURED is a verdict clause, never a malformed input:
-    # a run that fell back must still render a block that says so.
-    if attempted[0] not in ({"iab", pin} if pin else {"iab"}):
-        raise Malformed("pre: browser_election must attempt iab first"
-                        if pin is None else
-                        f"pre: browser_election must attempt the pinned {pin!r} "
-                        "or iab first")
-    if len(set(attempted)) != len(attempted) or any(toolset not in TOOLSETS for toolset in attempted):
-        raise Malformed("pre: browser_election contains an invalid or repeated toolset")
-    if elected not in TOOLSETS or elected != attempted[-1]:
-        raise Malformed("pre: browser_election.elected must be the final attempted toolset")
-    return elected
-
-
-def _validate_scan_provenance(
-        obj: dict, label: str, run_id: str, elected: str) -> None:
-    provenance = obj.get("scan_provenance")
-    if not isinstance(provenance, dict):
-        raise Malformed(f"{label}: new-schema snapshot requires scan_provenance")
-    if _run_token(provenance.get("run_id")) != _run_token(run_id):
-        raise Malformed(f"{label}: scan_provenance.run_id must match --run-id")
-    if provenance.get("toolset") != elected:
-        raise Malformed(f"{label}: scan_provenance.toolset must match the elected toolset")
-    if provenance.get("folder") != "Inbox":
-        raise Malformed(f"{label}: scan_provenance.folder must be Inbox")
-    if provenance.get("identity_field") != "conversation_id":
-        raise Malformed(f"{label}: scan_provenance.identity_field must be conversation_id")
-
-
-def _validate_browser_provenance(pre: dict, post: dict, run_id: str,
-                                 pin: str | None = None) -> str:
-    """Require fresh, same-lane scans and IAB-first election for v5.30 inputs."""
-    elected = _validate_browser_election(pre, pin)
-    for label, obj in (("pre", pre), ("post", post)):
-        _validate_scan_provenance(obj, label, run_id, elected)
-    return elected
-
-
 # --- ledger side: what the run actually PRODUCED, scoped to this run --------
-
-def counts_chip_clear(rows: list[dict]) -> int:
-    """Verified chip CLEARS (LIF-01 `action: cleared`), never adds/re-levels."""
-    n = 0
-    for r in rows:
-        if r.get("action") != "cleared":
-            continue
-        ver = r.get("verification")
-        if isinstance(ver, dict):
-            n += 1
-        elif isinstance(ver, str) and ver.startswith(
-            ("verified", "response-confirmed", "server-reread-confirmed", "PASS")
-        ):
-            n += 1
-        elif str(r.get("status") or "").startswith(("verified", "response-confirmed")):
-            n += 1
-    return n
-
 
 COUNTERS = {"archives": counts_archive, "drafts": counts_draft,
             "chip_clears": counts_chip_clear}
 
 
-#: Every spelling of a run id that the COS surfaces actually produce:
-#: `108`, `run108`, and — since MAN-01 (v5.58) told the run to take its
-#: identity from the host's manifest sheet verbatim — `2026-08-09-run108`.
-_RUN_TOKEN_RE = re.compile(r"(?:^|-)run(\d+)$|^(\d+)$")
-
-
-def _run_token(value: object) -> str:
-    """The RUN NUMBER, from whichever spelling of the id was handed over.
-
-    WHY THIS IS NOT `lstrip("run")` ANY MORE (measured, run 108, 2026-08-09).
-    MAN-01 made the run read its identity off the host's manifest sheet, whose
-    `run_id` is the FULL `<date>-run<N>`. Run 108 obeyed: it stamped
-    `2026-08-09-run108` into `scan_provenance.run_id` and into every ledger
-    row, and invoked this checker with `--run-id 2026-08-09-run108`, which
-    passed. The HOST validator re-executes the same checker with
-    `cos_runverify._run_number(run_id)` — the bare `108` — and the old token
-    (a leading-`run` strip, nothing more) made those two spellings unequal.
-    Two consequences on one night: `scan_provenance.run_id must match
-    --run-id` raised Malformed, so a genuine PASS block scored `contract:
-    FAIL`; and `run_scoped_rows` matched NONE of the run's 423 ledger rows,
-    which is the `OC-a-unaccounted` shape arriving from a spelling difference
-    rather than from missing work.
-
-    The run NUMBER is what every other joiner in this system already scopes on
-    (`_file_run`, `canonical_block_path`, `cos_runverify._run_number`), and a
-    run that writes under a foreign DATE has its own check
-    (`cos_runverify.check_artifact_naming`, built for exactly that run-64
-    defect) — so collapsing to the number here adds no blind spot it covers.
-    A value that is no recognised spelling is returned unchanged, so it can
-    still only match itself.
-    """
-    text = str(value).strip()
-    m = _RUN_TOKEN_RE.search(text)
-    return (m.group(1) or m.group(2)) if m else text
-
-
-def _file_run(path: Path) -> str | None:
-    m = re.search(r"-run([^.]+)\.jsonl$", path.name)
-    return m.group(1) if m else None
-
-
-def run_scoped_rows(ledgers: Path, glob: str, run_id: str) -> tuple[list[dict], int]:
-    """Rows attributable to `run_id`, plus the count of unattributable rows.
-
-    A row is this run's when it carries `run`/`run_id` matching, or when it
-    lives in a `…-run<N>.jsonl` file for this run. A row with NO attribution in
-    a file with NO run token cannot be proven to be this run's, so it is
-    SKIPPED (and surfaced) — v5.27 already requires per-run attribution.
-    """
-    want = _run_token(run_id)
-    keep: list[dict] = []
-    unattributed = 0
-    for path in sorted(ledgers.glob(glob)):
-        file_run = _file_run(path)
-        for row in _rows(path):
-            rid = row.get("run", row.get("run_id"))
-            if rid is not None:
-                if _run_token(rid) == want:
-                    keep.append(row)
-            elif file_run is not None:
-                if _run_token(file_run) == want:
-                    keep.append(row)
-            else:
-                unattributed += 1
-    return keep, unattributed
-
-
-# --- guard stops: a stop halts action, never accounting (v5.52) --------------
-
-def _guard_stop_shape(post: dict, enumerated: set[str]) -> dict | None:
-    """The declared `guard_stop`, or None when it is absent or unusable.
-
-    Shape only — whether the stop actually HAPPENED is decided from the run's
-    own ledgers by `guard_stop_corroborated`, never from this record.
-    """
-    record = post.get("guard_stop")
-    if not isinstance(record, dict):
-        return None
-    if record.get("guard") not in GUARD_STOPS:
-        return None
-    convid = record.get("convid")
-    if not isinstance(convid, str) or convid not in enumerated:
-        return None
-    return record
-
-
-def guard_stop_corroborated(ledgers: Path, run_id: str, guard: str) -> bool:
-    """Did THIS run's own ledgers record the named guard firing?
-
-    The stop's evidence is the reason word doctrine already requires on the row
-    the guard fired on — `held_reason` on the ingestion ledger (E30(c)) or
-    `action` on the action ledger. A run that declares a stop it never ledgered
-    is asserting the one thing that would excuse its unaccounted rows, which is
-    exactly the shape this checker refuses everywhere else.
-    """
-    for glob in GUARD_STOP_GLOBS:
-        rows, _ = run_scoped_rows(ledgers, glob, run_id)
-        for row in rows:
-            if guard in (row.get("held_reason"), row.get("action")):
-                return True
-    return False
-
-
-# --- the elected-lane pin (owner overlay, v5.52) -----------------------------
-
-def lane_pin(ledgers: Path) -> str | None:
-    """The owner's pinned browser toolset, from `overlay/cos/browser-lane.md`.
-
-    ABSENT file, absent key, or any unrecognised value ⇒ **no pin** and the
-    ordinary IAB-first election stands. Owner configuration, so it is read from
-    the vault beside the ops dir and never supplied by the run — a pin the run
-    could declare for itself is a pin a silent fallback can drop.
-    """
-    path = ledgers.parent / "overlay" / "cos" / "browser-lane.md"
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    body = re.sub(r"\A---\n.*?\n---\n", "", text, count=1, flags=re.S)
-    m = re.search(r"^pin:[ \t]*(\S+)[ \t]*$", body, re.M)
-    if m is None or m.group(1) not in TOOLSETS:
-        return None
-    return m.group(1)
-
-
 # --- input validation -------------------------------------------------------
-
-def _load(path: Path, label: str) -> dict:
-    try:
-        obj = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError as exc:
-        raise Malformed(f"{label}: no such file {path}") from exc
-    except json.JSONDecodeError as exc:
-        raise Malformed(f"{label}: not JSON ({exc})") from exc
-    if not isinstance(obj, dict):
-        raise Malformed(f"{label}: expected a JSON object")
-    return obj
-
-
-def _require(obj: dict, key: str, kind: type, label: str):
-    if key not in obj:
-        raise Malformed(f"{label}: missing required key `{key}`")
-    if not isinstance(obj[key], kind):
-        raise Malformed(f"{label}: `{key}` must be {kind.__name__}")
-    return obj[key]
-
 
 def validate(pre: dict, post: dict, profile: str, run_id: str,
              pin: str | None = None) -> None:
@@ -532,23 +168,10 @@ def validate(pre: dict, post: dict, profile: str, run_id: str,
     enumerated = set(enumerated_list)
     candidate_keys: set[tuple[str, str]] = set()
     for rec in post["candidates"]:
-        if not isinstance(rec, dict):
-            raise Malformed("post: each candidate record must be an object")
-        convid = rec.get("convid")
-        if not isinstance(convid, str) or not convid:
-            raise Malformed("post: each candidate record needs a non-empty `convid`")
-        if convid not in enumerated:
-            raise Malformed(f"post: candidate convid {convid!r} was not enumerated")
-        capability = rec.get("capability")
-        if capability not in CAPABILITIES:
-            raise Malformed(f"post: candidate for unknown capability "
-                            f"{capability!r}")
-        key = (convid, capability)
-        if key in candidate_keys:
-            raise Malformed(f"post: duplicate candidate {key!r}")
-        candidate_keys.add(key)
-        if not isinstance(rec.get("eligible"), bool):
-            raise Malformed("post: each candidate record needs a boolean `eligible`")
+        problem = candidate_shape_problem(rec, enumerated, candidate_keys,
+                                          CAPABILITIES)
+        if problem is not None:
+            raise Malformed(problem)
 
 
 def preflight(pre: dict, profile: str, run_id: str,
@@ -608,11 +231,6 @@ def evaluate(pre: dict, post: dict, ledgers: Path, run_id: str, profile: str) ->
     arrived: list[str] = list(post["arrived_during_run"])
     (conversation_before, folder_items_before, conversation_after,
      folder_items_after, legacy_counts) = _counts(pre, post)
-    reasons: list[str] = []
-    zero_send_proof = None
-    if not legacy_counts and profile == "full":
-        zero_send_proof, zero_send_reasons = _sent_zero_send(pre, post)
-        reasons.extend(zero_send_reasons)
 
     counts = dict.fromkeys(BUCKETS, 0)
     for convid in enumerated:
@@ -621,114 +239,28 @@ def evaluate(pre: dict, post: dict, ledgers: Path, run_id: str, profile: str) ->
             counts[bucket] += 1
     counts["enumerated"] = len(enumerated)
 
-    # --- provenance: the checker distrusts its own inputs -------------------
-    enumeration_complete = (
-        _complete_enumeration(pre, conversation_before)
-        and _complete_enumeration(post, conversation_after)
-    )
-    if not legacy_counts and not enumeration_complete:
-        reasons.append("OC-provenance-incomplete-enumeration")
-    if not legacy_counts and conversation_before != len(enumerated):
-        reasons.append("OC-provenance-pre-enumeration-count")
-    bucket_sum = sum(counts[b] for b in BUCKETS)
-    if bucket_sum != len(enumerated):
-        reasons.append("OC-provenance-bucket-sum")
-    # A guard-stopped row was never archived, so it is still in the Inbox and
-    # counts toward residency exactly as an unaccounted one did.
-    resident = (counts["held_non_drafted"] + counts["held_drafted"]
-                + counts["chipped"] + counts["unaccounted"]
-                + counts["stopped_by_guard"] + len(arrived))
-    if resident != conversation_after:
-        reasons.append("OC-provenance-residency")
-    if legacy_counts and folder_items_after != conversation_after:
-        reasons.append("OC-provenance-folder-count")
-    stray = sorted(set(post_run) - enumerated_set - set(arrived))
-    if stray:
-        reasons.append("OC-provenance-unknown-convid")
-
-    # --- clause (a): accounted, per the run's declared profile --------------
-    #
-    # A STOP HALTS ACTION, NEVER ACCOUNTING (v5.48 for the ingestion ledger,
-    # v5.52 here). A run whose safety guard correctly ended every mutation still
-    # owes a terminal bucket for every row it enumerated: `stopped_by_guard`
-    # says "no disposition was written because writing one was forbidden", and
-    # it is ACCOUNTED. It is not a free pass — the stop must be RECORDED, and
-    # the record must be corroborated by the run's own ledgers. A row
-    # unaccounted for any OTHER reason still FAILS exactly as before.
-    accounted = ACCOUNTED[profile]
-    unaccounted_convids = sorted(
-        c for c in enumerated if post_run.get(c) not in accounted)
-    if unaccounted_convids:
-        reasons.append("OC-a-unaccounted")
-
-    stopped_convids = sorted(
-        c for c in enumerated if post_run.get(c) == "stopped_by_guard")
-    guard_stop = _guard_stop_shape(post, enumerated_set)
-    if stopped_convids and guard_stop is None:
-        reasons.append("OC-guard-stop-unrecorded")
-    elif stopped_convids and not guard_stop_corroborated(
-            ledgers, run_id, guard_stop["guard"]):
-        reasons.append("OC-guard-stop-uncorroborated")
-
-    # The lane the owner pinned is the lane the run owes. A fallback is a named
-    # failure with the elected lane on the record, never a silent lane change.
-    if pin is not None and not legacy_counts:
-        if pre["browser_election"]["elected"] != pin:
-            reasons.append("OC-lane-pin-not-honoured")
-
-    # `label-only` forbids archiving: an archived row is a scope violation.
-    if profile == "label-only" and counts["archived"]:
-        reasons.append("OC-scope-violation-archived-under-label-only")
-
-    # --- capability liveness -------------------------------------------------
-    liveness: dict[str, dict] = {}
-    unattributed_total = 0
-    eligible_seen = {cap: 0 for cap in CAPABILITIES}
-    raw_seen = {cap: 0 for cap in CAPABILITIES}
-    archive_candidates: set[str] = set()
-    for rec in post["candidates"]:
-        cap = rec["capability"]
-        raw_seen[cap] += 1
-        if cap == "archives":
-            archive_candidates.add(rec["convid"])
-        if rec["eligible"]:
-            eligible_seen[cap] += 1
-        elif not rec.get("exclusion_reason"):
-            if "OC-candidate-no-exclusion-reason" not in reasons:
-                reasons.append("OC-candidate-no-exclusion-reason")
-
-    # A newly classified hold is legitimate when its archive decision was
-    # reported and rejected by a safety guard. Missing that per-conversation
-    # evidence is the degenerate "label everything Held" shape.
-    held_total = counts["held_non_drafted"] + counts["held_drafted"]
-    newly_held = {
-        convid for convid in enumerated
-        if convid not in pre_holds
-        and post_run.get(convid) in {"held_non_drafted", "held_drafted"}
-    }
-    if (profile == "full" and held_total > len(pre_holds)
-            and counts["archived"] == 0 and not arrived
-            and not newly_held.issubset(archive_candidates)):
-        reasons.append("OC-degenerate")
-
-    for cap in CAPABILITIES:
-        declared = post["capabilities"].get(cap)
-        in_scope = IN_SCOPE[profile][cap]          # computed, never read
-        if not isinstance(declared, dict):
-            reasons.append(f"OC-liveness-missing:{cap}")
-        elif declared.get("in_scope") != in_scope:
-            reasons.append(f"OC-liveness-in-scope:{cap}")
-        rows, unattributed = run_scoped_rows(ledgers, LEDGER_GLOB[cap], run_id)
-        unattributed_total += unattributed
-        output = COUNTERS[cap](rows)
-        liveness[cap] = {
-            "in_scope": in_scope,
-            "output": output,
-            "eligible_inputs": eligible_seen[cap],
-            "raw_inputs": raw_seen[cap],
-        }
-        if in_scope and output == 0 and eligible_seen[cap] > 0:
-            reasons.append(f"OC-liveness:{cap}")
+    # The clause families run in the order the verdict_reasons list has always
+    # carried them: zero-send + provenance, clause (a) with the guard-stop
+    # corroboration, the candidate scan, the anti-degenerate guard, liveness.
+    (enumeration_complete, clause_reasons, zero_send_proof,
+     stray) = provenance_reasons(
+        pre, post, counts, BUCKETS, enumerated, enumerated_set, arrived,
+        conversation_before, conversation_after, folder_items_after,
+        legacy_counts, _complete_enumeration, _sent_zero_send, profile)
+    unaccounted_convids, stopped_convids, guard_stop, a_reasons = (
+        accounting_reasons(
+            profile, ACCOUNTED[profile], post, pre, enumerated,
+            enumerated_set, counts, legacy_counts, pin, ledgers, run_id,
+            _guard_stop_shape, guard_stop_corroborated))
+    reasons = clause_reasons + a_reasons
+    eligible_seen, raw_seen, archive_candidates = candidate_scan(
+        post, CAPABILITIES, reasons)
+    reasons.extend(degenerate_reasons(
+        profile, counts, pre_holds, enumerated, post_run, arrived,
+        archive_candidates))
+    liveness, unattributed_total = capability_liveness(
+        post, profile, ledgers, run_id, eligible_seen, raw_seen, reasons,
+        CAPABILITIES, IN_SCOPE, LEDGER_GLOB, COUNTERS, run_scoped_rows)
 
     block = {
         "run_profile": profile,

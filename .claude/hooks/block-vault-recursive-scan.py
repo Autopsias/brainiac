@@ -182,6 +182,33 @@ def _is_under_vault(abs_path: str, vault_roots: tuple[str, ...]) -> bool:
 
 # -- grep -----------------------------------------------------------------------
 
+def _grep_flag_kind(tok: str) -> str | None:
+    """Classify one FLAG token: 'recursive', 'plain', None (not a flag), or
+    raise _Ambiguous for anything the conservative design refuses to split."""
+    class _Ambiguous(Exception):
+        pass
+    try:
+        if tok.startswith("--"):
+            base = tok.split("=", 1)[0]
+            if base in ("--recursive", "--dereference-recursive"):
+                return "recursive"
+            if "=" in tok:          # self-contained, e.g. --include=*.md
+                return "plain"
+            if base in _GREP_BOOL_LONG:
+                return "plain"
+            raise _Ambiguous        # unknown bare long flag -> ambiguous -> ALLOW
+        if tok.startswith("-") and len(tok) > 1:
+            letters = tok[1:]
+            if any(c in _GREP_ARG_SHORT for c in letters):
+                raise _Ambiguous    # arg-taking letter in cluster -> ambiguous -> ALLOW
+            if "r" in letters or "R" in letters:
+                return "recursive"
+            return "plain"
+    except _Ambiguous:
+        return "ambiguous"
+    return None                     # operand, not a flag
+
+
 def _check_grep(args: list[str], cwd: str, vault_roots: tuple[str, ...]) -> tuple[bool, str]:
     """
     Deny only a CLEAN recursive grep whose path operand(s) are inside the vault.
@@ -204,23 +231,13 @@ def _check_grep(args: list[str], cwd: str, vault_roots: tuple[str, ...]) -> tupl
             end_opts = True
             continue
 
-        if tok.startswith("--"):
-            base = tok.split("=", 1)[0]
-            if base in ("--recursive", "--dereference-recursive"):
-                recursive = True
-                continue
-            if "=" in tok:          # self-contained, e.g. --include=*.md
-                continue
-            if base in _GREP_BOOL_LONG:
-                continue
-            return False, ""        # unknown bare long flag -> ambiguous -> ALLOW
-
-        if tok.startswith("-") and len(tok) > 1:
-            letters = tok[1:]
-            if any(c in _GREP_ARG_SHORT for c in letters):
-                return False, ""    # arg-taking letter in cluster -> ambiguous -> ALLOW
-            if "r" in letters or "R" in letters:
-                recursive = True
+        kind = _grep_flag_kind(tok)
+        if kind == "ambiguous":
+            return False, ""        # ambiguous cluster/flag -> ALLOW
+        if kind == "recursive":
+            recursive = True
+            continue
+        if kind == "plain":
             continue
 
         # Operand.
@@ -244,6 +261,41 @@ def _check_grep(args: list[str], cwd: str, vault_roots: tuple[str, ...]) -> tupl
 
 # -- find -------------------------------------------------------------------------
 
+def _find_roots_start(args: list[str]) -> int:
+    """Index of the first search root: past any leading global options."""
+    i = 0
+    while i < len(args):
+        t = args[i]
+        if t in _FIND_GLOBAL_BARE:
+            i += 1
+        elif t == "-D":                     # -D debugopts (takes an arg)
+            i += 2
+        elif t.startswith("-O"):            # -O<n> (attached) or -O <n>
+            i += 2 if t == "-O" else 1
+        else:
+            break
+    return i
+
+
+def _find_target_verdict(tgt: str, cwd: str,
+                         vault_roots: tuple[str, ...]) -> tuple[bool, str] | None:
+    """One search root's verdict, or None when it must not block."""
+    abs_t = _resolve(tgt, cwd)
+    if not _is_under_vault(abs_t, vault_roots):
+        return None                         # explicit non-vault root -> ALLOW
+    if any(c in tgt for c in "*?["):        # an UNEXPANDED glob under the vault
+        return True, (                      # bash expands it to real dirs -> would recurse
+            f"`find {tgt}` globs a vault path "
+            "(expands to vault dirs -> can stall)"
+        )
+    if not os.path.isdir(abs_t):
+        return None                         # a file / nonexistent root cannot recurse -> ALLOW
+    return True, (
+        f"`find {tgt}` searches a vault directory "
+        "(descends .brain/model etc -> can stall + lock next call)"
+    )
+
+
 def _check_find(args: list[str], cwd: str, vault_roots: tuple[str, ...]) -> tuple[bool, str]:
     """
     Deny only a find that recursively descends a vault DIRECTORY.
@@ -260,23 +312,9 @@ def _check_find(args: list[str], cwd: str, vault_roots: tuple[str, ...]) -> tupl
         if t == "-maxdepth" and j + 1 < len(args) and args[j + 1] in ("0", "1"):
             return False, ""
 
-    # Skip leading global options so an explicit non-vault root after them is seen.
-    i = 0
-    while i < len(args):
-        t = args[i]
-        if t in _FIND_GLOBAL_BARE:
-            i += 1
-            continue
-        if t == "-D":                       # -D debugopts (takes an arg)
-            i += 2
-            continue
-        if t.startswith("-O"):              # -O<n> (attached) or -O <n>
-            i += 2 if t == "-O" else 1
-            continue
-        break
-
     # Collect the search roots (operands up to the first predicate/option).
     roots: list[str] = []
+    i = _find_roots_start(args)
     while i < len(args):
         t = args[i]
         if t in _FIND_PREDICATE_BREAK or t.startswith("-"):
@@ -286,20 +324,9 @@ def _check_find(args: list[str], cwd: str, vault_roots: tuple[str, ...]) -> tupl
 
     targets = roots if roots else ["."]     # no root -> find defaults to cwd
     for tgt in targets:
-        abs_t = _resolve(tgt, cwd)
-        if not _is_under_vault(abs_t, vault_roots):
-            continue                        # explicit non-vault root -> ALLOW
-        if any(c in tgt for c in "*?["):    # an UNEXPANDED glob under the vault
-            return True, (                  # bash expands it to real dirs -> would recurse
-                f"`find {tgt}` globs a vault path "
-                "(expands to vault dirs -> can stall)"
-            )
-        if not os.path.isdir(abs_t):
-            continue                        # a file / nonexistent root cannot recurse -> ALLOW
-        return True, (
-            f"`find {tgt}` searches a vault directory "
-            "(descends .brain/model etc -> can stall + lock next call)"
-        )
+        verdict = _find_target_verdict(tgt, cwd, vault_roots)
+        if verdict:
+            return verdict
     return False, ""                        # all roots outside vault / non-dir -> ALLOW
 
 
@@ -324,28 +351,40 @@ def _command_word(tokens: list[str]) -> tuple[str | None, int]:
     return None, len(tokens)
 
 
-def main() -> None:
+def _read_simple_bash_call() -> tuple[str, str] | None:
+    """stdin tool-call → (command, cwd) for a SIMPLE Bash command, else None.
+
+    None means ALLOW: not a Bash call, no command, unparseable input, or any
+    shell complexity (pipe/and-or/semicolon/substitution/leading cd) — the
+    design only judges single simple commands."""
     try:
         raw = sys.stdin.read()
         data = json.loads(raw) if raw.strip() else {}
     except (json.JSONDecodeError, ValueError):
-        sys.exit(0)                 # unparseable input -> ALLOW
+        return None                     # unparseable input -> ALLOW
 
     if data.get("tool_name") != "Bash":
-        sys.exit(0)
+        return None
 
     cmd = (data.get("tool_input") or {}).get("command", "")
     if not cmd or not cmd.strip():
-        sys.exit(0)
+        return None
 
-    # (1) Bail to ALLOW on ANY shell complexity -> single simple command only.
     stripped = cmd.strip()
     if stripped.startswith("(") or stripped.startswith("cd ") or stripped == "cd":
-        sys.exit(0)
+        return None
     if any(marker in cmd for marker in _COMPLEXITY):
-        sys.exit(0)
+        return None
 
     cwd = data.get("cwd") or os.getcwd()
+    return cmd, cwd
+
+
+def main() -> None:
+    call = _read_simple_bash_call()
+    if call is None:
+        sys.exit(0)
+    cmd, cwd = call
     vault_roots = _vault_roots(cwd)
 
     # (2) Tokenise FIRST (shlex handles quotes correctly); failure -> ALLOW.

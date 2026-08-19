@@ -2,7 +2,7 @@
 # brain-daily-brief — THE single sanctioned host scheduled task (`brain-nightly`,
 # persistence-budget.md THE LOCK). Runs the `brain maintain` umbrella, which is
 # sync --publish + brief PLUS the date-gated branches (Mon=health, Tue=integrity,
-# Sun=digest, 1st=graphify-documented-only) -- see src/brain/core.py
+# Sun=digest, 1st=graphify-documented-only) -- see src/brain/core/
 # BrainCore.maintain + src/brain/maintenance.py maintain_branches.
 #
 # Invoked by macOS launchd (brain-brief-mac.plist) or Windows Task Scheduler

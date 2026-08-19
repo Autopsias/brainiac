@@ -48,14 +48,25 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
-import re
 import shutil
 import sys
 import zipfile
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+# batch-2 drain: shared primitives and the version-propagation lane moved to
+# siblings and re-imported here, so every one of these names keeps its
+# `package_clients` module path (tests import them there).
+from package_shared import (  # noqa: E402,F401
+    DIST_DIR, FRONTMATTER_RE, PLUGINS_DIR, PYPROJECT_PATH, REPO_ROOT,
+    ValidationError, _log, _mini_yaml_parse, parse_skill_frontmatter,
+    validate_json_file, validate_skill_md)
+from package_versions import (  # noqa: E402,F401
+    NPM_PACKAGE_JSON, PLUGIN_NAMES, VERSION_STAMP_PATH, VERSION_STAMP_RE,
+    read_source_version, stamp_skill_version, validate_monotonic_version,
+    validate_npm_version_lockstep, validate_plugin_version_lockstep,
+    validate_version_stamp, write_compat_marker, write_npm_version,
+    write_plugin_versions, write_version_stamp)
 
 # The split: KERNEL = always-useful daily skills. EXTRAS = optional
 # maintenance/admin skills, installed separately ("one command away").
@@ -95,246 +106,7 @@ BRAINIAC_SKILLS = [
 
 CLAUDE_SKILLS_DIR = REPO_ROOT / ".claude" / "skills"
 AGENTS_SKILLS_DIR = REPO_ROOT / ".agents" / "skills"
-PLUGINS_DIR = REPO_ROOT / "plugins"
 COWORK_DIST_DIR = REPO_ROOT / "dist" / "cowork-skills"
-DIST_DIR = REPO_ROOT / "dist"
-PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
-
-# Accept CRLF as well as LF. `.gitattributes` now normalizes the checkout to LF,
-# but a file can still reach this parser with CRLF -- an older clone, an archive,
-# or an edit saved in a Windows editor -- and the LF-only anchor turned that into
-# a bare "no YAML frontmatter block found" on a file whose frontmatter is right
-# there. Belt to .gitattributes' braces; one character each way.
-FRONTMATTER_RE = re.compile(r"^---\r?\n(.*?)\r?\n---\r?\n", re.DOTALL)
-
-
-class ValidationError(Exception):
-    pass
-
-
-def _log(msg: str) -> None:
-    print(msg)
-
-
-# ---------------------------------------------------------------------------
-# Frontmatter parsing (stdlib-only mini-parser, same posture as tools/validate.py)
-# ---------------------------------------------------------------------------
-
-
-def parse_skill_frontmatter(skill_md_path: Path) -> dict:
-    text = skill_md_path.read_text(encoding="utf-8")
-    m = FRONTMATTER_RE.match(text)
-    if not m:
-        raise ValidationError(f"{skill_md_path}: no YAML frontmatter block found")
-    fm_text = m.group(1)
-    try:
-        import yaml  # type: ignore
-
-        data = yaml.safe_load(fm_text)
-    except ImportError:
-        data = _mini_yaml_parse(fm_text)
-    if not isinstance(data, dict):
-        raise ValidationError(f"{skill_md_path}: frontmatter did not parse to a mapping")
-    return data
-
-
-def _mini_yaml_parse(fm_text: str) -> dict:
-    """Minimal top-level ``key: value`` parser — good enough for name/description."""
-    out: dict = {}
-    key = None
-    for line in fm_text.splitlines():
-        if not line.strip() or line.strip().startswith("#"):
-            continue
-        if line.startswith((" ", "\t")):
-            continue  # nested block — not needed for name/description checks
-        if ":" in line:
-            key, _, val = line.partition(":")
-            key = key.strip()
-            val = val.strip()
-            if val.startswith('"') and val.endswith('"') and len(val) >= 2:
-                val = val[1:-1]
-            out[key] = val
-    return out
-
-
-def validate_skill_md(skill_md_path: Path) -> None:
-    fm = parse_skill_frontmatter(skill_md_path)
-    for required in ("name", "description"):
-        if not fm.get(required):
-            raise ValidationError(f"{skill_md_path}: frontmatter missing '{required}'")
-
-
-# ---------------------------------------------------------------------------
-# SKILL_VERSION / dist/COMPAT — generated version marker (VERIFY-ROUND-1)
-#
-# /brainiac-update (s03) compares this marker against ~/brainiac's code
-# version to detect skill<->code skew. It MUST be produced here, from the
-# same pyproject.toml version the code ships, never hand-maintained in any
-# SKILL.md — otherwise the version contract the update skill relies on is
-# unenforceable.
-# ---------------------------------------------------------------------------
-
-
-def read_source_version() -> str:
-    text = PYPROJECT_PATH.read_text(encoding="utf-8")
-    m = re.search(r'(?m)^version\s*=\s*"([^"]+)"', text)
-    if not m:
-        raise ValidationError(f"{PYPROJECT_PATH}: no top-level version = \"...\" found")
-    return m.group(1)
-
-
-def write_compat_marker(version: str) -> Path:
-    DIST_DIR.mkdir(parents=True, exist_ok=True)
-    compat_path = DIST_DIR / "COMPAT"
-    compat_path.write_text(version + "\n", encoding="utf-8")
-    return compat_path
-
-
-# ---------------------------------------------------------------------------
-# Committed version stamp (ADR-0005 Ruling 1) — src/brain/_version.py is the
-# from-source fallback the zero-install VM and the clean-room export report.
-# It MUST be git-committed (the export ships only git-tracked files), and it
-# is rewritten here — release.py runs this packager in the same act as the
-# pyproject bump — so staleness is structurally impossible.
-# ---------------------------------------------------------------------------
-
-VERSION_STAMP_PATH = REPO_ROOT / "src" / "brain" / "_version.py"
-VERSION_STAMP_RE = re.compile(r'(?m)^__version__ = "([^"]+)"$')
-
-VERSION_STAMP_TEMPLATE = '''"""Committed version stamp — GENERATED by tools/package_clients.py; do not hand-edit.
-
-ADR-0005 Ruling 1: the clean-room export ships only git-tracked files, so the
-zero-install VM (staged source, no package metadata) can only report a real
-version if this stamp is COMMITTED. tools/release.py rewrites it (via
-tools/package_clients.py) in the same act as the pyproject.toml bump, so the
-tagged release commit always carries the exact released version. On the
-pip-installed host, importlib.metadata stays primary; brain/__init__.py reads
-this file only as the fallback before 0.0.0+unknown.
-"""
-
-__version__ = "{version}"
-'''
-
-
-def write_version_stamp(version: str) -> Path:
-    content = VERSION_STAMP_TEMPLATE.format(version=version)
-    if not VERSION_STAMP_PATH.exists() or VERSION_STAMP_PATH.read_text(encoding="utf-8") != content:
-        VERSION_STAMP_PATH.write_text(content, encoding="utf-8")
-    return VERSION_STAMP_PATH
-
-
-def validate_version_stamp(version: str) -> None:
-    """Hard error if src/brain/_version.py is missing or != the pyproject SSOT
-    (ADR-0005 Ruling 1 — a stale committed stamp is worse than 0.0.0+unknown)."""
-    if not VERSION_STAMP_PATH.exists():
-        raise ValidationError(f"missing {VERSION_STAMP_PATH} (ADR-0005 Ruling 1 committed version stamp)")
-    m = VERSION_STAMP_RE.search(VERSION_STAMP_PATH.read_text(encoding="utf-8"))
-    if not m:
-        raise ValidationError(f"{VERSION_STAMP_PATH}: no __version__ = \"...\" line found")
-    if m.group(1) != version:
-        raise ValidationError(
-            f"{VERSION_STAMP_PATH}: stamp {m.group(1)!r} != pyproject.toml SSOT version {version!r} "
-            "(ADR-0005 Ruling 1 — rerun tools/package_clients.py and commit the stamp)"
-        )
-
-
-# ---------------------------------------------------------------------------
-# Plugin version propagation (ADR-0004 Ruling 1/5, s06) — the three
-# plugin.json files carry no independent version line; the SSOT is written
-# into all of them at package time, and --validate-only hard-fails any skew.
-# ---------------------------------------------------------------------------
-
-PLUGIN_NAMES = ["brainiac-manager", "brainiac-kernel", "brainiac-extras"]
-
-
-def write_plugin_versions(version: str) -> list[Path]:
-    written: list[Path] = []
-    for pname in PLUGIN_NAMES:
-        plugin_json_path = PLUGINS_DIR / pname / ".claude-plugin" / "plugin.json"
-        data = validate_json_file(plugin_json_path)
-        if data.get("version") != version:
-            data["version"] = version
-            plugin_json_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        written.append(plugin_json_path)
-    return written
-
-
-# The npm bootstrap installer (packaging/npm/brainiac-install) is a FOURTH
-# published artifact, on its own registry. It was bumped by hand in every
-# release commit until 0.19.10, when a release cut through tools/release.py
-# left it a version behind and every lockstep check still reported OK — the
-# validator simply did not know it existed. It is on the SSOT now.
-NPM_PACKAGE_JSON = REPO_ROOT / "packaging" / "npm" / "brainiac-install" / "package.json"
-
-
-def write_npm_version(version: str) -> Path:
-    data = validate_json_file(NPM_PACKAGE_JSON)
-    if data.get("version") != version:
-        data["version"] = version
-        NPM_PACKAGE_JSON.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    return NPM_PACKAGE_JSON
-
-
-def validate_npm_version_lockstep(version: str) -> None:
-    """Hard error if the npm bootstrap's version != the pyproject SSOT version.
-
-    Same rule as the plugin manifests (ADR-0004 Ruling 5): one version line
-    across every published artifact, skew is an error, not a warning."""
-    data = validate_json_file(NPM_PACKAGE_JSON)
-    nversion = data.get("version")
-    if nversion != version:
-        raise ValidationError(
-            f"{NPM_PACKAGE_JSON}: version {nversion!r} != pyproject.toml SSOT version {version!r} "
-            "(ADR-0004 Ruling 5 — single version line, skew is a hard error)"
-        )
-
-
-def validate_monotonic_version(version: str) -> None:
-    """ADR-0005 Ruling 5 (GV-01): hard-fail if the SSOT version on disk is not
-    strictly greater than the release baseline (highest semver-shaped local
-    tag, or itself if no such tag exists — a same-as-baseline version is fine
-    here, since --validate-only runs on a checkout that may already be AT the
-    just-cut version; only a real regression below the baseline must fail).
-    Reuses tools/release.py's guard so the rule lives in exactly one place."""
-    sys.path.insert(0, str(REPO_ROOT / "tools"))
-    import release as _release  # local import: avoid a hard import-time coupling for callers that only need packaging
-
-    baseline = _release.monotonic_baseline(version)
-    if _release._version_key(version) < _release._version_key(baseline):
-        raise ValidationError(
-            f"pyproject.toml SSOT version {version!r} is lower than the release baseline "
-            f"{baseline!r} (highest semver-shaped local tag) — ADR-0005 Ruling 5 monotonic guard"
-        )
-
-
-def validate_plugin_version_lockstep(version: str) -> None:
-    """Hard error on ANY plugin.json version != the pyproject SSOT version
-    (ADR-0004 Ruling 5: single version line, skew-is-error)."""
-    for pname in PLUGIN_NAMES:
-        plugin_json_path = PLUGINS_DIR / pname / ".claude-plugin" / "plugin.json"
-        data = validate_json_file(plugin_json_path)
-        pversion = data.get("version")
-        if pversion != version:
-            raise ValidationError(
-                f"{plugin_json_path}: version {pversion!r} != pyproject.toml SSOT version {version!r} "
-                "(ADR-0004 Ruling 5 — single version line, skew is a hard error)"
-            )
-
-
-def stamp_skill_version(skill_md_path: Path, version: str) -> None:
-    """Append a generated SKILL_VERSION marker line to a DISTRIBUTED copy of a
-    SKILL.md (never the canonical .claude/skills/ source)."""
-    text = skill_md_path.read_text(encoding="utf-8")
-    marker = f"<!-- SKILL_VERSION: {version} (generated by tools/package_clients.py — do not hand-edit) -->\n"
-    # Match only a real marker on its own line — prose may mention
-    # "<!-- SKILL_VERSION: ... -->" mid-line (e.g. brainiac-update docs).
-    marker_re = re.compile(r"^<!-- SKILL_VERSION:.*?-->\n?", re.MULTILINE)
-    if marker_re.search(text):
-        text = marker_re.sub(marker, text, count=1)
-    else:
-        text = text + "\n" + marker
-    skill_md_path.write_text(text, encoding="utf-8")
-
 
 # ---------------------------------------------------------------------------
 # 1. Codex — mirror .claude/skills/<name>/ -> .agents/skills/<name>/
@@ -393,14 +165,19 @@ ENGINE_ASSET_FILES = [
     # (`../tools/cos_retro.py`), so it must ride the wheel beside the wrapper:
     # launchd runs the INSTALLED `_assets/scripts/brain-synthesis.sh`, and a
     # registered workspace has no `tools/` dir of its own.
-    "tools/cos_retro.py",
+    "tools/cos_retro.py", "tools/cos_retro_scanners.py",
     "tools/cos_browser_scan.mjs",
     # INS-01 host run validator. `brain.cos_runverify` RE-EXECUTES these two
     # rather than reading the run's report of them (the outcome-contract verdict
     # and the ledger-derived counters), so an installed engine with no `tools/`
     # dir of its own has to carry them or every nightly scores INCONCLUSIVE.
-    "tools/cos_contract.py",
-    "tools/cos_reconcile_metrics.py",
+    "tools/cos_contract.py", "tools/cos_contract_criteria.py", "tools/cos_contract_criteria_2.py",
+    "tools/cos_contract_snapshot_shape.py", "tools/cos_contract_verdict_clauses.py", "tools/cos_reconcile_metrics.py",
+    # batch-2 drain: the shipped checkers import these siblings at load time
+    # (the sync prunes unlisted mirrors, and an installed engine has no tools/).
+    "tools/cos_contract_ledger_scan.py", "tools/cos_contract_provenance.py",
+    "tools/cos_reconcile_rows.py", "tools/cos_reconcile_guard.py", "tools/cos_reconcile_append.py",
+    "tools/cos_reconcile_steps.py",  # closure: cos_reconcile_metrics imports it at module load
     # `brain graph-report` HTML shell — the payload <script type="application/
     # json"> block is spliced in at render time by src/brain/graphreport.py;
     # everything else here is static (CSS/JS/WebGL viewer).
@@ -549,13 +326,6 @@ def validate_cowork_zip(zip_path: Path, version: str) -> None:
 # ---------------------------------------------------------------------------
 # Validation of the static marketplace/plugin/config artifacts
 # ---------------------------------------------------------------------------
-
-
-def validate_json_file(path: Path) -> dict:
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ValidationError(f"{path}: invalid JSON — {exc}") from exc
 
 
 def validate_marketplace() -> None:

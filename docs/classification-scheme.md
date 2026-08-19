@@ -81,7 +81,7 @@ This is an **ingest consistency** question, not an egress one. It also
 independently rules out any ranking-time merge of *name-similar* documents:
 collapsing such a pair would assert an identity the tiers themselves contradict
 (which is why the shipped family collapse requires byte-identity plus an
-owner-accepted supersession link, `src/brain/index.py`).
+owner-accepted supersession link, `src/brain/index/`).
 
 **Before acting, re-measure** — the counts above are a dated snapshot. The shape
 of the decision is: which copy carries the honest tier, and does ingest re-label

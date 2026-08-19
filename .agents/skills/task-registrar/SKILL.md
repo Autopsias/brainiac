@@ -32,7 +32,7 @@ skill enforces that lock structurally:
 - The HOST leg registers exactly one task: `brain-nightly`
   (`brain maintain --json`), which already does sync+publish+brief AND the
   date-gated health/integrity/digest branches internally (one OS entry, many
-  cadences multiplexed inside it — see `src/brain/core.py` `BrainCore.maintain`).
+  cadences multiplexed inside it — see `src/brain/core/` `BrainCore.maintain`).
 - The COWORK leg never sets a cron/schedule expression on anything it
   registers. The triggers it creates are **poke-only** (fired manually, by
   name, via the Cowork scheduled-tasks tools' own "run now" / `fire_trigger`

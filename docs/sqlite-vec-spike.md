@@ -37,7 +37,7 @@ implementations, selected by `get_backend()`:
   works everywhere** (incl. SQLCipher), correct (slower at scale). The
   guaranteed fallback.
 
-The index/retrieval code (`src/brain/index.py`) imports ONLY the adapter, never
+The index/retrieval code (`src/brain/index/`) imports ONLY the adapter, never
 `sqlite_vec`. Both backends pass the identical retrieval contract test
 (`tests/test_index.py`, parametrized over available backends). This satisfies
 "define the adapter + fallback BEFORE writing retrieval code."

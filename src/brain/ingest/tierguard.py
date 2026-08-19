@@ -195,6 +195,12 @@ def _floor_bytes(body: str) -> int:
     return fb(body)
 
 
+def _match_key(match: tuple[int, str, str, float]) -> tuple[int, bool, float]:
+    """Sort matches by tier, decided evidence, then similarity."""
+    rank, leg, _note_id, score = match
+    return rank, leg == "same_document", score
+
+
 class CrossTierGuard:
     """One per ingest run. Build is lazy; the caller threads the same instance
     through every candidate (and every nested zip member / eml attachment) so
@@ -279,31 +285,45 @@ class CrossTierGuard:
 
     # -- the verdict ------------------------------------------------------
     def verdict(self, body: str, tier: str) -> Verdict:
-        """The tier ``body`` may be admitted at, given the corpus.
-
-        Never below ``tier``. ``status`` is one of ``clear`` (judged, no
-        higher-tier twin), ``raised``, ``subfloor`` (ENF-01: too short to
-        judge) or ``unavailable`` (no corpus / disabled / index error)."""
+        """Return the high-water admission tier for ``body``."""
         base = tier_of(tier)
-        if tier_rank(base) >= tier_rank(TIERS[-1]):
-            # Already at the top tier — nothing can outrank it, so there is
-            # nothing to check and nothing that could lower it. This is the
-            # email/attachment lane's whole path (MNPI by default): it never
-            # builds the corpus table and never pays a millisecond.
-            self.counts.top_tier += 1
-            return Verdict(tier=base, status=CLEAR)
+        early, tokens, docs = self._verdict_precheck(body, base)
+        if early is not None:
+            return early
+        assert docs is not None
+        survivors = self._screen_higher_tiers(tokens, tier_rank(base), docs)
+        if not survivors:
+            return self._clear_verdict(base)
+        best = self._best_exact_match(tokens, survivors)
+        if best is None:
+            return self._clear_verdict(base)
+        return self._raise_verdict(base, best)
 
+    def _verdict_precheck(
+        self,
+        body: str,
+        base: str,
+    ) -> tuple[
+        Verdict | None,
+        list[str],
+        list[tuple[str, int, frozenset[int]]] | None,
+    ]:
+        """Apply the top-tier, body-floor, and corpus-availability gates."""
+        if tier_rank(base) >= tier_rank(TIERS[-1]):
+            self.counts.top_tier += 1
+            return Verdict(tier=base, status=CLEAR), [], None
         floor = _floor()
         tokens = _ct_tokens(body or "")
-        if len(tokens) < CROSS_TIER_MIN_TOKENS or _floor_bytes(body or "") < floor:
+        body_bytes = _floor_bytes(body or "")
+        if len(tokens) < CROSS_TIER_MIN_TOKENS or body_bytes < floor:
             self.counts.subfloor += 1
-            return Verdict(
-                tier=base, status=SUBFLOOR,
-                reason=(f"body below the ENF-01 duplicate-identity floor "
-                        f"({_floor_bytes(body or '')}B < {floor}B, "
-                        f"{len(tokens)} tokens < {CROSS_TIER_MIN_TOKENS}) — "
-                        "too short to judge, admitted at the declared tier"))
-
+            reason = (
+                "body below the ENF-01 duplicate-identity floor "
+                f"({body_bytes}B < {floor}B, {len(tokens)} tokens < "
+                f"{CROSS_TIER_MIN_TOKENS}) — too short to judge, admitted "
+                "at the declared tier"
+            )
+            return Verdict(tier=base, status=SUBFLOOR, reason=reason), tokens, None
         docs = self._table()
         if docs is None:
             if self._error == _NO_CORPUS_ERROR:
@@ -312,80 +332,115 @@ class CrossTierGuard:
                     tier=base, status=NO_CORPUS,
                     reason=("the corpus holds no comparable document to check "
                             "against — nothing could outrank this source, so it "
-                            "is admitted at the declared tier"))
+                            "is admitted at the declared tier")), tokens, None
             self.counts.unavailable += 1
-            return Verdict(
-                tier=base, status=UNAVAILABLE,
-                reason=(f"no cross-tier check was made: {self._error} — "
-                        "admitted at the declared tier"))
-
+            reason = (
+                f"no cross-tier check was made: {self._error} — "
+                "admitted at the declared tier"
+            )
+            return Verdict(tier=base, status=UNAVAILABLE, reason=reason), tokens, None
         self.counts.judged += 1
-        base_rank = tier_rank(base)
+        return None, tokens, docs
+
+    def _screen_higher_tiers(
+        self,
+        tokens: list[str],
+        base_rank: int,
+        docs: list[tuple[str, int, frozenset[int]]],
+    ) -> list[tuple[str, int]]:
+        """Return higher-tier documents surviving the shared sketch gate."""
         sketch = _ct_sketch(tokens)
-
-        # -- leg 1: the screen. Only a STRICTLY HIGHER tier can change the
-        # outcome, so the rank test comes first and most of the scan never
-        # touches a set operation. `invariants.screen_gate` scales the gate with
-        # the smaller sketch — see it for why a fixed 48 discarded every
-        # low-vocabulary document. ENF-05 closed the same hole in the detector
-        # this imports from, so there is one gate, measured once.
-        survivors = [(nid, rk) for nid, rk, sk in docs
-                     if rk > base_rank
-                     and len(sketch & sk) >= screen_gate(len(sketch), len(sk))]
+        survivors = [
+            (note_id, rank)
+            for note_id, rank, other_sketch in docs
+            if rank > base_rank
+            and len(sketch & other_sketch)
+            >= screen_gate(len(sketch), len(other_sketch))
+        ]
         self.counts.screened += len(survivors)
-        if not survivors:
-            self.counts.clear += 1
-            return Verdict(tier=base, status=CLEAR)
+        return survivors
 
-        # -- legs 2 and 3: exact verification on the real token sets, for the
-        # screen's survivors only.
+    def _best_exact_match(
+        self,
+        tokens: list[str],
+        survivors: list[tuple[str, int]],
+    ) -> tuple[int, str, str, float] | None:
+        """Choose the highest, strongest exact-leg match."""
         words = set(tokens)
         shingles = _ct_shingles(tokens)
         decided_only = _env_on(DECIDED_ONLY_ENV)
-        best: tuple[int, str, str, float] | None = None  # rank, leg, id, score
-        for nid, rk in survivors:
-            other = self._tokens_for(nid)
-            if other is None:
+        best: tuple[int, str, str, float] | None = None
+        for note_id, rank in survivors:
+            measured = self._measure_exact_match(
+                note_id,
+                words,
+                shingles,
+                decided_only,
+            )
+            if measured is None:
                 continue
-            if nid not in self._words:
-                self._words[nid] = set(other)
-            word_j = _jaccard(words, self._words[nid])
-            if word_j < CROSS_TIER_CANDIDATE:
-                continue
-            self.counts.shared_substance += 1
-            if nid not in self._shingles:
-                self._shingles[nid] = _ct_shingles(other)
-            shingle_j = _jaccard(shingles, self._shingles[nid])
-            if shingle_j >= CROSS_TIER_SAME_DOC:
-                self.counts.same_document += 1
-                leg, score = "same_document", shingle_j
-            elif decided_only:
-                continue
-            else:
-                leg, score = "shared_substance", word_j
-            # High-water mark: the most sensitive twin wins. Between two twins
-            # at the SAME tier prefer the decided leg, then the higher score —
-            # the reason line should name the strongest evidence, not the
-            # first row scanned.
-            key = (rk, leg == "same_document", score)
-            if best is None or key > (best[0], best[1] == "same_document", best[3]):
-                best = (rk, leg, nid, score)
+            leg, score = measured
+            candidate = (rank, leg, note_id, score)
+            if best is None or _match_key(candidate) > _match_key(best):
+                best = candidate
+        return best
 
-        if best is None:
-            self.counts.clear += 1
-            return Verdict(tier=base, status=CLEAR)
+    def _measure_exact_match(
+        self,
+        note_id: str,
+        words: set[str],
+        shingles: set[tuple[str, ...]],
+        decided_only: bool,
+    ) -> tuple[str, float] | None:
+        """Measure the exact shared-substance and same-document legs."""
+        other = self._tokens_for(note_id)
+        if other is None:
+            return None
+        self._words.setdefault(note_id, set(other))
+        word_jaccard = _jaccard(words, self._words[note_id])
+        if word_jaccard < CROSS_TIER_CANDIDATE:
+            return None
+        self.counts.shared_substance += 1
+        self._shingles.setdefault(note_id, _ct_shingles(other))
+        shingle_jaccard = _jaccard(shingles, self._shingles[note_id])
+        if shingle_jaccard >= CROSS_TIER_SAME_DOC:
+            self.counts.same_document += 1
+            return "same_document", shingle_jaccard
+        if decided_only:
+            return None
+        return "shared_substance", word_jaccard
 
-        rk, leg, nid, score = best
-        raised_to = TIERS[rk]
+    def _clear_verdict(self, base: str) -> Verdict:
+        self.counts.clear += 1
+        return Verdict(tier=base, status=CLEAR)
+
+    def _raise_verdict(
+        self,
+        base: str,
+        best: tuple[int, str, str, float],
+    ) -> Verdict:
+        rank, leg, note_id, score = best
+        raised_to = TIERS[rank]
         self.counts.raised += 1
         self.counts.raised_by_leg[leg] = self.counts.raised_by_leg.get(leg, 0) + 1
-        measure = ("5-word-shingle Jaccard" if leg == "same_document"
-                   else "word-set Jaccard")
+        measure = (
+            "5-word-shingle Jaccard" if leg == "same_document" else "word-set Jaccard"
+        )
+        threshold = (
+            CROSS_TIER_SAME_DOC if leg == "same_document" else CROSS_TIER_CANDIDATE
+        )
+        reason = (
+            f"raised {base} -> {raised_to}: {leg.replace('_', ' ')} as "
+            f"{note_id} ({raised_to}), {measure} {score:.3f} >= {threshold}"
+        )
         return Verdict(
-            tier=raised_to, status=RAISED, leg=leg, twin=nid, similarity=score,
-            reason=(f"raised {base} -> {raised_to}: {leg.replace('_', ' ')} as "
-                    f"{nid} ({raised_to}), {measure} {score:.3f} "
-                    f">= {CROSS_TIER_SAME_DOC if leg == 'same_document' else CROSS_TIER_CANDIDATE}"))
+            tier=raised_to,
+            status=RAISED,
+            leg=leg,
+            twin=note_id,
+            similarity=score,
+            reason=reason,
+        )
 
     # -- in-run admission -------------------------------------------------
     def admit(self, note_id: str, body: str, tier: str) -> None:

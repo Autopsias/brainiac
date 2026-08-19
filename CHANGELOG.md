@@ -7,6 +7,117 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.21] — 2026-08-19
+### Fixed
+- **The quarantine trend alerted nightly on files nobody had to look at.** The
+  `quarantine` health metric was a recursive file count of the whole
+  `inbox/_quarantine/` tree, so it counted everything under `_resolved/` — the
+  area a triage session parks already-dispositioned lots in, with their
+  `TRIAGE.md` and per-file `.reason.txt` sidecars. On the reference vault that
+  was 835 of 841 files: a documented, deliberate retirement of 212 files read
+  as +37 % growth against the trailing baseline and fired `trend:quarantine`
+  into every session start for four days, while the genuinely pending
+  quarantine was five orphan sidecars and a `.DS_Store`. `_count_files` now
+  counts PENDING content only (nothing under a `_resolved/` path segment, no
+  dotfiles), so the metric measures what its alert claims and a triage session
+  no longer creates a fortnight of false alarms.
+- **The linking lane had no consumer-side instrument, so a stalled lane and a
+  working one looked identical.** `unlinked_sources` counts the backlog, which
+  moves for reasons that have nothing to do with the lane (an exclusion-set
+  change, a dedup pass), and nothing measured whether the worst-first slice the
+  `corpus_invariants` fold writes each night was ever worked. A week of
+  guessing followed, including a confident wrong diagnosis that the weekly
+  session never read the file. `write_link_lane` now records `consumed_today`
+  (how many of the standing slice's candidates left the unlinked population,
+  cumulative within the generated day so the hourly fold cannot double-count,
+  reset on rollover) into the lane file and `link_lane_consumed` into
+  `health-history.jsonl`. A run of zeros while candidates exist is now visible
+  instead of inferred.
+- **`unreachable_gold` reported three different problems as one number.** Every
+  unreached gold document counted the same whether it was absent from the index,
+  in the `multi_hop` stratum a single-query sweep structurally cannot reach,
+  recoverable by the caller-opt-in variant contract, or a genuine ranking gap.
+  The metric now partitions its headline into `absent_from_index` /
+  `requires_multi_hop` / `variant_recoverable` / `ranking_gap` — exclusive
+  buckets that always sum to the value — and `brain health-report` renders them.
+  Same doctrine the link-coverage metric already carried, inverted: "N
+  unreachable" must not quietly mean "N including the ones no ranking change can
+  fix".
+- **`brain doctor` printed a read-not-recomputed metric under a fresh "last run"
+  stamp.** The corpus-invariants row listed every metric inline beneath the
+  fold's own run date, so `unreachable_gold` — read from a reachability artifact
+  produced on a separate, manual cadence — read as measured today when it was
+  eight days old. A reader could not tell from the surface, and one did not. Any
+  metric carrying its own `generated` date is now stamped with it
+  (`unreachable_gold=54@2026-08-10`).
+- **A doubled golden set would have made the reachability ratchet alert every
+  night.** `unreachable_gold`'s threshold is the best value ever recorded, an
+  absolute count — so expanding the golden set (181 → 375 labels) put a fresh,
+  correct measurement above a floor recorded on a different denominator, with
+  no way for the ratchet to know. The floor now records its label basis
+  alongside its value and re-seeds like a first observation when the basis
+  changes; an unchanged basis still ratchets and still alerts.
+- **Swept machine records outranked substantive documents at the top of the
+  weekly linking slice.** The lane sorts worst-first by classification, and a
+  workspace sweep stamps its own daily run reports `Restricted` — so three of
+  the first four candidates in a 40-item weekly budget were overnight-run logs
+  ("nightly ran 05:06 — DEGRADED"), which no honest derived note can be written
+  about. Sources carrying both `status: draft` and `provenance.trust: untrusted`
+  now sort after trusted sources within their classification band. Membership
+  and the metric are untouched — only slice order changes.
+- **Every COS ledger append failed under an explicit `--vault` from a foreign
+  directory.** `_append_lock_path` resolved its off-mount lock-directory proof
+  with no vault: true that the lock KEY needs none (it hashes the ledger path),
+  false that the PROOF does, since proving a path is off the VM-visible mount
+  resolves the vault root. So `brain --vault <path> maintain` run from anywhere
+  that is not itself a vault raised `VaultNotFoundError` out of claims, version
+  links, outcomes, defects, demotions and sweep claims alike. Scheduled runs
+  never saw it because their wrapper exports `$BRAIN_VAULT`. The vault now
+  threads through `_append_jsonl` to the proof.
+
+### Changed
+- **The weekly synthesis session works the linking lane FIRST.** It sat last of
+  five scopes in a turn-capped session and was reliably starved — measured at
+  ~7 of 40 candidates a week against a ~34/week intake, so the backlog grew
+  behind a lane that was genuinely switched on and looked healthy from every
+  surface. The session is also now required to state its own coverage count
+  beside the fold's `consumed_today`, and to say so in one line when it covered
+  nothing while candidates existed.
+- **The three engine monoliths became packages (tier-4 split).** `core.py`,
+  `cos.py` and `index.py` are now packages of focused modules behind
+  import-compatible facades, and the COS tool monoliths split the same way
+  (`cos_driver_transport.py`, `cos_mutate_*`). No behaviour change is
+  intended: the split is mechanical, the full suite covers it, and the three
+  quality ratchets pass whole-project with zero blocking violations.
+
+### Added
+- **The COS ingestion bridge turns a staged candidate into a proposal, never
+  silently.** A candidate the nightly staged used to stop there; the bridge
+  carries it into the proposal path with its attachment lane intact, and a
+  drop it cannot deliver quarantines loudly instead of disappearing. Six
+  adversarial review rounds shaped it, and the design ruling is worth stating
+  because a later reader will otherwise try to undo it: the bridge's
+  "already delivered" VERDICT was DELETED rather than hardened, because the
+  untrusted VM leg could forge it. The bridge now re-proposes every candidate
+  every pass and the engine's own replay guard suppresses duplicates —
+  authority sits on the side of the boundary that can be trusted with it.
+  Gated OFF by default (`COS_INGEST_BRIDGE=1`).
+
+### Fixed
+- **A synthesis run that died after writing its notes left them unsigned.**
+  The host sign-drain in `brain-synthesis.sh` — which exists precisely because
+  the confined session holds no audit key and cannot sign what it writes —
+  sat behind `if [ "$RC" -eq 0 ]`. So a guard in front of the fix restored the
+  exact gap the fix closes: the 2026-08-19 run worked its whole linking lane,
+  then hit the model provider's session limit on its last step and exited 1,
+  leaving 11 real notes indexed with no audit-chain entry and the
+  `unsigned_notes` invariant regressed off its zero floor. The drain now runs
+  whatever the session's exit code was, and the reindex follows the signatures
+  rather than the verdict, since a signed note that is not indexed is not
+  retrievable. The run's failure is still reported as a failure — signing
+  never launders a failed session into a successful one.
+
+
 ## [0.20.19] — 2026-08-18
 ### Fixed
 - **The test suite wrote into every registered live vault.** Running

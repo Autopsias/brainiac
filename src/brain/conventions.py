@@ -41,11 +41,10 @@ Discovery limits (read before trusting a clean run):
   - Enclosing-function resolution assumes standard 4-space, tab-free
     indentation (true of this codebase; ``ruff format`` enforces it) and
     walks a simple indent stack rather than parsing scopes properly.
-  - One file (``cli.py``) dispatches many subcommands from a single giant
-    function (``_main``); for that file only, the site id is sharpened by
-    scanning backward for the nearest ``if cmd == "<name>":`` guard so
-    ``brain write`` gets its own registry entry instead of collapsing every
-    CLI verb into one ``cli._main`` bucket.
+  - Legacy ``cli.py`` dispatch sites are sharpened by scanning backward for
+    the nearest ``if cmd == "<name>":`` guard. New command handlers live in
+    named ``cli_cmds`` functions, so their ordinary module/function identity
+    is already precise.
 """
 from __future__ import annotations
 
@@ -53,28 +52,30 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from .conventions_scan import discover_creation_sites as discover_creation_sites_impl
+
 # -- the registry -------------------------------------------------------------
 
 NOTE_CREATION_POLICIES: dict[str, dict[str, str]] = {
-    "core.capture": {
-        "path": "core.BrainCore.capture (ad-hoc captures AND the daily-note "
-                "fold, which calls capture() with note_type='daily')",
+    "core._briefing.capture": {
+        "path": "core/_briefing.py BrainCore.capture (ad-hoc captures AND the "
+                "daily-note fold, which calls capture() with note_type='daily')",
         "kind": "chained",
         "reason": "daily notes chain to yesterday's note (LNK-02); ad-hoc "
                   "captures are the caller's responsibility, counted by the "
                   "daily kl_orphans watch (LNK-03b)",
     },
-    "core.drain_drafts": {
-        "path": "core.BrainCore.drain_drafts (drain-on-invoke promotion of "
-                "capture-inbox/ drafts — VM draft_capture, cos-propose, "
-                "auto-capture holds all land here)",
+    "draft_drain._sign_wal_index_candidate": {
+        "path": "draft_drain.DraftDrainMixin._sign_wal_index_candidate "
+                "(drain-on-invoke promotion of capture-inbox/ drafts — VM "
+                "draft_capture, cos-propose, auto-capture holds all land here)",
         "kind": "autolinked",
         "reason": "sweep-promotion runs autolink.apply_autolinks on the "
                   "draft body before signing (LNK-01)",
     },
-    "ingest.pipeline._process_claimed": {
-        "path": "ingest.pipeline._process_claimed (inbox document promotion "
-                "-> raw/)",
+    "ingest.pipeline_stages.signed_note_write_stage": {
+        "path": "ingest.pipeline_stages.signed_note_write_stage (inbox "
+                "document promotion -> raw/)",
         "kind": "autolinked",
         "reason": "attendee/origin autolinking applied before write_note "
                   "(LNK-01); raw/ itself carries no linking obligation "
@@ -88,34 +89,38 @@ NOTE_CREATION_POLICIES: dict[str, dict[str, str]] = {
                   "(LNK-01); raw/ itself carries no linking obligation "
                   "(AGENTS.md §3 binds brain/ only) — this is opportunistic",
     },
-    "cli.write": {
-        "path": "cli._main, `brain write` dispatch -> core.write_note",
+    "cli_cmds.ingest_storage._run_write": {
+        "path": "cli_cmds.ingest_storage._run_write, `brain write` dispatch "
+                "-> core.write_note",
         "kind": "exempt",
         "reason": "host-broker direct write of an operator-authored body — "
                   "links are the caller's own responsibility per AGENTS.md §3",
     },
-    "core._supersede_locked": {
-        "path": "core.BrainCore._supersede_locked (via supersede())",
+    "core._supersession._supersede_locked": {
+        "path": "core/_supersession.py BrainCore._supersede_locked "
+                "(via supersede())",
         "kind": "exempt",
         "reason": "rewrites frontmatter of two EXISTING notes (both sides of "
                   "a version chain) — no new note body is created",
     },
-    "core._unsupersede_locked": {
-        "path": "core.BrainCore._unsupersede_locked (via unsupersede())",
+    "core._supersession._unsupersede_locked": {
+        "path": "core/_supersession.py BrainCore._unsupersede_locked "
+                "(via unsupersede())",
         "kind": "exempt",
         "reason": "DROPS the supersession keys from two EXISTING notes "
                   "(undoing a wrong DDP-01 auto-link, ENF-01) — no new note "
                   "body is created, the exact inverse of _supersede_locked",
     },
-    "core._recover_pending_supersede": {
-        "path": "core.BrainCore._recover_pending_supersede",
+    "core._supersession_journal._recover_pending_supersede": {
+        "path": "core/_supersession_journal.py "
+                "BrainCore._recover_pending_supersede",
         "kind": "exempt",
         "reason": "crash-recovery rewrite restoring a note's pre-transaction "
                   "content — not note creation",
     },
-    "cos._retire_signed_note": {
-        "path": "cos._retire_signed_note (undo of an ALREADY-SIGNED "
-                "auto-captured note, HARDENED:codex-9)",
+    "cos._hold_undo._retire_signed_note": {
+        "path": "cos/_hold_undo.py _retire_signed_note (undo of an "
+                "ALREADY-SIGNED auto-captured note, HARDENED:codex-9)",
         "kind": "exempt",
         "reason": "stamps retired/retired_date/retired_reason on an EXISTING "
                   "note through the audited write path — a retirement, not a "
@@ -154,74 +159,14 @@ def discover_creation_sites(src_root: Path) -> list[CreationSite]:
     choke point and return one :class:`CreationSite` per call, with its
     would-be ``NOTE_CREATION_POLICIES`` key already computed. See the module
     docstring for what this scan does and does not catch."""
-    sites: list[CreationSite] = []
-    for file in sorted(src_root.rglob("*.py")):
-        if "__pycache__" in file.parts:
-            continue
-        if file.name == "conventions.py":
-            # this module's own docstring quotes call-shaped example text
-            # (``<expr>.write_note(``) — not a real site, exclude by name
-            # rather than trying to out-clever prose detection.
-            continue
-        lines = file.read_text(encoding="utf-8").splitlines()
-        modname = _module_name(src_root, file)
-        # indent stack of (def_line_indent, function_name). Popped on ANY
-        # NEW logical line (not just `def`s) that dedents to <= a stack
-        # entry's indent — otherwise a nested helper (e.g. `_append` inside
-        # `_process_claimed`) would wrongly stay "current" for the rest of
-        # the outer function once its own body ends. ``paren_depth`` tracks
-        # unclosed ``([{`` so a multi-line def signature or call's closing
-        # line (indent-aligned back to the opening statement) is treated as
-        # a CONTINUATION of the same logical line, never as a dedent —
-        # otherwise closing a multi-arg ``def foo(\n  ...\n):`` at the def's
-        # own indent would immediately pop the very scope it just opened.
-        # Blank/comment-only lines are skipped for indent purposes; a naive
-        # char count also can't see brackets inside string literals — a
-        # documented limitation (module docstring).
-        stack: list[tuple[int, str]] = []
-        paren_depth = 0
-        for i, line in enumerate(lines, start=1):
-            is_continuation = paren_depth > 0
-            stripped = line.strip()
-            if stripped and not stripped.startswith("#"):
-                indent = len(line) - len(line.lstrip())
-                if not is_continuation:
-                    m = _DEF_RE.match(line)
-                    if m:
-                        while stack and indent <= stack[-1][0]:
-                            stack.pop()
-                        stack.append((indent, m.group("name")))
-                    else:
-                        while stack and indent <= stack[-1][0]:
-                            stack.pop()
-            paren_depth += sum(line.count(ch) for ch in "([{")
-            paren_depth -= sum(line.count(ch) for ch in ")]}")
-            paren_depth = max(paren_depth, 0)
-            if not is_continuation and _DEF_RE.match(line):
-                continue  # the def line itself is never a call site
-            if not _CALL_RE.search(line):
-                continue
-            enclosing = stack[-1][1] if stack else "<module>"
-            if enclosing == "write_note":
-                continue  # inside the definition body itself — not a
-                          # distinct external creation site.
-            site_id = f"{modname}.{enclosing}"
-            if modname == "cli":
-                cmd_name = None
-                for prev in reversed(lines[:i - 1]):
-                    cm = _CMD_RE.search(prev)
-                    if cm:
-                        cmd_name = cm.group(1)
-                        break
-                    if _DEF_RE.match(prev):
-                        break  # walked out of the enclosing function
-                if cmd_name:
-                    site_id = f"cli.{cmd_name}"
-            sites.append(CreationSite(
-                file=str(file.relative_to(src_root)), function=enclosing,
-                line=i, site_id=site_id,
-            ))
-    return sites
+    return discover_creation_sites_impl(
+        src_root,
+        module_name=_module_name,
+        definition_pattern=_DEF_RE,
+        call_pattern=_CALL_RE,
+        command_pattern=_CMD_RE,
+        site_factory=CreationSite,
+    )
 
 
 def unmapped_sites(sites: list[CreationSite],

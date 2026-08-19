@@ -321,6 +321,15 @@
     return t[0] || null;
   }
 
+  /* SCROLL CADENCE. Measured 2026-08-18: these were tuned to Chrome's row
+   * hydration rate. ego lite renders a Space as an isolated BrowserContext and
+   * hydrates rows about half as fast, so 0.9-viewport steps at 330 ms outran it
+   * and the scan ended early and CLEAN — atEnd, stagnant, no error — at 119 of
+   * 228. Half-viewport steps at 1200 ms collect all 228 on both browsers. A scan
+   * that stops early without failing is the dangerous shape, so the cadence is
+   * slow enough for the slowest surface rather than fastest for the quickest. */
+  var STEP_FRACTION = 0.5, DWELL_MS = 1200, STAGNANT_STOP = 12;
+
   function scanView(maxScrolls) {
     var c = scrollContainer();
     if (!c) return Promise.resolve({ids: [], declared: 0, scrolls: 0,
@@ -339,15 +348,15 @@
       });
       var atEnd = c.scrollHeight > 0 && c.scrollTop + c.clientHeight >= c.scrollHeight - 2;
       if (atEnd && count === before) stagnant += 1; else if (!atEnd) stagnant = 0;
-      if ((atEnd && stagnant >= 3) || scrolls >= maxScrolls) {
+      if ((atEnd && stagnant >= STAGNANT_STOP) || scrolls >= maxScrolls) {
         return {ids: Object.keys(seen), declared: declared, scrolls: scrolls,
                 stagnant: stagnant, at_end: atEnd, view: selectedView(),
-                complete: atEnd && stagnant >= 3 && declared > 0 && count === declared};
+                complete: atEnd && stagnant >= STAGNANT_STOP && declared > 0 && count === declared};
       }
       var prev = c.scrollTop;
-      c.scrollTop = c.scrollTop + Math.max(320, Math.floor(c.clientHeight * 0.9));
+      c.scrollTop = c.scrollTop + Math.max(160, Math.floor(c.clientHeight * STEP_FRACTION));
       scrolls += 1;
-      return sleep(330).then(function () {
+      return sleep(DWELL_MS).then(function () {
         if (c.scrollTop !== prev) stagnant = 0;
         return loop();
       });

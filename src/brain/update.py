@@ -30,12 +30,8 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 
-from .reexec import engine_version_moved, reexec_after_engine_move  # noqa: F401
-from .vmstaging import (
-    stage_vm_binaries,
-    stage_vm_support_files,
-    vm_binaries_verdict,
-)
+from .reexec import reexec_after_engine_move  # noqa: F401
+from .vmstaging import stage_vm_binaries, vm_binaries_verdict
 from .doctor import (
     CHANNEL_EDITABLE,
     CHANNEL_PIP_USER,
@@ -51,6 +47,14 @@ from .doctor import (
     render_human,
     run_doctor,
 )
+from .update_channels import (
+    WorkspaceStageCallbacks,
+    refresh_engine_channel,
+    stage_engine_and_skills as stage_engine_and_skills_impl,
+    restage_workspaces as restage_workspaces_impl,
+)
+from .update_channels_2 import UpdateFlowCallbacks, run_update_flow
+from .update_plugins import _default_runner as _default_runner  # noqa: F401
 
 # --------------------------------------------------------------------------
 # Runner abstraction — the ONLY place subprocess.run is called from this
@@ -104,175 +108,6 @@ def _packaged_script(name: str, engine_src: Optional[Path] = None) -> Optional[P
         if c.is_file():
             return c
     return None
-
-
-def _default_runner(cmd: list[str], **kwargs: Any) -> "subprocess.CompletedProcess[str]":
-    kwargs.setdefault("capture_output", True)
-    kwargs.setdefault("text", True)
-    kwargs.setdefault("timeout", 120)
-    return subprocess.run(cmd, **kwargs)
-
-
-# --------------------------------------------------------------------------
-# Preflight capability probe (HARDEN:consensus-HIGH)
-# --------------------------------------------------------------------------
-
-REQUIRED_SUBCOMMANDS = ("marketplace", "list", "uninstall", "install", "update")
-
-#: Reported when dist-rebuild/re-stage are skipped for lack of a checkout.
-_NO_CHECKOUT_DETAIL = (
-    "skipped — no local checkout resolved (tried explicit/$BRAINIAC_ENGINE_SRC/"
-    "__file__/marketplace installLocation) (a PyPI-first install "
-    "has none by default; only needed to re-stage Cowork workspaces — clone "
-    "https://github.com/Autopsias/brainiac.git and pass --engine-src, or set "
-    "$BRAINIAC_ENGINE_SRC, if you use Cowork)"
-)
-
-
-def probe_cli_capability(run: Runner = _default_runner) -> dict:
-    """Confirm the ``claude plugin`` CLI surface this module drives exists
-    before any destructive call. Never assert the surface from memory —
-    parse ``claude plugin --help`` and require every subcommand this module
-    calls to be present. Blocks (does not raise) on mismatch: callers must
-    check ``ok`` and stop, printing the manual fallback commands.
-    """
-    claude_bin = resolve_claude_bin()
-    if claude_bin is None:
-        return {
-            "ok": False,
-            "reason": "`claude` CLI not found on PATH",
-            "manual_commands": [
-                "install/repair the Claude Code CLI, then re-run `brain update`",
-            ],
-        }
-    try:
-        out = run([claude_bin, "plugin", "--help"])
-    except Exception as exc:
-        return {
-            "ok": False,
-            "reason": f"`claude plugin --help` failed: {type(exc).__name__}: {exc}",
-            "manual_commands": [
-                "claude plugin marketplace update <name>",
-                "claude plugin list",
-                "claude plugin uninstall <plugin>@<marketplace>",
-                "claude plugin install <plugin>@<marketplace>",
-                "claude plugin update <plugin>@<marketplace>",
-            ],
-        }
-    text = ((out.stdout or "") + "\n" + (out.stderr or "")).lower()
-    missing = [c for c in REQUIRED_SUBCOMMANDS if c not in text]
-    if missing:
-        return {
-            "ok": False,
-            "reason": f"`claude plugin --help` is missing expected subcommand(s): {missing} "
-                      "(gh#69626 pruning / gh#40153 non-atomic auto-update are cited real risks "
-                      "of this surface moving under us) — refusing to drive it blind",
-            "manual_commands": [
-                "claude plugin marketplace update <name>",
-                "claude plugin list",
-                "claude plugin uninstall <plugin>@<marketplace>",
-                "claude plugin install <plugin>@<marketplace>",
-                "claude plugin update <plugin>@<marketplace>",
-            ],
-        }
-    return {"ok": True, "reason": "claude plugin CLI surface confirmed", "manual_commands": []}
-
-
-# --------------------------------------------------------------------------
-# Step: marketplace refresh (ALWAYS FIRST — kills the stale-cache no-op)
-# --------------------------------------------------------------------------
-
-def refresh_marketplace(marketplace_name: str, run: Runner = _default_runner) -> dict:
-    claude_bin = resolve_claude_bin() or "claude"
-    try:
-        out = run([claude_bin, "plugin", "marketplace", "update", marketplace_name])
-    except Exception as exc:
-        return {"ok": False, "detail": f"{type(exc).__name__}: {exc}"}
-    ok = out.returncode == 0
-    return {"ok": ok, "detail": (out.stdout or out.stderr or "").strip()}
-
-
-# --------------------------------------------------------------------------
-# Downgrade-safe reinstall decision (pure logic — no subprocess) + execution
-# --------------------------------------------------------------------------
-
-def decide_plugin_action(installed: Optional[str], marketplace: Optional[str]) -> str:
-    """Pure decision function (fixture-testable, ADR-0005 Ruling 3):
-
-    - installed is None            -> "install"        (never installed)
-    - marketplace is None          -> "skip"           (nothing to compare against)
-    - installed >  marketplace     -> "reinstall"      (reconciliation downgrade,
-                                                          uninstall+clean install)
-    - installed <  marketplace     -> "update"         (normal forward update)
-    - installed == marketplace     -> "skip"           (already current)
-    """
-    if installed is None:
-        return "install"
-    if marketplace is None:
-        return "skip"
-    cmp_ = _compare(installed, marketplace)
-    if cmp_ == 0:
-        return "skip"
-    return "reinstall" if cmp_ > 0 else "update"
-
-
-def apply_plugin_action(
-    action: str, plugin_name: str, marketplace_name: str, run: Runner = _default_runner,
-) -> dict:
-    """Execute the decided action. ROLLBACK-safe ordering (HARDEN:claude-MEDIUM):
-    for "reinstall", uninstall ONLY after we've confirmed we're about to run
-    install right after in the same call — if install fails after a
-    successful uninstall, this returns ok=False with the plugin left absent,
-    and the caller (run_update) surfaces that as a partial/mixed-version
-    state rather than claiming success.
-    """
-    claude_bin = resolve_claude_bin() or "claude"
-    spec = f"{plugin_name}@{marketplace_name}"
-    if action == "skip":
-        return {"action": "skip", "ok": True, "detail": "already current"}
-
-    if action == "install":
-        out = run([claude_bin, "plugin", "install", spec])
-        ok = out.returncode == 0
-        return {"action": "install", "ok": ok, "detail": (out.stdout or out.stderr or "").strip()}
-
-    if action == "update":
-        # `claude plugin install` on an already-installed plugin is a no-op
-        # (prints "already installed", does NOT upgrade) — `claude plugin
-        # update` is the subcommand that actually moves the installed
-        # version forward. Verified live against v0.10.0's `claude plugin`
-        # CLI: install no-ops, update reports "updated from X to Y".
-        out = run([claude_bin, "plugin", "update", spec])
-        ok = out.returncode == 0
-        return {"action": "update", "ok": ok, "detail": (out.stdout or out.stderr or "").strip()}
-
-    if action == "reinstall":
-        uninstall_out = run([claude_bin, "plugin", "uninstall", spec])
-        if uninstall_out.returncode != 0:
-            # Uninstall itself failed: plugin is presumably still in its
-            # original (installed>marketplace) state. Not worse than before.
-            return {
-                "action": "reinstall", "ok": False, "stage": "uninstall",
-                "detail": (uninstall_out.stdout or uninstall_out.stderr or "").strip(),
-            }
-        install_out = run([claude_bin, "plugin", "install", spec])
-        if install_out.returncode != 0:
-            # WORST case (HARDEN:claude-MEDIUM): uninstall succeeded, install
-            # failed -> plugin is now ABSENT, strictly worse than the
-            # downgraded start. Report this explicitly so the caller can
-            # print the exact recovery command rather than a green report.
-            return {
-                "action": "reinstall", "ok": False, "stage": "install",
-                "detail": (install_out.stdout or install_out.stderr or "").strip(),
-                "half_applied": True,
-                "recovery_command": f"claude plugin install {spec}",
-            }
-        return {
-            "action": "reinstall", "ok": True,
-            "detail": (install_out.stdout or install_out.stderr or "").strip(),
-        }
-
-    raise ValueError(f"unknown plugin action: {action!r}")
 
 
 # --------------------------------------------------------------------------
@@ -336,71 +171,15 @@ def refresh_engine_venv(
     PATH-resolved `brain` binary is what makes `brain update` self-heal the
     right thing regardless of how the engine was installed.
     """
-    legacy_venv_dir = brainiac_home / "venv"
-    legacy_bin = _venv_bin(legacy_venv_dir, "brain")
-    which_brain = shutil.which("brain")
-    brain_bin: Optional[Path] = legacy_bin if legacy_bin.exists() else (
-        Path(which_brain) if which_brain else None
+    return refresh_engine_channel(
+        engine_src,
+        brainiac_home,
+        run,
+        detect_channel=detect_install_channel,
+        venv_bin=_venv_bin,
+        which_brain=shutil.which("brain"),
+        python_executable=sys.executable,
     )
-    channel = detect_install_channel(brain_bin) if brain_bin else CHANNEL_EDITABLE
-
-    def _read_version(bin_path: Optional[Path]) -> str:
-        if not bin_path or not Path(bin_path).exists():
-            return "unknown"
-        try:
-            out = run([str(bin_path), "--version"])
-            return (out.stdout or out.stderr or "unknown").strip() or "unknown"
-        except Exception:
-            return "unknown"
-
-    old_version = _read_version(brain_bin)
-    has_checkout = engine_src is not None and (engine_src / "pyproject.toml").exists()
-
-    if channel == CHANNEL_PYPI_UV:
-        install_out = run(["uv", "tool", "upgrade", "brainiac-cli"])
-    elif channel == CHANNEL_PIPX:
-        install_out = run(["pipx", "upgrade", "brainiac-cli"])
-    elif channel == CHANNEL_PIP_USER:
-        install_out = run([sys.executable, "-m", "pip", "install", "--user",
-                           "--upgrade", "brainiac-cli[mcp]"])
-    elif channel == CHANNEL_VENV_WHEEL:
-        # RC2: a NON-editable wheel in ~/.brainiac/venv — upgrade IN-VENV, never
-        # `pip install -e` (which would flip a wheel install into editable and
-        # bind it to a checkout path). Prefer the local checkout build when one
-        # exists (this machine: the SSOT may be newer than a not-yet-published
-        # PyPI), else pull the published wheel.
-        pip = _venv_bin(legacy_venv_dir, "pip")
-        target = f"{engine_src}[mcp]" if has_checkout else "brainiac-cli[mcp]"
-        install_out = run([str(pip), "install", "--upgrade", target])
-        brain_bin = legacy_bin
-    else:  # editable-checkout — the pre-PyPI / --dev / offline path
-        if not has_checkout:
-            # Fail fast with an actionable message instead of `pip install -e`
-            # against None / a nonexistent path (the old ~/brainiac footgun).
-            return {
-                "ok": False,
-                "old_version": old_version,
-                "new_version": old_version,
-                "detail": ("editable-checkout channel but no engine checkout resolved — "
-                           "pass --engine-src <clone> or set $BRAINIAC_ENGINE_SRC to a "
-                           "checkout with pyproject.toml"),
-                "channel": channel,
-            }
-        if not _venv_bin(legacy_venv_dir, "pip").exists():
-            run(["python3", "-m", "venv", str(legacy_venv_dir)])
-        pip = _venv_bin(legacy_venv_dir, "pip")
-        install_out = run([str(pip), "install", "--upgrade", "-e", f"{engine_src}[mcp]"])
-        brain_bin = legacy_bin
-
-    ok = install_out.returncode == 0
-    new_version = _read_version(brain_bin) if ok else old_version
-    return {
-        "ok": ok,
-        "old_version": old_version,
-        "new_version": new_version,
-        "detail": (install_out.stdout or install_out.stderr or "").strip(),
-        "channel": channel,
-    }
 
 
 # --------------------------------------------------------------------------
@@ -515,27 +294,6 @@ def write_update_state(
 
 
 # --------------------------------------------------------------------------
-# dist/ rebuild — `pip install -e` (engine venv refresh, above) refreshes the
-# installed package/venv but NEVER regenerates the gitignored dist/COMPAT +
-# dist/cowork-skills/*.skill artifacts that restage_workspaces' cowork-vm leg
-# copies (tools/package_clients.py is the only thing that builds those).
-# Skipping this is the exact bug observed live twice (0.10.2->0.10.3 and
-# 0.10.3->0.10.4): restage_workspaces silently staged one-build-stale .skill
-# bundles and `brain doctor` flagged "Staged skill bundles stale" / "dist/COMPAT
-# stale" until a human ran the packager by hand and re-ran `brain update`.
-# --------------------------------------------------------------------------
-
-def rebuild_dist(engine_src: Path, run: Runner = _default_runner) -> dict:
-    packager = engine_src / "tools" / "package_clients.py"
-    try:
-        out = run([sys.executable, str(packager)], cwd=str(engine_src))
-    except Exception as exc:
-        return {"ok": False, "detail": f"{type(exc).__name__}: {exc}"}
-    ok = out.returncode == 0
-    return {"ok": ok, "detail": (out.stdout or out.stderr or "").strip()}
-
-
-# --------------------------------------------------------------------------
 # Workspace re-stage — thin wrapper delegating to workspace_registry; never
 # reimplements its locking/schema. For target "cowork-vm" this re-runs the
 # (a) engine-source and (d) skill-bundle legs of
@@ -545,79 +303,6 @@ def rebuild_dist(engine_src: Path, run: Runner = _default_runner) -> dict:
 # already covers for a routine update). Doing the copy in Python keeps it
 # testable with plain tmp-path fixtures instead of a real bash subprocess.
 # --------------------------------------------------------------------------
-
-_VERSION_STAMP_RE = re.compile(r'(?m)^__version__ = "([^"]+)"$')
-
-
-def _read_version_stamp(stamp_path: Path) -> Optional[str]:
-    if not stamp_path.exists():
-        return None
-    m = _VERSION_STAMP_RE.search(stamp_path.read_text(encoding="utf-8"))
-    return m.group(1) if m else None
-
-
-def _resolve_shipped_model_source() -> tuple[Path, str]:
-    """Resolve the exact model snapshot/file selected by the running engine."""
-    from .embed import OnnxEmbedder
-
-    embedder = OnnxEmbedder()
-    onnx_path, base = embedder._resolve_model_files()
-    if Path(onnx_path).name != Path(embedder._onnx_file).name:
-        raise RuntimeError(
-            f"resolved ONNX file {onnx_path!r} does not match "
-            f"the selected model contract {embedder._onnx_file!r}"
-        )
-    return Path(base), embedder._onnx_file
-
-
-def _stage_model_cache(brain_dir: Path, source: tuple[Path, str]) -> dict:
-    """Atomically replace ``.brain/model`` with the selected minimal snapshot."""
-    base, onnx_file = source
-    required = (onnx_file, "tokenizer.json")
-    optional = ("tokenizer_config.json", "special_tokens_map.json", "config.json")
-    missing = [rel for rel in required if not (base / rel).is_file()]
-    if missing:
-        raise FileNotFoundError(
-            f"selected model snapshot {base} is incomplete; missing {', '.join(missing)}"
-        )
-
-    brain_dir.mkdir(parents=True, exist_ok=True)
-    staged = Path(tempfile.mkdtemp(prefix=".model-stage-", dir=brain_dir))
-    try:
-        copied: list[str] = []
-        for rel in (*required, *optional):
-            src = base / rel
-            if not src.is_file():
-                continue
-            dst = staged / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst, follow_symlinks=True)
-            copied.append(rel)
-
-        model_dir = brain_dir / "model"
-        old = brain_dir / ".model-previous"
-        if old.exists():
-            shutil.rmtree(old)
-        if model_dir.exists():
-            model_dir.replace(old)
-        try:
-            staged.replace(model_dir)
-        except Exception:
-            if old.exists() and not model_dir.exists():
-                old.replace(model_dir)
-            raise
-        if old.exists():
-            shutil.rmtree(old)
-        return {
-            "model_dir": str(model_dir),
-            "model_file": onnx_file,
-            "model_files": copied,
-            "model_bytes": sum((model_dir / rel).stat().st_size for rel in copied),
-        }
-    finally:
-        if staged.exists():
-            shutil.rmtree(staged)
-
 
 def stage_engine_and_skills(
     engine_src: Path,
@@ -635,177 +320,41 @@ def stage_engine_and_skills(
     Returns a dict with the SSOT/staged versions and skill count so the
     caller can assert-and-fail rather than silently report ok.
     """
-    brain_dir = Path(workspace_path) / ".brain"
-
-    # (a) engine source — replace wholesale, drop __pycache__ (mirrors the
-    # script's `rm -rf` + `cp -R` + pycache cleanup).
-    engine_dir = brain_dir / "engine"
-    if engine_dir.exists():
-        shutil.rmtree(engine_dir)
-    engine_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(engine_src / "src" / "brain", engine_dir / "brain")
-    for cache_dir in (engine_dir / "brain").rglob("__pycache__"):
-        shutil.rmtree(cache_dir, ignore_errors=True)
-
-    # (b) selected model snapshot — an engine refresh without this leg can
-    # leave e5 beside a BGE-configured engine and silently break every dense
-    # query in the VM. Resolve once per update, then replace the cache as one
-    # directory so the VM never observes a half-copied 563 MB model.
-    source = model_source or _resolve_shipped_model_source()
-    model_status = _stage_model_cache(brain_dir, source)
-
-    # (d) skill bundles (cw-02) — refresh from the current dist build.
-    skills_src_dir = engine_src / "dist" / "cowork-skills"
-    skills_dst_dir = brain_dir / "skills"
-    skills_dst_dir.mkdir(parents=True, exist_ok=True)
-    zips = sorted(skills_src_dir.glob("*.skill")) if skills_src_dir.is_dir() else []
-    for z in zips:
-        shutil.copyfile(z, skills_dst_dir / z.name)
-
-    # (c/c2/c3 + prompt + AGENTS.md + probes) the VM-facing extras — see
-    # brain/vmstaging.py.
-    vendor_status = stage_vm_support_files(brain_dir, engine_src, _packaged_script)
-
-    # (a-ELF) the frozen Linux binaries — the leg this function omitted until
-    # 2026-08-16; see brain/vmstaging.py for what that cost.
-    bin_status = stage_vm_binaries(brain_dir, engine_src / "dist")
-
-    ssot = _ssot_version(engine_src)
-    staged = _read_version_stamp(engine_dir / "brain" / "_version.py")
-    bin_ok, bin_detail = vm_binaries_verdict(bin_status, ssot)
+    callbacks = WorkspaceStageCallbacks(
+        packaged_script=_packaged_script,
+        resolve_model_source=_resolve_shipped_model_source,
+        stage_model_cache=_stage_model_cache,
+        ssot_version=_ssot_version,
+        read_version_stamp=_read_version_stamp,
+    )
+    staged = stage_engine_and_skills_impl(
+        engine_src,
+        workspace_path,
+        model_source=model_source,
+        callbacks=callbacks,
+    )
+    bin_status = stage_vm_binaries(Path(workspace_path) / ".brain", engine_src / "dist")
+    binaries_ok, binaries_detail = vm_binaries_verdict(
+        bin_status, staged.get("ssot_version")
+    )
     return {
-        "ssot_version": ssot,
-        "staged_version": staged,
-        "version_ok": ssot is not None and staged == ssot,
-        "skills_shipped": len(zips),
-        "skills_src_dir": str(skills_src_dir),
-        "vendor_status": vendor_status,
-        "model_status": model_status,
+        **staged,
         "binaries": bin_status,
-        "binaries_ok": bin_ok,
-        "binaries_detail": bin_detail,
+        "binaries_ok": binaries_ok,
+        "binaries_detail": binaries_detail,
     }
-
-
-def _restage_no_op_reason(stage_info: dict) -> str | None:
-    """The no-silent-no-op predicate (DV-01, ADR-0005 Ruling 1): why this
-    re-stage must NOT be reported ok, or None if it is genuinely fine.
-
-    One predicate rather than three inline guards — the original defect was a
-    re-stage reporting "ok" off the index sync alone while the staged engine
-    stayed at a stale pre-0.10.0 copy, and every artifact this function landed
-    has since earned the same treatment.
-    """
-    if not stage_info["version_ok"]:
-        return (f"staged engine version {stage_info['staged_version']!r} != "
-                f"SSOT {stage_info['ssot_version']!r} after re-stage — "
-                "engine copy landed a missing/stale _version.py stamp")
-    # Same rule for the ELF leg (2026-08-16): without it the re-stage reports
-    # ok while the VM's PATH-first binary is releases behind and silently
-    # ranking on hash vectors.
-    if not stage_info["binaries_ok"]:
-        return stage_info["binaries_detail"]
-    if stage_info["skills_shipped"] == 0:
-        return (f"no .skill bundles found in {stage_info['skills_src_dir']} "
-                "to refresh — run tools/package_clients.py in the checkout")
-    return None
 
 
 def restage_workspaces(
     engine_src: Path, brainiac_home: Path, run: Runner = _default_runner,
 ) -> list[dict]:
-    import sys as _sys
-
-    _sys.path.insert(0, str(engine_src / "tools"))
-    import workspace_registry as _wr  # type: ignore
-
-    results = []
-    model_source: tuple[Path, str] | None = None
-    model_source_error: str | None = None
-    brain_bin = brainiac_home / "venv" / "bin" / "brain"
-    for entry in _wr.list_entries():
-        vault_path = entry.get("vault_path", "")
-        workspace_path = entry.get("workspace_path", "")
-        target = entry.get("target")
-        import platform
-        import socket
-
-        # Gate on arch ONLY (BUG A, pre-existing since v0.10.0): macOS
-        # `socket.gethostname()` is UNSTABLE — it flips between the mDNS
-        # `.local` name and the DHCP-assigned name for the SAME machine
-        # (verified live: an entry staged as `oldhost.local`
-        # read back as `Mac.lan` on an unchanged host), so a hostname-based
-        # gate silently skips the user's own workspace and the re-stage below
-        # never runs. arch is stable and still protects against a genuinely
-        # different (stale, other-machine) entry; the folder-exists check
-        # right below is the second layer of defense for a same-arch entry
-        # that's actually a different machine (its path won't resolve here).
-        if entry.get("arch") != platform.machine():
-            results.append({"workspace_path": workspace_path, "target": target,
-                            "status": "skipped", "reason": "different arch"})
-            continue
-        if entry.get("host") != socket.gethostname():
-            # Self-heal rather than skip: rewrite the entry's host to the
-            # current hostname so the registry stops drifting every time
-            # macOS flips which name it hands back.
-            _wr.upsert_entry(vault_path=vault_path, workspace_path=workspace_path,
-                              target=target, model_dir=entry.get("model_dir"))
-        if not Path(vault_path or workspace_path).exists():
-            results.append({"workspace_path": workspace_path, "target": target,
-                            "status": "skipped", "reason": "folder missing"})
-            continue
-
-        if target == "host":
-            # Engine venv refresh already covers this leg (Step 3); only the
-            # nightly task remains and that's a separate, per-vault script
-            # (scripts/install-brief-mac.sh) — not re-implemented here.
-            results.append({"workspace_path": workspace_path, "target": target,
-                            "status": "ok", "reason": "engine refresh covers host leg"})
-        elif target == "cowork-vm":
-            # BUG B: the Cowork VM reads `<vault_path>/.brain` (this is what
-            # `tools/cowork_workspace_install.sh` stages into as `$VAULT`) —
-            # `workspace_path` is the PARENT checkout dir, whose own `.brain`
-            # (if any) is the unrelated HOST stage. Staging into
-            # `workspace_path` re-stages the host copy (already current) and
-            # reads its version back as "ok" while the real VM engine at
-            # `vault_path/.brain/engine` never moves. Must stage vault_path.
-            try:
-                if model_source is None and model_source_error is None:
-                    try:
-                        model_source = _resolve_shipped_model_source()
-                    except Exception as exc:
-                        model_source_error = f"{type(exc).__name__}: {exc}"
-                if model_source_error is not None:
-                    raise RuntimeError(
-                        f"selected model could not be resolved: {model_source_error}"
-                    )
-                assert model_source is not None
-                stage_info = stage_engine_and_skills(
-                    engine_src, vault_path, model_source=model_source
-                )
-            except (OSError, RuntimeError) as exc:
-                results.append({"workspace_path": workspace_path, "target": target,
-                                "status": "failed",
-                                "reason": f"engine/model/skill re-stage failed: "
-                                          f"{type(exc).__name__}: {exc}"})
-                continue
-            no_op = _restage_no_op_reason(stage_info)
-            if no_op:
-                results.append({"workspace_path": workspace_path, "target": target,
-                                "status": "failed", "reason": no_op})
-                continue
-            sync_out = run([str(brain_bin), "sync", "--publish"],
-                           env={**os.environ, "BRAIN_VAULT": vault_path})
-            ok = sync_out.returncode == 0
-            results.append({"workspace_path": workspace_path, "target": target,
-                            "status": "ok" if ok else "failed",
-                            "reason": (sync_out.stdout or sync_out.stderr or "").strip()})
-            if ok:
-                _wr.touch_refreshed(vault_path=vault_path, workspace_path=workspace_path, target=target)
-        else:
-            results.append({"workspace_path": workspace_path, "target": target,
-                            "status": "skipped", "reason": f"unknown target {target!r}"})
-    return results
+    return restage_workspaces_impl(
+        engine_src,
+        brainiac_home,
+        run,
+        stage_workspace=stage_engine_and_skills,
+        resolve_model_source=_resolve_shipped_model_source,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -843,190 +392,44 @@ def run_update(
     mutating call (marketplace update, plugin install/uninstall, pip install,
     workspace re-stage) — used by the evidence transcript in this session so
     no live plugin store or venv is touched.
+
+    The delegated flow preserves the source ordering contract:
+    ``refresh_marketplace(marketplace_name, run=run)`` precedes
+    ``before_doctor = run_doctor(``.
     """
-    brainiac_home = brainiac_home or Path(os.environ.get("BRAINIAC_HOME", Path.home() / ".brainiac"))
+    brainiac_home = brainiac_home or Path(
+        os.environ.get("BRAINIAC_HOME", Path.home() / ".brainiac")
+    )
     claude_home = claude_home or (Path.home() / ".claude")
-    resolved_engine_src = resolve_engine_source(explicit=engine_src, claude_home=claude_home)
-
-    result: dict[str, Any] = {
-        "ok": False,
-        "steps": {},
-        "before_after": [],
-        # RC6/step 9: the Cowork Desktop-store residue line is printed ONLY
-        # when `brain doctor` actually reports that surface stale (populated
-        # after after_doctor below) — a current store gets no noise.
-        "residual_human_steps": [],
-    }
-
-    # Step 0 — preflight capability probe (HARDEN:consensus-HIGH)
-    if skip_capability_probe:
-        probe = {"ok": True, "reason": "probe skipped by caller", "manual_commands": []}
-    else:
-        probe = probe_cli_capability(run=run)
-    result["steps"]["capability_probe"] = probe
-    if not probe["ok"]:
-        result["notes"] = ("BLOCKED before any destructive call: " + probe["reason"] +
-                            ". Manual commands: " + "; ".join(probe["manual_commands"]))
-        return result
-
-    # Step 1 — marketplace refresh FIRST (structurally kills the stale-cache
-    # no-op — HARDEN:codex-HIGH). This MUST run before `before_doctor` below:
-    # `brain doctor`'s "Installed CLI plugin" rows read the marketplace's
-    # on-disk checkout (the exact cache this refresh updates), so computing
-    # `before_doctor` first would make the reinstall decision at Step 2 compare
-    # against pre-refresh marketplace data — the stale-cache no-op this whole
-    # ordering exists to kill (GV-02).
-    if dry_run:
-        mkt_refresh = {"ok": True, "detail": "[dry-run] claude plugin marketplace update "
-                                              f"{marketplace_name} (skipped)"}
-    else:
-        mkt_refresh = refresh_marketplace(marketplace_name, run=run)
-    result["steps"]["marketplace_refresh"] = mkt_refresh
-    if not mkt_refresh["ok"]:
-        result["notes"] = f"marketplace refresh failed: {mkt_refresh['detail']} — stopping before any plugin mutation."
-        return result
-
-    # `before_doctor` is captured AFTER the marketplace refresh, so the
-    # plugin-action decision below and the final before->after table both
-    # reflect a fresh marketplace read, never a stale pre-refresh snapshot.
-    before_doctor = run_doctor(brainiac_home=brainiac_home, claude_home=claude_home)
-    before_table = {r["surface"]: r["detail"] for r in before_doctor["rows"]}
-    result["steps"]["doctor_before"] = render_human(before_doctor)
-
-    # Step 2 — per-plugin downgrade-safe reinstall decision + apply.
-    plugin_rows = [r for r in before_doctor["rows"] if r["surface"].startswith("Installed CLI plugin")]
-    plugin_actions = []
-    half_applied = []
-    failed_updates = []
-    for row in plugin_rows:
-        raw = row.get("raw") or {}
-        installed = raw.get("installed")
-        marketplace = raw.get("marketplace")
-        pname = row["surface"].split("(", 1)[1].rstrip(")")
-        action = decide_plugin_action(installed, marketplace)
-        if dry_run:
-            applied = {"action": action, "ok": True, "detail": f"[dry-run] would {action}"}
-        else:
-            applied = apply_plugin_action(action, pname, marketplace_name, run=run)
-            # No-op detection (the CLI's `plugin install` on an already-
-            # installed plugin silently no-ops instead of upgrading — the
-            # exact bug this session fixes). Re-read the installed version
-            # after the action and assert it actually moved to marketplace;
-            # a no-op must never report ok:true.
-            if action == "update" and applied.get("ok"):
-                refreshed = check_installed_cli_plugins(claude_home, "", marketplace_name)
-                after_row = next((r for r in refreshed if r["surface"] == row["surface"]), None)
-                after_version = (after_row or {}).get("raw", {}).get("installed")
-                if after_version == installed:
-                    applied = {
-                        **applied,
-                        "ok": False,
-                        "detail": (
-                            f"plugin {pname} still at {installed} after update — the claude "
-                            "plugin CLI no-op'd; run `/plugin update "
-                            f"{pname}@{marketplace_name}` manually and restart"
-                        ),
-                    }
-        plugin_actions.append({"plugin": pname, "installed_before": installed,
-                               "marketplace": marketplace, **applied})
-        if applied.get("half_applied"):
-            half_applied.append(applied)
-        elif action == "update" and not applied.get("ok"):
-            failed_updates.append(applied)
-    result["steps"]["plugin_reinstall"] = plugin_actions
-    if half_applied:
-        result["notes"] = ("update INCOMPLETE — surfaces at mixed versions: a reinstall "
-                            "half-applied (uninstall ok, install failed). Recovery: " +
-                            "; ".join(h["recovery_command"] for h in half_applied))
-        result["steps"]["doctor_after"] = render_human(run_doctor(brainiac_home=brainiac_home, claude_home=claude_home))
-        return result
-    if failed_updates:
-        result["notes"] = ("update INCOMPLETE — plugin update no-op'd: " +
-                            "; ".join(f["detail"] for f in failed_updates))
-        result["steps"]["doctor_after"] = render_human(run_doctor(brainiac_home=brainiac_home, claude_home=claude_home))
-        return result
-
-    # Step 3 — engine venv refresh.
-    if dry_run:
-        engine_result = {"ok": True, "old_version": before_table.get("Host engine venv", "unknown"),
-                         "new_version": "[dry-run] not executed", "detail": "[dry-run] pip -e skipped"}
-    else:
-        engine_result = refresh_engine_venv(resolved_engine_src, brainiac_home, run=run)
-    result["steps"]["engine_refresh"] = engine_result
-    if not engine_result["ok"] and not dry_run:
-        result["notes"] = f"engine venv refresh failed: {engine_result['detail']} — stopping before workspace re-stage."
-        return result
-
-    reexec_after_engine_move(engine_result, dry_run=dry_run)
-
-    # Step 3.5 — rebuild dist/ (COMPAT + cowork-skills bundles) from the
-    # freshly-installed engine, BEFORE staging workspaces below reads it.
-    # PYP-04: dist_rebuild and workspace re-stage both need a REAL checkout
-    # (tools/package_clients.py, dist/cowork-skills/) — a PyPI-first host
-    # install has none by default, and only Cowork workspaces need either
-    # step. Gate on the checkout actually existing so a host-only PyPI
-    # install's `brain update` never fails on a step it doesn't need.
-    no_checkout_detail = _NO_CHECKOUT_DETAIL
-    engine_src_available = (
-        resolved_engine_src is not None and (resolved_engine_src / "pyproject.toml").exists()
+    resolved_engine_src = resolve_engine_source(
+        explicit=engine_src,
+        claude_home=claude_home,
     )
-    if dry_run:
-        dist_rebuild = {"ok": True, "detail": "[dry-run] tools/package_clients.py (skipped)"}
-    elif not engine_src_available:
-        dist_rebuild = {"ok": True, "skipped": True, "detail": no_checkout_detail}
-    else:
-        dist_rebuild = rebuild_dist(resolved_engine_src, run=run)
-    result["steps"]["dist_rebuild"] = dist_rebuild
-    if not dist_rebuild["ok"] and not dry_run:
-        result["notes"] = f"dist rebuild failed: {dist_rebuild['detail']} — stopping before workspace re-stage."
-        return result
-
-    # Step 4 — re-stage every registered workspace.
-    if dry_run:
-        workspace_results: list[dict] = [{"workspace_path": "[dry-run]", "target": "n/a",
-                                          "status": "skipped", "reason": "dry-run: no re-stage executed"}]
-    elif not engine_src_available:
-        workspace_results = [{"workspace_path": "n/a", "target": "n/a", "status": "skipped",
-                              "reason": no_checkout_detail}]
-    else:
-        workspace_results = restage_workspaces(resolved_engine_src, brainiac_home, run=run)
-    result["steps"]["workspace_restage"] = workspace_results
-
-    # Step 5 — brain doctor verify (final pass/fail).
-    after_doctor = run_doctor(brainiac_home=brainiac_home, claude_home=claude_home)
-    result["steps"]["doctor_after"] = render_human(after_doctor)
-
-    # Step 9 — Cowork Desktop plugin-store residue: print the one manual
-    # instruction ONLY when the store is actually stale (a store version below
-    # SSOT). The row is always MANUAL_REQUIRED (never gates), so we read its raw
-    # version and compare against SSOT ourselves.
-    ssot_after = after_doctor.get("ssot_version") or "0.0.0"
-    desktop_stale = any(
-        r["surface"].startswith("Desktop/Cowork plugin store")
-        and (r.get("raw") or {}).get("version")
-        and _compare(str(r["raw"]["version"]), ssot_after) < 0
-        for r in after_doctor["rows"]
+    callbacks = UpdateFlowCallbacks(
+        probe_capability=probe_cli_capability,
+        refresh_marketplace=refresh_marketplace,
+        run_doctor=run_doctor,
+        render_human=render_human,
+        decide_plugin_action=decide_plugin_action,
+        apply_plugin_action=apply_plugin_action,
+        check_installed_cli_plugins=check_installed_cli_plugins,
+        refresh_engine_venv=refresh_engine_venv,
+        rebuild_dist=rebuild_dist,
+        restage_workspaces=restage_workspaces,
+        render_before_after=render_before_after,
+        compare=_compare,
+        reexec_after_engine_move=reexec_after_engine_move,
     )
-    if desktop_stale:
-        result["residual_human_steps"].append(
-            "Desktop/Cowork plugin store is STALE and has no external CLI: in a "
-            "Cowork session use /skill-creator to repackage + Save-and-Replace the "
-            "stale skill(s) — /brainiac-update is host-only and refuses in Cowork — "
-            "then re-run `brain doctor` on the host to confirm it took.")
-
-    # Before -> after table across the surfaces that actually changed intent.
-    table = []
-    for surface in sorted(set(before_table) | {r["surface"] for r in after_doctor["rows"]}):
-        after_val = next((r["detail"] for r in after_doctor["rows"] if r["surface"] == surface), "n/a")
-        table.append({"surface": surface, "before": before_table.get(surface, "n/a"), "after": after_val})
-    result["before_after"] = table
-    result["before_after_rendered"] = render_before_after(table)
-
-    result["ok"] = after_doctor["ok"]
-    result["notes"] = ("update complete, all required surfaces current" if after_doctor["ok"]
-                       else f"update ran to completion but {after_doctor['stale_count']} required "
-                            "surface(s) still stale — see brain doctor output above")
-    return result
+    return run_update_flow(
+        marketplace_name=marketplace_name,
+        engine_src=resolved_engine_src,
+        brainiac_home=brainiac_home,
+        claude_home=claude_home,
+        run=run,
+        skip_capability_probe=skip_capability_probe,
+        dry_run=dry_run,
+        callbacks=callbacks,
+    )
 
 
 def _demo() -> None:
@@ -1053,5 +456,29 @@ def _demo() -> None:
     print("OK: update self-check passed")
 
 
+
+# The plugin-channel steps live in update_plugins.py and the dist/model staging
+# legs in update_model.py since the 2026-08-16 size ratchet; re-exported so
+# every `brain.update.<name>` caller and monkeypatch target is unchanged.
+from .update_model import (  # noqa: E402,F401  (facade re-export)
+    _VERSION_STAMP_RE as _VERSION_STAMP_RE,
+    _read_version_stamp as _read_version_stamp,
+    _resolve_shipped_model_source as _resolve_shipped_model_source,
+    _stage_model_cache as _stage_model_cache,
+    rebuild_dist as rebuild_dist,
+)
+from .update_plugins import (  # noqa: E402,F401  (facade re-export)
+    REQUIRED_SUBCOMMANDS as REQUIRED_SUBCOMMANDS,
+    apply_plugin_action as apply_plugin_action,
+    decide_plugin_action as decide_plugin_action,
+    probe_cli_capability as probe_cli_capability,
+    refresh_marketplace as refresh_marketplace,
+)
+
+
+# The ``__main__`` guard lives at the very END of the module, AFTER the
+# facade re-exports above: under runpy (``python -m brain.<mod>``) the guard
+# fires at its source position, and every facade name must already be bound
+# by then (2026-08-16 size-ratchet fix).
 if __name__ == "__main__":
     _demo()

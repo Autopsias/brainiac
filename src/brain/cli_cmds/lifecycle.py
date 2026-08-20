@@ -212,6 +212,34 @@ def _run_alerts(args, ctx) -> int:
     return 0
 
 
+def _run_install_hook(args, ctx) -> int:
+    """Place + register the SessionStart alert hook. HOST only.
+
+    The Claude Code channel is the one the wiring table calls HARD, and until
+    2026-08-20 nothing installed it: the script rode the wheel and every host
+    but the author's got the soft AGENTS.md line instead."""
+    from pathlib import Path
+
+    from .. import session_hook
+    from ..update import _packaged_script
+
+    if ctx.role == "vm":
+        print("install-hook is HOST-broker only (it writes the host's Claude "
+              "Code config); refused on role=vm", file=sys.stderr)
+        return 3
+
+    claude_home = Path(args.claude_home).expanduser() if args.claude_home else (
+        Path.home() / ".claude")
+    result = session_hook.install(
+        claude_home, _packaged_script(session_hook.HOOK_SCRIPT))
+    _emit(
+        result if args.json else None,
+        args.json,
+        None if args.json else session_hook.render_human(result),
+    )
+    return 0 if result["ok"] else 1
+
+
 def _run_mcp_config(args, ctx) -> int:
     config = ctx.config
 
@@ -279,6 +307,7 @@ _HANDLERS = {
     "init": _run_init,
     "doctor": _run_doctor,
     "alerts": _run_alerts,
+    "install-hook": _run_install_hook,
     "mcp-config": _run_mcp_config,
     "provision-request": _run_provision_request,
     "provision-drain": _run_provision_drain,

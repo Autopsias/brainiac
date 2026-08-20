@@ -371,7 +371,6 @@ def run_doctor(
     from .vmstaging import check_staged_vm_binaries
 
     rows.extend(check_staged_vm_binaries(registry_entries, ssot))
-
     gating_stale = [r for r in rows if r["status"] in _GATING_STATUSES]
     return {
         "ssot_version": ssot,

@@ -600,6 +600,7 @@
     "src/brain/rerank_onnx.py",
     "src/brain/retrieval_ops.py",
     "src/brain/retro.py",
+    "src/brain/session_hook.py",
     "src/brain/snapshot.py",
     "src/brain/spine.py",
     "src/brain/spine_render.py",
@@ -789,5 +790,5 @@
     "vault/raw/2026-06-27-arctic-vs-e5-benchmark.md",
     "vault/raw/README.md"
   ],
-  "count": 788
+  "count": 789
 }

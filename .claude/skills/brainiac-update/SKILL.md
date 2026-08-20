@@ -241,7 +241,16 @@ tell a human to do by hand. It self-executes, in order (`src/brain/update.py`
    skip-don't-delete behavior as before. If NO checkout is available (the
    common PyPI-first host-only case), both steps report `ok: true, skipped`
    — never a failure.
-6. **`brain doctor` verify** — the final pass/fail. Every surface from
+6. **SessionStart alert hook refresh** — re-places
+   `~/.claude/hooks/brainiac-alerts.sh` from the wheel and registers it in
+   `~/.claude/settings.json` if it is not already there
+   (`steps.session_hook`). Idempotent, additive only (it never touches
+   `permissions` or any other key), and never fatal: a failed refresh costs a
+   banner, so it reports `ok: false` and the update continues. Hosts updating
+   from before 0.20.25 carry the pre-0.20.7 INLINE copy of the digest, which
+   reads notify markers and so reports findings that cleared two days ago —
+   this leg is what fixes them.
+7. **`brain doctor` verify** — the final pass/fail. Every surface from
    ADR-0005 Ruling 2's table is re-checked; the process exit code (and this
    skill's final report) is `0`/PASS only when every scriptable REQUIRED
    surface reads `current`. The Desktop/Cowork plugin store (surface 11) is

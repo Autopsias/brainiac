@@ -82,7 +82,7 @@ file reads only), and each harness reaches it by whatever mechanism it has:
 
 | Harness | Mechanism | Guarantee |
 |---|---|---|
-| **Claude Code (CLI)** | `SessionStart` hook in `~/.claude/settings.json` → `~/.claude/hooks/brainiac-alerts.sh` → `brain alerts --one-line` | **hard** — the harness injects it |
+| **Claude Code (CLI)** | `SessionStart` hook in `~/.claude/settings.json` → `~/.claude/hooks/brainiac-alerts.sh` → `brain alerts --one-line`, placed and registered by `brain install-hook` (and re-placed by every `brain update`) | **hard** — the harness injects it |
 | **Codex** | `SessionStart` in `~/.codex/hooks.json` (same schema as Claude Code) → the same script | **hard** — the harness injects it |
 | **Cowork (Desktop VM)** | AGENTS.md §9 instruction, inlined into the workspace `CLAUDE.md` BRAIN-CONTRACT block → `brain --role vm alerts` | **soft** — Cowork has no hook mechanism; the model must follow the line |
 | **Gemini CLI / Desktop Code tab** | AGENTS.md §9 instruction | **soft** |
@@ -90,8 +90,8 @@ file reads only), and each harness reaches it by whatever mechanism it has:
 Two consequences worth stating plainly. **Cowork cannot be made hard** — there
 is no hook surface to register, so the contract line is the mechanism, and a
 session that ignores it sees nothing. **The VM sees a subset, and says so:**
-the notify markers, the owner inbox and the engine-feedback backlog live on the
-shared mount and read identically from either role, but
+the current-findings feed, the owner inbox and the engine-feedback backlog live
+on the shared mount and read identically from either role, but
 `~/.brainiac/update-state.json` and `~/.brain/synthesis-state.json` are host
 home and unreachable — `alerts` lists them under `unreachable` so "no alerts"
 on the VM can never quietly mean "could not look".

@@ -32,11 +32,22 @@ import re
 from pathlib import Path
 from typing import Any
 
-# A degradation marker is written at most once per finding per day by
-# `brain maintain`. Reporting today's AND yesterday's covers the case of a
-# finding raised late at night and a session opened the next morning; the
-# marker for a condition that has since cleared ages out on its own.
-MARKER_WINDOW_DAYS = 1
+# `brain maintain` overwrites `notify-sent/current.json` at the end of every
+# run with the findings TRUE AT THAT MOMENT. That file is this digest's feed.
+#
+# It reads the feed and not the sibling `*.marker` files, and the difference is
+# the whole point: a marker records that a finding was ANNOUNCED on a given
+# day, never that it still holds. Reading markers over a 48h window meant a
+# condition fixed at noon kept alerting until the day after tomorrow — in one
+# measured session (2026-08-20) three of the four reported lines were corpus
+# invariants already back at zero. An alert that is usually wrong is an alert
+# nobody reads, which is the exact failure this whole module exists to prevent.
+CURRENT_FINDINGS_FILE = "current.json"
+
+# The feed is only as current as the run that wrote it. Past this, `maintain`
+# itself has stopped and the frozen findings inside are not the news — the
+# silence is.
+FINDINGS_STALE_DAYS = 2
 
 # An auto-update record older than this is stale news, not an alert — a
 # stopped or dead `maintain` must not nag forever.
@@ -151,8 +162,8 @@ def synthesis_alerts(home: Path, today: datetime.date) -> list[dict[str, str]]:
 # ---------------------------------------------------------------------------
 
 def vault_alerts(vault: Path, today: datetime.date) -> list[dict[str, str]]:
-    """Engine-feedback backlog, owner-decision queue, and the degradation
-    markers ``brain maintain`` already writes under ``.brain/notify-sent/``."""
+    """Engine-feedback backlog, owner-decision queue, and whatever is degraded
+    right now per ``degradation_alerts`` below."""
     name = vault.parent.name or str(vault)
     out: list[dict[str, str]] = []
 
@@ -174,23 +185,50 @@ def vault_alerts(vault: Path, today: datetime.date) -> list[dict[str, str]]:
                           f"{open_questions} owner decision(s) queued (use /brain-inbox)",
                           name))
 
-    keys: set[str] = set()
-    for marker in glob.glob(str(vault / ".brain" / "notify-sent" / "*.marker")):
-        day = _date(os.path.basename(marker))
-        if day is None or (today - day).days > MARKER_WINDOW_DAYS:
-            continue
-        try:
-            keys.add(Path(marker).read_text(encoding="utf-8").strip() or "unknown")
-        except OSError:
-            continue
+    out += degradation_alerts(vault, today, name)
+    return out
+
+
+def degradation_alerts(
+    vault: Path, today: datetime.date, name: str,
+) -> list[dict[str, str]]:
+    """What is degraded RIGHT NOW, from the feed the last maintain run wrote.
+
+    Three outcomes, and none of them is a bare silence:
+
+    * feed present and fresh — report the keys it holds;
+    * feed present and stale — `maintain` has stopped, so say THAT instead of
+      reciting findings frozen days ago;
+    * feed absent on a vault that has run `maintain` at all — the engine
+      writing that vault's runs predates this feed, so degradation is
+      unreported until it next runs. A vault where nothing has ever run is
+      genuinely quiet and stays quiet.
+    """
+    feed = _read_json(vault / ".brain" / "notify-sent" / CURRENT_FINDINGS_FILE)
+    if not isinstance(feed, dict):
+        if (vault / ".brain" / "maintain-state.json").exists():
+            return [_alert("maintain:no-feed",
+                           "no current-findings feed — the engine running this "
+                           "vault's `brain maintain` predates it, so degradation "
+                           "is UNREPORTED until the next run", name)]
+        return []
+
+    at = _date(feed.get("at"))
+    if at is not None and (today - at).days > FINDINGS_STALE_DAYS:
+        return [_alert("maintain:stale",
+                       f"`brain maintain` last ran {at.isoformat()} "
+                       f"({(today - at).days}d ago) — nothing is watching this "
+                       "vault and its findings are that old", name)]
+
+    keys = {str(item.get("key")) for item in feed.get("findings") or []
+            if isinstance(item, dict) and item.get("key")}
     # The synthesis watchdog duplicates `synthesis_alerts` above; the blocked,
     # trend and invariant keys are news.
     keys.discard("synthesis-watchdog")
-    if keys:
-        out.append(_alert("degradation",
-                          "degradation finding(s) in last 48h: " + ", ".join(sorted(keys)),
-                          name))
-    return out
+    if not keys:
+        return []
+    return [_alert("degradation",
+                   "degradation finding(s) now: " + ", ".join(sorted(keys)), name)]
 
 
 def _staged_versions(vault: Path) -> set[str]:

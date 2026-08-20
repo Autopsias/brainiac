@@ -195,6 +195,11 @@ _plans/*/run_state.json
 _plans/*/HALT_NOTICE.txt
 _archive/
 .claude/eval-gates.json
+# /repo-health's generated dashboard: machine output, regenerated per run, and
+# it bakes the operator's absolute home path into HEALTH.html + scorecard.json
+# — which the clean-room export test correctly refuses to ship. It was
+# untracked until a `git add -A` swept it into 2e6ecec.
+.claude/health/
 # Step 0a real-corpus validation: kill-resume on a real-content subset —
 # counts and timings only, no note content.
 !_evidence/obs-recovery-2026-07/real-corpus-validation.txt

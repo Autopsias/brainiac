@@ -7,6 +7,47 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.25] — 2026-08-20
+### Fixed
+- **`brain alerts` reported what had been ANNOUNCED, not what was true.** It
+  read `.brain/notify-sent/*.marker` over a 48-hour window, and a marker is
+  the desktop notification's once-a-day dedup: it records that a finding was
+  surfaced on a day, never that it still holds. So a condition fixed at noon
+  kept alerting until the day after tomorrow — measured on the reference vault
+  2026-08-20, four reported keys with three of them corpus invariants already
+  back at zero. `brain maintain` already computes the true set every run, so
+  it now writes that set to `notify-sent/current.json`, rewritten from scratch
+  each run, and the digest reads it. Recorded before the `BRAIN_NOTIFY` check:
+  the digest is a separate channel from the ping, and silencing one must not
+  blind the other. Silence still never means "could not look" — a feed older
+  than two days reports the dead `maintain` instead of reciting its frozen
+  findings, and a missing feed on a vault that HAS run `maintain` reports that
+  the engine predates the feed.
+
+### Added
+- **`brain install-hook`** — places `~/.claude/hooks/brainiac-alerts.sh` and
+  registers it as a `SessionStart` hook. `docs/harness-wiring.md` called that
+  channel HARD ("the harness injects it") while no install path placed the
+  script: it rode the wheel and nothing copied it, so every owner but the
+  author got the soft AGENTS.md line, which a model can forget. The same leg
+  now runs on every `brain update`, which is what repairs a host still
+  carrying the pre-0.20.7 INLINE copy of the digest — the copy that reads
+  markers. It only ever ADDS its own entry, never touching `permissions` or
+  any other key, and a `settings.json` it cannot parse is refused rather than
+  replaced. **On a harness-managed `~/.claude` it writes nothing but the
+  script** (owner ruling 2026-08-20, "brainiac auto update should not update
+  shit in gearbox"): a deploy target has exactly one writer, so the engine
+  ships its own artifact and the harness declares the wiring. Detected by the
+  deploy tooling a harness leaves behind (`scripts/gearbox`,
+  `scripts/deploy.pathspec`); a standalone host registers itself as before,
+  or `install-hook` would place a script nothing ever runs.
+- **A `brain doctor` row for that hook, and it GATES.** A deleted or
+  unregistered hook is silent: the session opens with no banner, which reads
+  exactly like a healthy vault. Nothing else notices — `install-hook` and
+  `brain update` re-place the file, but only when something runs them. A host
+  with no `~/.claude` at all reports `unmanaged` instead, since a machine that
+  does not run Claude Code has no hook surface to be broken.
+
 ## [0.20.24] — 2026-08-20
 ### Fixed
 - **`brain dossier` named withheld notes in the same breath as withholding

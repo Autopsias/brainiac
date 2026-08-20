@@ -1309,10 +1309,17 @@ entry formats in `docs/session-memory.md`. Rules an agent needs at a glance:
 - **Run `brain alerts` at session start — EVERY harness, not just the one with
   a hook.** It is the single degradation digest: auto-update state, weekly
   synthesis health, the engine-feedback backlog, the owner-decision queue, and
-  the notify markers `brain maintain` writes (`blocked`, `trend:*`,
-  `invariant:*`). Pure file reads — no index, embedder, network or key — so it
-  costs the engine's import floor and nothing more. On the Cowork VM run
-  `brain --role vm alerts`: the markers, the inbox and the feedback backlog all
+  whatever is degraded RIGHT NOW (`blocked`, `trend:*`, `invariant:*`). Pure
+  file reads — no index, embedder, network or key — so it costs the engine's
+  import floor and nothing more. **Currently true, not recently seen:** it
+  reads `notify-sent/current.json`, which `brain maintain` REWRITES at the end
+  of every run, never the sibling `*.marker` files — a marker records that a
+  finding was ANNOUNCED that day, so reading markers made a condition fixed at
+  noon keep alerting for 48 hours (measured 2026-08-20: three of four reported
+  lines were invariants already back at zero). A feed older than 2 days, or
+  missing on a vault that has run `maintain`, is itself the finding. On the
+  Cowork VM run
+  `brain --role vm alerts`: the feed, the inbox and the feedback backlog all
   sit on the shared mount, so the VM sees the same findings the host does,
   and the two host-home sources it cannot reach are listed under
   `unreachable` rather than skipped. **Surface every finding to the owner.**
@@ -1358,14 +1365,17 @@ even though the mount makes them visible.
 
 **One deliberate exception, and it is the degradation digest.**
 `brain --role vm alerts` READS three things under `.brain/`:
-`notify-sent/*.marker`, `memory/inbox.jsonl` and `engine-feedback/*.md`. That
+`notify-sent/current.json`, `memory/inbox.jsonl` and `engine-feedback/*.md`
+(plus `maintain-state.json`, only to tell a vault that has never run
+`maintain` from one whose feed is missing). That
 is the whole point of the first bullet above — until 2026-08-14 this logic
 lived only in a Claude Code hook, so a Cowork session worked for days against
 a vault whose invariants had regressed with no surface that could tell it.
 Only the two HOST-HOME sources (`~/.brainiac/update-state.json`,
 `~/.brain/synthesis-state.json`) are out of the VM's reach, and `alerts`
 reports those under `unreachable` rather than skipping them. The reads are
-file-reads of counts and markers; the VM still never WRITES anything here,
+file-reads of counts and one findings file; the VM still never WRITES
+anything here,
 and none of it is ever indexed. This paragraph said "never reads or writes
 it" until 2026-08-18, which contradicted the bullet at the top of this
 section and would have told a Cowork session to refuse the one command that

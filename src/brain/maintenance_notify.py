@@ -99,6 +99,42 @@ def degradation_findings(
     return pairs
 
 
+CURRENT_FINDINGS_FILE = "current.json"
+
+
+def record_current_findings(
+    vault: Path, findings: list[tuple[str, str]], today: datetime.date,
+) -> None:
+    """Overwrite the currently-true findings feed that ``brain alerts`` reads.
+
+    The per-day ``*.marker`` files beside this one are the GUI notification's
+    dedup: a marker records that a finding was ANNOUNCED today, never that it
+    still holds. ``brain alerts`` read those markers as its feed until
+    2026-08-20, so a condition fixed at noon kept alerting for two days — in
+    one measured session three of the four reported lines were invariants
+    already back at zero, and an alert that is wrong most of the time is an
+    alert nobody reads.
+
+    This file is rewritten from scratch on every maintain run, so a cleared
+    condition clears here within the hour. Best-effort: a failed write must
+    never fail a maintain run, and both the missing and the stale case are
+    alerts of their own on the reading side — silence never means "all clear".
+    """
+    path = _notify_marker_dir(vault) / CURRENT_FINDINGS_FILE
+    payload = {
+        "at": today.isoformat(),
+        "findings": [{"key": key, "text": text} for key, text in findings],
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(payload, indent=1), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        _log.warning("[degradation] current-findings feed unwritable (%s); "
+                     "`brain alerts` will report it as missing", path.parent)
+
+
 def _notify_marker_dir(vault: Path) -> Path:
     from . import config as _config
 
@@ -197,18 +233,23 @@ def pending_notifications(
 ) -> list[tuple[str, str]]:
     """The ``(key, text)`` findings still pending notification for TODAY —
     empty when ``BRAIN_NOTIFY=off`` or when every candidate was already
-    surfaced today (dedup by stable KEY). Pure read (does not mark) — pair
-    with ``fire_and_mark_notifications``. Also opportunistically prunes old
-    markers (fix [7]) since this is called once per maintain run.
+    surfaced today (dedup by stable KEY). Does not MARK — pair with
+    ``fire_and_mark_notifications``. Two side effects, both because this is
+    called exactly once per maintain run: it prunes old markers (fix [7]) and
+    it overwrites the currently-true findings feed ``brain alerts`` reads
+    (``record_current_findings``).
 
     ``maintain_state`` (optional, ES-01) folds branch-escalation findings in —
     see ``degradation_findings``."""
 
     _prune_notify_markers(vault)
+    findings = degradation_findings(outcomes, trend_findings, maintain_state, today)
+    # Recorded BEFORE the BRAIN_NOTIFY check: `brain alerts` is a separate
+    # channel from the GUI ping, and turning the ping off must not blind it.
+    record_current_findings(vault, findings, today)
     if os.environ.get(NOTIFY_ENV, "").strip().lower() == "off":
         return []
-    return [(k, t) for (k, t) in degradation_findings(outcomes, trend_findings, maintain_state, today)
-            if should_notify(vault, k, today)]
+    return [(k, t) for (k, t) in findings if should_notify(vault, k, today)]
 
 
 def fire_and_mark_notifications(

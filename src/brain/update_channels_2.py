@@ -360,6 +360,34 @@ def _apply_plugin_actions(
     return True
 
 
+def _run_session_hook(
+    engine_src: Optional[Path], claude_home: Path, *, dry_run: bool,
+) -> dict[str, Any]:
+    """Re-place and re-register the SessionStart alert hook on every update.
+
+    It rides the update rather than only the install for the reason every
+    other staging leg here does: the hook is a thin caller whose CONTENT this
+    engine owns, and a host carrying an older copy has no other way to be
+    fixed. Hosts updating from before 0.20.25 carry the pre-0.20.7 INLINE
+    implementation of the whole digest — one that reads notify markers and so
+    reports findings that cleared two days ago.
+
+    Never fatal to the update: a failed hook refresh costs a banner, while
+    stopping here would cost the engine refresh that already succeeded."""
+    if dry_run:
+        return {"ok": True, "script": "skipped", "settings": "skipped",
+                "detail": "dry run"}
+    try:
+        from . import session_hook
+        from .update import _packaged_script
+
+        return session_hook.install(
+            claude_home, _packaged_script(session_hook.HOOK_SCRIPT, engine_src))
+    except Exception as exc:  # noqa: BLE001 — a banner must never fail an update
+        return {"ok": False, "script": "error", "settings": "skipped",
+                "detail": f"{type(exc).__name__}: {exc}"}
+
+
 def run_update_flow(
     *,
     marketplace_name: str,
@@ -435,6 +463,9 @@ def run_update_flow(
         callbacks=callbacks,
     )
     result["steps"]["workspace_restage"] = workspace_results
+    result["steps"]["session_hook"] = _run_session_hook(
+        engine_src, claude_home, dry_run=dry_run
+    )
 
     after_doctor = callbacks.run_doctor(
         brainiac_home=brainiac_home,

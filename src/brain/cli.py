@@ -30,6 +30,8 @@ FINAL stage before stdout. A harness self-discovers the whole contract from
     brain doctor [--json]                  # health + version table, ALL surfaces (read-only)
     brain alerts [--json] [--one-line]     # degradation digest for a session start —
                                             # pure file reads, VM_ALLOWED
+    brain install-hook [--json]            # place + register the SessionStart alert
+                                            # hook in ~/.claude [HOST]
     brain health-report [--json]           # static HTML health page -> .brain/brief/
                                             # health-latest.html [HOST]
     brain graph-report [--json]            # static HTML graph explorer -> .brain/graph/

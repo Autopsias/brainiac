@@ -95,7 +95,7 @@ def _add_doctor(sub) -> None:
 def _add_alerts(sub) -> None:
     sp = sub.add_parser(
         "alerts",
-        help="READ-ONLY degradation digest every harness can call: auto-update state, weekly-synthesis task health, engine-feedback backlog, the owner-decision queue, and the notify markers `brain maintain` writes. Pure file reads — no index, embedder, network or key. role=vm reads only its own vault and REPORTS the two host-home sources it cannot reach, so silence never means 'could not look'.",
+        help="READ-ONLY degradation digest every harness can call: auto-update state, weekly-synthesis task health, engine-feedback backlog, the owner-decision queue, and whatever is degraded RIGHT NOW per the findings feed `brain maintain` rewrites each run. Pure file reads — no index, embedder, network or key. role=vm reads only its own vault and REPORTS the two host-home sources it cannot reach, so silence never means 'could not look'.",
     )
     sp.add_argument("--json", action="store_true")
     sp.add_argument(
@@ -103,6 +103,23 @@ def _add_alerts(sub) -> None:
         action="store_true",
         help="emit the single-line banner form a SessionStart hook injects (empty output when all clear)",
     )
+
+
+def _add_install_hook(sub) -> None:
+    sp = sub.add_parser(
+        "install-hook",
+        help="HOST: place the SessionStart alert hook in ~/.claude/hooks/ and "
+             "register it in settings.json so every Claude Code session gets "
+             "the `brain alerts` banner. Idempotent; only ever ADDS its own "
+             "entry and never touches permissions. `brain update` runs this "
+             "too — call it directly on a first install.",
+    )
+    sp.add_argument(
+        "--claude-home",
+        default=None,
+        help="Claude Code config dir (default: ~/.claude)",
+    )
+    sp.add_argument("--json", action="store_true")
 
 
 def _add_mcp_config(sub) -> None:
@@ -147,6 +164,7 @@ def add_parser(sub) -> None:
     _add_init(sub)
     _add_doctor(sub)
     _add_alerts(sub)
+    _add_install_hook(sub)
     _add_mcp_config(sub)
     _add_provision_request(sub)
     _add_provision_drain(sub)

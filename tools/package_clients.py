@@ -150,7 +150,7 @@ ENGINE_ASSET_FILES = [
     "scripts/brain-brief.sh",
     "scripts/brain-synthesis.sh",
     "scripts/brain-synthesis-mac.plist",
-    # session-start alert hook (installer copies it into ~/.claude/hooks/) +
+    # session-start alert hook (placed by brain/session_hook.py) +
     # BOTH Cowork VM probes (staged into every workspace by
     # update.stage_engine_and_skills / cowork_workspace_install.sh): the
     # un-fakeable retrieval self-test, and the negative boundary probe that

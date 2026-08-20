@@ -1,10 +1,10 @@
-"""The publish phase family of `publish_public` — index uploads, clean-venv verification, npm, public git, release asset (batch-2 drain).
+"""The publish phase family of `publish_public` — index uploads, clean-venv verification, public git, release asset (batch-2 drain).
 
 Moved verbatim out of `publish_public`; every parent-surface collaborator
-(`_run`, `_need`, `_run_pty`, `_poll`, `_throwaway_venv`, `_clean_venv_check`,
-`build_mcpb`, `PublishError`, …) resolves through the parent module at CALL
-time, so a test that monkeypatches one on `publish_public` keeps governing this
-code exactly as before.
+(`_run`, `_need`, `_poll`, `_throwaway_venv`, `_clean_venv_check`,
+`build_mcpb`, `NPM_PUBLISH_WAIT_SECONDS`, `PublishError`, …) resolves through
+the parent module at CALL time, so a test that monkeypatches one on
+`publish_public` keeps governing this code exactly as before.
 """
 from __future__ import annotations
 
@@ -214,16 +214,17 @@ def _archive_content_diff(built: Path, served: Path) -> list[str]:
     return sorted(set(a) ^ set(b)) + sorted(k for k in set(a) & set(b) if a[k] != b[k])
 
 
-def phase_npm(export_dir: Path, version: str, scratch: Path,
-              gate_fn) -> str:
-    """Pack + smoke-test the npx bootstrap from the EXPORT tree, gate, publish,
-    verify the registry serves the new version."""
-    # Resume safety: a publish that succeeded but whose verification lagged (or
-    # whose later phase failed) must not be attempted twice — npm versions are
-    # permanent, and a second publish is a hard error, not a no-op.
-    already = _pp._run(["npm", "view", f"brainiac-install@{version}", "version"])
-    if already.returncode == 0 and version in already.stdout:
-        return f"npm already serves brainiac-install@{version} (nothing re-published)"
+def npm_pack_smoke(export_dir: Path, version: str, scratch: Path) -> str:
+    """Pack the npx bootstrap from the EXPORT tree and run it, WITHOUT publishing.
+
+    The publish itself belongs to CI (see `phase_post_verify`), but the tag
+    push that triggers it is irreversible, so what shipped has to be proven
+    good BEFORE that push rather than after. This is the half of the old
+    `phase_npm` that was actually verification: pack the exact tarball the
+    workflow will publish, install it into a throwaway prefix, and run
+    `--dry-run` through it. A broken bootstrap fails here, while the tag is
+    still local and nothing is public.
+    """
     pkg = export_dir / "packaging" / "npm" / "brainiac-install"
     pack_dir = scratch / "npm-pack"
     pack_dir.mkdir(exist_ok=True)
@@ -237,25 +238,7 @@ def phase_npm(export_dir: Path, version: str, scratch: Path,
           "npm install of packed tarball")
     _pp._need(_pp._run([str(prefix / "bin" / "brainiac-install"), "--dry-run"]),
           "brainiac-install --dry-run smoke")
-    gate_fn("npm", "publish brainiac-install to npm",
-            "npm publishes are permanent per version; the bootstrap must point "
-            "at a PyPI version that exists (it does — the pypi phase passed)",
-            [f"tarball packed at {version} and smoke-tested (--dry-run exit 0)",
-             "PyPI publish verified in the previous phase"])
-    print("\nnpm publish: if 2FA is on, npm prints an authorization URL below — open it and\n"
-          "approve; the publish continues by itself (waiting up to 15 minutes).\n", flush=True)
-    published = _pp._run_pty(["npm", "publish", "--access", "public", "--auth-type", "web"],
-                         cwd=pkg, timeout=900)
-    if published.returncode != 0:
-        url = _pp.AUTH_URL_RE.search(published.stdout)
-        hint = f"\nAuthorization URL npm offered: {url.group(0)}" if url else ""
-        raise _pp.PublishError(f"npm publish failed (exit {published.returncode})\n"
-                           f"{published.stdout}{hint}")
-    _pp._poll(lambda: _pp._run(["npm", "view", f"brainiac-install@{version}", "version"]),
-          what=f"npm view brainiac-install@{version}",
-          ok=lambda p: p.returncode == 0 and version in p.stdout,
-          seconds=180, every=10)
-    return f"npm serves brainiac-install@{version}"
+    return f"packed brainiac-install-{version}.tgz and ran --dry-run through it (exit 0)"
 
 
 def sync_export_into_clone(export_dir: Path, clone: Path) -> None:
@@ -310,11 +293,16 @@ def phase_public_git(export_dir: Path, version: str, scratch: Path,
 
     gate_fn("public-git", f"push v{version} to {url} ({default_branch} + tag)",
             "a public push is visible immediately and can only be superseded, "
-            "not unpublished; this is the last gate",
+            "not unpublished — and pushing THIS TAG also publishes "
+            f"brainiac-install@{version} to npm, which is permanent per "
+            "version; this is the last gate",
             [f"squashed commit on {default_branch} from the verified export",
              "final-tree contamination scan: 0 hits (self-test passed)",
              f"diffstat tail: {stat_tail}",
-             "PyPI + npm phases verified for this version"])
+             "PyPI publish verified for this version",
+             "npm tarball packed from this export and smoke-tested; the tag "
+             "push fires npm-publish.yml, which publishes it over OIDC with "
+             "a provenance attestation"])
     _pp._need(_pp._run(["git", "push", "origin", default_branch], cwd=clone, interactive=True,
                timeout=600), "git push branch")
     _pp._need(_pp._run(["git", "push", "origin", f"v{version}"], cwd=clone, interactive=True,
@@ -428,19 +416,42 @@ def phase_release_asset(export_dir: Path, version: str, scratch: Path,
     return f"{action}; brainiac.mcpb served, sha256 verified ({digest[:16]}…)"
 
 
-def phase_post_verify(version: str, scratch: Path, *, npm_published: bool = True) -> str:
-    """The consumption paths a new user actually takes, from clean environments."""
+def phase_post_verify(version: str, scratch: Path) -> str:
+    """The consumption paths a new user actually takes, from clean environments.
+
+    npm is published by `npm-publish.yml` on the tag push, not by this script,
+    so this phase WAITS for the registry rather than assuming it. The wait is
+    keyed on the public tag: no tag means the workflow was never triggered and
+    npm cannot be expected, so the gap is reported instead of failing a
+    release whose PyPI and git legs both landed.
+    """
     lines = [_pp._clean_venv_check(version, [], scratch, "pypi-final")]
-    proc = _pp._run(["gh", "api", f"repos/{_pp.PUBLIC_REPO}/git/refs/tags/v{version}"])
-    lines.append(f"public tag v{version}: {'visible' if proc.returncode == 0 else 'NOT VISIBLE YET'}")
-    if not npm_published:
-        # Verifying a channel the operator deliberately skipped would fail the
-        # whole run over an act nobody performed -- and a red final phase on a
-        # release whose PyPI and git legs both landed reads as "the release
-        # broke". Report the gap instead; the caller already knows why.
-        lines.append(f"npx brainiac-install@{version}: SKIPPED (npm not published "
-                     f"in this run — that channel is still on its previous version)")
+    tag_visible = _pp._run(
+        ["gh", "api", f"repos/{_pp.PUBLIC_REPO}/git/refs/tags/v{version}"]).returncode == 0
+    lines.append(f"public tag v{version}: {'visible' if tag_visible else 'NOT VISIBLE YET'}")
+    if not tag_visible:
+        lines.append(f"npm brainiac-install@{version}: NOT EXPECTED YET (the tag that "
+                     f"triggers npm-publish.yml is not on the public repo, so that "
+                     f"channel is still on its previous version)")
         return "\n".join(lines)
+
+    # ~25s of workflow plus the registry's own read-after-write lag. A poll, not
+    # a sleep: a run that publishes fast must not pay the worst case.
+    try:
+        _pp._poll(lambda: _pp._run(["npm", "view", f"brainiac-install@{version}", "version"]),
+                  what=f"npm view brainiac-install@{version} (published by npm-publish.yml "
+                       f"on the tag push)",
+                  ok=lambda p: p.returncode == 0 and version in p.stdout,
+                  seconds=_pp.NPM_PUBLISH_WAIT_SECONDS, every=15)
+    except _pp.PublishError as exc:
+        raise _pp.PublishError(
+            f"{exc}\n\nPyPI and the public repo both landed; only npm is missing. "
+            f"Read the workflow run, then re-fire it — neither needs this pipeline:\n"
+            f"    gh run list --repo {_pp.PUBLIC_REPO} --workflow npm-publish.yml --limit 3\n"
+            f"    gh workflow run npm-publish.yml --repo {_pp.PUBLIC_REPO} -f tag=v{version}"
+        ) from exc
+    lines.append(f"npm serves brainiac-install@{version} (published by npm-publish.yml)")
+
     npx = _pp._run(["npx", "--yes", f"brainiac-install@{version}", "--dry-run"], timeout=600)
     lines.append(f"npx brainiac-install@{version} --dry-run: exit {npx.returncode}")
     if npx.returncode != 0:

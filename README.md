@@ -46,18 +46,17 @@ https://raw.githubusercontent.com/Autopsias/brainiac/main/docs/install/LLM-INSTA
 
 ### 3 · By hand — any OS
 
-```bash
-npx brainiac-install --vault ~/brain      # Node 18+ — installs the engine AND sets up the vault in one shot
-```
-
-…or with Python tooling (two commands):
+Already have `uv` (or pipx, or pip)? Two commands:
 
 ```bash
 uv tool install 'brainiac-cli[mcp]'       # or: pipx install 'brainiac-cli[mcp]'  /  pip install --user 'brainiac-cli[mcp]'
 BRAIN_VAULT=~/brain/vault brain init --full --apply
 ```
 
-No `uv`? Download the bootstrap script, run it, then run the `brain init` line above:
+**Have none of those — not even Python?** The bootstrap script handles it.
+It fetches `uv` (a self-contained binary that needs no Python), lets uv
+download its own Python, and installs through that. Run it, then the
+`brain init` line above:
 
 ```bash
 # macOS/Linux
@@ -69,6 +68,13 @@ curl -fsSL https://raw.githubusercontent.com/Autopsias/brainiac/main/install.sh 
 irm https://raw.githubusercontent.com/Autopsias/brainiac/main/install.ps1 -OutFile install.ps1; .\install.ps1
 $env:BRAIN_VAULT = "$HOME\brain\vault"; brain init --full --apply
 ```
+
+Pass `--no-uv-bootstrap` (`-NoUvBootstrap` on Windows) to forbid that
+download and be told what to install yourself instead.
+
+Prefer Node? `npx brainiac-install --vault ~/brain` does the engine install
+and the vault setup in one shot — but it needs Node 18+ **and** one of
+uv/pipx/Python already present, so on a bare machine use the script above.
 
 (The bootstrap scripts install the engine only — `brain init --full --apply`
 is what creates the vault and registers maintenance. Full Windows

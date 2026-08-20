@@ -18,6 +18,14 @@ npx brainiac-install
    commands (the uv standalone installer, and python.org) and exits — it
    never installs anything on your behalf beyond the `brainiac-cli` package
    itself.
+
+   > **On a machine with Node but no Python, use the shell installer
+   > instead.** This package deliberately stops rather than fetching a
+   > toolchain for you, so it cannot help there. `install.sh` /
+   > `install.ps1` (see the repo README) do fetch `uv` — a self-contained
+   > binary needing no Python — and let uv download its own CPython. This
+   > package is for machines that already have a Python toolchain and would
+   > rather type one `npx` command than curl a script.
 3. **Verifies** the install (`brain --version`) and prints a PATH hint if the
    new shim directory isn't on PATH in the current shell yet.
 4. **Initializes a vault** — prompts for a workspace directory (or accept one

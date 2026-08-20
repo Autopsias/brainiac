@@ -3,15 +3,26 @@
 
     python3 tools/publish_public.py v0.19.18 --denylist ~/brainiac-release-groundtruth.txt
     python3 tools/publish_public.py v0.19.18 --denylist <path> --dry-run       # verify only, no gates
-    python3 tools/publish_public.py v0.19.18 --denylist <path> --from npm      # resume after a partial run
+    python3 tools/publish_public.py v0.19.18 --denylist <path> --from pypi     # resume after a partial run
 
 Owner decision 2026-07-29 (amending the runbook's earlier "publishing is
 never scripted" rule): the pipeline ORCHESTRATES the release, but every
-irreversible act — TestPyPI upload, PyPI upload, npm publish, public git
-push — stops at an interactive gate that states what has been verified, what
-is about to happen and why it cannot be undone, and proceeds only when the
-operator types the exact version string. Automation composes the steps; the
-human still performs each act.
+irreversible act — TestPyPI upload, PyPI upload, public git push — stops at
+an interactive gate that states what has been verified, what is about to
+happen and why it cannot be undone, and proceeds only when the operator
+types the exact version string. Automation composes the steps; the human
+still performs each act.
+
+npm is NOT one of those acts, and has not needed to be since v0.20.11: the
+public repo's `npm-publish.yml` publishes `brainiac-install` over OIDC
+trusted publishing when the tag lands, in ~25s, with no credential and with
+a SLSA provenance attestation attached. This pipeline used to publish it by
+hand FIRST — the phase ran before the tag push, so it always won the race
+and the workflow found nothing to do. That cost an npm login that expires
+every two hours (it broke the v0.20.22 run), and it shipped three releases
+without provenance (0.20.19/0.20.21/0.20.22 read `publisher=autopsias,
+provenance=none`; 0.20.11 reads `GitHub Actions` + slsa.dev/provenance/v1).
+So the push publishes npm now, and `phase_post_verify` waits for it.
 
 Why this exists (measured, 2026-07-29): the manual chain shipped v0.19.17 to
 PyPI WITHOUT the Windows fixes that were already committed — the tag was cut
@@ -39,6 +50,18 @@ Structural guarantees (not gate-dependent):
 
 Every phase appends to `_evidence/releases/publish-<version>.md` as it
 completes, so an aborted run leaves a truthful partial transcript.
+
+Wall clock (measured on v0.20.22, then addressed 2026-08-20 — ~90 min -> ~20):
+- the suite runs PARALLEL here (`-n 8 --dist loadfile`, AGENTS.md §8): 12-18
+  min sequential vs ~3:15 for an identical pass set;
+- a RESUME does not re-run a suite that already passed at the same COMMIT
+  (never the same tag name — v0.20.22's tag moved after a test-only fix);
+- the Cowork VM ELF build (~12 min under qemu) starts in the BACKGROUND at
+  phase 1 and is collected by the deploy phase, instead of blocking the
+  version bump before the pipeline even began.
+No gate was weakened to get there: the uploads still stop for consent, the
+scanner still proves it can fail, and the deploy phase still hard-fails on a
+stale stamp. Those cost seconds; the three above cost the hour.
 """
 from __future__ import annotations
 
@@ -46,9 +69,7 @@ import datetime as _dt
 import hashlib
 import json
 import os
-import pty
 import re
-import select
 import shutil
 import subprocess
 import sys
@@ -66,9 +87,17 @@ DIST_MATRIX_WORKFLOW = "distribution-matrix.yml"
 
 PHASES = [
     "preflight", "worktree", "tests", "export", "build", "windows-ci",
-    "testpypi", "pypi", "npm", "public-git", "release-asset", "post-verify",
+    "testpypi", "pypi", "public-git", "release-asset", "post-verify",
     "deploy",
 ]
+
+# How long `phase_post_verify` waits for npm-publish.yml to put the bootstrap
+# on the registry after the tag push. The workflow itself runs in ~25s; the
+# rest is the registry's read-after-write lag and any queueing for a runner.
+# Named, not inlined, so a test can shrink it — `_poll` sleeps on a wall-clock
+# deadline, so a no-op sleep against an inlined 600 busy-spins for ten real
+# minutes.
+NPM_PUBLISH_WAIT_SECONDS = 600
 
 
 class PublishError(Exception):
@@ -90,59 +119,12 @@ def _run(cmd: list[str], *, cwd: Path | None = None, interactive: bool = False,
                           timeout=timeout, env=env)
 
 
-AUTH_URL_RE = re.compile(r"https://\S*(?:npmjs\.com|npmjs\.org)/(?:auth|login)\S*")
-
-
-def _run_pty(cmd: list[str], *, cwd: Path | None = None,
-             timeout: int = 900) -> subprocess.CompletedProcess:
-    """Run a command attached to a pseudo-terminal, streaming its output.
-
-    npm's one-time-password step has two modes and it picks by asking whether
-    stdout is a terminal. On a TTY it prints a click-to-authorize URL and waits
-    for the browser round-trip; with no TTY it refuses outright (`EOTP`, "requires
-    a one-time password"), which is a dead end for any non-interactive caller —
-    a relayed authenticator code expires before a run reaches the publish step.
-    A pty gets the URL flow, and the operator authorizes by clicking.
-
-    Output is echoed as it arrives (so the URL is visible in a log being
-    tailed, not just at exit) and returned in `stdout` for the caller to scan.
-    A `Press ENTER`-style prompt is answered automatically — the browser round
-    trip, not the keypress, is the actual human gate.
-    """
-    master, slave = pty.openpty()
-    proc = subprocess.Popen(cmd, cwd=cwd, stdin=slave, stdout=slave, stderr=slave,
-                            close_fds=True)
-    os.close(slave)
-    chunks: list[str] = []
-    pending = ""
-    deadline = time.monotonic() + timeout
-    try:
-        while True:
-            if time.monotonic() > deadline:
-                proc.kill()
-                raise PublishError(
-                    f"{cmd[0]} timed out after {timeout}s waiting for browser authorization")
-            if not select.select([master], [], [], 1.0)[0]:
-                if proc.poll() is not None:
-                    break
-                continue
-            try:
-                data = os.read(master, 4096)
-            except OSError:      # EIO — the child closed the pty
-                break
-            if not data:
-                break
-            text = data.decode("utf-8", "replace")
-            chunks.append(text)
-            sys.stdout.write(text)
-            sys.stdout.flush()
-            pending = (pending + text)[-400:]
-            if re.search(r"press\s+(?:enter|any key)", pending, re.I):
-                os.write(master, b"\n")
-                pending = ""
-    finally:
-        os.close(master)
-    return subprocess.CompletedProcess(cmd, proc.wait(), "".join(chunks), "")
+# `_run_pty` + `AUTH_URL_RE` lived here until 2026-08-20. They existed for ONE
+# caller: npm's browser-authorization flow, which only appears on a TTY. The
+# pipeline no longer publishes npm (the tag push does, from CI), so both went
+# with the phase rather than sitting here looking load-bearing. The manual
+# fallback, if the workflow is ever broken, is a plain `npm publish` typed by
+# hand in packaging/npm/brainiac-install — see docs/release-runbook.md §7.7.
 
 
 def _need(proc: subprocess.CompletedProcess, what: str) -> subprocess.CompletedProcess:
@@ -236,10 +218,10 @@ def phase_preflight(tag: str, *, expect_published: bool | None = False) -> str:
       The upload may or may not have gone through before the run died; twine
       runs with ``--skip-existing``, so either state is fine and neither is
       evidence of a problem.
-    * ``True`` — a resume PAST the upload (`--from npm` / `public-git` /
-      `post-verify`). Here the version being absent is the anomaly: skipping an
-      upload that never happened would ship an npm bootstrap pointing at
-      nothing.
+    * ``True`` — a resume PAST the upload (`--from public-git` /
+      `release-asset` / `post-verify`). Here the version being absent is the
+      anomaly: skipping an upload that never happened would ship an npm
+      bootstrap pointing at nothing.
 
     A single boolean got this wrong in both directions: it dead-ended every
     post-upload resume on the already-published guard, and then dead-ended
@@ -301,7 +283,32 @@ def _elf_stamp_versions() -> dict[str, str]:
     return out
 
 
-def phase_local_deploy(version: str) -> str:
+def start_vm_elf_build(version: str) -> "subprocess.Popen | None":
+    """Start the Cowork VM ELF build in the BACKGROUND, or None if not needed.
+
+    The emulated x86_64 arch takes ~12 minutes and shares nothing with the
+    tests, the export, the scans or the uploads — run serially it was a pure
+    12-minute addition to every release. Started here, it overlaps the whole
+    pipeline and is usually finished before `phase_local_deploy` asks for it.
+
+    Returns None when the stamps already match: a rebuild that would produce
+    the bytes already on disk is the one case worth skipping outright.
+    """
+    stamps = _elf_stamp_versions()
+    if stamps and all(v == version for v in stamps.values()):
+        return None
+    try:
+        return subprocess.Popen(
+            ["bash", str(REPO_ROOT / "tools" / "build_brain_binary_linux.sh")],
+            cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True)
+    except OSError:
+        # Docker missing entirely — deploy's stamp check is the hard gate, so
+        # fail there with the real diagnosis rather than guessing here.
+        return None
+
+
+def phase_local_deploy(version: str, elf_build: "subprocess.Popen | None" = None) -> str:
     """Publishing is not deploying — this phase closes the gap between them.
 
     v0.20.20 and v0.20.21 both shipped while this host kept staging 0.20.19
@@ -327,6 +334,16 @@ def phase_local_deploy(version: str) -> str:
     session-start `staging:stale` alert (src/brain/alerts.py) is the backstop
     for a run that stops before reaching it.
     """
+    if elf_build is not None:
+        # Started back at the pipeline's first phase; by now it has usually
+        # finished. Its failure is not the verdict — the stamp check below is —
+        # but its output is the only diagnosis if the stamps are wrong.
+        out, _ = elf_build.communicate(timeout=3600)
+        if elf_build.returncode != 0:
+            raise PublishError(
+                "the background VM ELF build failed (exit "
+                f"{elf_build.returncode}); a Cowork session bootstrapped from "
+                f"these would silently run the old engine:\n{(out or '')[-1500:]}")
     stamps = _elf_stamp_versions()
     if not stamps or any(v != version for v in stamps.values()):
         _need(_run(["bash", str(REPO_ROOT / "tools" / "build_brain_binary_linux.sh")],
@@ -339,14 +356,24 @@ def phase_local_deploy(version: str) -> str:
                 f"VM ELF stamps still disagree with {version} after a rebuild: "
                 f"{wrong or 'no stamps found'} — a Cowork session bootstrapped "
                 f"from these would silently run the old engine")
-    proc = _need(_run([sys.executable, "-m", "brain", "update", "--json"],
-                      cwd=REPO_ROOT, timeout=1800),
-                 "brain update")
-    tail = proc.stdout[proc.stdout.index("{"):] if "{" in proc.stdout else "{}"
+    # The exit code is NOT the verdict: `brain update` exits 1 whenever its
+    # closing doctor has ANY stale row, including vault-health findings
+    # (audit drift, invariants watchdog) that no deploy can or should fix —
+    # the v0.20.22 run deployed every surface and still exited 1 on two such
+    # rows. The verdict is the staging-surface check on the JSON below.
+    proc = _run([sys.executable, "-m", "brain", "update", "--json"],
+                cwd=REPO_ROOT, timeout=1800)
+    tail = proc.stdout[proc.stdout.index("{"):] if "{" in proc.stdout else ""
     try:
-        report = json.loads(tail)
+        report = json.loads(tail) if tail else None
     except ValueError:
-        raise PublishError(f"brain update emitted unparseable JSON:\n{proc.stdout[-800:]}")
+        report = None
+    if not isinstance(report, dict):
+        # No JSON is not clean — an update that crashed before reporting must
+        # never pass on empty input.
+        raise PublishError(
+            f"brain update produced no parseable JSON (exit {proc.returncode}):\n"
+            f"{(proc.stdout or '')[-800:]}\n{(proc.stderr or '')[-400:]}")
     residual = [str(s) for s in report.get("residual_human_steps") or []]
     # `ok: False` with ONLY residual human steps is the expected end state —
     # the Desktop store always needs the owner. Any OTHER stale surface means
@@ -392,10 +419,11 @@ sys.modules.setdefault("tools.publish_public", sys.modules[__name__])
 # monkeypatch on publish_public._run (etc.) keeps governing them.
 from tools.publish_public_checks import (  # noqa: E402,F401
     _load_denylist_terms, _scan_tree, phase_build, phase_export, phase_tests,
-    phase_windows_ci, pytest_failure_summary, scanner_self_test)
+    phase_windows_ci, pytest_failure_summary, scanner_self_test,
+    suite_parallel_args, worktree_sha)
 from tools.publish_public_uploads import (  # noqa: E402,F401
     _archive_content_diff, _archive_members, _clean_venv_check,
-    _non_pypi_index, _poll, _throwaway_venv, build_mcpb, phase_npm,
+    _non_pypi_index, _poll, _throwaway_venv, build_mcpb, npm_pack_smoke,
     phase_post_verify, phase_public_git, phase_pypi, phase_release_asset,
     phase_testpypi, sync_export_into_clone)
 from tools.publish_steps import main  # noqa: E402

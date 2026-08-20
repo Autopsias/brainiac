@@ -195,8 +195,21 @@ def _corpus_invariants_html(
 def _invariant_extra(name: str, metric: dict[str, Any], inv_module: Any) -> str:
     extra = _unsigned_notes_context(metric) if name == "unsigned_notes" else ""
     if name == "unlinked_sources":
+        # Per reason, not just the total. AGENTS.md §4 rule 6 requires
+        # by-design exclusions to be counted SEPARATELY — "0 unlinked" must
+        # never quietly mean "0 except the ones we skip". An aggregate hides
+        # a newly added exclusion class entirely: when `emitter_output`
+        # landed it took 25 rows out of the reference vault's count, and on
+        # the old aggregate line that read as one larger number with no way
+        # to tell what changed.
+        by_reason = metric.get("excluded_by_reason") or {}
+        detail = ", ".join(
+            f"{brief_mod._esc(key)} {brief_mod._esc(value)}"
+            for key, value in sorted(by_reason.items(), key=lambda kv: -kv[1])
+        )
         extra = (f"{brief_mod._esc(metric.get('population', '?'))} in population, "
-                 f"{brief_mod._esc(metric.get('excluded', 0))} excluded by design")
+                 f"{brief_mod._esc(metric.get('excluded', 0))} excluded by design"
+                 + (f" ({detail})" if detail else ""))
     elif name == "cross_tier_twins":
         extra = f"of {brief_mod._esc(metric.get('pairs', '?'))} name-twin pair(s)"
     elif name in ("cross_tier_duplicates", "cross_tier_candidates"):

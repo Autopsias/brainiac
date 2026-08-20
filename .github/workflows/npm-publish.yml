@@ -12,16 +12,18 @@ name: npm-publish
 # token-in-.npmrc path has a deadline. Trusted publishing is the replacement
 # GitHub steers to, and it takes credentials out of the release entirely.
 #
-# BEFORE THIS CAN WORK the package owner must add a trusted publisher on
-# npmjs.com (package settings -> Trusted publishers):
-#     organization/user: Autopsias
-#     repository:        brainiac
-#     workflow filename: npm-publish.yml
-#     allowed actions:   npm publish
-# That is an owner action in the npm web UI — configuring it now itself
-# requires an interactive 2FA challenge — and it CANNOT be done from here.
-# Until it is configured, this workflow fails at the publish step with an
-# auth error and the release pipeline's local npm phase remains the path.
+# STATUS 2026-08-20: CONFIGURED AND LIVE, and now the ONLY publish path.
+# The trusted publisher is registered on npmjs.com (Autopsias/brainiac,
+# workflow npm-publish.yml) and this workflow has published every recent tag
+# in ~25s. `tools/publish_public.py` no longer publishes npm at all: its own
+# phase ran BEFORE the tag push, so it always won the race and this workflow
+# found nothing to do — which cost a two-hour-expiring npm session token and
+# shipped 0.20.19/0.20.21/0.20.22 with NO provenance attestation, where
+# 0.20.11 (published here) carries slsa.dev/provenance/v1.
+#
+# So this job is load-bearing. If it breaks, npm is simply late: PyPI and the
+# public repo are unaffected, `phase_post_verify` fails the release naming
+# the re-fire command, and the manual fallback is docs/release-runbook.md §7.9.
 
 on:
   push:

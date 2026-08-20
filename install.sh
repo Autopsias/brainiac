@@ -25,13 +25,19 @@ set -euo pipefail
 
 WITH_OCR=0
 DEV_MODE=0
+UV_BOOTSTRAP=1
 for arg in "$@"; do
   case "$arg" in
     --with-ocr) WITH_OCR=1 ;;
     --dev|--offline) DEV_MODE=1 ;;
-    *) printf 'ERROR: unknown option %s (supported: --dev, --with-ocr)\n' "$arg" >&2; exit 1 ;;
+    --no-uv-bootstrap) UV_BOOTSTRAP=0 ;;
+    *) printf 'ERROR: unknown option %s (supported: --dev, --with-ocr, --no-uv-bootstrap)\n' "$arg" >&2; exit 1 ;;
   esac
 done
+
+# Managed Python version requested when uv has to supply one. Only used on the
+# no-system-Python path; a machine with a usable python3 keeps whatever it has.
+UV_MANAGED_PYTHON="3.12"
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="${BRAINIAC_HOME:-$HOME/.brainiac}/venv"
@@ -40,12 +46,57 @@ BIN_DIR="$HOME/.local/bin"
 say()  { printf '\033[1m==> %s\033[0m\n' "$*"; }
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
-# 1. Python check (>=3.9) — needed on every path (pip --user fallback, and
-#    the --dev venv).
+# 1. Python check (>=3.9).
+#
+# This used to be a hard failure for EVERY path, which was wrong on the default
+# one: uv and pipx each manage their own interpreter, so Python is only truly
+# needed for the `pip --user` last resort and for --dev's editable venv. A
+# machine with no Python was told "install Python 3.9+ first" and stopped —
+# and npx, the path that looked like it covered that case, only printed the
+# same advice (2026-08-20 distribution review).
+#
+# uv closes it properly: it is a self-contained binary that needs no Python to
+# run and can fetch a managed CPython of its own. So when there is no usable
+# python3 AND no uv, fetch uv rather than giving up. Skip with
+# --no-uv-bootstrap on a machine whose policy forbids the download.
 PY="$(command -v python3 || true)"
-[ -n "$PY" ] || fail "python3 not found. Install Python 3.9+ first (macOS: 'brew install python3' or https://python.org)."
-"$PY" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' \
-  || fail "Python 3.9+ required; found $("$PY" --version 2>&1)."
+if [ -n "$PY" ] && ! "$PY" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)'; then
+  say "Found $("$PY" --version 2>&1), which is below the 3.9 this needs — ignoring it."
+  PY=""
+fi
+
+NEED_MANAGED_PYTHON=0
+if [ -z "$PY" ]; then
+  if [ "$DEV_MODE" = "1" ]; then
+    fail "--dev needs a real python3 3.9+ on PATH to build the editable venv.
+  Install Python 3.9+ (macOS: 'brew install python3' or https://python.org), then re-run."
+  fi
+  if command -v uv >/dev/null 2>&1; then
+    NEED_MANAGED_PYTHON=1
+    say "No Python 3.9+ on PATH — uv is here and will supply its own ($UV_MANAGED_PYTHON)."
+  elif [ "$UV_BOOTSTRAP" = "0" ]; then
+    fail "No Python 3.9+ and no uv on PATH, and --no-uv-bootstrap forbids fetching uv.
+  Install either one, then re-run:
+    uv:     curl -LsSf https://astral.sh/uv/install.sh | sh
+    Python: https://www.python.org/downloads/"
+  else
+    say "No Python 3.9+ and no uv on PATH."
+    say "Fetching uv from https://astral.sh/uv/install.sh — a self-contained binary"
+    say "that needs no Python, and that will then download its own CPython $UV_MANAGED_PYTHON."
+    say "(Skip this with --no-uv-bootstrap and install Python or uv yourself.)"
+    curl -LsSf https://astral.sh/uv/install.sh | sh \
+      || fail "fetching uv failed. Install uv or Python 3.9+ by hand, then re-run."
+    # The uv installer drops the binary here and only edits shell profiles,
+    # which this shell has already read — so put it on PATH for this run.
+    for cand in "${XDG_BIN_HOME:-}" "${CARGO_HOME:-$HOME/.cargo}/bin" "$HOME/.local/bin"; do
+      [ -n "$cand" ] && [ -x "$cand/uv" ] && PATH="$cand:$PATH" && export PATH && break
+    done
+    command -v uv >/dev/null 2>&1 \
+      || fail "uv installed but is not on PATH in this shell. Open a new shell and re-run this script."
+    NEED_MANAGED_PYTHON=1
+    say "uv $(uv --version 2>/dev/null | awk '{print $2}') is ready."
+  fi
+fi
 
 # 1a. venv module preflight (CS-03), only load-bearing for --dev (the
 #     editable venv) — stock Debian/Ubuntu ships `python3` but NOT the
@@ -105,9 +156,22 @@ else
   say "Installing brainiac-cli from PyPI — trying uv tool install, then pipx, then pip --user"
 
   if command -v uv >/dev/null 2>&1; then
-    say "Attempt 1/3: uv tool install 'brainiac-cli[mcp,ocr]'"
-    if uv tool install 'brainiac-cli[mcp,ocr]'; then
+    # --python only on the no-system-Python path: it makes uv fetch a managed
+    # CPython. Passing it always would override a perfectly good interpreter
+    # the machine already has.
+    UV_PY_ARG=""
+    if [ "$NEED_MANAGED_PYTHON" = "1" ]; then
+      UV_PY_ARG="--python $UV_MANAGED_PYTHON"
+      say "Attempt 1/3: uv tool install --python $UV_MANAGED_PYTHON 'brainiac-cli[mcp,ocr]' (uv downloads CPython $UV_MANAGED_PYTHON first)"
+    else
+      say "Attempt 1/3: uv tool install 'brainiac-cli[mcp,ocr]'"
+    fi
+    # shellcheck disable=SC2086  # UV_PY_ARG is a controlled two-token flag or empty
+    if uv tool install $UV_PY_ARG 'brainiac-cli[mcp,ocr]'; then
       INSTALLED_CHANNEL="uv tool"
+    elif [ "$NEED_MANAGED_PYTHON" = "1" ]; then
+      fail "uv tool install failed, and there is no system Python to fall back to.
+  Read the error above; then either re-run, or install Python 3.9+ and re-run."
     else
       say "uv tool install failed — falling back to pipx"
     fi
@@ -126,6 +190,13 @@ else
     else
       say "Attempt 2/3: pipx not found on PATH — skipping (https://pipx.pypa.io/)"
     fi
+  fi
+
+  if [ -z "$INSTALLED_CHANNEL" ] && [ -z "$PY" ]; then
+    # Only reachable if uv was present, its install failed, and pipx was too —
+    # `"$PY" -m pip` with PY empty would run `-m pip` on nothing.
+    fail "uv and pipx both failed and there is no system Python for the pip fallback.
+  Read the errors above, then re-run."
   fi
 
   if [ -z "$INSTALLED_CHANNEL" ]; then

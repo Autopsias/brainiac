@@ -35,7 +35,11 @@
 #>
 [CmdletBinding()]
 param(
-    [switch]$Dev
+    [switch]$Dev,
+    # Forbid fetching uv when no Python is present (see section 1). Without
+    # this the script downloads uv rather than dead-ending, which is the only
+    # way a machine with no Python can install anything here.
+    [switch]$NoUvBootstrap
 )
 
 # Unknown/extra parameters are rejected automatically by PowerShell's own
@@ -43,6 +47,9 @@ param(
 # is the .ps1 equivalent of install.sh's "unknown option" guard.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+# Managed Python requested when uv has to supply one. Only used on the
+# no-system-Python path; a machine with a usable Python keeps what it has.
+$UvManagedPython = '3.12'
 # PowerShell 7.3+ defaults $PSNativeCommandUseErrorActionPreference to $true,
 # which makes a non-zero exit code from a native exe (py/pip/brain.exe) throw
 # a generic terminating error immediately under ErrorActionPreference='Stop'
@@ -80,8 +87,6 @@ if (Get-Command py -ErrorAction SilentlyContinue) {
     $PyBaseArgs = @('-3')
 } elseif (Get-Command python -ErrorAction SilentlyContinue) {
     $PyExe = 'python'
-} else {
-    Fail "Python not found. Install Python 3.9+ from https://python.org (check 'Add python.exe to PATH' in the installer) or 'winget install Python.Python.3.12', then re-run this script."
 }
 
 function Invoke-Py {
@@ -89,10 +94,53 @@ function Invoke-Py {
     & $PyExe @PyBaseArgs @PyArgs
 }
 
-Invoke-Py -PyArgs @('-c', 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)')
-if ($LASTEXITCODE -ne 0) {
-    $verOutput = (Invoke-Py -PyArgs @('--version')) 2>&1
-    Fail "Python 3.9+ required; found $verOutput."
+if ($PyExe) {
+    Invoke-Py -PyArgs @('-c', 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)')
+    if ($LASTEXITCODE -ne 0) {
+        $verOutput = (Invoke-Py -PyArgs @('--version')) 2>&1
+        Say "Found $verOutput, which is below the 3.9 this needs - ignoring it."
+        $PyExe = $null
+    }
+}
+
+# No usable Python is no longer a dead end (2026-08-20 distribution review).
+# uv and pipx each manage their own interpreter, so Python is only truly needed
+# for the `pip --user` last resort and for -Dev's editable venv. uv is a
+# self-contained binary that needs no Python to run and can fetch a managed
+# CPython of its own, so fetch uv rather than stopping. -NoUvBootstrap opts out.
+$NeedManagedPython = $false
+if (-not $PyExe) {
+    if ($Dev) {
+        Fail "-Dev needs a real Python 3.9+ on PATH to build the editable venv. Install Python 3.9+ from https://python.org or 'winget install Python.Python.3.12', then re-run."
+    }
+    if (Get-Command uv -ErrorAction SilentlyContinue) {
+        $NeedManagedPython = $true
+        Say "No Python 3.9+ on PATH - uv is here and will supply its own ($UvManagedPython)."
+    } elseif ($NoUvBootstrap) {
+        Fail "No Python 3.9+ and no uv on PATH, and -NoUvBootstrap forbids fetching uv. Install either one, then re-run:`n    uv:     powershell -ExecutionPolicy ByPass -c `"irm https://astral.sh/uv/install.ps1 | iex`"`n    Python: winget install Python.Python.3.12"
+    } else {
+        Say "No Python 3.9+ and no uv on PATH."
+        Say "Fetching uv from https://astral.sh/uv/install.ps1 - a self-contained binary that"
+        Say "needs no Python, and that will then download its own CPython $UvManagedPython."
+        Say "(Skip this with -NoUvBootstrap and install Python or uv yourself.)"
+        & powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+        if ($LASTEXITCODE -ne 0) {
+            Fail "fetching uv failed. Install uv or Python 3.9+ by hand, then re-run."
+        }
+        # The uv installer edits the User PATH, which this already-running
+        # process does not re-read - put its bin dir on PATH for this run.
+        foreach ($cand in @("$env:USERPROFILE\.local\bin", "$env:CARGO_HOME\bin", "$env:USERPROFILE\.cargo\bin")) {
+            if ($cand -and (Test-Path (Join-Path $cand 'uv.exe'))) {
+                $env:PATH = "$cand;$env:PATH"
+                break
+            }
+        }
+        if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+            Fail "uv installed but is not on PATH in this session. Open a new PowerShell window and re-run this script."
+        }
+        $NeedManagedPython = $true
+        Say "uv is ready."
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -210,9 +258,23 @@ if ($Dev) {
     Say "Installing brainiac-cli from PyPI - trying uv tool install, then pipx, then pip --user"
 
     if (Get-Command uv -ErrorAction SilentlyContinue) {
-        Say "Attempt 1/3: uv tool install 'brainiac-cli[mcp]'"
-        & uv tool install 'brainiac-cli[mcp]'
-        if ($LASTEXITCODE -eq 0) { $InstalledChannel = 'uv tool' } else { Say "uv tool install failed - falling back to pipx" }
+        # --python only on the no-system-Python path: it makes uv fetch a
+        # managed CPython. Passing it always would override a perfectly good
+        # interpreter the machine already has.
+        if ($NeedManagedPython) {
+            Say "Attempt 1/3: uv tool install --python $UvManagedPython 'brainiac-cli[mcp]' (uv downloads CPython $UvManagedPython first)"
+            & uv tool install --python $UvManagedPython 'brainiac-cli[mcp]'
+        } else {
+            Say "Attempt 1/3: uv tool install 'brainiac-cli[mcp]'"
+            & uv tool install 'brainiac-cli[mcp]'
+        }
+        if ($LASTEXITCODE -eq 0) {
+            $InstalledChannel = 'uv tool'
+        } elseif ($NeedManagedPython) {
+            Fail "uv tool install failed, and there is no system Python to fall back to. Read the error above; then either re-run, or install Python 3.9+ and re-run."
+        } else {
+            Say "uv tool install failed - falling back to pipx"
+        }
     } else {
         Say "Attempt 1/3: uv not found on PATH - skipping (install from https://docs.astral.sh/uv/ for the fastest channel)"
     }
@@ -225,6 +287,12 @@ if ($Dev) {
         } else {
             Say "Attempt 2/3: pipx not found on PATH - skipping (https://pipx.pypa.io/)"
         }
+    }
+
+    if (-not $InstalledChannel -and -not $PyExe) {
+        # Only reachable if uv was present, its install failed, and pipx failed
+        # too - Invoke-Py with no interpreter would run nothing at all.
+        Fail "uv and pipx both failed and there is no system Python for the pip fallback. Read the errors above, then re-run."
     }
 
     if (-not $InstalledChannel) {

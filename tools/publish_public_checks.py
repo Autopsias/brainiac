@@ -22,7 +22,14 @@ from tools import publish_public as _pp  # noqa: E402
 def pytest_failure_summary(stdout: str, *, max_names: int = 40) -> str:
     """Every FAILED name plus the count line. The old version printed the last 3
     lines, which on a 4-failure run named only 2 of them -- the hidden pair sent
-    the operator diagnosing the wrong test. Names first, count last."""
+    the operator diagnosing the wrong test. Names first, count last.
+
+    Pass stdout AND stderr. pytest writes a startup failure -- an unrecognised
+    argument, a collection error, a missing plugin -- to STDERR, so a summary
+    built from stdout alone came back EMPTY and the phase reported "test suite
+    failed in the tag worktree:" with nothing after the colon (measured on the
+    v0.20.23 dry run). An empty failure report is a report that cannot inform.
+    """
     lines = stdout.strip().splitlines()
     failed = [ln for ln in lines if ln.startswith("FAILED ")]
     counts = [ln for ln in lines if re.search(r"\d+ (failed|passed|error)", ln)]
@@ -31,15 +38,105 @@ def pytest_failure_summary(stdout: str, *, max_names: int = 40) -> str:
         out.append(f"... and {len(failed) - max_names} more FAILED lines")
     if counts:
         out.append(counts[-1])
-    return "\n".join(out) or "\n".join(lines[-3:])
+    return ("\n".join(out) or "\n".join(lines[-3:])
+            or "(pytest produced no output at all -- it did not start; "
+               "check the invocation and the interpreter's plugins)")
 
 
-def phase_tests(worktree: Path) -> str:
-    proc = _pp._run([sys.executable, "-m", "pytest", "-q"], cwd=worktree, timeout=3600)
-    summary = _pp.pytest_failure_summary(proc.stdout)
+def suite_parallel_args(python: str) -> tuple[list[str], str]:
+    """The parallel flags for THIS interpreter, or none plus the reason.
+
+    AGENTS.md §8's parallel form needs pytest-xdist and pytest-timeout, which
+    live in the `dev` extra. The pipeline runs under whichever interpreter has
+    pytest+build+twine, and on this host that is `~/.brainiac/venv` -- which
+    carries bare pytest. So the parallel invocation added in ae6efb1 aborted
+    the phase in 3 seconds with `unrecognized arguments: -n --dist --timeout`,
+    and had been broken in the SHIPPING context since it landed, because no
+    release ran in between to exercise it.
+
+    Degrade, never hard-fail: a missing test accelerator must not block a
+    release. But say so in the phase summary -- silently running sequentially
+    is a 12-minute regression wearing a pass.
+    """
+    if _pp._run([python, "-c", "import xdist, pytest_timeout"]).returncode != 0:
+        return [], (f"SEQUENTIALLY -- {python} has no pytest-xdist/pytest-timeout; "
+                    f"`{python} -m pip install -e '.[dev]'` halves this phase")
+    return (["-n", "8", "--dist", "loadfile", "--timeout", "300"],
+            "in parallel (-n 8 --dist loadfile, AGENTS.md §8)")
+
+
+# The canonical parallel suite invocation (AGENTS.md §8). `--dist loadfile`
+# keeps every test in one FILE on one worker, which is what makes the parallel
+# run stable — the fcntl lock tests, the autouse env isolation and the node
+# suite all assume file-local ordering. Measured 2026-08-13: 14:53 sequential
+# -> ~3:15 parallel, identical pass set. The one deselect asserts against LIVE
+# host COS ledgers and is machine-bound by design; it is deselected in the
+# sequential gates too, so parallel coverage equals sequential coverage.
+SUITE_DESELECT = (
+    "tests/test_cos_runverify.py::"
+    "test_corpus_join_zero_false_positives_across_every_real_historical_run")
+
+
+SUITE_CACHE = Path(__file__).resolve().parents[1] / "_evidence" / "releases" / ".suite-pass.json"
+
+
+def _suite_cache_read(sha: str) -> str | None:
+    try:
+        return json.loads(SUITE_CACHE.read_text(encoding="utf-8")).get(sha)
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def _suite_cache_write(sha: str, summary: str) -> None:
+    try:
+        data = json.loads(SUITE_CACHE.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            data = {}
+    except (OSError, ValueError):
+        data = {}
+    data[sha] = summary
+    # Keep the file small; a release only ever reads its own sha.
+    for old in list(data)[:-20]:
+        data.pop(old)
+    SUITE_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    SUITE_CACHE.write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
+
+
+def worktree_sha(worktree: Path) -> str | None:
+    """The commit the throwaway worktree is checked out at."""
+    proc = _pp._run(["git", "rev-parse", "HEAD"], cwd=worktree)
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def phase_tests(worktree: Path, *, reuse_pass_for_sha: str | None = None) -> str:
+    """Run the suite in the tag worktree.
+
+    ``reuse_pass_for_sha`` is set ONLY on a resume: an identical commit has an
+    identical suite result, so re-running it costs 3-18 minutes to learn what a
+    prior phase of the SAME release already proved. Keyed on the commit sha and
+    never the tag name — a tag that moved (a fix cut after a failed run) has a
+    different sha and re-runs, which is exactly the v0.20.22 case.
+    """
+    if reuse_pass_for_sha:
+        cached = _suite_cache_read(reuse_pass_for_sha)
+        if cached:
+            return f"{cached} [reused: same commit {reuse_pass_for_sha[:9]} passed earlier this release]"
+    parallel_args, mode = _pp.suite_parallel_args(sys.executable)
+    proc = _pp._run(
+        [sys.executable, "-m", "pytest", "-q", *parallel_args,
+         "--deselect", SUITE_DESELECT],
+        cwd=worktree, timeout=3600)
+    # stdout AND stderr: pytest reports a startup failure on stderr, and a
+    # summary built from stdout alone came back blank (v0.20.23 dry run).
+    summary = _pp.pytest_failure_summary(f"{proc.stdout}\n{proc.stderr}")
     if proc.returncode != 0:
-        raise _pp.PublishError(f"test suite failed in the tag worktree:\n{summary}")
-    return summary.splitlines()[-1] if summary else "passed"
+        raise _pp.PublishError(
+            f"test suite failed in the tag worktree (ran {mode}):\n{summary}")
+    line = f"{summary.splitlines()[-1] if summary else 'passed'} — ran {mode}"
+    sha = worktree_sha(worktree)
+    if sha:
+        _suite_cache_write(sha, line)
+    return line
 
 
 def _load_denylist_terms(denylist: Path) -> list[str]:

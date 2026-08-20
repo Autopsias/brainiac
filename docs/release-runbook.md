@@ -47,6 +47,16 @@ target version already has a section), and runs `tools/package_clients.py` to
 propagate the version into all three `plugin.json` + `SKILL_VERSION` stamps +
 `dist/COMPAT`.
 
+It does **not** build the Cowork VM Linux binaries. That build takes ~12
+minutes (the x86_64 arch runs under qemu emulation) and used to block the bump
+before the release pipeline had even started, after which the pipeline checked
+the same stamps again at the end. `tools/publish_public.py` now starts it in
+the background at its first phase and hard-fails in the deploy phase if the
+stamps still lag. **If you bump WITHOUT publishing**, run
+`tools/build_brain_binary_linux.sh` yourself — otherwise `brain doctor`'s
+staged-VM-binary row and the session-start `staging:stale` alert will report
+the workspaces as stale, which is the intended visible outcome, not a bug.
+
 If the SSOT is **already** at the target version (e.g. a prior session already
 ran `release.py set`), `release.py` refuses with "pyproject.toml is already at
 X.Y.Z" — that's expected; in that case just verify the CHANGELOG already has
@@ -498,23 +508,48 @@ Transcript of this run is release evidence, same class as the soak report in
 
 ---
 
-## 7.9. Publish to npm (human-run) — after PyPI, before Step 8 (SUI-01)
+## 7.9. npm — published BY THE TAG PUSH, not by a human (revised 2026-08-20)
 
-> **Prefer §7.10's guarded pipeline** — it runs this section with the same
-> gate before `npm publish`. The commands below are the reference/fallback.
+> **Nobody runs `npm publish` for a normal release.** Pushing the tag in
+> Step 8 fires `npm-publish.yml` on the public repo, which publishes
+> `brainiac-install` over OIDC trusted publishing in ~25s, with no credential
+> and with a SLSA provenance attestation attached. §7.10's pipeline packs and
+> smoke-tests the tarball before that push and then WAITS for the registry.
+> The commands below are the manual fallback for a broken workflow only.
 
-The `brainiac-install` npx bootstrap (`packaging/npm/brainiac-install/`) is
-published to npm **after** §7.6's PyPI publish completes and **before** Step
-8's public export — same ordering contract as §7.6, and for the same
-reason: the package's whole job is `npx brainiac-install` installing
-`brainiac-cli` from PyPI, so publishing it ahead of PyPI would ship a
-bootstrapper for a version that isn't there yet, and publishing it after
-Step 8 would leave the freshly-public docs pointing at an `npx` command
-that 404s.
+**Why this changed.** The pipeline used to publish npm by hand in its own
+phase, which ran BEFORE the tag push — so it always won the race and the
+workflow found nothing to do. That cost an npm session token that expires
+every two hours (it broke the v0.20.22 run and cost a resume), and it
+stripped the provenance the CI path attaches:
 
-Same human-only class as PyPI/`git push`: no script in this repo holds or
-reads an npm token — a human runs `npm publish` from their own authenticated
-npm session (`npm login` / `~/.npmrc`, never this repo's).
+```
+$ npm view brainiac-install@<v> _npmUser.name dist.attestations…
+0.20.11   publisher=GitHub Actions   provenance=slsa.dev/provenance/v1
+0.20.19   publisher=autopsias        provenance=(none)
+0.20.21   publisher=autopsias        provenance=(none)
+0.20.22   publisher=autopsias        provenance=(none)
+```
+
+GitHub also removes direct publish from 2FA-bypass granular tokens in
+January 2027, so the hand path had a deadline regardless.
+
+**The ordering contract is unchanged and now enforced by the trigger
+itself:** npm publishes on the tag push, which happens after §7.6's PyPI
+publish, so the bootstrap can never point at a `brainiac-cli` version PyPI
+does not serve.
+
+**If the workflow fails** — read it, then re-fire it. Neither needs the
+release pipeline:
+
+```
+gh run list --repo Autopsias/brainiac --workflow npm-publish.yml --limit 3
+gh workflow run npm-publish.yml --repo Autopsias/brainiac -f tag=v<X.Y.Z>
+```
+
+Only if the workflow itself is broken does a human publish, from their own
+authenticated npm session (`npm login`, never this repo's credentials) —
+steps 1-4 below.
 
 **1. Sync the package version with the release** — AUTOMATIC since v0.19.10.
 `tools/package_clients.py` writes the SSOT version into
@@ -632,9 +667,11 @@ If a published release turns out to be defective or itself contaminated:
 "publishing is never scripted" rule. The amendment's shape: automation
 COMPOSES the steps; the human still PERFORMS each irreversible act, because
 the pipeline stops at an interactive gate before every one of them —
-TestPyPI upload, PyPI upload, npm publish, public git push — states what has
-been verified and why the act cannot be undone, and proceeds only when the
-operator types the exact version string. `--dry-run` runs every verification
+TestPyPI upload, PyPI upload, public git push — states what has been
+verified and why the act cannot be undone, and proceeds only when the
+operator types the exact version string. npm is no longer one of those
+gates: the tag push publishes it from CI (§7.9), and the public-git gate
+now says so, because that push is what makes the npm version permanent. `--dry-run` runs every verification
 and stops at the first gate.
 
 In a Claude Code session, `/publish-release` drives this end to end —
@@ -644,7 +681,7 @@ per-act `--confirm` consent recorded in evidence.
 ```
 python3 tools/publish_public.py v<X.Y.Z> --denylist ~/brainiac-release-groundtruth.txt
 python3 tools/publish_public.py v<X.Y.Z> --denylist <path> --dry-run     # verify only
-python3 tools/publish_public.py v<X.Y.Z> --denylist <path> --from npm    # resume a partial run
+python3 tools/publish_public.py v<X.Y.Z> --denylist <path> --from pypi   # resume a partial run
 ```
 
 Why it exists (measured, 2026-07-29): the manual chain shipped v0.19.17 to

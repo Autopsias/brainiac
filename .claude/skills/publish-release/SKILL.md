@@ -1,6 +1,6 @@
 ---
 name: publish-release
-description: "Cut and publicly publish a new brainiac version end to end — version bump, scoped release commit, local tag, then the guarded pipeline (tools/publish_public.py: clean-worktree export, contamination gates with scanner self-test, TestPyPI → PyPI → npm → public git push) with the owner approving each irreversible act in-session. Triggers: \"publish the release\", \"cut and publish\", \"ship version X.Y.Z publicly\", \"release to PyPI\", \"push the new version to the public repo\", \"/publish-release\". NOT for local-only version cuts (tools/release.py alone), not for the clean-room export by itself (tools/publish_release.py), and never runs unattended or on a schedule."
+description: "Cut and publicly publish a new brainiac version end to end — version bump, scoped release commit, local tag, then the guarded pipeline (tools/publish_public.py: clean-worktree export, contamination gates with scanner self-test, TestPyPI → PyPI → public git push, with npm published by CI on the tag) with the owner approving each irreversible act in-session. Triggers: \"publish the release\", \"cut and publish\", \"ship version X.Y.Z publicly\", \"release to PyPI\", \"push the new version to the public repo\", \"/publish-release\". NOT for local-only version cuts (tools/release.py alone), not for the clean-room export by itself (tools/publish_release.py), and never runs unattended or on a schedule."
 disable-model-invocation: true
 ---
 
@@ -35,11 +35,11 @@ resistance.
 ## Checklist (copy into the session and tick off)
 
 ```
-[ ] 1. Preflight: ONE interpreter imports pytest+build+twine, npm whoami,
-       tag exists, denylist present, [Unreleased] non-empty, WIP identified
+[ ] 1. Preflight: ONE interpreter imports pytest+build+twine, tag exists,
+       denylist present, [Unreleased] non-empty, WIP identified
 [ ] 2. Cut: release.py bump → scoped commit → local tag
 [ ] 3. Verify: pipeline --dry-run (full suite, export, canary, build, CI signal)
-[ ] 4. Decision card: owner approves acts (AskUserQuestion, one card, FIVE acts)
+[ ] 4. Decision card: owner approves acts (AskUserQuestion, one card, FOUR acts)
 [ ] 5. Execute: pipeline with --confirm per approved act + --consent-note
 [ ] 6. Report: evidence transcript + what is now live where
 [ ] 7. Propagate: host, staged workspace, Cowork plugin store, VM leg —
@@ -55,7 +55,6 @@ resistance.
 ```
 PY=~/.brainiac/venv/bin/python3          # the interpreter that has all three
 $PY -c "import pytest, build, twine"     # must ALL import, from ONE interpreter
-npm whoami                               # must print a user, not E401
 git rev-parse --verify refs/tags/v<X.Y.Z>   # the pipeline needs the tag to exist
 ls ~/brainiac-release-groundtruth.txt    # the denylist
 ```
@@ -66,12 +65,13 @@ ls ~/brainiac-release-groundtruth.txt    # the denylist
   fresh venv "to fix it" swaps a step-7 failure for a step-3 failure. On this
   host `~/.brainiac/venv/bin/python3` is the one that satisfies all three —
   verify, never assume, and invoke the pipeline with it explicitly.
-- **`npm whoami` before anything.** Not logged in reads as `E401` here and as
-  a `404 Not Found — PUT …` at publish time, which looks like a missing
-  package rather than missing auth. It killed v0.20.11's npm phase outright.
-  Fix it up front with `npm login --auth-type=web`, which prints a
-  `https://www.npmjs.com/login?next=/login/cli/<uuid>` URL — relay it to the
-  owner immediately and confirm with `npm whoami` before continuing.
+- **Do NOT check `npm whoami`, and never run `npm login`.** Since 2026-08-20
+  the pipeline does not publish npm at all: the tag push fires
+  `npm-publish.yml`, which publishes over OIDC with no credential and with a
+  provenance attestation. The old hand publish is what needed a login that
+  expires every two hours, and it broke the v0.20.22 run. If npm is missing at
+  the end, the fix is the workflow, not an auth session — `post-verify` prints
+  the two `gh` commands.
 - `CHANGELOG.md` must have real content under `## [Unreleased]` — an empty
   section means there is nothing to release; stop and say so.
 - `git status --short`: identify anything dirty that is NOT release material.
@@ -122,13 +122,19 @@ Present ONE card carrying: the dry-run's verified summary (verbatim from the
 gate output), anything excluded from the release commit (step 1), any
 Windows-CI acceptance reason, and the acts as a multi-select.
 
-**There are FIVE gated acts, not four:** `testpypi`, `pypi`, `npm`,
-`public-git`, `release-asset`. A card offering only the first four stops the
-run at step 11/12 needing a second, separate approval (measured 2026-08-16).
-Include `release-asset` explicitly, and say what it carries: it attaches
-assets to the GitHub release that CI already created on the tag push, and it
-has failed since v0.20.5 on the mcpb handshake gate — so the owner is
-approving something with a known failure history, not a formality.
+**There are FOUR gated acts:** `testpypi`, `pypi`, `public-git`,
+`release-asset`. It was five until 2026-08-20, when `npm` stopped being an
+act this pipeline performs. Include `release-asset` explicitly — omitting it
+stops the run near the end needing a second, separate approval (measured
+2026-08-16) — and say what it carries: it attaches assets to the GitHub
+release that CI already created on the tag push, and it has failed since
+v0.20.5 on the mcpb handshake gate, so the owner is approving something with
+a known failure history, not a formality.
+
+**Say what `public-git` now also does.** Pushing the tag publishes
+`brainiac-install` to npm, and an npm version is permanent. The pipeline's
+gate text says this; the card must too, or the owner is approving a
+consequence they were not shown.
 
 The owner's selection is the consent — record their exact wording if they add
 notes, and pass one `--confirm` per selected act. If they approve a subset
@@ -148,12 +154,12 @@ python3 tools/publish_public.py v<X.Y.Z> \
 
 `--skip-tests` is legitimate here and only here: step 3 just ran the suite
 on this exact tag. Pass `--confirm` ONLY for the acts selected in step 4.
-If a phase fails midway (e.g. npm auth missing): report the tool's own
-error, let the owner fix auth outside the session, then resume with
-`--from <phase>` plus the still-pending `--confirm` flags — consent from
-step 4 carries over within the same session; a NEW session asks again.
-Preflight is resume-aware (`expect_published`), so `--from npm` does NOT
-trip the already-on-PyPI guard.
+If a phase fails midway: report the tool's own error, let the owner fix it
+outside the session, then resume with `--from <phase>` plus the still-pending
+`--confirm` flags — consent from step 4 carries over within the same session;
+a NEW session asks again. Preflight is resume-aware (`expect_published`), so
+`--from public-git` does NOT trip the already-on-PyPI guard. A resume also
+reuses a suite pass recorded for the SAME commit sha, so the prefix is cheap.
 
 **Auth surfaces the pipeline cannot solve for the owner** — each is the
 owner's to hold, and the tool's own error is the report:
@@ -161,11 +167,10 @@ owner's to hold, and the tool's own error is the report:
 - **twine (PyPI/TestPyPI)** needs a credential it can find non-interactively
   (`~/.pypirc` section, or keyring). No terminal ⇒ no password prompt; it
   raises `EOFError`. TestPyPI tokens are separate from PyPI's.
-- **npm 2FA** is handled: the publish runs on a pseudo-terminal and prints a
-  click-to-authorize URL. **Watch the run's output for that URL and relay it
-  to the owner immediately** — the publish blocks up to 15 minutes waiting for
-  the browser round-trip, so a URL surfaced late is a timeout. Never ask for a
-  typed one-time code: it expires before the run reaches the publish step.
+- **npm needs no auth at all any more** — CI holds it, via OIDC. There is no
+  URL to relay and no code to type. `post-verify` waits up to 10 minutes for
+  the workflow plus registry lag; if it times out, read and re-fire the
+  workflow with the two `gh` commands the error prints.
 - **A missing module reads as an auth failure.** Measured 2026-08-16: the run
   died with `No module named twine` on line 1 of its own log, and that was
   diagnosed twice as a credential problem and once as a missing TTY before

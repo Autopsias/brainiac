@@ -58,6 +58,13 @@ Installs `brainiac-cli[mcp]` from PyPI trying `uv tool install` → `pipx` →
 `pip install --user` (first success wins; it reports the channel). **No model
 download happens now** — install never blocks on the network beyond PyPI.
 
+**The machine does not need Python.** If there is no usable `python3` and no
+`uv`, the script fetches `uv` from `astral.sh` (a self-contained binary that
+needs no Python) and installs through it, letting uv download its own CPython
+3.12. It says so before doing it. If the human objects to that download, re-run
+with `--no-uv-bootstrap` (`-NoUvBootstrap` on Windows) and it names both fixes
+instead. Do NOT tell a human to "install Python first" — that advice is stale.
+
 **Windows (PowerShell, no WSL):**
 
 ```powershell

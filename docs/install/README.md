@@ -254,6 +254,13 @@ success wins. Pass `--with-ocr` to also install the OCR toolchain
 (scanned-PDF ingestion) visibly; skip it and scanned PDFs just quarantine
 until you do.
 
+**No Python on the machine?** That is no longer a dead end (2026-08-20). uv
+is a self-contained binary that needs no Python to run and can download a
+managed CPython of its own, so when there is neither a usable `python3` nor
+uv on PATH, the installer fetches uv from `astral.sh` — visibly, saying so
+first — and then installs through it. Pass `--no-uv-bootstrap` to forbid
+that download and get a message naming both fixes instead.
+
 **Skills.** Codex has no marketplace/plugin system to install into — its
 `.agents/skills/` directory is repo-local, so it needs the repo present
 regardless of engine channel:
@@ -305,7 +312,9 @@ irm https://raw.githubusercontent.com/Autopsias/brainiac/main/install.ps1 -OutFi
 ```
 
 PyPI-first, same as `install.sh`: tries `uv tool install`, then `pipx`, then
-`pip install --user`, first success wins, each attempt visibly reported.
+`pip install --user`, first success wins, each attempt visibly reported. The
+same uv bootstrap applies when the machine has no Python at all; `-NoUvBootstrap`
+forbids the download.
 Puts `brain` on your **User PATH** (additive — never overwrites your
 existing PATH, safe to re-run). Semantic search downloads its embedding
 model (~563 MB) lazily on first real use, or run `brain warmup` up front.
@@ -375,7 +384,10 @@ shell and carries no runtime dependencies; see
 `packaging/npm/brainiac-install/README.md` for the full contract. This path
 is **for machines that already have Node** — it doesn't install Node itself;
 a machine with only Python (no Node) should use Path A/E's shell/PowerShell
-installer instead.
+installer instead. It is also **not** the answer for a machine with Node but
+no Python: it runs the same three-channel chain and stops the same way. Path
+A/E's installers are the ones that fetch uv and a managed CPython in that
+case.
 
 ---
 

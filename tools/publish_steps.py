@@ -20,7 +20,8 @@ from tools.publish_public import (
     phase_build,
     phase_export,
     phase_local_deploy,
-    phase_npm,
+    start_vm_elf_build,
+    npm_pack_smoke,
     phase_post_verify,
     phase_preflight,
     phase_public_git,
@@ -30,9 +31,19 @@ from tools.publish_public import (
     phase_tests,
     phase_windows_ci,
     phase_worktree,
+    worktree_sha,
 )
 
 __doc__ = _source.__doc__
+
+
+def _step(phase: str) -> str:
+    """`[7/12]` for a phase, derived from PHASES.
+
+    Hand-numbered before 2026-08-20, which is why dropping the npm phase would
+    otherwise have silently misnumbered the six phases after it.
+    """
+    return f"[{PHASES.index(phase) + 1}/{len(PHASES)}]"
 
 
 def _make_gate_fn(
@@ -65,39 +76,43 @@ def _run_initial_phases(
     summary = phase_preflight(tag, expect_published=pypi_expectation)
     ev.record("preflight", "OK", summary)
     verified.append(summary)
-    print(f"[1/{len(PHASES)}] preflight: {summary}")
+    print(f"{_step('preflight')} preflight: {summary}")
 
     worktree = phase_worktree(tag, scratch)
     ev.record("worktree", "OK", str(worktree))
     verified.append(f"clean worktree at {tag}")
-    print(f"[2/{len(PHASES)}] worktree: clean at {tag}")
+    print(f"{_step('worktree')} worktree: clean at {tag}")
 
     if args.skip_tests:
         ev.record("tests", "SKIPPED",
                   "--skip-tests passed; operator asserts the suite ran for this tag")
         verified.append("tests: SKIPPED by operator flag")
-        print(f"[3/{len(PHASES)}] tests: SKIPPED (--skip-tests)")
+        print(f"{_step('tests')} tests: SKIPPED (--skip-tests)")
     else:
-        summary = phase_tests(worktree)
+        # On a resume the suite may already have passed at this exact commit
+        # earlier in the same release; phase_tests reuses that only when the
+        # sha matches, so a re-cut tag still re-runs.
+        reuse = worktree_sha(worktree) if args.from_phase else None
+        summary = phase_tests(worktree, reuse_pass_for_sha=reuse)
         ev.record("tests", "OK", summary)
         verified.append(f"suite: {summary}")
-        print(f"[3/{len(PHASES)}] tests: {summary}")
+        print(f"{_step('tests')} tests: {summary}")
 
     export_dir = phase_export(worktree, scratch, denylist)
     ev.record("export", "OK", "0 hits; scanner self-test passed")
     verified.append("export contamination scan: 0 hits (scanner self-test passed)")
-    print(f"[4/{len(PHASES)}] export + contamination gate: 0 hits (self-test passed)")
+    print(f"{_step('export')} export + contamination gate: 0 hits (self-test passed)")
 
     artifacts = phase_build(export_dir, tag.removeprefix("v"), denylist)
     names = ", ".join(path.name for path in artifacts)
     ev.record("build", "OK", names)
     verified.append(f"built from export: {names}")
-    print(f"[5/{len(PHASES)}] build from export: {names} (sdist re-scanned: 0 hits)")
+    print(f"{_step('build')} build from export: {names} (sdist re-scanned: 0 hits)")
 
     summary = phase_windows_ci(args.accept_windows_ci)
     ev.record("windows-ci", "OK", summary)
     verified.append(f"windows CI: {summary}")
-    print(f"[6/{len(PHASES)}] windows CI signal: {summary}")
+    print(f"{_step('windows-ci')} windows CI signal: {summary}")
     return worktree, export_dir, artifacts
 
 
@@ -120,9 +135,9 @@ def _run_upload_phases(
         summary = phase_testpypi(artifacts, version, scratch)
         ev.record("testpypi", "OK", summary)
         verified.append(f"testpypi: {summary}")
-        print(f"[7/{len(PHASES)}] testpypi: {summary}")
+        print(f"{_step('testpypi')} testpypi: {summary}")
     else:
-        print(f"[7/{len(PHASES)}] testpypi: skipped (--from {args.from_phase})")
+        print(f"{_step('testpypi')} testpypi: skipped (--from {args.from_phase})")
 
     if should_run("pypi"):
         gate_fn("pypi", "upload to PRODUCTION PyPI",
@@ -131,33 +146,33 @@ def _run_upload_phases(
         summary = phase_pypi(artifacts, version, scratch)
         ev.record("pypi", "OK", summary)
         verified.append(f"pypi: {summary}")
-        print(f"[8/{len(PHASES)}] pypi: {summary}")
+        print(f"{_step('pypi')} pypi: {summary}")
     else:
-        print(f"[8/{len(PHASES)}] pypi: skipped (--from {args.from_phase})")
-
-    if should_run("npm"):
-        summary = phase_npm(export_dir, version, scratch, gate_fn)
-        ev.record("npm", "OK", summary)
-        verified.append(f"npm: {summary}")
-        print(f"[9/{len(PHASES)}] npm: {summary}")
-    else:
-        print(f"[9/{len(PHASES)}] npm: skipped (--from {args.from_phase})")
+        print(f"{_step('pypi')} pypi: skipped (--from {args.from_phase})")
 
     if should_run("public-git"):
+        # Prove the npm tarball BEFORE the push that publishes it: the push
+        # fires npm-publish.yml, and an npm version is permanent.
+        smoke = npm_pack_smoke(export_dir, version, scratch)
+        ev.record("npm-smoke", "OK", smoke)
+        verified.append(f"npm bootstrap: {smoke}")
+        print(f"{_step('public-git')} npm bootstrap (pack + smoke, not published): {smoke}")
+
         summary = phase_public_git(export_dir, version, scratch, denylist, gate_fn)
         ev.record("public-git", "OK", summary)
         verified.append(summary)
-        print(f"[10/{len(PHASES)}] public git: {summary}")
+        print(f"{_step('public-git')} public git: {summary} "
+              f"— this push also fires npm-publish.yml")
     else:
-        print(f"[10/{len(PHASES)}] public git: skipped (--from {args.from_phase})")
+        print(f"{_step('public-git')} public git: skipped (--from {args.from_phase})")
 
     if should_run("release-asset"):
         summary = phase_release_asset(export_dir, version, scratch, gate_fn)
         ev.record("release-asset", "OK", summary)
         verified.append(summary)
-        print(f"[11/{len(PHASES)}] release asset: {summary}")
+        print(f"{_step('release-asset')} release asset: {summary}")
     else:
-        print(f"[11/{len(PHASES)}] release asset: skipped (--from {args.from_phase})")
+        print(f"{_step('release-asset')} release asset: skipped (--from {args.from_phase})")
 
 
 def main() -> int:
@@ -178,7 +193,7 @@ def main() -> int:
                         help="proceed despite a missing/red distribution-matrix signal; "
                              "the reason is recorded in the evidence transcript")
     parser.add_argument("--confirm", action="append", default=[], metavar="ACT",
-                        choices=["testpypi", "pypi", "npm", "public-git", "release-asset"],
+                        choices=["testpypi", "pypi", "public-git", "release-asset"],
                         help="pre-authorize ONE irreversible act (repeatable). For "
                              "harness-driven runs where the owner approved that "
                              "specific act in-session; requires --consent-note")
@@ -203,8 +218,17 @@ def main() -> int:
     gate_fn = _make_gate_fn(args, version, ev)
     def should_run(phase: str) -> bool:
         return PHASES.index(phase) >= start_idx
+    elf_build = None
     try:
         print(f"publish_public: {tag} — scratch at {scratch}")
+        # ~12 min under qemu, sharing nothing with anything below. Started here
+        # it overlaps the whole pipeline; the deploy phase waits for it and
+        # still hard-fails on stale stamps.
+        if not args.dry_run:
+            elf_build = start_vm_elf_build(version)
+            if elf_build is not None:
+                print("  (VM ELF build started in the background — the deploy "
+                      "phase waits for it)")
         worktree, export_dir, artifacts = _run_initial_phases(
             args, tag, denylist, ev, should_run, verified, scratch
         )
@@ -213,18 +237,19 @@ def main() -> int:
             export_dir, artifacts, denylist
         )
 
-        # A resume that started past the npm phase never published it, so the
-        # npx path cannot exist for this version yet.
-        summary = phase_post_verify(version, scratch, npm_published=should_run("npm"))
+        # npm is published by the tag push, not by this script, so this waits
+        # on the registry; it reports the gap rather than failing when the tag
+        # itself was never pushed.
+        summary = phase_post_verify(version, scratch)
         ev.record("post-verify", "OK", summary)
-        print(f"[12/{len(PHASES)}] post-verify:\n{summary}")
+        print(f"{_step('post-verify')} post-verify:\n{summary}")
 
         # Publishing is not deploying: without this, the release is live on
         # every public channel while THIS host keeps staging the previous
         # engine into Cowork (measured: 0.20.19 survived two releases).
-        summary = phase_local_deploy(version)
+        summary = phase_local_deploy(version, elf_build)
         ev.record("deploy", "OK", summary)
-        print(f"[13/{len(PHASES)}] deploy:\n{summary}")
+        print(f"{_step('deploy')} deploy:\n{summary}")
 
         ev.record("DONE", "OK", f"v{version} fully published and verified")
         print(f"\nDONE — transcript: {ev.path}")

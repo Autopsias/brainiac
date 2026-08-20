@@ -180,20 +180,26 @@ def run_vm_binary_build(*, dry_run: bool) -> None:
     it must still succeed. The staged-VM-binary doctor row and the re-stage
     assert are what make a skipped build VISIBLE, so a warning here cannot
     quietly become a stale binary later.
+
+    SINCE 2026-08-20 THE BUMP NO LONGER BLOCKS ON IT. The emulated x86_64 arch
+    takes ~12 minutes, and the bump ran it in the foreground before the release
+    pipeline had even started — then the pipeline's deploy phase checked the
+    stamps again at the end. The pipeline now starts this same build in the
+    BACKGROUND alongside its test phase and hard-fails on stale stamps in
+    `phase_local_deploy`, so the work happens once, off the critical path, with
+    a stricter owner than this advisory warning ever was. A bare bump that is
+    never published leaves the ELFs behind, which `brain doctor`'s staged-VM-
+    binary row and the session-start `staging:stale` alert both report.
     """
-    script = REPO_ROOT / "tools" / "build_brain_binary_linux.sh"
     if dry_run:
-        print("  (dry-run: skipping tools/build_brain_binary_linux.sh)")
+        print("  (dry-run: skipping the VM ELF note)")
         return
-    print("  rebuilding the Cowork VM ELFs (tools/build_brain_binary_linux.sh) ...")
-    try:
-        subprocess.run([str(script)], check=True, cwd=REPO_ROOT)
-    except (subprocess.CalledProcessError, OSError) as exc:
-        print(f"  WARNING: VM ELF rebuild did not run ({exc}).", file=sys.stderr)
-        print("  dist/brain-linux-* is now OLDER than this release. Run "
-              "tools/build_brain_binary_linux.sh on a host with Docker before "
-              "staging any Cowork workspace; `brain doctor` will report the "
-              "staged VM binary as stale until you do.", file=sys.stderr)
+    print("  VM ELFs: the release pipeline builds them in the background and "
+          "verifies the stamps in its deploy phase (tools/publish_public.py). "
+          "Building here would block the cut for ~12 minutes to redo that.")
+    print("  If you are bumping WITHOUT publishing, run "
+          "tools/build_brain_binary_linux.sh yourself, or `brain doctor` will "
+          "report the staged VM binary as stale.")
 
 
 def apply_release(new_version: str, *, dry_run: bool) -> None:

@@ -7,6 +7,7 @@ import time
 
 from .. import classification as cls
 from .. import cli as shared
+from .. import egress
 
 _emit = shared._emit
 _excluded_note = shared._excluded_note
@@ -287,9 +288,9 @@ def _run_dossier(args, ctx) -> int:
     res = core.dossier(args.query, k=args.k)
     decisions, drep = _filter_dicts(res["decisions"], args.max_tier)
     sources, srep = _filter_dicts(res["sources"], args.max_tier)
-    # The targeted decision-layer probe can add a hit outside hybrid's
-    # normal pool. Finalize the same post-egress identity conclusion over
-    # both dossier layers so a withheld identity owner stays unknown.
+    egress.gate_dossier_tensions(decisions, sources)
+    # The targeted decision-layer probe can add a hit outside hybrid's normal
+    # pool; finalize post-egress identity over both layers so it stays unknown.
     core.annotate_create_safety(args.query, decisions + sources, args.max_tier)
     report = {
         "total": drep["total"] + srep["total"],

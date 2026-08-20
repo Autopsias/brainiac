@@ -171,9 +171,8 @@ class AuditChain:
                 drift.append({"path": path, "issue": "content_drift",
                               "expected_sha256": expected, "actual_sha256": actual})
         for rec in drift:
-            match = match_disposition(rec, dispositions)
-            rec["disposition"] = (match or {}).get("disposition")
-            rec["disposition_reason"] = (match or {}).get("reason")
+            rec["disposition"], rec["disposition_reason"] = _drift_disposition_label(
+                rec, dispositions)
         return drift
 
 
@@ -217,6 +216,9 @@ from .audit import (  # noqa: E402
 )
 from .audit_drift import load_drift_dispositions as load_drift_dispositions  # noqa: E402
 from .audit_drift import match_disposition as match_disposition  # noqa: E402
+from .audit_drift import (  # noqa: E402
+    drift_disposition_label as _drift_disposition_label,
+)
 
 # Facade bind for the monkeypatch contract: tests patch
 # brain.audit.resolve_signing_key / provision_signing_key, so call sites here

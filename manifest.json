@@ -96,6 +96,7 @@
     "docs/adr/0007-resumable-rebuild-staging-artifact.md",
     "docs/adr/0008-retrieval-upgrades.md",
     "docs/adr/0009-shadow-translation.md",
+    "docs/adr/0010-deliverables-shelf-outside-the-vault.md",
     "docs/architecture-overview.html",
     "docs/benchmark-results.md",
     "docs/classification-scheme.md",
@@ -554,6 +555,7 @@
     "src/brain/init_steps.py",
     "src/brain/invariant_coverage.py",
     "src/brain/invariant_crosstier.py",
+    "src/brain/invariant_floors.py",
     "src/brain/invariant_reachability.py",
     "src/brain/invariant_shared.py",
     "src/brain/invariant_unsigned_notes.py",
@@ -678,6 +680,10 @@
     "tools/cos_hold_actions.py",
     "tools/cos_hold_visible.py",
     "tools/cos_ingest_bridge.py",
+    "tools/cos_ingest_bridge_candidate.py",
+    "tools/cos_ingest_bridge_content.py",
+    "tools/cos_ingest_bridge_report.py",
+    "tools/cos_ingest_bridge_store.py",
     "tools/cos_judge.py",
     "tools/cos_judge_apply.py",
     "tools/cos_judge_batches.py",
@@ -783,5 +789,5 @@
     "vault/raw/2026-06-27-arctic-vs-e5-benchmark.md",
     "vault/raw/README.md"
   ],
-  "count": 782
+  "count": 788
 }

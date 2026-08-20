@@ -87,6 +87,21 @@ def apply_gate(
     return flt.filter(items, key=key), flt.redaction_report(items, key=key)
 
 
+def gate_dossier_tensions(decisions: list[dict], surfaced_sources: list[dict]) -> None:
+    """Re-gate each decision's ``tensions`` against the POST-EGRESS sources.
+
+    ``core.dossier`` builds ``tensions`` from its UNGATED candidate pool
+    (RET-10), so a decision that survives :func:`apply_gate` still names a
+    withheld note's id/date/type/identity unless the list is re-filtered
+    against the same surfaced set. It lives here, beside the chokepoint,
+    because BOTH transports gate the two dossier layers separately and would
+    otherwise each need their own copy of this rule.
+    """
+    surfaced_ids = {s["id"] for s in surfaced_sources}
+    for d in decisions:
+        d["tensions"] = [t for t in d.get("tensions", []) if t["id"] in surfaced_ids]
+
+
 # --------------------------------------------------------------------------
 # Trusted-harness allowlist (SEC-01, HARDENED:claude / r2-claude)
 # --------------------------------------------------------------------------

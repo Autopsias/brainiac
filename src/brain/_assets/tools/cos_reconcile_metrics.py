@@ -197,7 +197,7 @@ def counts_bridge_dropped(rows: list[dict]) -> int:
     (s03 ING-01). ZERO vs NO INPUT, per B3: a date with NO
     `_cos_ingest_bridge_*` ledger contributes NOTHING here — that is a night
     the bridge never ran on, never one that ran and dropped zero. Both
-    readings are probed in tests/test_cos_ingest_bridge.py.
+    readings are probed in tests/test_cos_ingest_bridge_accounting.py.
 
     DISTINCT conversations, because the bridge ledger is append-only across
     re-runs: an idempotent re-run appends `already-dropped` rows beside the

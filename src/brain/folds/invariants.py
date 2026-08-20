@@ -61,12 +61,19 @@ class InvariantFoldsMixin:
                 previous.get("floors"), metrics
             )
             regressions = invariants.invariant_regressions(previous_floors, values)
+            # A defect count improves when the corpus SHRINKS, so a run taken
+            # while documents were missing must not set a floor no healthy
+            # vault can match (invariant_floors).
+            declined = invariants.declined_floors(previous_floors, values, metrics)
             run.results["corpus_invariants"] = metrics
             run.state[invariants.STATE_KEY] = {
                 **previous,
                 "metrics": metrics,
-                "floors": invariants.update_floors(previous_floors, values),
+                "floors": invariants.update_floors_guarded(
+                    previous_floors, values, metrics
+                ),
                 "regressions": regressions,
+                "floors_declined": declined,
             }
             if not run.dry_run and regressions:
                 self._append_hot_once(

@@ -182,6 +182,48 @@ stopped running *at all*, keyed on `last_attempt` age. Only the latter can detec
 that went unnoticed for 32 nights: when the process never runs, no handler fires, no
 counter increments, and a failure count stays at zero forever.
 
+## Deliverables shelf
+
+**Deliverable** — a note carrying `deliverable: true`, anchoring a final output *produced
+from* vault content for an audience: a deck, a memo, an analysis. It is the opposite end of
+the pipe from a `source`, which is material that came *in*. The distinction is the SUBJECT
+of the file, never who or what authored it — the same test ENF-06 applies to operational
+artifacts. Deliverability is **orthogonal to `type:`**, and deliberately so: `type` is
+single-valued and load-bearing for retrieval (`type: decision` is the decision layer,
+selected by exact equality at `core/_retrieval.py:124`; `type: project` drives PARA filing),
+so a produced decision document that was *retagged* `deliverable` would leave the decision
+layer. It stays `type: decision` and gains a key. A new version of a deliverable is a
+**supersede**, never an edit, because the shelf shows exactly the latest member of a chain
+— with the standing caveat that outside `…-vN` families supersession is only ever
+*proposed* (CUR-01), so "latest" on this engine means "not explicitly retired", not "the
+newest of a family". The shelf reports that ambiguity rather than hiding it.
+
+**Shelf** — the generated, human-facing folder of latest-version-only COPIES, grouped by
+project. It lives **outside `vault/`** and is bound to one vault (default
+`<vault>/../brain-deliverables`, override `$BRAIN_DELIVERABLES_DIR`); that placement is
+load-bearing, not cosmetic: `scan_vault`
+(`notes.py:217`) is the only whole-vault walker, so a shelf outside the tree is excluded
+from retrieval **structurally** — no indexing rule is weakened, and walkers not yet written
+inherit the exclusion for free. The same argument AGENTS.md already makes for `cos-corpus`.
+Inside `vault/` the copies would additionally be tarred by `backup.py`, carried by
+`brain project`, collide with the path-keyed audit chain, and — being byte-identical to
+their own notes — feed `auto_dedup_tier1`, which could retire the real note against its
+convenience copy. See [ADR 0010](docs/adr/0010-deliverables-shelf-outside-the-vault.md).
+
+**Ledger-owned path** vs **unknown file** vs **diverged copy** — three states a file on
+the shelf can be in, and the fold treats them differently. *Ledger-owned* means the
+**host-private ledger** records that path with the sha256 the fold wrote; only these may be
+moved aside, and only when their note is superseded or gone. The in-shelf
+`shelf-manifest.json` is a published *advisory view* of that ledger and is never read back
+for authority — it sits in a folder the owner can write to, so anything able to edit it
+could otherwise nominate a hand-dropped file for removal. And the fold never deletes: a
+displaced copy moves to `_previous/<run-id>/`. *Unknown* means the fold never
+wrote it (the owner dropped it there, or a cloud-sync agent produced a conflict copy) — it
+is never touched, only reported. *Diverged* means ledger-owned but the on-disk sha256 no
+longer matches: someone edited the copy. A diverged file is treated like an unknown one —
+never moved, always reported — which is the whole reason the ledger records a hash. A
+fold that writes a hash it never reads has recorded nothing.
+
 ## Capture provenance & ingestion learning
 
 **`provenance.*` keys** — flat dotted frontmatter keys, written and read as literal

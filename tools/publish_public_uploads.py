@@ -386,20 +386,37 @@ def phase_release_asset(export_dir: Path, version: str, scratch: Path,
         f"See `CHANGELOG.md` section `[{version}]` for what changed."
     )
 
+    def _upload_onto_existing() -> str:
+        _pp._need(_pp._run(["gh", "release", "upload", f"v{version}", str(bundle),
+                    "--repo", _pp.PUBLIC_REPO, "--clobber"], timeout=600),
+              "gh release upload")
+        return "re-uploaded the asset onto the existing release"
+
     # Resume safety: a run that created the release and then died must not fail
     # here on "release already exists" — re-upload over it instead.
     existing = _pp._run(["gh", "release", "view", f"v{version}", "--repo", _pp.PUBLIC_REPO])
     if existing.returncode == 0:
-        _pp._need(_pp._run(["gh", "release", "upload", f"v{version}", str(bundle),
-                    "--repo", _pp.PUBLIC_REPO, "--clobber"], timeout=600),
-              "gh release upload")
-        action = "re-uploaded the asset onto the existing release"
+        action = _upload_onto_existing()
     else:
-        _pp._need(_pp._run(["gh", "release", "create", f"v{version}", str(bundle),
+        created = _pp._run(["gh", "release", "create", f"v{version}", str(bundle),
                     "--repo", _pp.PUBLIC_REPO, "--title", f"brainiac v{version}",
-                    "--notes", notes], timeout=600),
-              "gh release create")
-        action = "created the release"
+                    "--notes", notes], timeout=600)
+        if created.returncode == 0:
+            action = "created the release"
+        elif "already exists" in (created.stdout or "") + (created.stderr or ""):
+            # The check above is a SNAPSHOT and this phase now races a robot.
+            # Since 2026-08-20 the previous phase's tag push fires
+            # npm-publish.yml, whose `github-release` job creates the Release
+            # itself — measured on v0.20.23: CI created it at 13:21:57, the
+            # view returned "not found" before that, and the create then died
+            # `HTTP 422 Release.tag_name already exists`, failing a release
+            # whose PyPI, git and npm legs had all landed. Re-check by DOING
+            # the other branch rather than trusting the stale snapshot.
+            action = _upload_onto_existing() + " (created by CI while this phase ran)"
+        else:
+            raise _pp.PublishError(
+                f"gh release create failed (exit {created.returncode})\n"
+                f"{created.stdout}{created.stderr}")
 
     back = scratch / "asset-verify"
     back.mkdir(exist_ok=True)

@@ -224,6 +224,7 @@ def dispatch_dossier(
     result = core.dossier(str(args["query"]), k=int(args.get("k", 12)))
     decisions, decision_report = _filtered(result["decisions"], max_tier)
     sources, source_report = _filtered(result["sources"], max_tier)
+    egress.gate_dossier_tensions(decisions, sources)
     core.annotate_create_safety(str(args["query"]), decisions + sources, max_tier)
     report: dict[str, Any] = {
         key: decision_report[key] + source_report[key]

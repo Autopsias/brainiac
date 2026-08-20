@@ -395,7 +395,26 @@ gates.
    ratcheting** — each metric's threshold is the best value ever recorded, so
    the same rule alerts from a 2,132 baseline and from a zero one; never a
    week-over-week percentage, which dies at zero exactly when a backfill
-   finally works. The fold carries a **dead-man's switch**: its own
+   finally works.
+
+   **A floor is only earned on a corpus that did not shrink
+   (`brain.invariant_floors`, 2026-08-20).** Every one of these metrics counts
+   DEFECTS IN A CORPUS, so REMOVING documents improves the score — the ratchet
+   can be won by damage. The reference vault read `unlinked_sources = 0` across
+   19 consecutive runs on 2026-08-19 while ~120 documents from the wrongful
+   433-file hand retirement were still out of the vault; they were reinstated
+   the next day (notes 2490 → 2612) and every healthy run since reported a
+   REGRESSION against a floor only a damaged corpus could reach. An alarm that
+   can never be satisfied is an alarm nobody reads, which is the exact failure
+   this fold exists to prevent. So each floor is stored WITH the `population`
+   it was recorded against (same shape as `unreachable_gold_labels`), and a
+   metric may not set a new floor on a run whose population fell below that
+   basis. The guard **only ever declines to LOWER a floor** — it never raises
+   one, never suppresses a regression, and never touches the reported value;
+   a genuine improvement over the whole corpus ratchets exactly as before, and
+   the metrics that report no population (pair and family counts) are
+   untouched. A declined floor is reported as `floors_declined`, never
+   silently skipped. The fold carries a **dead-man's switch**: its own
    last-successful-run age is a metric, and a row older than
    `$BRAIN_INVARIANTS_MAX_AGE_DAYS` (default 3) — or missing on a vault whose
    other branches run — is DEGRADED in `brain doctor`, in `brain

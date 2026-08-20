@@ -375,7 +375,15 @@ def drain(*, registry_path: Optional[Path] = None,
         for marker in sorted(root.glob(f"*/vault/.brain/{REQUEST_NAME}")):
             vault = marker.parent.parent
             workspace = vault.parent
-            if Path(os.path.realpath(workspace)).parent != root:
+            real_workspace = Path(os.path.realpath(workspace))
+            real_vault = Path(os.path.realpath(vault))
+            # The VM owns everything under `workspace` (PRV-10) and can make
+            # `vault` itself a symlink to an arbitrary host directory while
+            # still passing the workspace-parent check below. Require the
+            # resolved vault to land exactly at <real workspace>/vault, or
+            # the drain would init/sync/register/MCP-wire an attacker-chosen
+            # path instead of the requested workspace's own vault.
+            if real_workspace.parent != root or real_vault != real_workspace / "vault":
                 handled.append({"vault": str(vault), "status": "skipped-symlink-escape",
                                 "ok": False})
                 continue

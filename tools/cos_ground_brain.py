@@ -71,17 +71,21 @@ class Brain:
         raise LookupFailed(last or "no answer")
 
     def search(self, query: str, k: int) -> list[dict[str, Any]]:
-        doc = self._run(["search", query, "--json", "--max-tier", "MNPI",
-                         "-k", str(k), "--no-rerank"])
+        # `--` before the query, and the query LAST: a subject or sender that
+        # begins with "-" would otherwise be parsed as an option and take the
+        # whole lookup down, leaving that thread uncovered for a reason that
+        # has nothing to do with the vault.
+        doc = self._run(["search", "--json", "--max-tier", "MNPI",
+                         "-k", str(k), "--no-rerank", "--", query])
         return list((doc or {}).get("results") or [])
 
     def get(self, note_id: str) -> dict[str, Any]:
-        doc = self._run(["get", note_id, "--json", "--max-tier", "MNPI"])
+        doc = self._run(["get", "--json", "--max-tier", "MNPI", "--", note_id])
         return doc if isinstance(doc, dict) and not doc.get("error") else {}
 
     def dossier(self, query: str, k: int) -> list[dict[str, Any]]:
-        doc = self._run(["dossier", query, "--json", "--max-tier", "MNPI",
-                         "-k", str(k)])
+        doc = self._run(["dossier", "--json", "--max-tier", "MNPI",
+                         "-k", str(k), "--", query])
         return list((doc or {}).get("decisions") or [])
 
 

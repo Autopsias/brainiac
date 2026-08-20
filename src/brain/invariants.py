@@ -493,4 +493,8 @@ from .invariant_crosstier import (  # noqa: E402,F401  (facade re-export)
     cross_tier_twins as cross_tier_twins, screen_gate as screen_gate,
 )
 from .invariants_metrics import cross_tier_duplicates as cross_tier_duplicates  # noqa: E402
+from .invariant_floors import (  # noqa: E402,F401  (facade re-export)
+    declined_floors as declined_floors, metric_populations as metric_populations,
+    POPULATION_SUFFIX as POPULATION_SUFFIX, update_floors_guarded as update_floors_guarded,
+)
 

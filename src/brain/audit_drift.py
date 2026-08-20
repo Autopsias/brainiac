@@ -35,12 +35,16 @@ def migrate_drift_dispositions(vault: Path) -> str | None:
     deleting the operator's historical record on their behalf is not this
     function's call. Returns a one-line note when it acted, else ``None``.
 
-    The carried-forward records came from a VM-writable path, so the copy is
-    STAMPED (``migrated_from_mount``) rather than laundered into looking
-    host-authored. Without this, a vault with triaged historical drift would
-    report every previously-explained record as unexplained on first run after
-    the upgrade — a false tamper alarm, which is the fastest way to teach an
-    operator to ignore a real one."""
+    The carried-forward records came from a VM-writable path, so each one is
+    QUARANTINED (``unverified_migrated: true``) rather than laundered into
+    looking host-authored: ``match_disposition`` refuses a quarantined record,
+    so it cannot silently explain away drift on a note the VM itself tampered
+    with and pre-seeded a matching legacy disposition for. It still counts
+    toward ``unexplained`` (fails closed) but carries a distinct
+    ``disposition_reason`` so an operator sees "needs re-confirmation" rather
+    than a generic unexplained-drift alarm indistinguishable from real
+    tampering. Re-confirming one (the operator re-triages it through the
+    normal disposition flow, on the host-private file) drops the flag."""
     legacy = legacy_drift_dispositions_path(vault)
     if not legacy.is_file():
         return None
@@ -57,6 +61,10 @@ def migrate_drift_dispositions(vault: Path) -> str | None:
     records = raw.get("dispositions") if isinstance(raw, dict) else raw
     if not isinstance(records, list):
         return None
+    records = [
+        {**r, "unverified_migrated": True} if isinstance(r, dict) else r
+        for r in records
+    ]
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -95,12 +103,10 @@ def load_drift_dispositions(vault: Path) -> dict[str, dict]:
             if isinstance(r, dict) and isinstance(r.get("path"), str)}
 
 
-def match_disposition(record: dict, dispositions: dict[str, dict]) -> dict | None:
-    """The disposition explaining THIS drift record, or ``None``.
-
-    Matching requires the same path, the same issue, and the same observed
-    hash the disposition was recorded against — so a further edit re-surfaces
-    as unexplained instead of hiding under an old ruling."""
+def _candidate_disposition(record: dict, dispositions: dict[str, dict]) -> dict | None:
+    """The on-file disposition matching THIS record's path+issue+hash, before
+    the quarantine check — shared by ``match_disposition`` and the
+    needs-re-confirmation labelling in ``AuditChain.content_drift``."""
     d = dispositions.get(str(record.get("path")))
     if not isinstance(d, dict) or not d.get("disposition"):
         return None
@@ -110,6 +116,42 @@ def match_disposition(record: dict, dispositions: dict[str, dict]) -> dict | Non
     if d.get(key) != record.get(key):
         return None
     return d
+
+
+def match_disposition(record: dict, dispositions: dict[str, dict]) -> dict | None:
+    """The disposition explaining THIS drift record, or ``None``.
+
+    Matching requires the same path, the same issue, and the same observed
+    hash the disposition was recorded against — so a further edit re-surfaces
+    as unexplained instead of hiding under an old ruling. A disposition
+    carried forward from the pre-2026-08-07 VM-writable legacy path
+    (``unverified_migrated``) is REFUSED here — it was recorded somewhere the
+    Cowork VM could write, so it must never silently explain drift the VM
+    itself could have both caused and pre-seeded a matching legacy record
+    for. It still surfaces (see ``content_drift``'s "needs re-confirmation"
+    reason), just not as an accepted explanation."""
+    d = _candidate_disposition(record, dispositions)
+    if d is None or d.get("unverified_migrated"):
+        return None
+    return d
+
+
+def drift_disposition_label(record: dict, dispositions: dict[str, dict]) -> tuple:
+    """``(disposition, reason)`` for one drift record — the single place
+    ``AuditChain.content_drift`` derives both fields, so the quarantine
+    labelling stays out of that function's own branching (complexity)."""
+    match = match_disposition(record, dispositions)
+    if match is not None:
+        return match.get("disposition"), match.get("reason")
+    candidate = _candidate_disposition(record, dispositions)
+    if candidate is not None and candidate.get("unverified_migrated"):
+        # A pre-2026-08-07 legacy disposition would have explained this
+        # record, but it was recorded on the VM-writable mount — refused as
+        # an explanation (match_disposition), surfaced distinctly here so it
+        # reads as "needs re-confirmation" rather than an indistinguishable
+        # fresh tamper alarm.
+        return None, "needs_reconfirmation_migrated_from_mount"
+    return None, None
 
 
 def drift_summary(vault: Path, chain: "AuditChain") -> dict:

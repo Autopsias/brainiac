@@ -41,6 +41,7 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest   # trusted publishing requires a GitHub-hosted runner
+    timeout-minutes: 15
     steps:
       # Deliberately NOT `ref: ${{ inputs.tag }}`. A workflow_dispatch input in
       # a checkout `ref:` is a ref-injection surface; it is validated below and
@@ -136,6 +137,7 @@ jobs:
   github-release:
     needs: publish
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:

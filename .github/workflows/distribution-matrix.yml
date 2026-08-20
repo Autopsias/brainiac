@@ -43,6 +43,7 @@ jobs:
   build-and-smoke:
     name: build + smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

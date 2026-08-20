@@ -20,6 +20,7 @@ permissions:
 jobs:
   audit:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -88,3 +89,6 @@ jobs:
         with:
           name: sbom-cyclonedx
           path: sbom.cyclonedx.json
+          # An SBOM is a snapshot of one run's dependency tree; the default
+          # 90-day hold keeps 90 days of them for no reader.
+          retention-days: 14

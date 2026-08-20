@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 # check. The IMPORT package stays `brain` and the console script stays
 # `brain` — only the distribution/project name changes.
 name = "brainiac-cli"
-version = "0.20.23"
+version = "0.20.24"
 description = "Brainiac — local any-LLM second-brain core engine + brain CLI (Markdown truth, derived SQLite index)."
 readme = "README.md"
 license = "Apache-2.0"
@@ -170,7 +170,13 @@ target-version = "py39"
 extend-exclude = ["_plans", "_archive", "_evidence", "src/brain/_assets"]
 
 [tool.ruff.lint]
-select = ["F", "E9"]
+select = ["F", "E9", "E722"]
+# E722 (bare `except:`) was added 2026-08-20 with ZERO existing violations, so
+# it costs nothing today and only stops a regression. It is the one rule of the
+# four "agent slop" checks worth having here: F841 already ships inside F and
+# also reads zero; ERA001's only two hits are `# nosemgrep:` suppressions that
+# must stay on the line they sit on; and BLE001 reads 258, every one a
+# deliberate fail-closed handler this engine is built out of.
 # F401/F403/F405 are all the same disagreement with this repo's FACADE
 # architecture, and it is the architecture that is right.
 #

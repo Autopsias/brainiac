@@ -7,6 +7,101 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.24] — 2026-08-20
+### Fixed
+- **`brain dossier` named withheld notes in the same breath as withholding
+  them.** `core.dossier` builds each decision's `tensions` from its UNGATED
+  candidate pool, and both transports gate `decisions` and `sources`
+  separately — so a decision that survived the gate still carried the id,
+  date, type and identity of notes the same response reported as withheld.
+  Note ids are date+slug derived from titles, so this disclosed the existence
+  and subject of Confidential/Restricted/MNPI documents to a leg clamped at
+  Internal. The re-gate lives in `egress.py` beside `apply_gate`, because
+  `mcp_verbs.dispatch_dossier` has the identical shape and fixing only the CLI
+  would have left the MCP transport leaking. One definition, two call sites,
+  one test each — both proved to fail on the unfixed code.
+- **The provision drain followed a VM-planted `vault` symlink.** The guard
+  realpath'd the WORKSPACE while `vault = marker.parent.parent` stayed
+  unresolved, and under PRV-10 the untrusted leg owns that component on the
+  shared mount. The test proves the exploit rather than asserting it: on the
+  unfixed code the drain returns `provisioned` after running init/sync against
+  the attacker's directory, plus a launchd nightly, a registry entry and an
+  MCP server pointing there. It now requires
+  `realpath(vault) == realpath(workspace)/"vault"` and records
+  `skipped-symlink-escape` otherwise.
+- **Carried-forward drift dispositions were trusted.** Records copied from the
+  pre-2026-08-07 VM-writable path were promoted to host-private authority with
+  no integrity check, and a disposition matches on path + issue + observed
+  hash — every one known to whoever edited the note. They are now stamped
+  `unverified_migrated`, refused by `match_disposition`, and surfaced as
+  `needs_reconfirmation_migrated_from_mount`. Quarantine rather than deletion:
+  the legacy reader exists to prevent a false tamper alarm on upgrade, and
+  that reason still holds. An existing test had ASSERTED the vulnerable
+  behaviour and is flipped.
+- **A wrongful retirement set a floor no healthy vault could ever match.**
+  Every WAT-01 metric counts defects IN A CORPUS, so removing documents
+  improves the score and the ratchet can be won by damage. It was: the
+  reference vault read `unlinked_sources = 0` across 19 runs while ~120
+  documents from the 433-file hand retirement were out of the vault, and every
+  healthy run after their reinstatement reported a REGRESSION against a floor
+  that only existed because the corpus was broken. A floor is now stored WITH
+  the population it was recorded against, and a metric may not set one on a
+  run whose population fell below that basis. The guard only ever declines to
+  LOWER a floor — a declined floor is reported as `floors_declined`, never a
+  number that quietly did not change.
+- **The release-asset phase raced the robot it had just started.** (Landed
+  after the `v0.20.23` tag, so it ships here rather than there — the entry was
+  filed under 0.20.23 by mistake.) Now that the tag push fires
+  `npm-publish.yml`, that workflow's `github-release` job creates the GitHub
+  Release itself, and this phase's "does it already exist?" check is a
+  snapshot taken before that. Losing the race now means uploading onto the
+  robot's Release instead of failing a run whose PyPI, git and npm legs had
+  all landed. Any OTHER create error still fails.
+- **Untrusted mail text was passed to the engine as a bare positional.**
+  `tools/cos_ground_brain.py` handed sender and subject straight to
+  `brain search`/`get`/`dossier`, so a value beginning with "-" parsed as an
+  option and that thread went uncovered for a reason unrelated to the vault.
+  Every untrusted value now goes last, behind `--`. Probed against the real
+  parser: `-urgent`, `--draft`, `-k` and `-Q3-pricing` all exit 2 on the old
+  form, while `-- FW: Q3 pricing` parses fine either way, because argparse
+  lets through any argument containing a space — probing with the spaced
+  subject alone would have shown a fix that fixes nothing.
+
+### Changed
+- **Every CI job now has a time limit.** Ten jobs across nine workflows set no
+  `timeout-minutes` and inherited GitHub's 360-minute default. The values are
+  sized from the last 60 runs' measured per-workflow maxima — each at least
+  ten times its own worst real run — so a slow day cannot fail a job while a
+  wedged one dies in minutes. The SBOM artifact also gains
+  `retention-days: 14`, having held 90 days of per-run snapshots for no reader.
+- **The mcpb build no longer fetches an unpinned package on the release host.**
+  `npx --yes @anthropic-ai/mcpb` ran while that host holds the PyPI, npm and
+  git credentials. `tools/check_workflow_supply_chain.py` already forbids this
+  class; it just never looked outside `.github/workflows/`. Pinned to 2.1.2.
+- **The ingest bridge outgrew the ratchet where nothing was staged to notice.**
+  `tools/cos_ingest_bridge.py` reached 1325 LOC and its test 3191, both past
+  the limits and neither baselined — the ratchet judges only STAGED files, so
+  15 commits of growth passed every gate. Split into five descriptive siblings
+  in house style, with the 91-line design-collapse docstring kept verbatim on
+  the facade. Test bodies are byte-verbatim: 76 top-level names before, the
+  same 76 after.
+- **`E722` (bare `except:`) joins the ruff select** at zero existing
+  violations — it costs nothing today and only stops a regression. The config
+  records why the other three "agent slop" rules stay out, because the
+  measurement is the useful part.
+- **`eval/bulk_link_control.py` no longer copies the index to a fixed name in
+  the shared temp directory.** That copy IS the index, MNPI included; on a
+  shared-`/tmp` host a predictable path is both a disclosure and a
+  symlink-write target. Uses `mkdtemp` now.
+
+### Added
+- **ADR 0010 — the deliverables shelf lives outside the vault.** The reasoning
+  existed only under `_plans/`, which is gitignored, so the decision was on
+  one disk and nowhere in history. `scan_vault` is the only whole-vault
+  walker, so a shelf outside the tree is excluded from retrieval STRUCTURALLY
+  rather than by a rule a future walker could forget. `CONTEXT.md` gains the
+  language: deliverable, shelf, and the three states a shelf file can be in.
+
 ## [0.20.23] — 2026-08-20
 ### Fixed
 - **A script emitting `type: proposal` daily was counted as 22 sources

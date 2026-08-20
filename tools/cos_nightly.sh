@@ -1059,7 +1059,7 @@ print(json.dumps(d.get('counters')), '| rejected', len(d.get('rejected') or []))
 # hit as an open batch and died 18 on (backpressure). `--dry-run` decides every
 # candidate and reports, writing nothing and taking no lock.
 #
-# Read as a block by `tests/test_cos_ingest_bridge.py`, which SLICES THESE
+# Read as a block by `tests/test_cos_ingest_bridge_nightly.py`, which SLICES THESE
 # LINES OUT AND RUNS THEM against a stub bridge tool — the same marker trick
 # the re-prime gate and the apply-outcome gate use. It depends on $PY,
 # $BRAIN_VAULT, $RUN_ID, $DRY, $LOG and log()/die(), and nothing else.

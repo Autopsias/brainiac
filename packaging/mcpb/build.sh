@@ -37,7 +37,12 @@ open(p, 'a').write('\n')
 echo "== manifest.json stamped to version $SSOT_VERSION (SSOT: pyproject.toml) =="
 
 # --- 2. mcpb CLI: validate then pack ---------------------------------------
-MCPB="npx --yes @anthropic-ai/mcpb"
+# PINNED, not floating: this runs on the RELEASE host while it holds the
+# PyPI, npm and git credentials, and `npx --yes @anthropic-ai/mcpb` fetched
+# whatever was latest at that moment. The repo already forbids this class in
+# CI (tools/check_workflow_supply_chain.py) — that gate just never looked
+# outside .github/workflows/. Bump deliberately, like any other dependency.
+MCPB="npx --yes @anthropic-ai/mcpb@2.1.2"
 echo "== mcpb validate =="
 $MCPB validate "$BUNDLE_DIR/manifest.json"
 

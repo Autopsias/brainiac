@@ -27,6 +27,24 @@ repos:
                '--error', '--skip-unknown-extensions',
                '--timeout-threshold', '1']
 
+  # Correctness lint. The repo had NO linter of any kind until 2026-08-19, and
+  # the first scan found code that cannot run: `tools/cos_mutate_evidence.py`
+  # called `evidence_stages.e17_block()`, `subprocess.run()` and `json.loads()`
+  # with none of the three names in scope (the s18 split dropped the imports and
+  # left a module qualifier behind), `tools/cos_model_answer.py` shadowed an
+  # imported SHINGLE_W with an equal literal, and `src/brain/invariants.py`
+  # re-exported two names twice. Nothing in the repo could see any of it — the
+  # three quality ratchets measure SIZE, not whether a name resolves.
+  #
+  # Configured in pyproject.toml `[tool.ruff.lint]` as pyflakes + E9 ONLY. This
+  # is deliberately not a style gate: no formatter, no line length, no import
+  # sorting. Adding those would churn every file and catch no defect. Measured
+  # 22 ms over the whole repo, so it stays well inside the cheap-hook budget.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.3
+    hooks:
+      - id: ruff-check
+
   - repo: local
     hooks:
       # semgrep's p/github-actions pack does NOT cover the one workflow finding

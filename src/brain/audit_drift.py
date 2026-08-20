@@ -3,6 +3,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # annotation-only; a runtime import here would be a cycle
+    from .audit_chain import AuditChain
 
 DRIFT_DISPOSITIONS_FILENAME = "audit-drift-dispositions.json"
 

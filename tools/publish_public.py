@@ -67,6 +67,7 @@ DIST_MATRIX_WORKFLOW = "distribution-matrix.yml"
 PHASES = [
     "preflight", "worktree", "tests", "export", "build", "windows-ci",
     "testpypi", "pypi", "npm", "public-git", "release-asset", "post-verify",
+    "deploy",
 ]
 
 
@@ -287,6 +288,82 @@ def phase_preflight(tag: str, *, expect_published: bool | None = False) -> str:
                 f"publishing it would not become the default install")
         return f"tag/version consistent; PyPI latest {latest}, {version} is new and above it"
     return "tag/version consistent; PyPI unreachable (offline?) — monotonicity NOT verified"
+
+
+def _elf_stamp_versions() -> dict[str, str]:
+    """`{arch: version}` for every `dist/brain-linux-*.version` sidecar."""
+    out: dict[str, str] = {}
+    for stamp in sorted((REPO_ROOT / "dist").glob("brain-linux-*.version")):
+        try:
+            out[stamp.stem] = stamp.read_text(encoding="utf-8").strip()
+        except OSError:
+            out[stamp.stem] = "(unreadable)"
+    return out
+
+
+def phase_local_deploy(version: str) -> str:
+    """Publishing is not deploying — this phase closes the gap between them.
+
+    v0.20.20 and v0.20.21 both shipped while this host kept staging 0.20.19
+    into every Cowork workspace: the pipeline ended at "published", the Linux
+    ELF rebuild was a separate script whose failure `release.py` downgrades to
+    a warning, and `brain update` was a third step nobody owns. Three manual
+    steps, two of them silently skippable, is how a release leaves the
+    operator's own machine behind.
+
+    So the LAST phase of a release is the local deploy:
+
+      1. the VM ELF stamps must match the released version — rebuilt here if
+         they lag (the emulated arch takes 10-15 min; that is the cost of not
+         shipping a stale engine to the sandbox), and a build that still does
+         not produce matching stamps FAILS the phase instead of warning;
+      2. `brain update` re-stages every registered workspace (engine venv,
+         plugin stores, skill bundles, ELFs) and verifies with its own doctor;
+      3. whatever `brain update` cannot reach (the Desktop/Cowork plugin
+         store has no external CLI) is REPORTED as the residual human step,
+         never dropped.
+
+    Skippable like every phase (`--from`/resume semantics unchanged); the
+    session-start `staging:stale` alert (src/brain/alerts.py) is the backstop
+    for a run that stops before reaching it.
+    """
+    stamps = _elf_stamp_versions()
+    if not stamps or any(v != version for v in stamps.values()):
+        _need(_run(["bash", str(REPO_ROOT / "tools" / "build_brain_binary_linux.sh")],
+                   cwd=REPO_ROOT, timeout=3600),
+              "VM ELF rebuild (tools/build_brain_binary_linux.sh)")
+        stamps = _elf_stamp_versions()
+        wrong = {k: v for k, v in stamps.items() if v != version}
+        if not stamps or wrong:
+            raise PublishError(
+                f"VM ELF stamps still disagree with {version} after a rebuild: "
+                f"{wrong or 'no stamps found'} — a Cowork session bootstrapped "
+                f"from these would silently run the old engine")
+    proc = _need(_run([sys.executable, "-m", "brain", "update", "--json"],
+                      cwd=REPO_ROOT, timeout=1800),
+                 "brain update")
+    tail = proc.stdout[proc.stdout.index("{"):] if "{" in proc.stdout else "{}"
+    try:
+        report = json.loads(tail)
+    except ValueError:
+        raise PublishError(f"brain update emitted unparseable JSON:\n{proc.stdout[-800:]}")
+    residual = [str(s) for s in report.get("residual_human_steps") or []]
+    # `ok: False` with ONLY residual human steps is the expected end state —
+    # the Desktop store always needs the owner. Any OTHER stale surface means
+    # the deploy did not take.
+    rendered = str(report.get("before_after_rendered") or "")
+    stale = [ln.strip() for ln in rendered.splitlines()
+             if "!= SSOT" in ln.split("->")[-1]
+             and "plugin store" not in ln.lower()]
+    if stale:
+        raise PublishError(
+            "brain update left non-plugin-store surfaces stale:\n  "
+            + "\n  ".join(s[:160] for s in stale))
+    lines = [f"ELF stamps {', '.join(f'{k}={v}' for k, v in sorted(stamps.items()))}",
+             "brain update: workspaces, skills and binaries staged at "
+             f"{version}"]
+    lines += [f"RESIDUAL (owner): {s}" for s in residual]
+    return "\n".join(lines)
 
 
 def phase_worktree(tag: str, scratch: Path) -> Path:

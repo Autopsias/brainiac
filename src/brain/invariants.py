@@ -488,8 +488,6 @@ from .invariant_coverage import (  # noqa: E402,F401  (facade re-export)
     link_coverage_exclusion as link_coverage_exclusion,
     link_lane_budget as link_lane_budget,
     link_lane_candidates as link_lane_candidates,
-    link_lane_budget as link_lane_budget,
-    link_lane_candidates as link_lane_candidates,
     lane_consumption as lane_consumption,
     _untrusted_draft as _untrusted_draft,
     unlinked_sources as unlinked_sources,

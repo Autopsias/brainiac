@@ -350,8 +350,8 @@ def main() -> int:
     print("=" * 72)
     print("EXTENDED STATISTICS (EF-04) — informational, does not change PASS/FAIL")
     print("=" * 72)
-    print(f"  Bootstrap CI (DESCRIPTIVE effect-size interval, H19 — not a "
-          f"significance test):")
+    print("  Bootstrap CI (DESCRIPTIVE effect-size interval, H19 — not a "
+          "significance test):")
     print(f"    mean Δ={overall_ci.mean:+.4f}  95% CI=[{overall_ci.ci_lower:+.4f}, "
           f"{overall_ci.ci_upper:+.4f}]  n={overall_ci.n}  B={overall_ci.b}  "
           f"seed={overall_ci.seed}")
@@ -383,9 +383,9 @@ def main() -> int:
     mde = minimum_detectable_effect(deltas.size, obs_sd, alpha=args.fdr_alpha,
                                      power=args.target_power)
     pw = achieved_power(deltas.size, obs_sd, float(deltas.mean()), alpha=args.fdr_alpha)
-    print(f"  Pre-registered minimum detectable effect (H20 — the success gate "
-          f"is an effect-size")
-    print(f"  threshold, not a bare 'CI lower bound > 0'):")
+    print("  Pre-registered minimum detectable effect (H20 — the success gate "
+          "is an effect-size")
+    print("  threshold, not a bare 'CI lower bound > 0'):")
     print(f"    n={deltas.size}  observed_sd={obs_sd:.4f}  alpha={args.fdr_alpha}  "
           f"target_power={args.target_power} -> MDE={mde:+.4f}")
     print(f"    achieved power for the OBSERVED overall effect "

@@ -55,8 +55,6 @@ def new_health_run_id() -> str:
     """A short, unique-enough id stamped on every health-history record so a
     reader merging the live file + rotated archives can dedup instead of
     double-counting a record two racing writers might otherwise both see."""
-    import time
-    import uuid
 
     return f"{int(time.time() * 1000):x}-{uuid.uuid4().hex[:8]}"
 
@@ -91,7 +89,6 @@ def _acquire_health_history_lock(
     rotate onto the same archive name. Blocks briefly (busy-wait), self-heals
     a lock older than ``stale_after`` (a crash mid-critical-section), and
     never blocks indefinitely."""
-    import os
     import time
 
     lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -120,7 +117,6 @@ def _rotate_health_history(path: Path, archive_dir: Path) -> str:
     """Move the current file to a MONOTONICALLY-NAMED, create-exclusive
     archive segment — never overwrites an existing segment even if two
     rotations somehow land in the same millisecond."""
-    import os
     import time
 
     archive_dir.mkdir(parents=True, exist_ok=True)
@@ -145,7 +141,6 @@ def _prune_old_files(dir_path: Path, pattern: str, retention_days: int) -> None:
     shared implementation for the two near-identical mtime pruners this
     session added — the health-archive and the notify-marker cleanups (review
     finding [8])."""
-    import time
 
     if not dir_path.is_dir():
         return
@@ -177,7 +172,6 @@ def append_health_record(
     Also prunes archive segments past ``archive_retention_days`` (default
     90, env-overridable — fix [6]) every call: cheap (a small glob under the
     lock already held) and keeps the archive dir from growing forever."""
-    import os
 
     from . import config as _config
 
@@ -271,7 +265,6 @@ def read_health_history(
     and sorted by ``ts``. Read-only — safe to call from ``health_trend`` on
     every run without touching state. The live file is always included
     regardless of age (it is small until it next rotates)."""
-    import os
     import time
 
     from . import config as _config

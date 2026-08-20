@@ -370,18 +370,17 @@ from .cos_runverify_touch import (  # noqa: E402,F401  (facade re-export)
     _MUTATION_COUNTERS as _MUTATION_COUNTERS,
     _NON_TOUCHING_CATEGORIZE_PRIMITIVE as _NON_TOUCHING_CATEGORIZE_PRIMITIVE,
     _UNREAD_DEFER_REASON as _UNREAD_DEFER_REASON,
-    _written_before as _written_before,
     action_rows as action_rows,
-    check_chip_reeval_draw as check_chip_reeval_draw,
     check_open_instrumentation as check_open_instrumentation,
     check_target_identity as check_target_identity,
     check_unread_touch as check_unread_touch,
-    chip_rows as chip_rows,
-    hold_rows as hold_rows,
     mutation_counts as mutation_counts,
-    prior_reeval_stamps as prior_reeval_stamps,
     unledgered_mutations as unledgered_mutations,
 )
+# The five chip names this block also carried are re-exported by `_touch` from
+# `_chips`, and the `_chips` block further down re-exports them again — so the
+# same five objects were bound twice and the second binding silently won. They
+# stay on the `_chips` import, beside the module that defines them.
 
 from .cos_runverify_ledger import (  # noqa: E402,F401  (facade re-export)
     check_body_order as check_body_order,

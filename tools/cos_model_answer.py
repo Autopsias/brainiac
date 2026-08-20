@@ -223,7 +223,12 @@ MAX_ANSWER_BYTES = 4 * 1024 * 1024
 #: "the same text". A field of fewer than 5 tokens yields no shingles and CANNOT
 #: BE JUDGED; that limit is stated rather than papered over, and such a field is
 #: too short to carry a meaningful quotation.
-SHINGLE_W = 5
+#
+# The VALUE lives in `cos_model_answer_overlap` and is imported above. It was
+# ALSO assigned here, shadowing that import with an equal literal — the two
+# agreed by luck. `shingles()` reads the overlap module's copy while every
+# reader of `cos_model_answer.SHINGLE_W` got this one, so editing either alone
+# would have split the engine's one notion of "the same text" silently.
 
 
 class _SelfNS:

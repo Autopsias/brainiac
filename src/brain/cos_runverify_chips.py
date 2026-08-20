@@ -165,4 +165,3 @@ from .cos_runverify import (  # noqa: E402
     _undetected_problem_row as _undetected_problem_row,
 )
 from .cos_runverify_io import _read_jsonl as _read_jsonl  # noqa: E402
-from .cos_runverify import _RUN_NUMBER_RE as _RUN_NUMBER_RE  # noqa: E402

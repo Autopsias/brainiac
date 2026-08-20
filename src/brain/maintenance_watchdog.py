@@ -34,7 +34,6 @@ def _load_synthesis_entry(
     ``None`` on any absence/parse failure/missing-vault-entry (never
     raises); the path is still returned so a caller (the watchdog finding)
     can report where it looked."""
-    import os
 
     path = state_path or Path(
         os.environ.get(SYNTHESIS_STATE_ENV, "")

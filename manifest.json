@@ -67,6 +67,7 @@
     ".github/workflows/codeql.yml",
     ".github/workflows/dependency-review.yml",
     ".github/workflows/distribution-matrix.yml",
+    ".github/workflows/lint.yml",
     ".github/workflows/npm-publish.yml",
     ".github/workflows/quality-ratchet.yml",
     ".github/workflows/semgrep.yml",
@@ -539,6 +540,7 @@
     "src/brain/ingest/handlers/xlsx.py",
     "src/brain/ingest/handlers/zip.py",
     "src/brain/ingest/pipeline.py",
+    "src/brain/ingest/pipeline_duplicates.py",
     "src/brain/ingest/pipeline_files.py",
     "src/brain/ingest/pipeline_nested.py",
     "src/brain/ingest/pipeline_run.py",
@@ -781,5 +783,5 @@
     "vault/raw/2026-06-27-arctic-vs-e5-benchmark.md",
     "vault/raw/README.md"
   ],
-  "count": 780
+  "count": 782
 }

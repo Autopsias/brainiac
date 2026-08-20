@@ -50,8 +50,6 @@ from cos_mutate_policy import (  # noqa: E402
     DEFAULT_CAPS, DRAFT_FOLDER, STATES, TERMINAL)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from cos_reconcile_metrics import applied_counts  # noqa: E402
-from cos_mutate_policy import (  # noqa: E402
-    DEFAULT_CAPS, DRAFT_FOLDER, STATES, TERMINAL)
 import os
 import re
 from cos_mutate_gates import PRIMITIVE, receipts_shape_ok  # noqa: E402

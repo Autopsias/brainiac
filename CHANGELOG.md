@@ -7,6 +7,55 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.22] — 2026-08-20
+### Fixed
+- **A failed extraction could never be retried — 20 documents were lost in
+  place.** The ingest pipeline's duplicate check keyed on the ORIGINAL
+  binary's sha256 and ran BEFORE extraction, so an image whose OCR produced
+  the `[no text detected]` stub was recorded in the manifest forever: every
+  re-drop of the same file filed as a duplicate of its own failure. The check
+  now reads the existing note first (`pipeline_duplicates.py`) — a prior
+  extraction that failed lets the retry re-extract, and a retry that fails
+  AGAIN files as the duplicate it is, never a second stub. On the reference
+  vault this recovered 20 image-only sources (616–4,199 chars each) that had
+  sat uncitable behind their stubs.
+- **Publishing is not deploying — the release pipeline now finishes the
+  job.** v0.20.20 and v0.20.21 both shipped while this host kept staging
+  0.20.19 into every Cowork workspace: the pipeline ended at "published", the
+  Linux-binary rebuild was a separate script whose failure `release.py`
+  downgrades to a warning, and `brain update` was a third step nobody owned.
+  The pipeline gains a final `deploy` phase: stale ELF version stamps trigger
+  the rebuild and stamps still wrong after it FAIL the phase (never a
+  warning); `brain update` runs; any non-plugin-store surface left stale
+  fails; the one genuinely manual residual (the Desktop/Cowork plugin store,
+  which has no external CLI) is printed as `RESIDUAL (owner):`, never
+  dropped. `brain alerts` gains the matching `staging:stale` key — pure file
+  reads comparing staged workspace versions against the running engine — so
+  a host that skipped the deploy hears about it at every session start.
+
+### Added
+- **The repo has its first linter.** ruff, correctness-only (pyflakes `F` +
+  `E9`): three crash-on-execution call sites in the mutation-evidence
+  builder, a shadowed `SHINGLE_W`, and doubled facade imports all predated
+  it. `F401`/`F403`/`F405` are deliberately off — the measured reason is in
+  `pyproject.toml`: the autofix's 474 removals broke the facade import graph.
+  Enforced as a pre-commit hook (22 ms measured) and a CI backstop whose
+  workflow first proves the check can still fail before trusting its
+  all-clear.
+
+### Changed
+- **The retirement line is the SUBJECT, not the author (owner ruling
+  2026-08-20).** ENF-06's prose implied machine-authored reports were
+  retirable; a hand retirement acting on that took ~100 knowledge documents
+  (including a `type: design` architecture note) out of the index, and the
+  retrieval golden set — not the invariants — noticed. AGENTS.md §4 now
+  states the test: a record of THE VAULT RUNNING may retire; a DOCUMENT
+  ABOUT THE WORK stays searchable however it was produced. Chief-of-Staff
+  morning briefs are the one named owner exception. A hand retirement must
+  classify by subject and show the split BEFORE writing, and retired files
+  are MOVED (reinstatement = move back + sync; signatures still cover the
+  bytes — 112 documents were reinstated this way with zero audit drift).
+
 ## [0.20.21] — 2026-08-19
 ### Fixed
 - **The quarantine trend alerted nightly on files nobody had to look at.** The

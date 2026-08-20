@@ -28,6 +28,7 @@ import datetime
 import glob
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -192,6 +193,67 @@ def vault_alerts(vault: Path, today: datetime.date) -> list[dict[str, str]]:
     return out
 
 
+def _staged_versions(vault: Path) -> set[str]:
+    """Every version stamp a staged Cowork workspace carries, as file reads.
+
+    Two stamp kinds exist: the staged engine's ``_version.py`` and the
+    ``brain-linux-*.version`` sidecars beside the VM ELFs. A missing stamp
+    contributes nothing — absence means "never staged", which is not
+    staleness."""
+    found: set[str] = set()
+    try:
+        text = (vault / ".brain" / "engine" / "brain" / "_version.py").read_text(
+            encoding="utf-8")
+        m = re.search(r'__version__\s*=\s*"([^"]+)"', text)
+        if m:
+            found.add(m.group(1))
+    except OSError:
+        pass
+    try:
+        for stamp in sorted((vault / ".brain" / "bin").glob("brain-linux-*.version")):
+            v = stamp.read_text(encoding="utf-8").strip()
+            if v:
+                found.add(v)
+    except OSError:
+        pass
+    return found
+
+
+def staging_alerts(home: Path) -> list[dict[str, str]]:
+    """Staged Cowork workspaces that lag the engine running on this host.
+
+    This is the channel that did not exist on 2026-08-20, when both vaults'
+    workspaces sat at 0.20.19 for two releases: `brain doctor` reported the
+    staleness, but only to someone who ran doctor, and `update_alerts` above
+    reads a marker that only `brain update` writes — so NOT running the one
+    command that fixes the drift was exactly the case that produced silence.
+    A finding needs a channel to the session; this is that channel, and it is
+    pure file reads like everything else here."""
+    running = _running_version()
+    if running is None:
+        return []
+    registry = _read_json(home / ".brainiac" / "workspaces.json")
+    if not isinstance(registry, dict):
+        return []
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for entry in registry.get("entries", []):
+        if not isinstance(entry, dict) or entry.get("target") != "cowork-vm":
+            continue
+        raw = entry.get("vault_path")
+        if not raw or raw in seen:
+            continue
+        seen.add(raw)
+        stale = sorted(_staged_versions(Path(raw)) - {running})
+        if stale:
+            out.append(_alert(
+                "staging:stale",
+                f"Cowork workspace staged at {', '.join(stale)} while this host "
+                f"runs {running} — run 'brain update' on the host",
+                scope=raw))
+    return out
+
+
 def host_vaults(home: Path) -> list[Path]:
     """Every host-target vault in the workspace registry, deduped, in order."""
     registry = _read_json(home / ".brainiac" / "workspaces.json")
@@ -247,6 +309,7 @@ def collect(
                 "so nothing was inspected")
     else:
         alerts += update_alerts(home, today)
+        alerts += staging_alerts(home)
         alerts += synthesis_alerts(home, today)
         vaults = host_vaults(home)
         if not vaults and vault:

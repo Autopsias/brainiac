@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .base import ExtractResult, Handler, density_gate
+from .base import NO_TEXT_MARKER, ExtractResult, Handler, density_gate
 from .base import ocr_image as _ocr
 
 try:
@@ -57,7 +57,7 @@ class ImageHandler(Handler):
 
         body = (
             "## OCR (verbatim)\n\n"
-            f"{ocr_text if ocr_text else '[no text detected]'}\n\n"
+            f"{ocr_text if ocr_text else NO_TEXT_MARKER}\n\n"
             "## Image metadata\n\n"
             f"- **Format:** {fmt}\n"
             f"- **Dimensions:** {width} x {height} px\n"

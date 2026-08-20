@@ -43,7 +43,6 @@ def _claim_drops_locked(vault, cap_mod, now: _dt.datetime) -> dict[str, Any]:
     seen_hashes = {e.get("sha256") for e in ledger}
     pending = proposals_dir(vault) / "pending"
     rej_dir = proposals_dir(vault) / "rejected"
-    ddir = proposal_drop_dir(vault)
     pending.mkdir(parents=True, exist_ok=True)
     rej_dir.mkdir(parents=True, exist_ok=True)
 

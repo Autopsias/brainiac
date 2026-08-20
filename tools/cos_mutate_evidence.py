@@ -6,6 +6,8 @@ wording keeps its one definition.
 """
 from __future__ import annotations
 
+import json
+import subprocess
 from typing import Any
 
 
@@ -139,7 +141,7 @@ def build_evidence(vault: Path | None, run_id: str | None, *,
         "live_half": PENDING if not live else "recorded below",
         "vault_root_asserted": (live or {}).get("vault_root_asserted")
         or (assert_vault(vault) if vault else None),
-        "e17": evidence_stages.e17_block(
+        "e17": e17_block(
             e17, live, mutation_lane=MUTATION_LANE, pending=PENDING),
         "zero_send": zero_send_block(
             live, pending=PENDING, permitted_actions=PERMITTED_ACTIONS,

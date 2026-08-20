@@ -19,6 +19,7 @@ from tools.publish_public import (
     gate,
     phase_build,
     phase_export,
+    phase_local_deploy,
     phase_npm,
     phase_post_verify,
     phase_preflight,
@@ -217,6 +218,13 @@ def main() -> int:
         summary = phase_post_verify(version, scratch, npm_published=should_run("npm"))
         ev.record("post-verify", "OK", summary)
         print(f"[12/{len(PHASES)}] post-verify:\n{summary}")
+
+        # Publishing is not deploying: without this, the release is live on
+        # every public channel while THIS host keeps staging the previous
+        # engine into Cowork (measured: 0.20.19 survived two releases).
+        summary = phase_local_deploy(version)
+        ev.record("deploy", "OK", summary)
+        print(f"[13/{len(PHASES)}] deploy:\n{summary}")
 
         ev.record("DONE", "OK", f"v{version} fully published and verified")
         print(f"\nDONE — transcript: {ev.path}")

@@ -133,7 +133,6 @@ class _CoreCaptureMixin:
         mismatch guard will do a full, now-offline (model already cached)
         re-embed automatically."""
         self._require_host("warm up the embedding model (download)")
-        import os
         import time
 
         from ..embed import get_embedder, model_cache_ready
@@ -234,7 +233,12 @@ class _CoreCaptureMixin:
         return run_ingest(self, dry_run=dry_run)
     def ingest_transcript(
         self, path: str | Path, *, origin: str, language: str | None = None,
-        document_date: str | None = None, classification: str = "Internal",
+        # `classification` shadows the imported module of that name for this
+        # signature's scope, which F811 is right to notice — but it is a PUBLIC
+        # keyword argument (`ingest_transcript(..., classification="Internal")`)
+        # and the module is not used in this method. Renaming it would break
+        # every caller to silence a name collision that costs nothing here.
+        document_date: str | None = None, classification: str = "Internal",  # noqa: F811
     ) -> dict[str, Any]:
         """HOST-only: promote one transcript ``.md`` file into ``vault/raw/``
         with explicit provenance (ADR-0003 Ruling 1 companion / ING-04).

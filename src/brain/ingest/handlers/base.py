@@ -101,6 +101,16 @@ def ocr_lang() -> str | None:
     return _OCR_LANG
 
 
+#: What an image handler writes when OCR returned nothing. An image with no
+#: readable text is still INGESTED (its dimensions and format are a real
+#: record, and quarantining a photo helps nobody) — but the resulting note is
+#: a FAILED EXTRACTION, not a document, and the ingest pipeline reads this
+#: marker to know that re-offering the same bytes is a RETRY rather than a
+#: duplicate. Kept here, next to `ocr_image`, so the writer and the reader can
+#: never drift apart.
+NO_TEXT_MARKER = "[no text detected]"
+
+
 def ocr_image(img: Any) -> tuple[str, list[str]]:
     """LOCAL-only OCR of one PIL image. Never raises: a missing binding, a
     missing tesseract binary, or any engine failure all degrade to empty text

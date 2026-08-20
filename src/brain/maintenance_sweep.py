@@ -46,7 +46,6 @@ def workspace_sweep_config() -> tuple[list[tuple[Path, int | None]], int]:
     settle in a day, while a WORKING folder needs the long gate so
     in-progress files are never swept. One global age starved the capture
     folders by a week; ``path=1`` fixes that per source."""
-    import os
 
     raw = os.environ.get(WORKSPACE_SWEEP_DIRS_ENV, "").strip()
     dirs: list[tuple[Path, int | None]] = []
@@ -81,7 +80,6 @@ def sweep_workspace(
     motion — classification/signing/dedup all happen downstream in the
     ingest drain. Collisions uniquify (never clobber an inbox file).
     Returns an honest report; a missing dir is reported, never raised."""
-    import time
 
     from .ingest.pipeline import _move, _unique_dest
 

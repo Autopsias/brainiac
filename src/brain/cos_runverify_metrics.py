@@ -217,11 +217,13 @@ def check_metrics_row(vault, run_id: str, manifest: dict[str, Any],
     if mutation is not None:
         return mutation
 
-    stamps = {"bundle_version": manifest.get("bundle_version"),
+    # `frozen`, not `stamps`: this module imports `cos_runverify_stamps as
+    # stamps`, and a local of that name hid the module for the rest of the scope.
+    frozen = {"bundle_version": manifest.get("bundle_version"),
               "extraction_rules_version": manifest.get("extraction_rules_version"),
               "skill_sha256": manifest.get("skill_sha256")}
     wrong = [f"{k}: row says {row.get(k)!r}, the manifest froze {v!r}"
-             for k, v in stamps.items()
+             for k, v in frozen.items()
              if row.get(k) is not None and str(row.get(k)) != str(v)]
     if wrong:
         return _row("metrics_row", FAIL,
@@ -229,7 +231,7 @@ def check_metrics_row(vault, run_id: str, manifest: dict[str, Any],
                     + "; ".join(wrong)
                     + ". The host record wins; investigate which bundle ran",
                     reexecuted=True)
-    absent = [k for k in stamps if row.get(k) is None]
+    absent = [k for k in frozen if row.get(k) is None]
     if absent:
         return _row("metrics_row", DEGRADED,
                     f"counters recount clean against the ledger, but the row "

@@ -175,7 +175,6 @@ def body_sha256(body: str) -> str:
     differs trivially between re-ingestions of the same content — hashing
     the body alone is what makes those re-ingestions detectable as
     duplicates in the first place."""
-    import hashlib
 
     return hashlib.sha256(_normalize_body_for_hash(body).encode("utf-8")).hexdigest()
 
@@ -183,7 +182,6 @@ def body_sha256(body: str) -> str:
 def autodedup_max_per_run() -> int:
     """Bounded trickle, never a mass migration (owner cap). Malformed/missing
     env falls back to the default rather than raising."""
-    import os
 
     try:
         return max(0, int(os.environ.get("BRAIN_AUTODEDUP_MAX_PER_RUN", "").strip()

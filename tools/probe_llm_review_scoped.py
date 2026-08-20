@@ -15,7 +15,6 @@ def fake_gate(stdout, rc):
 
 def run(stdout, rc):
     g = fake_gate(stdout, rc)
-    env = dict(os.environ)
     src = Path(SCOPED).read_text().replace(
         '_BUNDLED = Path.home() / ".claude" / "skills" / "plan-execute" / "scripts" / "llm_review_gate.py"',
         f'_BUNDLED = Path({g!r})')

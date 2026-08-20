@@ -316,7 +316,6 @@ def _selfcheck() -> None:
 
     A gate nobody has watched fail is not a gate — the whole reason this file
     exists is that E16 passed vacuously for 15 runs."""
-    import tempfile
 
     seed = ("---\nsetting: ingest\n---\n"
             "- contract-version: always | lane=both\n"

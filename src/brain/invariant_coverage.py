@@ -31,11 +31,15 @@ GENERATED_MAP_BASENAMES = frozenset({"backlinks.md", "catalog.md"})
 # two is byte-identical, and `generated_by:` — which would have been the honest
 # marker — is present on 5 sources out of 2,217.
 #
-# The set is deliberately CONSERVATIVE and explicit, never a prefix match. Kinds
-# a human might author about the business — report, review, analysis, proposal,
-# memo — are NOT here, and neither are the Chief-of-Staff briefs: those are
-# machine-produced but they are about the business, so they stay in the
-# knowledge population where a reader can reach them.
+# The set is deliberately CONSERVATIVE and explicit, never a prefix match. What
+# decides is the SUBJECT, not the author (owner ruling 2026-08-20): a machine
+# wrote most of this corpus, and the test is whether a file records THE VAULT
+# RUNNING or documents THE WORK. So report, review, analysis, proposal and memo
+# are NOT here — a reader must be able to reach them however they were made.
+#
+# The Chief-of-Staff briefs are about the business too, and this set has never
+# matched them: they declare no type. The owner retired the ones produced so
+# far by hand, which is an owner act and not something to encode here.
 OPERATIONAL_SOURCE_TYPES = frozenset({
     "alert",
     "audit",

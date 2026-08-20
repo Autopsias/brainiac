@@ -108,7 +108,6 @@ def _notify_marker_dir(vault: Path) -> Path:
 def _notify_marker_path(vault: Path, key: str, today: datetime.date) -> Path:
     """Marker path for a STABLE dedup ``key`` (not the value-bearing display
     text — review finding [1]). One marker per key per day."""
-    import hashlib
 
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
     return _notify_marker_dir(vault) / f"{today.isoformat()}-{digest}.marker"
@@ -118,7 +117,6 @@ def _prune_notify_markers(vault: Path, retention_days: int | None = None) -> Non
     """Delete per-day dedup markers older than ``retention_days`` (default
     30, env-overridable — fix [7]): one marker file accumulates per unique
     finding per day forever otherwise. Best-effort, never raises."""
-    import os
 
     retention = retention_days if retention_days is not None else int(
         os.environ.get(NOTIFY_MARKER_RETENTION_DAYS_ENV, DEFAULT_NOTIFY_MARKER_RETENTION_DAYS))
@@ -153,7 +151,6 @@ def mark_notified(vault: Path, key: str, today: datetime.date) -> str:
     the caller still fires (the finding must not be lost) and it may re-surface
     next run until the dir recovers. The durable WARNING ``[degradation]`` log
     line fires regardless, so the finding is never lost."""
-    import os
 
     marker = _notify_marker_path(vault, key, today)
     try:
@@ -178,8 +175,6 @@ def fire_notification(text: str, *, title: str = "Brainiac health") -> str:
     never raises — a GUI ping is pure convenience on top of the durable log
     line the caller always emits. Slowing or failing the maintain run over a
     notification is never acceptable."""
-    import platform
-    import subprocess
 
     if platform.system() != "Darwin":
         return "skipped (non-macOS)"
@@ -208,7 +203,6 @@ def pending_notifications(
 
     ``maintain_state`` (optional, ES-01) folds branch-escalation findings in —
     see ``degradation_findings``."""
-    import os
 
     _prune_notify_markers(vault)
     if os.environ.get(NOTIFY_ENV, "").strip().lower() == "off":

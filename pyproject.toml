@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 # check. The IMPORT package stays `brain` and the console script stays
 # `brain` — only the distribution/project name changes.
 name = "brainiac-cli"
-version = "0.20.21"
+version = "0.20.22"
 description = "Brainiac — local any-LLM second-brain core engine + brain CLI (Markdown truth, derived SQLite index)."
 readme = "README.md"
 license = "Apache-2.0"
@@ -98,7 +98,11 @@ ingest = ["pypdf>=6.15.0", "python-docx>=1.1", "python-pptx>=0.6.23", "openpyxl>
 # "Running the test suite"): ~15 min sequential -> ~6 min at `-n 8`. Both are
 # pytest-dev org, actively maintained. Declared here so a fresh checkout can
 # run that command; without them `-n 8` is an unknown-option error.
-dev = ["pytest>=7", "build>=1", "pytest-xdist>=3.8", "pytest-timeout>=2.4"]
+dev = ["pytest>=7", "build>=1", "pytest-xdist>=3.8", "pytest-timeout>=2.4",
+       # The correctness linter behind the pre-commit `ruff-check` hook. Its
+       # rule set lives in [tool.ruff.lint] below; declared here so a fresh
+       # checkout can run `ruff check .` without the hook.
+       "ruff>=0.16"]
 # A/B retrieval eval harness (S05): ranx is MIT; numpy comes transitively.
 # `pip install -e .[eval]` to run eval/harness.py + eval/gate.py + scripts/ci/eval_gate.sh.
 eval = ["ranx>=0.3.20", "numpy>=1.24"]
@@ -151,6 +155,51 @@ brain = ["_assets/**"]
 # generated _assets mirror of tools/ + scripts/ (re-synced by
 # tools/package_clients.py). Not authored source.
 exclude = ["_plans", "_archive", "_evidence", "_assets"]
+
+[tool.ruff]
+# CORRECTNESS ONLY — this is not a style gate. The repo already has three
+# quality ratchets (size, function length, complexity) and a formatter would
+# churn every file for no defect caught. What was MISSING was the one class of
+# check that finds code which cannot run: the s16/s18 module splits left
+# `tools/cos_mutate_evidence.py` calling `evidence_stages.e17_block()`,
+# `subprocess.run()` and `json.loads()` with none of the three names in scope,
+# and `src/brain/invariants.py` re-exporting two names twice. Nothing in the
+# repo could see either one. Hence pyflakes (F) plus E9 (syntax/IO errors),
+# and deliberately nothing else.
+target-version = "py39"
+extend-exclude = ["_plans", "_archive", "_evidence", "src/brain/_assets"]
+
+[tool.ruff.lint]
+select = ["F", "E9"]
+# F401/F403/F405 are all the same disagreement with this repo's FACADE
+# architecture, and it is the architecture that is right.
+#
+# The s15-s18 splits left behind modules whose entire job is to re-export: a
+# `_shared.py` holds one family's imports and every sibling does
+# `from ._shared import *`; `cos_runverify.py` binds ~60 names that
+# `cos_runverify_io.py` and `tools/cos_judge.py` then read back OFF IT, which
+# the doctrine text pins by name. To this rule every one of those imports is
+# "unused" — the consumer is another module, which pyflakes cannot see.
+#
+# MEASURED, 2026-08-19: enabling F401 and applying its 474 automatic fixes
+# broke the import graph outright (`ImportError: cannot import name
+# '_MARKER_DISPOSITION' from partially initialized module`). It is not a
+# tuning problem — the rule cannot tell a dead import from an interface here,
+# and a rule whose fix breaks the build is worse than no rule. The three
+# defects this lint exists to catch (F821 undefined names, F811 shadowed
+# definitions, F841 dead locals) were all found WITHOUT it.
+#
+# Re-enabling is a real piece of work, not a config change: give every
+# deliberate re-export an explicit `X as X` alias (which ruff does accept, and
+# which parts of `cos_runverify.py` already use), and then turn this back on.
+ignore = ["F401", "F403", "F405"]
+
+[tool.ruff.lint.per-file-ignores]
+# F811 cannot see pytest. A module-level `@pytest.fixture def text()` and a test
+# that takes `text` as a parameter is the framework's core idiom, and this rule
+# reads all 602 of ours as redefinitions. Every one is a false positive; the 44
+# real F811s all live outside tests/.
+"tests/**" = ["F811"]
 
 [tool.pytest.ini_options]
 # Scope collection to tests/ so pytest never descends into a local model venv

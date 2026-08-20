@@ -1,0 +1,57 @@
+name: lint
+
+# CI backstop for the pre-commit `ruff-check` hook.
+#
+# The hook judges only STAGED files and can be skipped with `SKIP=ruff-check`.
+# This job re-runs the same rule set WHOLE-PROJECT on every push and PR, so a
+# local skip becomes a red check on the next push instead of permanent and
+# invisible — the same posture as quality-ratchet.yml.
+#
+# The rule set is NOT defined here. It lives in pyproject.toml [tool.ruff.lint]
+# so the hook, this job and a developer's `ruff check .` can never disagree
+# about what counts as a finding.
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ruff:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        # Pinned to the same version as the pre-commit hook's `rev:`, so a
+        # finding can never appear in one place and not the other. Bump both
+        # together.
+        run: python -m pip install ruff==0.16.3
+
+      - name: Prove the check can still fail
+        # A gate that returns "clean" because its input was empty is worse than
+        # no gate. Plant a known-bad file OUTSIDE the repo (so the repo's own
+        # config cannot exempt it) and assert ruff flags it before trusting the
+        # all-clear below.
+        run: |
+          set -euo pipefail
+          plant=$(mktemp -d)
+          printf 'def probe():\n    return undefined_name_probe(1)\n' > "$plant/bad.py"
+          ! ruff check --isolated --select F821 "$plant"
+
+      - name: Lint
+        run: ruff check .

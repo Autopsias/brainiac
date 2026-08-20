@@ -112,7 +112,6 @@ def retention_fold(vault: Path, today: datetime.date, *, dry_run: bool = False) 
     unverified chain. Deletes the parked file + its ``.duplicate-of.txt``
     sidecar together, as one lot. Never touches ``inbox/_quarantine/`` (see
     ``quarantine_triage_summary`` for that lifecycle instead)."""
-    import os
     import time
 
     from .ingest.pipeline import _load_manifest as _load_ingest_manifest
@@ -259,7 +258,6 @@ def quarantine_triage_summary(vault: Path, today: datetime.date | None = None) -
     days, and total size. Never deletes anything: a quarantined file may be
     the only copy of its content (that's exactly why it never reached
     ``raw/`` in the first place)."""
-    import time
 
     qdir = vault / "inbox" / "_quarantine"
     result: dict[str, Any] = {

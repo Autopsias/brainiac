@@ -178,7 +178,7 @@ def main() -> int:
                               encoding="utf-8")
 
     if args.md:
-        lines = [f"# S05 A/B scorecard — current (SC) vs new (brain)", "",
+        lines = ["# S05 A/B scorecard — current (SC) vs new (brain)", "",
                  f"- current: `{cur.get('system')}` captured {cur.get('captured')}",
                  f"- new: `{new.get('system')}` captured {new.get('captured')}",
                  f"- paired scored set: **{len(scored)}** queries "

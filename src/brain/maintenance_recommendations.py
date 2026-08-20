@@ -155,7 +155,6 @@ def curation_finding_key(stale_links: list[dict[str, Any]]) -> str:
     targets = sorted({(s.get("target_text") or "") for s in stale_links})
     if not targets:
         return "none"
-    import hashlib
     return hashlib.sha256("\n".join(targets).encode("utf-8")).hexdigest()[:12]
 
 
@@ -169,7 +168,6 @@ def promote_scan_finding_key(candidates: list[dict[str, Any]]) -> str:
     ids = sorted({str(c.get("id") or "") for c in candidates})
     if not ids:
         return "none"
-    import hashlib
     return hashlib.sha256("\n".join(ids).encode("utf-8")).hexdigest()[:12]
 
 

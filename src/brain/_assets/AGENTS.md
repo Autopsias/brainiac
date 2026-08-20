@@ -417,10 +417,32 @@ gates.
    quarantined** (nothing failed — it is simply not knowledge), and the metric
    excludes it as `operational_artifact`, counted like every other exclusion.
    The set is explicit and conservative: `report`, `review`, `analysis` and
-   `proposal` are NOT in it, because a human writes those about the business,
-   and neither are the Chief-of-Staff briefs — machine-written, but about the
-   business, so they stay reachable. `BRAIN_INGEST_ALLOW_OPERATIONAL=1` admits
-   one deliberately.
+   `proposal` are NOT in it, because what decides is the SUBJECT, not the
+   author. A machine wrote most of this corpus. The test is whether the file
+   is a record of THE VAULT RUNNING — an audit of its own chain, a nightly
+   log, a health alert, a backfill report, an eval baseline, a tombstone, a QA
+   run — or a DOCUMENT ABOUT THE WORK. The second stays reachable however it
+   was produced. `BRAIN_INGEST_ALLOW_OPERATIONAL=1` admits one deliberately.
+
+   **The Chief-of-Staff briefs are the one named exception (owner ruling
+   2026-08-20).** They are about the business, so the paragraph above would
+   keep them — but the owner has read them and ruled the ones produced so far
+   worthless, and the 34 in the reference vault are retired. Nothing automatic
+   does that: they declare no type and match no rule here. Retiring them was an
+   owner act and stays one.
+
+   **A HAND retirement is not covered by any of this, and it is the one that
+   went wrong.** Two sessions retired 433 files from the reference vault as
+   "machine residue"; exactly ONE matched the set above, and the batch took
+   roughly a hundred documents this paragraph protects, including a
+   `type: design` architecture note. Nothing noticed for days — the RETRIEVAL
+   GOLDEN SET did, reporting 19 labels pointing at documents no longer in the
+   index. So: classify by subject and show the split BEFORE writing, never
+   after. Retired files are MOVED to `inbox/_quarantine/_resolved/<batch>/` and
+   never deleted, so a reinstatement is a move back into `vault/raw/` plus a
+   `brain sync` — the original signatures still cover the bytes, and
+   `verify-audit --check-content` confirmed zero drift across all 112 restored
+   on 2026-08-20.
 
    **A duplicate is decided on CONTENT, never on a filename (ENF-03,
    2026-08-12).** `cross_tier_twins` compares one id shape and therefore

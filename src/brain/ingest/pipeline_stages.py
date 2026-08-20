@@ -8,6 +8,8 @@ from typing import Any, Callable
 
 from . import handlers as H
 from . import tierguard as TG
+from .handlers.base import NO_TEXT_MARKER
+from .pipeline_duplicates import prior_extraction_failed, record_duplicate
 
 
 @dataclass
@@ -233,23 +235,16 @@ def extraction_handler_stage(record: ClaimRecord) -> ClaimRecord:
 
     assert record.claimed is not None
     assert record.original_bytes is not None
+    retry_of: str | None = None
     if record.original_sha in record.drain.manifest:
         existing_id = record.drain.manifest[record.original_sha]
-        facade._move(record.claimed, record.drain.duplicate_dir / record.claimed.name)
-        (record.drain.duplicate_dir / f"{record.claimed.name}.duplicate-of.txt").write_text(
-            f"identical content already ingested as raw/{existing_id}.md\n",
-            encoding="utf-8",
-        )
-        record.append("duplicates", {
-            "file": record.claimed.name,
-            "existing_id": existing_id,
-            "classification": facade._existing_note_classification(
-                record.drain.vault,
-                existing_id,
-            ),
-        })
-        record.terminal = True
-        return record
+        if not prior_extraction_failed(record.drain.vault, existing_id):
+            return record_duplicate(record, existing_id)
+        # The prior ingest failed to read this file. Let it through and see
+        # whether THIS engine does better; if it does not, the tail of this
+        # function files it as the duplicate it would otherwise have been, so
+        # an hourly drain can never accumulate one stub per run.
+        retry_of = existing_id
     handler = H.handler_for(record.claimed)
     if handler is None:
         return _quarantine_handler_failure(record, "no_handler_for_extension", [])
@@ -272,6 +267,11 @@ def extraction_handler_stage(record: ClaimRecord) -> ClaimRecord:
             result.quarantine_reason,
             result.warnings,
         )
+    if retry_of is not None and NO_TEXT_MARKER in (result.markdown or ""):
+        # Re-read produced nothing either. Nothing has improved, so this is the
+        # duplicate the manifest said it was — filed as one, not written as a
+        # second identical stub.
+        return record_duplicate(record, retry_of)
     record.result = result
     # Defense for handler-produced Markdown that was not directly decodable.
     declared = facade._operational_type(result.markdown or "")

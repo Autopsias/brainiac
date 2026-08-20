@@ -20,7 +20,10 @@ def _wilson_lower_bound(successes: int, n: int, z: float = 1.96) -> float:
 def pattern_stats(vault, pattern: str, bundle_version: str) -> dict[str, Any]:
     """Owner-decision volume/accept-rate + claim-time defect count for
     ``pattern``, scoped to THIS ``bundle_version`` only."""
-    n = accepted = defects = 0
+    # `defect_count`, not `defects`: this module imports a `defects` FUNCTION
+    # from `_learning_ledger`, and a local of that name hid it for the rest of
+    # the scope. The reported key stays "defects".
+    n = accepted = defect_count = 0
     for e in _read_jsonl(_outcomes_path(vault)):
         if e.get("pattern") != pattern or e.get("bundle_version") != bundle_version:
             continue
@@ -31,8 +34,8 @@ def pattern_stats(vault, pattern: str, bundle_version: str) -> dict[str, Any]:
         elif outcome == "rejected":
             n += 1
         elif outcome == "claim-rejected-security":
-            defects += 1
-    return {"n": n, "accepted": accepted, "defects": defects,
+            defect_count += 1
+    return {"n": n, "accepted": accepted, "defects": defect_count,
             "lower_bound": _wilson_lower_bound(accepted, n)}
 
 def auto_capture_eligible(vault, pattern: str | None,

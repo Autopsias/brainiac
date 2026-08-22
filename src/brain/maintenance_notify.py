@@ -214,6 +214,13 @@ def fire_notification(text: str, *, title: str = "Brainiac health") -> str:
 
     if platform.system() != "Darwin":
         return "skipped (non-macOS)"
+    # The kill switch lives HERE, not only in `pending_notifications`: every
+    # banner goes through this one call, and a caller reaching it directly
+    # (`fire_and_mark_notifications`, a test, future code) used to sail past
+    # the gate and write to the owner's real Notification Center. Measured
+    # 2026-08-21: 28 identical fixture banners in one day from one test.
+    if os.environ.get(NOTIFY_ENV, "").strip().lower() == "off":
+        return "skipped (BRAIN_NOTIFY=off)"
     try:
         result = subprocess.run(
             ["osascript", "-e",
@@ -230,6 +237,7 @@ def fire_notification(text: str, *, title: str = "Brainiac health") -> str:
 def pending_notifications(
     vault: Path, outcomes: dict[str, Any], trend_findings: list[dict[str, Any]],
     today: datetime.date, maintain_state: dict[str, Any] | None = None,
+    router: Any = None,
 ) -> list[tuple[str, str]]:
     """The ``(key, text)`` findings still pending notification for TODAY —
     empty when ``BRAIN_NOTIFY=off`` or when every candidate was already
@@ -240,10 +248,22 @@ def pending_notifications(
     (``record_current_findings``).
 
     ``maintain_state`` (optional, ES-01) folds branch-escalation findings in —
-    see ``degradation_findings``."""
+    see ``degradation_findings``.
+
+    ``router`` (optional, REG-03) is the remediation routing step
+    (``remediation_routing.router_for``): it takes the raw findings and returns
+    only the ones that still BANNER, having sent the rest to ``hot.md`` or to
+    the owner inbox on the way. It is applied BEFORE ``record_current_findings``
+    so the feed `brain alerts` reads carries the banner set — a finding a live
+    branch is fixing is a log line, not a session-start alarm. No router (every
+    caller that does not pass one) is exactly the behaviour that shipped
+    before, and a router that raises is caught inside itself and returns the
+    findings untouched."""
 
     _prune_notify_markers(vault)
     findings = degradation_findings(outcomes, trend_findings, maintain_state, today)
+    if router is not None:
+        findings = router(findings)
     # Recorded BEFORE the BRAIN_NOTIFY check: `brain alerts` is a separate
     # channel from the GUI ping, and turning the ping off must not blind it.
     record_current_findings(vault, findings, today)

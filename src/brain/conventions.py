@@ -96,6 +96,15 @@ NOTE_CREATION_POLICIES: dict[str, dict[str, str]] = {
         "reason": "host-broker direct write of an operator-authored body — "
                   "links are the caller's own responsibility per AGENTS.md §3",
     },
+    "remediation_folds.audited_write": {
+        "path": "remediation_folds.audited_write (the ONE write surface both "
+                "FIX-01/FIX-02 repair branches use)",
+        "kind": "exempt",
+        "reason": "it REFUSES a target that does not already exist and refuses "
+                  "any body change, so it can only ever re-sign or re-stamp an "
+                  "EXISTING note — no new note body is created and no unlinked "
+                  "note can appear",
+    },
     "core._supersession._supersede_locked": {
         "path": "core/_supersession.py BrainCore._supersede_locked "
                 "(via supersede())",

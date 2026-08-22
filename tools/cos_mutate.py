@@ -109,17 +109,9 @@ chip_for = chips.chip_for
 #: reads the page half and asserts every skip site sets THIS key.
 ABSENT_TARGET_FLAG = "absent_target"
 
-#: HOW MANY ROWS MAY VANISH before a night is an enumeration failure rather
-#: than a busy mailbox (review 2026-08-12). A thread moving mid-run is ordinary
-#: and one or two a night is expected; a quarter of the plan disappearing is
-#: the browser reading a starved folder, and carrying on would apply the night
-#: to whatever fraction of the mailbox happened to render. The cap is a
-#: FRACTION of the plan with an absolute floor, so a 4-row hand-run is not
-#: tripped by its first skip and a 200-row night is not allowed 50. Tripping it
-#: STOPS the pass exactly like a verification failure: everything before it is
-#: applied and verified, nothing after it runs.
-ABSENT_SKIP_FRACTION = 0.25
-ABSENT_SKIP_FLOOR = 5
+# ABSENT_SKIP_FRACTION / ABSENT_SKIP_FLOOR live in `cos_mutate_policy` (the cap
+# math itself is `cos_mutate_gates.absent_skip_cap`, imported below) — no
+# separate copy here.
 
 
 # batch-2 drain: the vault gates, the plan builders, the undo ledger, the
@@ -132,8 +124,9 @@ from cos_mutate_evidence import (  # noqa: E402,F401
 from cos_mutate_bridge import (  # noqa: E402,F401
     HOOK_JS, HOOK_SRC_ID, HOOK_STAT_ID, IN_ID, OUT_ID, PAGE_JS, SRC_ID,
     WRONG_WORLD,
-    Bridge, CdpBridge,
-    stage_hook, verify_capture_world)
+    Bridge, CdpBridge, EgoBridge,
+    stage_hook, verify_capture_world, _bridge_for, _init_page,
+    _transport_name)
 from cos_mutate_gates import (  # noqa: E402,F401
     CANARY_MAX_AGE_DAYS, DRAFT_FORMS, MUTATION_LANE, PRIMITIVE, MutationStop,
     absent_skip_cap, assert_vault,
@@ -141,7 +134,7 @@ from cos_mutate_gates import (  # noqa: E402,F401
     short, stop_file, stopped, _fold, _ledger_path, _read_jsonl, _ts, _utcnow,
     _within_window)
 from cos_mutate_ledger import (  # noqa: E402,F401
-    UndoLedger, dispatched_counters, mutation_lane_lock_path,
+    LEDGER_ROW_KEYS, UndoLedger, dispatched_counters, mutation_lane_lock_path,
     record_mutation_counters, _mutation_lane_lock, _reconcile_module,
     _run_suffix, _undo_row, _write_text_atomic)
 # --- denylist: named here so a payload carrying one is REFUSED --------------
@@ -154,8 +147,8 @@ BANNED_DISPOSITIONS = ("SendOnly", "SendAndSaveCopy", "SendToNone",
                        "SendToAllAndSaveCopy", "SendToChangedAndSaveCopy")
 # --- end denylist ------------------------------------------------------------
 from cos_mutate_policy import (  # noqa: E402,F401
-    CHIP_RANK, DEFAULT_CAPS, DEFAULT_SINCE_DAYS, MANAGED_CHIPS, STATES,
-    TERMINAL,
+    CHIP_RANK, DEFAULT_CAPS, DEFAULT_SINCE_DAYS, MANAGED_CHIPS, RECEIPT_KEYS,
+    STATES, TERMINAL,
     DRAFT_FOLDER, DRAFT_RESUME_POLICY, PENDING,
     PERMITTED_ACTIONS, PERMITTED_CONVERSATION_ACTIONS, PERMITTED_FOLDERS,
     REFUSED_CONVERSATION_ACTIONS, SAVE_ONLY)
@@ -203,117 +196,12 @@ _OPS_MODE = 0o644
 #: ledger↔metrics join re-counts them per date. Two spellings of one mapping is
 #: how the row and the recount drift apart, which is the defect this closes.
 
-# --- the undo ledger's CLOSED FIELD SET (grounding design D14, sink 11) -----
-#: `_cos_undo_ledger_<run>.jsonl` is written at APPLY, long after grounding
-#: exists, so the ordering argument that covers the capture corpus is FALSE for
-#: it. What covers it is that no key here is free text a model could author —
-#: and that argument only holds if it is enforced where the row is SERIALIZED.
-#: `_undo_row` ends with `row.update(extra)` and the apply path serializes
-#: `dict(intent, …)` merges anyway, so a rule pinned to `_undo_row` constrains
-#: nothing that reaches disk. It is enforced in `UndoLedger.append`.
-#:
-#: THE BOUND IS A SUBSET, NOT AN EQUALITY, and that is a decision rather than a
-#: slip (design revision 4, carried finding 3). Exact key-set equality is
-#: unsatisfiable as the record stated it: the write-ahead `intent` row
-#: serializes 24 keys against this 28-key set, and the four merge keys do not
-#: exist yet when it is written. The UPPER bound — nothing outside this set may
-#: be serialized — is the half that closes the sink, and it is unambiguous. The
-#: lower bound is deliberately not asserted: filling absent keys with `None`
-#: would make every intent row claim a `receipts` it does not have.
-LEDGER_ROW_KEYS = frozenset({
-    # the 23 `_undo_row` names
-    "idempotency_key", "conversation_id", "conversation_id_digest", "verb",
-    "state", "reason", "account", "message_id", "key_scheme", "thread_id",
-    "mutation_lane", "original_folder", "destination_folder", "action_ts",
-    "primitive", "connector_result", "verification", "chip", "mode",
-    "before_image", "item_id_at_resolve", "changekey_refetched_at", "run",
-    # the stamp `append` itself adds
-    "ts",
-    # and exactly the four the apply/unchip merges add
-    "new_item_id", "dispatched", "receipts", "observed_after",
-})
-
-#: `receipts` is the one NESTED value, and key closure cannot bound a nested
-#: free value — so it gets a shape rule. These are the keys the page actually
-#: emits (`cos_mutate_page.js:1902` draft, `:1939` archive); nothing else.
-RECEIPT_KEYS = frozenset({
-    "is_draft", "signature_present", "send_attempted",
-    "moved_item_resolves", "source_folder", "source_absent",
-    "source_enumeration_complete", "source_enumeration_terminated",
-    "source_items_seen", "source_total_in_view",
-    "deleted_items_absent", "deleted_items_enumeration_complete",
-    # the marker a refused post-dispatch row is rewritten with
-    "refused",
-})
-
-
-
-def _init_page(bridge: Bridge, shapes: dict[str, Any], run_id: str) -> dict[str, Any]:
-    """Stage the page driver, then REQUIRE that something else booted it in MAIN.
-
-    It used to boot the driver itself with `tab.js`, which is the isolated world
-    — the same silent failure as `WRONG_WORLD`, one layer up: the driver would
-    load, answer the bridge, and be refused 401 on every request because the
-    captured envelope lives in the other world.
-    """
-    bridge.stage()
-    if bridge.tab.js("String(typeof window.__cosMut)") != "undefined":
-        raise MutationStop(
-            "the page driver is in the host's ISOLATED world. " + WRONG_WORLD)
-    if bridge.tab.js(f"String(!!document.getElementById({json.dumps(OUT_ID)}))") != "true":
-        raise MutationStop(
-            "the page driver has not booted in the tab's MAIN world. Evaluate "
-            f"this line there (browser extension), then retry:\n"
-            f"  {drv.bootstrap_for(SRC_ID)}")
-    return bridge.call("init", {"shapes": shapes, "signature": f"[cos:{run_id}:"})
-
-
-class EgoBridge(Bridge):
-    """The same page driver over the ego lite transport.
-
-    IT IS THE OTHER TWO, HALF EACH, and neither half is a new idea. Like
-    `CdpBridge` it reaches the page's MAIN world, so it stages AND boots the
-    driver itself — no browser extension, no isolated-world dance, none of the
-    two-surface choreography `_init_page` exists to police. Like `Bridge` it
-    polls from the HOST, because ego lite's per-call evaluation window is a hard
-    15 s that is not configurable, and `CdpBridge` waits for a mutation to finish
-    INSIDE one awaited evaluate — up to 180 s. That call cannot exist on this
-    transport, so the wait goes back on this side of the wire.
-
-    Nothing else changes, and deliberately so: `call` is inherited unmodified, so
-    the ops, the sequence discipline, the 449/401 flags and the validator are the
-    ones the other two lanes already run. A second copy of that body is how two
-    lanes drift apart.
-    """
-
-    def __init__(self, *, poll_seconds: float = 1.5, max_wait: float = 180.0) -> None:
-        super().__init__(drv.EgoTab(), poll_seconds=poll_seconds, max_wait=max_wait)
-
-    def stage(self) -> str:
-        """Stage the source AND evaluate the bootstrap — this world can."""
-        booted = self.tab.js(drv.stage(self.tab, PAGE_JS, SRC_ID))
-        if "cos-mutate-page-loaded" not in str(booted):
-            raise MutationStop(
-                f"the page driver did not boot over ego lite: {booted!r}")
-        return str(booted)
-
-
-def _bridge_for(tab_id: int | None, shapes: dict[str, Any], run_id: str,
-                *, use_cdp: bool, use_ego: bool = False) -> Any:
-    """ego, CDP or AppleScript, one place, so no pass can pick a different one."""
-    if use_cdp or use_ego:
-        bridge: Any = EgoBridge() if use_ego else CdpBridge()
-        bridge.stage()
-        bridge.call("init", {"shapes": shapes, "signature": f"[cos:{run_id}:"})
-        return bridge
-    bridge = Bridge(drv.ChromeTab(tab_id))
-    _init_page(bridge, shapes, run_id)
-    return bridge
-
-
-def _transport_name(*, use_cdp: bool, use_ego: bool) -> str:
-    """One name for the evidence row, decided where the bridge is."""
-    return "ego" if use_ego else ("cdp" if use_cdp else "applescript")
+# The undo ledger's CLOSED FIELD SET (grounding design D14, sink 11) and the
+# nested `receipts` shape rule both live on their real siblings —
+# `LEDGER_ROW_KEYS` beside `UndoLedger.append` in `cos_mutate_ledger` (the
+# write site that enforces it), `RECEIPT_KEYS` beside the other mutation
+# policy constants in `cos_mutate_policy` — and are re-imported below so this
+# module's path for both names is unchanged.
 
 
 

@@ -220,16 +220,25 @@ DRY=0; MODEL=1; SCOPE_ARGS="--since-days $SINCE_DAYS"; SCOPE_DESC="${SINCE_DAYS}
 # ATTENDED MODE, off by default. `--archive-cap=N` is ONE token on purpose:
 # this loop reads "$@" without shifting, which is what keeps it parseable by
 # the /bin/bash 3.2 the plist actually invokes (the shebang is overridden).
-ARCHIVE_CAP=""; ATTENDED_ARGS=""; PLAN_CAP_ARGS=""
+ARCHIVE_CAP=""; ATTENDED_ARGS=""; PLAN_CAP_ARGS=""; SESSION_APPROVED=0
 for a in "$@"; do
   case "$a" in
     --dry) DRY=1 ;;
     --no-model) MODEL=0 ;;
     --all) SCOPE_ARGS="--all"; SCOPE_DESC="historic (all)" ;;
-    --archive-cap=*)
-      ARCHIVE_CAP="${a#--archive-cap=}"
+    # `--approve-cap=N` is `--archive-cap=N` whose GO the SESSION answers.
+    # Owner ruling 2026-08-22: the attended approval moved into the assistant
+    # session, and until this flag existed nothing implemented that ruling —
+    # the gate could only be cleared by a human typing GO at a TTY, so the one
+    # supported way to get a certifiable run was unreachable from a session.
+    # What the owner approves here is the BOUND, not the list: at most N
+    # archives, enforced in the PLANNER by --archive-abort-cap, and re-checked
+    # against the frozen plan at the pause below before anything is dispatched.
+    --archive-cap=*|--approve-cap=*)
+      case "$a" in --approve-cap=*) SESSION_APPROVED=1 ;; esac
+      ARCHIVE_CAP="${a#*=}"
       case "$ARCHIVE_CAP" in
-        ''|*[!0-9]*) echo "--archive-cap= needs a non-negative integer, got '$ARCHIVE_CAP'" >&2; exit 2 ;;
+        ''|*[!0-9]*) echo "${a%%=*}= needs a non-negative integer, got '$ARCHIVE_CAP'" >&2; exit 2 ;;
       esac
       ATTENDED_ARGS="--attended"
       PLAN_CAP_ARGS="--archive-abort-cap $ARCHIVE_CAP" ;;
@@ -686,6 +695,55 @@ file and must not try. Do not run any brain or cos command." "${MODEL_TOOLS[@]}"
     die "the category batch failed (rc=$RC) — see $LOG" 7
   fi
 fi
+
+# THE ARMING LAPSES ACROSS THE CATEGORY BATCH (2026-08-22). The prepare(ego)
+# above runs at the TOP of the night; the read scan below runs after the
+# enumerate AND after the category batch's model legs — measured at 6m52s
+# (run160: armed 13:03:56, scanned 13:10:48) and 6m31s (run158). The arming is
+# CDP-session-scoped page state, so OWA's brand gate can close again inside
+# that gap: both of those runs scanned a DEGRADED page (`aria-setsize=0` on
+# every row) and stopped. run159 crossed the same gap intact, so the lapse is
+# not a timeout to wait out — it is a state the run must re-establish.
+#
+# This is the SAME re-prime the mutation lane already does before ITS dispatch
+# (see "reprime gate" below), for the same reason and against the same measured
+# failure. Re-arming is idempotent and cost 13s on run160's own prepare, so it
+# runs unconditionally rather than trying to guess whether the gap was long
+# enough to matter. WHERE it sits is the whole point: after the category batch,
+# before the scan. A re-arm anywhere earlier re-arms the state that was already
+# good and leaves the gap it exists to cover.
+# --- BEGIN read-lane rearm gate ---
+# ARMING IS A CONVERGE-WITH-DEADLINE OPERATION, so ONE miss is not evidence the
+# page is degraded. Measured on run163: the re-arm reported `degraded` with
+# `cap.boot:false` while `setsize:212` and the Google Chrome brand were BOTH
+# present — the reload happened, 65 calls were captured, and the boot FindItem
+# simply did not land inside the poll window. A bare re-run one second later
+# came back `armed` with `boot:true`. Dying there stopped a healthy run.
+# The retry is bounded at two and the SECOND result is still gated exactly as
+# the first was, so a genuinely degraded page (aria-setsize 0, no brand) still
+# stops the run — it just has to fail twice to do it. `tr` strips newlines
+# ONLY: stripping spaces too rewrote the brand list to `GoogleChrome` in the
+# log and invited exactly the wrong diagnosis.
+REARM=""; RC=1
+for REARM_TRY in 1 2; do
+  if [ "${COS_TRANSPORT:-ego}" = "ego" ]; then
+    REARM="$($PY tools/cos_ego_arm.py 2>&1)"; RC=$?
+  else
+    REARM="$($PY tools/cos_cdp_capture.py --prepare 2>&1)"; RC=$?
+  fi
+  log "re-arm before the read scan (attempt $REARM_TRY): $(printf '%s' "$REARM" | tr -d '\n')"
+  # rc 4 is "the mailbox session lapsed" — a retry cannot sign anyone in.
+  # Written as an `if`, not `[ … ] || [ … ] && break`: under `set -e` that
+  # list's exit status is 1 on the retry path and would kill the run silently.
+  if [ "$RC" -eq 0 ] || [ "$RC" -eq 4 ]; then break; fi
+done
+if [ "$RC" -eq 4 ]; then
+  die "the read lane could not be re-armed — the browser is up but the mailbox
+ session lapsed during the category batch. Sign in once, then re-run." 4
+fi
+[ "$RC" -eq 0 ] || die "the mail tab did not re-arm before the read scan
+ (rc=$RC) — refusing to scan a page that may be degraded" 5
+# --- END read-lane rearm gate ---
 
 $PY tools/cos_driver.py $TFLAG --cap "$BODY_CAP" $CATEGORIES $DRAW_BINDING \
     --out "$EV/read-night.json" \
@@ -1277,10 +1335,27 @@ for m in rows:
     *) die "attended run: the frozen plan at \$EV/plan.json could not be read, so there is nothing the owner can approve. Nothing was dispatched" 17 ;;
   esac
   log "attended: $ATTENDED_SUMMARY"
-  printf 'APPLY this plan? type GO to proceed: '
-  GO=""
-  read -r GO || true
-  [ "$GO" = "GO" ] || die "attended run: the owner did not approve the plan (read '$GO'). Nothing was dispatched" 17
+  if [ "${SESSION_APPROVED:-0}" = "1" ]; then
+    # THE CAP IS THE APPROVAL, so the cap must actually be in the frozen plan.
+    # A plan carrying a null or different `archive_abort_cap` was NOT planned
+    # under the bound the owner approved (run162's plan recorded null), and
+    # auto-approving that would approve an unbounded list. Both halves are
+    # checked: the recorded cap, and the archive count the plan really holds.
+    PLAN_CAP_CHECK="$($PY -c "
+import json
+d = json.load(open('$EV/plan.json'))
+cap = d.get('archive_abort_cap')
+n = len([m for m in d['mutations'] if m['verb'] == 'archive'])
+print('OK' if cap == $ARCHIVE_CAP and n <= $ARCHIVE_CAP
+      else 'MISMATCH cap=%r archives=%d approved=$ARCHIVE_CAP' % (cap, n))" 2>&1)"
+    [ "$PLAN_CAP_CHECK" = "OK" ] || die "attended run: the frozen plan does not match the approved bound ($PLAN_CAP_CHECK). Nothing was dispatched" 17
+    log "attended: session-approved under --approve-cap=$ARCHIVE_CAP (owner ruling 2026-08-22); no typed GO"
+  else
+    printf 'APPLY this plan? type GO to proceed: '
+    GO=""
+    read -r GO || true
+    [ "$GO" = "GO" ] || die "attended run: the owner did not approve the plan (read '$GO'). Nothing was dispatched" 17
+  fi
   APPROVED_DIGEST="$($PY -c "
 import json
 print((json.load(open('$EV/plan.json')).get('plan_digest') or '?')[:16])")"

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .context import MaintenanceRun
-from .. import maintenance
+from .. import exceptions_page, maintenance, remediation_questions, remediation_routing
 
 
 class ReportingFoldsMixin:
@@ -55,7 +55,29 @@ class ReportingFoldsMixin:
     def _fire_health_notifications(
         self, run: MaintenanceRun, trend_findings: list[dict[str, Any]]
     ) -> list[str]:
-        """Fire best-effort alarms from the post-fold outcome snapshot."""
+        """Fire best-effort alarms from the post-fold outcome snapshot.
+
+        REG-03: every finding is ROUTED first. What a live, converging branch
+        owns is suppressed to a ``hot.md`` line, owner-class findings become
+        one inbox question each, log-class findings never banner — and only
+        what is left reaches the marker/notification path unchanged. The
+        router's state is read HOST-PRIVATE; ``run.state`` (the mount-visible
+        maintain-state) is passed on only for the ES-01 branch-escalation
+        findings it has always produced, never as suppression evidence."""
+        try:
+            router = remediation_routing.router_for(
+                self, run.date,
+                targets=remediation_routing.target_signatures(run.results),
+                # EXC-01: what each owner-class finding is ABOUT. `subjects`
+                # keys a singleton question on the population the detector
+                # found (and names it in the question); `pairs` is what the
+                # cross-tier batch stages one proposal from. Both come from
+                # THIS run's `corpus_invariants` metrics — a run without them
+                # converts nothing and the findings banner, unchanged.
+                subjects=remediation_questions.subjects_from_results(run.results),
+                pairs=remediation_questions.pairs_from_results(run.results))
+        except Exception:  # noqa: BLE001 — no router means everything banners
+            router = None
         try:
             candidates = maintenance.pending_notifications(
                 Path(self.vault),
@@ -63,6 +85,7 @@ class ReportingFoldsMixin:
                 trend_findings,
                 run.date,
                 maintain_state=run.state,
+                router=router,
             )
             return maintenance.fire_and_mark_notifications(
                 Path(self.vault), candidates, run.date
@@ -81,6 +104,16 @@ class ReportingFoldsMixin:
             self._save_maintain_state(run.state)
             try:
                 self.health_report(today=run.date)
+            except Exception:  # noqa: BLE001
+                pass
+            # EXC-02: the exceptions page reads the owner queue + the
+            # findings feed `health_history_fold` (above) just settled, so
+            # it regenerates AFTER both, same best-effort posture as the
+            # health report right above it — a rendering bug here must
+            # never fail the maintain run.
+            try:
+                run.results["exceptions_page"] = exceptions_page.generate(
+                    self, today=run.date)
             except Exception:  # noqa: BLE001
                 pass
         return {
@@ -106,11 +139,36 @@ class ReportingFoldsMixin:
                         f"auto-updated engine to {result.get('latest')}",
                     )
                 )
+                # FIX-04/registry: `update:applied` is LOG, not a banner —
+                # "good news is not an alert". A dated hot.md line is the
+                # whole record; `brain alerts`' `update_alerts()` no longer
+                # surfaces this status at all (the dead banner it used to
+                # repeat for up to 7 days is deleted, not just quieted here).
+                self._append_hot_once(
+                    f"maintain:auto-update:{run.date.isoformat()}",
+                    f"## {run.date.isoformat()} — auto-update\n"
+                    f"- **Applied:** engine auto-updated to "
+                    f"{result.get('latest')}\n",
+                )
             elif result.get("auto_update") == "failed":
                 run.blocked.append(
                     maintenance.blocked_item(
                         f"auto-update to {result.get('latest')} FAILED: "
                         f"{result.get('notes')}",
+                        "update pipeline",
+                        "run `brain update` manually",
+                    )
+                )
+            elif result.get("auto_update") == "escalated":
+                # FIX-04: bounded retries exhausted (`brain_update.
+                # retry_decision`) — no more automatic attempts for this
+                # version. `brain alerts`' `update_alerts()` already renders
+                # this from the host-global state; the blocked entry is this
+                # RUN's own record of it.
+                run.blocked.append(
+                    maintenance.blocked_item(
+                        f"auto-update to {result.get('latest')}: "
+                        f"{result.get('reason')}",
                         "update pipeline",
                         "run `brain update` manually",
                     )

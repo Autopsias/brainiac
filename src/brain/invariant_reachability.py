@@ -41,6 +41,14 @@ def unreachable_gold(vault: Path) -> dict[str, Any]:
         # first match wins, and they always sum to `value`.
         buckets = {"absent_from_index": 0, "requires_multi_hop": 0,
                    "variant_recoverable": 0, "ranking_gap": 0}
+        # EXC-01: WHICH documents, not just how many. A question that says
+        # "19 gold documents are unreachable" is not decidable — the owner
+        # cannot choose "reinstate from the _resolved batch" without knowing
+        # what to reinstate. The ids are also what makes the question's
+        # subject STABLE: a different document going missing at the same count
+        # is a different question, and must be asked rather than skipped as
+        # already-decided.
+        docs: list[str] = []
         for rec in labels:
             if not isinstance(rec, dict):
                 continue
@@ -48,6 +56,9 @@ def unreachable_gold(vault: Path) -> dict[str, Any]:
             if reached.get("default_any_leg"):
                 continue
             unreachable += 1
+            doc = str(rec.get("doc") or "").strip()
+            if doc:
+                docs.append(doc)
             if rec.get("present_in_index") is False:
                 buckets["absent_from_index"] += 1
             elif str(rec.get("stratum") or "") == "multi_hop":
@@ -71,4 +82,5 @@ def unreachable_gold(vault: Path) -> dict[str, Any]:
         "value": unreachable, "available": True, "artifact": str(newest),
         "generated": generated or None, "age_days": age_days,
         "labels": len(labels), "buckets": buckets,
+        "unreachable_docs": sorted(set(docs)),
     }

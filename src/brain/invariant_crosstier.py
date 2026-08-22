@@ -28,6 +28,12 @@ def cross_tier_twins(conn: Any, *, cap: int = SAMPLE_CAP) -> dict[str, Any]:
         "pairs": pairs,
         "sample": [f"{a} ({cls[a] or 'unlabelled'}) / {b} ({cls[b] or 'unlabelled'})"
                     for a, b in cross[:cap]],
+        # EXC-01: the cross-tier pairs themselves, in the shape the
+        # content detector returns them, so one owner question can be staged
+        # per pair. `pairs` above is the whole TWIN population (a count) and
+        # was already taken; this is the CROSS-tier subset.
+        "cross_pairs": [{"a": a, "a_tier": cls[a], "b": b, "b_tier": cls[b]}
+                        for a, b in cross],
     }
 
 
@@ -168,6 +174,9 @@ def cross_tier_candidates_entry(dup: dict[str, Any]) -> dict[str, Any]:
         "comparable": dup.get("comparable"),
         "coverage": dup.get("coverage"),
         "sample": dup.get("candidate_sample") or [],
+        # EXC-01: the undecided half's own pair population (see the sibling
+        # note in `invariants_metrics._cross_tier_duplicates_impl`).
+        "pairs": dup.get("candidate_pairs") or [],
     }
 
 

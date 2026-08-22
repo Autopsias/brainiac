@@ -3,6 +3,25 @@
 Source of truth: gearbox scripts/quality/ (deployed to ~/.claude/scripts/quality/).
 Adopting repos vendor this file into tools/ next to the checkers via
 vendor_quality.py — never edit a vendored copy; re-sync instead.
+
+NEVER RUN --generate-baseline IN A TREE OTHER SESSIONS ARE EDITING.
+It measures the WORKING TREE, so every file that happens to be dirty at that
+instant becomes the repo's official baseline — including a peer's half-written
+function and any prose they were mid-way through adding. Nobody decides that,
+nobody reviews it, and it looks identical to a deliberate re-record afterwards.
+Hand-edit the specific entries you mean instead, and name the before/after in
+the commit message ("shipping.py 795 -> 799, +4 lines of wiring at two call
+sites"). Hand-edits also COMPOSE: 685 -> 795 -> 799 on shipping.py landed
+cleanly across three concurrent sessions precisely because each moved one entry;
+one regeneration would have flattened the other two into whatever the tree
+looked like that second.
+
+When a bump IS right, check that the growth is the CODE and not the comment you
+wrote about the code — re-recording is the easy move and it silently buys
+headroom for prose.
+
+Derived independently by three sessions in one evening (2026-08-20/21) and
+stated nowhere else, which is the argument for it living here.
 """
 
 from __future__ import annotations
@@ -46,3 +65,35 @@ def parent_sources(project: Path, rel: str) -> list[str]:
         if result.returncode == 0:
             sources.append(result.stdout)
     return sources
+
+
+def self_recorded_bounds(
+    project: Path, exc_rel: str, parse, current: dict,
+) -> dict:
+    """Baseline entries THIS commit introduces or raises, keyed as `parse` keys.
+
+    A ratchet whose bar can be rewritten by the same commit it judges is not a
+    ratchet. Measured on the real checkers, 2026-08-21: a file grown 100 -> 600
+    LOC against a 500 limit exits 0 and prints "within size limits" when the
+    commit also re-records its baseline at 600 -- the `loc <= bound` test is
+    satisfied by the number the commit just wrote, so the parent comparison
+    below it never runs. The control (same growth, no re-record) blocks, which
+    is what proves the re-record is doing it.
+
+    Returns {key: previous_bound_or_None} for every entry whose bound is new or
+    higher than in EVERY parent. An entry that is unchanged, or lowered, is not
+    returned -- shrinking a baseline is always allowed and is the point.
+    """
+    parents = [parse(src) for src in parent_sources(project, exc_rel)]
+    if not parents:
+        # No parent version: a brand-new baseline file. Every entry is
+        # self-recorded, and `previous` is None for all of them.
+        return {k: None for k in current}
+    raised = {}
+    for key, bound in current.items():
+        befores = [p[key] for p in parents if key in p]
+        if not befores:
+            raised[key] = None
+        elif bound > max(befores):
+            raised[key] = max(befores)
+    return raised

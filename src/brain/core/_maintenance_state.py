@@ -288,8 +288,16 @@ class _MaintenanceStateMixin:
                         answered_at: str | None = None) -> bool:
         """Record the owner's answer to queued question ``key``. Host-only. The
         answer is CONSUMED (executed through the audited write path) by the next
-        fold — recording it here is plain host queue state, not an index write."""
+        fold — recording it here is plain host queue state, not an index write.
+
+        The answer is ALSO appended to the host-private remediation answers
+        ledger (REG-03). ``inbox.jsonl`` lives on the shared mount, so an
+        ``answered`` line there is a CLAIM a VM can forge; audited remediation
+        reads the ledger instead, and treats a missing ledger row as "not
+        answered". Best-effort here, fail-closed there: an unwritable ledger
+        must not lose the owner's answer from the queue they are looking at."""
         from .. import inbox as ibx
+        from .. import remediation_state as _remstate
         import datetime as _dt
         self._require_host("answer an owner question")
         d = today or _dt.date.today()
@@ -298,6 +306,14 @@ class _MaintenanceStateMixin:
             answered_at=answered_at)
         if matched:
             self._write_inbox(entries)
+            answered_row = next(
+                (e for e in entries if e.get("key") == key), {"key": key})
+            _remstate.record_owner_answer(self.vault, {
+                "key": key, "answer": answer, "answered": d.isoformat(),
+                "answered_at": answered_row.get("answered_at"),
+                "question": answered_row.get("question", ""),
+                "source": answered_row.get("source", ""),
+            })
         return matched
     def open_questions(self) -> list[dict[str, Any]]:
         """The open owner-decision queue (host-only read)."""

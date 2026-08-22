@@ -11,6 +11,7 @@ from .organization import OrganizationFoldsMixin
 from .orchestrator import MaintenanceOrchestratorMixin
 from .preflight import PreflightFoldsMixin
 from .publish import PublishFoldsMixin
+from .remediation import RemediationFoldsMixin
 from .reporting import ReportingFoldsMixin
 from .retention import RetentionFoldsMixin
 from .watchdogs import WatchdogFoldsMixin
@@ -28,6 +29,7 @@ __all__ = [
     "MaintenanceOrchestratorMixin",
     "PreflightFoldsMixin",
     "PublishFoldsMixin",
+    "RemediationFoldsMixin",
     "ReportingFoldsMixin",
     "RetentionFoldsMixin",
     "WatchdogFoldsMixin",

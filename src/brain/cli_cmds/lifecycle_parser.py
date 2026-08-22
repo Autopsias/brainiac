@@ -105,6 +105,28 @@ def _add_alerts(sub) -> None:
     )
 
 
+def _add_exceptions(sub) -> None:
+    sp = sub.add_parser(
+        "exceptions",
+        help="show, open, or print the page that says what needs you — the "
+             "one `brain maintain` rewrites every run. Host: sweeps the "
+             "workspace registry and reports EVERY vault. VM: its own vault, "
+             "the tier-gated mount copy. A vault whose nightly has not "
+             "written a summary reports UNKNOWN, never a zero.",
+    )
+    sp.add_argument("--json", action="store_true")
+    sp.add_argument(
+        "--open", dest="open_page", action="store_true",
+        help="hand the page to the desktop browser (macOS/Windows/Linux). A "
+             "sandbox with no browser reports that and prints the path.",
+    )
+    sp.add_argument(
+        "--text", action="store_true",
+        help="print the page as plain text — for a harness with no browser "
+             "(Codex in a terminal, a Cowork sandbox)",
+    )
+
+
 def _add_install_hook(sub) -> None:
     sp = sub.add_parser(
         "install-hook",
@@ -164,6 +186,7 @@ def add_parser(sub) -> None:
     _add_init(sub)
     _add_doctor(sub)
     _add_alerts(sub)
+    _add_exceptions(sub)
     _add_install_hook(sub)
     _add_mcp_config(sub)
     _add_provision_request(sub)

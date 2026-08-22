@@ -61,6 +61,31 @@ if [ -z "$BRAIN_BIN" ]; then
   exit 1
 fi
 
+# The RUN VALIDATOR needs the mutation toolchain, and the wheel does not carry
+# it (2026-08-22). `brain.cos_runverify.check_plan_binding` imports
+# `cos_mutate.load_frozen_plan` to re-hash a run's frozen plan — one definition
+# of that hash, never restated — but `tools_dir()` falls through to the wheel's
+# bundled `brain/_assets/tools/`, which mirrors the CONTRACT checkers and no
+# `cos_mutate*`. So a host scoring through the installed engine cannot verify
+# `plan_binding` and every mutating run reads INCONCLUSIVE, which holds its
+# candidates in claim quarantine. Measured on this host: run 2026-08-22-run157
+# and run 2026-08-21-run154 both score VALID 17/17 with this variable set and
+# INCONCLUSIVE 16/17 without it.
+#
+# This script lives at `src/brain/_assets/scripts/` inside the checkout, so the
+# checkout's real `tools/` is four levels up. Set the variable ONLY when that
+# directory actually exists and carries the module: a genuinely installed copy
+# has no checkout above it, and there the correct outcome is the INCONCLUSIVE
+# it already returns — an unverifiable binding must never read as a pass. An
+# operator override always wins.
+if [ -z "${BRAIN_COS_TOOLS_DIR:-}" ]; then
+  _cos_tools="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../tools" 2>/dev/null && pwd || true)"
+  if [ -n "$_cos_tools" ] && [ -f "$_cos_tools/cos_mutate.py" ]; then
+    export BRAIN_COS_TOOLS_DIR="$_cos_tools"
+  fi
+  unset _cos_tools
+fi
+
 {
   echo "=== brain-daily-brief / brain-nightly $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
   # cos-broker first — CORRECTION (2026-07-17): `brain maintain` ALSO runs the

@@ -69,7 +69,23 @@ def _load_script(directory: Path, name: str):
         raise ImportError(f"cannot load {name} from {directory}")
     mod = importlib.util.module_from_spec(spec)
     sys.modules[name] = mod
-    spec.loader.exec_module(mod)
+    # A FAILED LOAD MUST NOT STAY CACHED (2026-08-21). `sys.modules[name]` is
+    # set before the body runs so the module can import itself; if the body
+    # then raises, the half-built object stays behind and the cache check above
+    # hands it to the NEXT caller as a hit — its `__file__` matches, so nothing
+    # notices. The caller reaches for a name the body never got to define and
+    # gets an AttributeError, which `check_plan_binding` reads as "the frozen
+    # plan does not hash to its own stamp… a binding that points at a TAMPERED
+    # plan": run 2026-08-21-run154 scored INVALID on `module 'cos_mutate' has
+    # no attribute 'load_frozen_plan'` with 16 of 17 checks passing and the
+    # plan itself intact. Unusable toolchain must reach the caller as an
+    # exception (-> INCONCLUSIVE), never as a partial module (-> FAIL). This is
+    # what CPython's own import machinery does on the same path.
+    try:
+        spec.loader.exec_module(mod)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
     return mod
 
 

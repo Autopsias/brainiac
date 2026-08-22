@@ -89,6 +89,54 @@ def completeness(capture: dict[str, Any]) -> dict[str, Any]:
 
 
 def assert_complete(report: dict[str, Any]) -> None:
+    # THE INSTRUMENT FIRST, THEN WHAT IT MEASURED (2026-08-22). `dom_scan_complete`
+    # is the scanner's own report that it reached the end of the virtualized list
+    # and collected every id the list declares. Nothing read it, so a scan that
+    # stopped short did not fail as a short scan — its missing ids surfaced as a
+    # set difference below and stopped the night for "conversation id(s) [that]
+    # appear in one enumeration and not the other", i.e. it accused the mailbox
+    # of changing under the read. Measured twice minutes apart on a mailbox that
+    # reconciled at 505 = 505 both times (run155: 258 of 263; run156: 259 of 263).
+    # An unfinished measurement is not evidence of anything, so it is refused on
+    # its own terms and BEFORE the comparison it would otherwise poison. Still a
+    # hard stop — this makes the reason true, never the gate softer.
+    # A DEGRADED PAGE IS NOT A SHORT SCAN (2026-08-22). `declaredSize` is
+    # `max(0, ...)` over each rendered row's `aria-setsize`, and OWA writes
+    # `aria-setsize=0` on EVERY row when its user-agent brand gate is not
+    # satisfied — the documented ego-lane degradation signature
+    # (`tools/cos_ego_arm.py`, which exists to prove `aria-setsize > 0` before
+    # a run starts). The arming is CDP-session-scoped page state, so it can
+    # lapse mid-run: run 2026-08-22-run158 armed at 12:12:29 with
+    # `setsize: 225` and scanned at 12:19 with declared 0.
+    #
+    # With rows on screen and declared 0, `complete` can never be true — it
+    # requires `declaredSize > 0` — so the branch below fires and reports
+    # "collected 221 id(s) of the 0 the list declares", which reads as a
+    # scanner that stopped short and sends the reader looking for a scrolling
+    # bug. The remedy is to RE-ARM, and nothing said so. Same hard stop,
+    # different and true reason.
+    if (report.get("dom_declared_size") == 0
+            and report.get("scanner_count", 0) > 0):
+        raise DriverStop(
+            f"the mail list declares a size of 0 while {report['scanner_count']} "
+            "row(s) are rendered — that is OWA's DEGRADED page state, not a "
+            "short scan. OWA writes `aria-setsize=0` on every row when the "
+            "user-agent brand gate is unsatisfied, and the ego arming that "
+            "satisfies it is CDP-session-scoped page state that lapses on a "
+            "reload. Re-run `python3 tools/cos_ego_arm.py` (exit 0 = armed, "
+            "and its probe must report setsize > 0) with the mailbox tab in "
+            "its own VISIBLE foreground window, then start the run again. "
+            "Refusing to compare a degraded scan against the REST census, and "
+            "refusing to fetch any body.")
+    if not report.get("dom_scan_complete", True):
+        raise DriverStop(
+            f"the DOM scanner did not finish reading the list: it collected "
+            f"{report['scanner_count']} id(s) of the "
+            f"{report['dom_declared_size']} the list declares. The mail list is "
+            "virtualized, so the scanner must scroll to see every row, and a "
+            "pass that stops short is an unfinished MEASUREMENT — not evidence "
+            "that the mailbox changed. Refusing to compare an incomplete scan "
+            "against the REST census, and refusing to fetch any body.")
     if report["unexplained_set_difference"] > report["tolerance"]:
         raise DriverStop(
             f"enumeration completeness FAILED: "

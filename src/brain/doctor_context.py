@@ -2,8 +2,10 @@
 
 The path, marketplace, registry and repo-root resolution moved verbatim out
 of ``doctor.run_doctor``; the report orchestration stays in
-:mod:`brain.doctor` with an unchanged signature. This module never imports
-it.
+:mod:`brain.doctor` with an unchanged signature. This module imports
+:mod:`brain.doctor` only lazily (inside function bodies, below) — never at
+module load time — so :mod:`brain.doctor` can import THIS module back at its
+own load time without a cycle.
 """
 from __future__ import annotations
 
@@ -13,7 +15,31 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from .doctor import marketplace_install_location
+
+def marketplace_install_location(claude_home: Path, name: str = "brainiac") -> Optional[Path]:
+    """The one already-persisted authoritative pointer to the marketplace's
+    on-disk checkout (RC1/RC3/RC4). ``~/.claude/plugins/known_marketplaces.json``
+    is a FLAT dict keyed by marketplace name (verified on-machine: no
+    "marketplaces" wrapper — same read as ``check_stale_name_plugins``), each
+    value carrying an ``installLocation``. A directory-source marketplace (this
+    machine: ``installLocation`` == the engine checkout) records the REAL path
+    there, so reading it fixes three bugs at once: the hardcoded
+    ``marketplaces/<name>`` guess that read a directory-source install as "not
+    installed" (RC3), the ``__file__``-inference that mislocated ``repo_root``
+    on a wheel install (RC1/RC4), and the ``~/brainiac`` engine-src fallback
+    (RC1). Returns ``None`` when the file, the key, or the dir is absent —
+    every caller keeps its own fallback."""
+    known = _read_json(claude_home / "plugins" / "known_marketplaces.json")
+    if not isinstance(known, dict):
+        return None
+    entry = known.get(name)
+    if not isinstance(entry, dict):
+        return None
+    loc = entry.get("installLocation")
+    if not loc:
+        return None
+    p = Path(str(loc)).expanduser()
+    return p if p.is_dir() else None
 
 
 def resolve_marketplace_dir(claude_home: Path, marketplace_dir: Optional[Path],
@@ -155,3 +181,10 @@ def build_context_and_checks(
         unreadable_registry_row=_doctor._unreadable_registry_row,
     )
     return context, checks
+
+
+# Parent-namespace bind, deferred past this module's own defs. Safe: this
+# module is only ever first imported (by ``doctor.run_doctor``'s lazy
+# ``import doctor_context``, or by the facade re-export below) after
+# :mod:`brain.doctor` has already defined ``_read_json`` at its own top.
+from .doctor import _read_json as _read_json  # noqa: E402

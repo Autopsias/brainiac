@@ -45,6 +45,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -80,6 +81,65 @@ def _findings(text: str) -> list[dict] | None:
     return out
 
 
+def _run_in_own_process_group(argv: list[str]) -> subprocess.CompletedProcess:
+    """Run the bundled gate so that killing THIS process kills it too.
+
+    MEASURED CAUSE (2026-08-21). Every layer here enforces its timeout by
+    killing its DIRECT child only. plan-execute's argv runner kills the
+    `/bin/sh -c` wrapper; this module was that wrapper's child, so the gate
+    below it was reparented to init and kept running — with a live model
+    connection and nobody reading its output. One such orphan was observed at
+    34 minutes (`ppid=1`) after a gate reported `timeout after 1800s`, and
+    three of this session's five gate runs timed out while an orphan from the
+    previous one was still alive. Raising the timeout makes it WORSE: a longer
+    window breeds a longer-lived orphan.
+
+    So the child gets its own process group (`start_new_session=True`) and the
+    signals that kill this process kill that whole group first. The gate's own
+    `subprocess.run(..., timeout=...)` at `llm_review_gate.py:305` has the same
+    single-child defect one layer further down; that file is a DEPLOY TARGET
+    (`~/.claude`) and must be fixed at its source repo, not here.
+    """
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, start_new_session=True)
+
+    def _reap(signum, _frame):
+        _kill_group(proc)
+        # Re-raise as the default action so the caller sees a normal signal death.
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    previous = {}
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        try:
+            previous[sig] = signal.signal(sig, _reap)
+        except (ValueError, OSError):      # not the main thread, or unsupported
+            pass
+    try:
+        stdout, stderr = proc.communicate()
+    except BaseException:                  # noqa: BLE001 — including KeyboardInterrupt
+        _kill_group(proc)
+        raise
+    finally:
+        for sig, handler in previous.items():
+            try:
+                signal.signal(sig, handler)
+            except (ValueError, OSError):
+                pass
+    return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
+
+
+def _kill_group(proc: subprocess.Popen) -> None:
+    """Kill the child's whole process group; never raise."""
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     gate = _bundled_path()
@@ -88,8 +148,7 @@ def main(argv=None) -> int:
               file=sys.stderr)
         return INDETERMINATE
 
-    proc = subprocess.run([sys.executable, str(gate), *argv],
-                          capture_output=True, text=True)
+    proc = _run_in_own_process_group([sys.executable, str(gate), *argv])
     combined = (proc.stdout or "") + "\n" + (proc.stderr or "")
     print(combined.rstrip())
 

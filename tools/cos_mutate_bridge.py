@@ -219,3 +219,71 @@ class CdpBridge:
             err.mutation_in_flight = bool(out.get("mutation_in_flight"))  # type: ignore[attr-defined]
             raise err
         return out
+
+
+class EgoBridge(Bridge):
+    """The same page driver over the ego lite transport.
+
+    IT IS THE OTHER TWO, HALF EACH, and neither half is a new idea. Like
+    `CdpBridge` it reaches the page's MAIN world, so it stages AND boots the
+    driver itself — no browser extension, no isolated-world dance, none of the
+    two-surface choreography `_init_page` exists to police. Like `Bridge` it
+    polls from the HOST, because ego lite's per-call evaluation window is a hard
+    15 s that is not configurable, and `CdpBridge` waits for a mutation to finish
+    INSIDE one awaited evaluate — up to 180 s. That call cannot exist on this
+    transport, so the wait goes back on this side of the wire.
+
+    Nothing else changes, and deliberately so: `call` is inherited unmodified, so
+    the ops, the sequence discipline, the 449/401 flags and the validator are the
+    ones the other two lanes already run. A second copy of that body is how two
+    lanes drift apart.
+    """
+
+    def __init__(self, *, poll_seconds: float = 1.5, max_wait: float = 180.0) -> None:
+        super().__init__(drv.EgoTab(), poll_seconds=poll_seconds, max_wait=max_wait)
+
+    def stage(self) -> str:
+        """Stage the source AND evaluate the bootstrap — this world can."""
+        booted = self.tab.js(drv.stage(self.tab, PAGE_JS, SRC_ID))
+        if "cos-mutate-page-loaded" not in str(booted):
+            raise MutationStop(
+                f"the page driver did not boot over ego lite: {booted!r}")
+        return str(booted)
+
+
+def _init_page(bridge: Bridge, shapes: dict[str, Any], run_id: str) -> dict[str, Any]:
+    """Stage the page driver, then REQUIRE that something else booted it in MAIN.
+
+    It used to boot the driver itself with `tab.js`, which is the isolated world
+    — the same silent failure as `WRONG_WORLD`, one layer up: the driver would
+    load, answer the bridge, and be refused 401 on every request because the
+    captured envelope lives in the other world.
+    """
+    bridge.stage()
+    if bridge.tab.js("String(typeof window.__cosMut)") != "undefined":
+        raise MutationStop(
+            "the page driver is in the host's ISOLATED world. " + WRONG_WORLD)
+    if bridge.tab.js(f"String(!!document.getElementById({json.dumps(OUT_ID)}))") != "true":
+        raise MutationStop(
+            "the page driver has not booted in the tab's MAIN world. Evaluate "
+            f"this line there (browser extension), then retry:\n"
+            f"  {drv.bootstrap_for(SRC_ID)}")
+    return bridge.call("init", {"shapes": shapes, "signature": f"[cos:{run_id}:"})
+
+
+def _bridge_for(tab_id: int | None, shapes: dict[str, Any], run_id: str,
+                *, use_cdp: bool, use_ego: bool = False) -> Any:
+    """ego, CDP or AppleScript, one place, so no pass can pick a different one."""
+    if use_cdp or use_ego:
+        bridge: Any = EgoBridge() if use_ego else CdpBridge()
+        bridge.stage()
+        bridge.call("init", {"shapes": shapes, "signature": f"[cos:{run_id}:"})
+        return bridge
+    bridge = Bridge(drv.ChromeTab(tab_id))
+    _init_page(bridge, shapes, run_id)
+    return bridge
+
+
+def _transport_name(*, use_cdp: bool, use_ego: bool) -> str:
+    """One name for the evidence row, decided where the bridge is."""
+    return "ego" if use_ego else ("cdp" if use_cdp else "applescript")

@@ -33,6 +33,31 @@ BUCKET_RESIDENT = "held_non_drafted"
 # accounting: a PURE function of the capture
 # ---------------------------------------------------------------------------
 
+def body_open_succeeded(b: dict[str, Any] | None) -> bool:
+    """Did this body open actually LAND? ONE definition, read from the verifier.
+
+    TWO SPELLINGS OF ONE CONCEPT is what this closes. The driver counted any
+    extraction above zero characters as an open, while `cos_runverify` fails
+    the run over any extraction at or below `_EMPTY_SHELL_CHARS` — the bare
+    `<origin>/mail/` shell OWA drops a tab to when a conversation will not
+    deep-link, folder and id gone. So a refused open was banked as a landed
+    one, and the SAME thread invalidated two runs in a row: run162 and run164
+    both failed `body_pass` on conversation `…grEtBSrkvbvcCz0ATswXo=`, 30
+    characters, `body_opened: true`. An INVALID run never permits claiming, so
+    one unopenable email was quarantining every ingestion candidate the night
+    produced — 12 on each of those two runs.
+
+    The threshold is IMPORTED, never restated. A second copy of the number is
+    the same defect wearing the fix's clothes; the import is local because
+    `tools/` reaches `brain` through the run's PYTHONPATH, exactly as
+    `cos_corpus` is reached below.
+    """
+    from brain.cos_runverify_checks import (  # noqa: PLC0415
+        _EMPTY_SHELL_CHARS)
+    return bool(b and b.get("ok")
+                and int(b.get("body_chars") or 0) > _EMPTY_SHELL_CHARS)
+
+
 def build_accounting(capture: dict[str, Any], *, run_id: str,
                      bundle_version: str, rules_version: str,
                      enumerated_at: str,
@@ -54,7 +79,7 @@ def build_accounting(capture: dict[str, Any], *, run_id: str,
     seq = 0
     for d in capture.get("draw", []):
         b = bodies.get(d["convId"])
-        if b and b.get("ok") and int(b.get("body_chars") or 0) > 0:
+        if body_open_succeeded(b):
             seq += 1
             opened_seq[d["convId"]] = seq
 

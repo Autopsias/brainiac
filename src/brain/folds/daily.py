@@ -24,6 +24,16 @@ class DailyFoldsMixin:
         self.cos_broker_summary_fold(run)
         try:
             self.sync_reconcile_fold(run)
+            # AFTER the sync and BEFORE the publish, and both halves matter.
+            # After: `reguard` asks the ENF-04 guard about a corpus that
+            # INCLUDES this run's admissions — judged against the pre-sync
+            # index, a source whose higher-tier twin arrived this hour is
+            # stamped `clear` and leaves the unguarded population for good.
+            # Before: `publish_daily_fold` reconciles fold mutations and
+            # republishes the snapshot at the end of this block, so a raised
+            # tier still reaches the index and the VM's snapshot in the SAME
+            # run instead of leaking through the low copy for another hour.
+            self.remediation_fold(run)
             self.version_chain_fold(run)
             self.auto_dedup_fold(run)
             self.auto_para_fold(run)

@@ -180,6 +180,36 @@ def _run_doctor(args, ctx) -> int:
     return 0 if report["ok"] else 1
 
 
+def _run_exceptions(args, ctx) -> int:
+    """`brain exceptions` — the one way every harness reaches the page.
+
+    A vault is OPTIONAL for the same reason it is optional for `alerts`: the
+    host role sweeps the registry and needs none. Resolving leniently keeps
+    the command usable from any directory, which is where a session actually
+    runs it."""
+    from .. import exceptions_cli as _exc
+
+    try:
+        exc_vault = ctx.config.vault_root(args.vault)
+    except ctx.config.VaultNotFoundError:
+        exc_vault = None
+    report = _exc.collect(role=ctx.role, vault=exc_vault)
+    if args.open_page:
+        report["opened"] = _exc.open_all(report)
+    if args.json:
+        _emit(report, True, None)
+    elif args.text:
+        print(_exc.render_text(report))
+    else:
+        print(_exc.render_human(report))
+        if args.open_page:
+            print(report["opened"])
+    # Exit 0 even when things need the owner: this is a READOUT, and a
+    # non-zero exit reads as "the command broke" in every harness that
+    # wraps it.
+    return 0
+
+
 def _run_alerts(args, ctx) -> int:
     role = ctx.role
     config = ctx.config
@@ -307,6 +337,7 @@ _HANDLERS = {
     "init": _run_init,
     "doctor": _run_doctor,
     "alerts": _run_alerts,
+    "exceptions": _run_exceptions,
     "install-hook": _run_install_hook,
     "mcp-config": _run_mcp_config,
     "provision-request": _run_provision_request,

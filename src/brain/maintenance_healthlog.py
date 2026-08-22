@@ -210,7 +210,14 @@ def append_health_record(
 # read from a reachability artifact produced on a monthly-ish cadence, so it
 # is null on ~every hourly record and would fall out of the 14-day read
 # window between measurements.
-SPARSE_METRICS = ("golden_score", "invariant_unreachable_gold")
+#
+# SPD-01 adds `remediation_cost_usd` for the same reason again: it is null on
+# every hourly run where no model-backed remediation branch spent anything
+# (every mechanical run, and most `synthesis_retry` runs — it only ever
+# reports a nonzero figure on the run that observes its OWN re-fire), so it
+# needs the same last-non-null sparse comparison `golden_score` gets, not the
+# 7-day trailing window the high-frequency metrics use.
+SPARSE_METRICS = ("golden_score", "invariant_unreachable_gold", "remediation_cost_usd")
 
 
 def _append_sparse_metrics(sparse_path: Path, record: dict[str, Any]) -> None:
@@ -300,6 +307,17 @@ def read_health_history(
 DEFAULT_LATENCY_REGRESSION_PCT = 0.50
 DEFAULT_QUARANTINE_REGRESSION_PCT = 0.25
 DEFAULT_GOLDEN_REGRESSION_PCT = 0.05
+#: SPD-01 — a week-over-week jump of this MULTIPLE (5x, i.e. current >=
+#: 5 * previous) in remediation branch spend is a regression, even though
+#: there is no cap on the spend itself (owner ruling: unlimited spend,
+#: trend-alerted). Env: BRAIN_HEALTH_REMEDIATION_COST_REGRESSION_MULTIPLE.
+DEFAULT_REMEDIATION_COST_REGRESSION_MULTIPLE = 5.0
+#: The grill ruling's absolute floor and first-occurrence channel: a trend
+#: check has nothing to compare on the very first night any model-backed
+#: branch spends anything, so that night — and any night whose spend crosses
+#: this floor — alerts directly rather than waiting for a second data point.
+BRAIN_REMEDIATION_COST_ALERT_USD_ENV = "BRAIN_REMEDIATION_COST_ALERT_USD"
+DEFAULT_REMEDIATION_COST_ALERT_USD = 5.0
 HEALTH_TREND_MIN_DAYS = 7
 HEALTH_TREND_MIN_BASELINE_DAYS = 2
 # A median over a PARTIAL day is not a median. The hourly self-test is ONE
@@ -322,6 +340,7 @@ _DAILY_REDUCERS: dict[str, str] = {
     "selftest_ms": "median",
     "blocked": "max", "action_required": "max",
     "golden_score": "last_non_null", "synthesis_cost_usd": "last_non_null",
+    "remediation_cost_usd": "last_non_null",
 }
 
 

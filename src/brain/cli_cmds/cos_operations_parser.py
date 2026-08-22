@@ -133,7 +133,24 @@ def _add_cos_spine(sub) -> None:
     sp.add_argument("--json", action="store_true")
 
 
+def _add_cos_standing_approval(sub) -> None:
+    sp = sub.add_parser(
+        "cos-standing-approval",
+        help="HOST-only: record (or clear) the owner's STANDING answer to every COS ingestion batch. With one recorded, each batch is still built, signed, enqueued and consumed with its per-candidate content CAS intact — only the keystroke is standing. Stored host-private, off every VM-visible root. No action shows the current state.",
+    )
+    sp.add_argument(
+        "--accept-all", action="store_true",
+        help="record a standing ACCEPT for every future batch (requires --reason)")
+    sp.add_argument(
+        "--clear", action="store_true",
+        help="remove the standing answer and restore the manual per-batch gate")
+    sp.add_argument("--reason", default=None,
+                    help="the owner's words, stored with the record")
+    sp.add_argument("--json", action="store_true")
+
+
 def add_parser(sub) -> None:
+    _add_cos_standing_approval(sub)
     _add_cos_broker(sub)
     _add_cos_correct(sub)
     _add_cos_evidence(sub)

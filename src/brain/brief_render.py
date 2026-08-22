@@ -64,6 +64,10 @@ def _html_page(*, title: str, accent: str, body: str) -> str:
   .ok {{ color: #059669; }}
   .warn {{ color: #b45309; font-weight: 600; }}
   .empty {{ color: var(--muted); font-style: italic; }}
+  .do {{ margin: 0.8rem 0 0; padding: 0.55rem 0.75rem; border-radius: 8px;
+         background: rgba(37, 99, 235, 0.08); border-left: 3px solid #2563eb;
+         font-size: 0.92rem; }}
+  .muted-note {{ color: var(--muted); font-size: 0.88rem; margin: 0.15rem 0 0.4rem; }}
 </style>
 </head>
 <body>

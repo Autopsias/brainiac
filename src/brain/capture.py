@@ -54,6 +54,19 @@ def enforce(content: str, *, override: dict[str, Any] | None = None) -> str:
     signs it — the host promote step validates, signs, indexes, and updates status.
     """
     override = override or {}
+    # CANONICAL LF, ALWAYS (2026-08-21). Captured email text arrives CRLF, and
+    # every consumer in this codebase re-reads a stored note with
+    # `Path.read_text`, whose universal-newline translation deletes every `\r`.
+    # So a note written with CRLF hashed one way when it was composed and
+    # another way when it was read back: the COS ingestion ledger named the
+    # bytes on disk while the claim sweep hashed the translated text, and no
+    # candidate carrying a carriage return could ever bind (25 of 25 parked as
+    # `ledger-digest-mismatch` on run 2026-08-21-run154). Normalising here —
+    # the one canonicalizer every candidate and every draft passes through —
+    # makes read-back an identity for everything the engine writes, which is
+    # what the content-digest contract assumes at every comparison site
+    # (claim sweep, batch-accept CAS, hold release).
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
     meta, body = fm.parse_text(content)
 
     nid = override.get("id") or meta.get("id") or _derive_id(body)

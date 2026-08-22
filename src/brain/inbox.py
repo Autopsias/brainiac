@@ -11,8 +11,10 @@ a stated default. Never "review this bucket by hand".
 
 Stored as JSONL at ``<vault>/.brain/memory/inbox.jsonl`` (host-only, never
 indexed). The headless synthesis session ENQUEUES (it cannot ask); an
-interactive ``/brain-inbox`` session ANSWERS; the next fold CONSUMES the answers
-and executes them through the audited write path.
+interactive session ANSWERS by ASKING the owner (AskUserQuestion) and writing
+the reply back here; the next fold CONSUMES the answers and executes them
+through the audited write path. The owner is never sent to a command to go and
+read a queue — the queue is a write-back store, not a destination.
 """
 from __future__ import annotations
 
@@ -91,7 +93,18 @@ def enqueue(
         "answer": None,
         "answered": None,
     }
-    return entries + [entry], True
+    # At most ONE expired record per key survives the re-ask. A lane that
+    # re-asks after expiry (the cross-tier exception batch, whose TTL frees the
+    # slot without deciding anything) added one dead row per TTL cycle, forever,
+    # to a file whose whole point is a ~5-question queue. The NEWEST expiry is
+    # kept — it is the visible evidence that the slot was freed — and the ones
+    # before it are dropped. Only `expired`: an `answered` entry may still be
+    # waiting to be CONSUMED (the COS broker reads answered entries out of this
+    # file), so those are never touched.
+    seen = [i for i, e in enumerate(entries)
+            if e.get("key") == key and e.get("status") == "expired"]
+    stale = set(seen[:-1])
+    return [e for i, e in enumerate(entries) if i not in stale] + [entry], True
 
 
 def open_questions(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -123,11 +136,31 @@ def record_answer(
     return entries, matched
 
 
+def expire_questions(
+    entries: list[dict[str, Any]], keys: set[str], *, expired: str,
+) -> tuple[list[dict[str, Any]], int]:
+    """Close the OPEN questions in ``keys``. Returns ``(entries, closed)``.
+
+    Expiry is what keeps the ~5-cap queue from silting up with slots nobody
+    answered, and it also refuses a LATE answer at the queue level, since
+    :func:`record_answer` only touches ``open`` entries. Whether the underlying
+    CONDITION is thereby settled is the caller's business and not the same
+    question: the COS broker treats an expired batch as decided, the
+    cross-tier exception batch does not."""
+    closed = 0
+    for e in entries:
+        if e.get("key") in keys and e.get("status", "open") == "open":
+            e["status"] = "expired"
+            e["expired"] = expired
+            closed += 1
+    return entries, closed
+
+
 def summary_line(entries: list[dict[str, Any]]) -> str:
     """One-line push summary for the SessionStart hook (empty when the queue is
     empty). Deliberately terse — it's injected into every session."""
     n = len(open_questions(entries))
     if not n:
         return ""
-    return (f"{n} owner decision(s) pending in the brain inbox — say "
-            f"'brain inbox' (or run /brain-inbox) to answer them (~{n} min).")
+    return (f"{n} owner decision(s) pending — the assistant will walk you "
+            f"through them (~{n} min).")

@@ -40,7 +40,8 @@ def _run_cos_run_begin(args, ctx) -> int:
     core = ctx.core
     try:
         res = core.cos_run_begin(
-            run_id=args.run_id, lane=args.lane, skill_path=args.skill
+            run_id=args.run_id, lane=args.lane, skill_path=args.skill,
+            attended=bool(getattr(args, "attended", False)),
         )
     except Exception as exc:  # RoleError / unresolvable lane -> fail closed
         _emit(

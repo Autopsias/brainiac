@@ -226,6 +226,44 @@ Known positives: `tests/test_cos_runverify.py` (runs 57/58/59's shapes, each
 sub-check fired on its own, the adversarial marker fixture) and, on a host that
 has them, the REAL run 57/58/59 artifacts.
 
+### 2b.1 · The owner's STANDING answer (owner ruling 2026-08-21)
+
+> *"I will always approve ALL content including MNPI going into Brainiac."*
+
+The per-batch owner question asked a question whose answer never varied, and a
+gate with no real decision behind it is not a control — it is a queue that
+strands content. On the reference deployment 25 candidates sat unclaimable for
+twelve days behind one.
+
+A vault may therefore record a **standing answer**:
+
+```bash
+brain cos-standing-approval --accept-all --reason "<the owner's words>"
+brain cos-standing-approval                 # show the current state
+brain cos-standing-approval --clear         # restore the manual gate
+```
+
+**What it does NOT do is remove the gate.** The batch is still built, still
+Ed25519-signed, still enqueued as the owner question, and still consumed by
+`consume_answers` with its per-candidate content CAS intact — a candidate
+whose bytes drifted after batching is refused exactly as before
+(`tests/test_cos_standing_approval.py::test_standing_approval_does_not_weaken_the_content_cas`).
+Only the KEYSTROKE is standing: the recorded answer is replayed into the
+question the moment it is asked, and `enqueue_batch` reports it as
+`batch.standing_approval`, never silently.
+
+**The record is HOST-PRIVATE, and that placement is load-bearing.** It decides
+whether content is signed without a human looking, so under `<vault>/.brain/`
+or `<vault>/overlay/` it would sit on the Cowork VirtioFS mount where the
+untrusted VM leg could write one — the same mistake INT-01 (approved queue),
+INT-02 (drift dispositions), INT-04 (attachment anchors) and INT-05 (writer
+lock) each had to be moved off the mount to fix. It uses their one shared
+resolver (`_proven_off_mount`), and `cos-standing-approval` is refused on
+`role=vm` at the CLI boundary before anything runs.
+
+A malformed, truncated or unexpected record **fails closed to the manual
+gate** — never auto-answers on a half-written file.
+
 ### 2c · The approved queue (INT-01/INT-04) — accept to signature, with no writable gap
 
 An owner-accepted candidate used to wait in `capture-inbox/`, which is

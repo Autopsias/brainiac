@@ -1,9 +1,14 @@
-"""The transport layer of `cos_driver` — Chrome/CDP tab, staging, the two capture passes
+"""The transport layer of `cos_driver` — Chrome/CDP/ego tab wire, the MAN-01 sheet gate
 
 Moved verbatim out of `cos_driver` (batch-2 drain) and re-imported by it, so
 every name keeps its `cos_driver` module path; the parent's night orchestration
 calls these through its own globals exactly as before, so a test that
 monkeypatches one on `cos_driver` still steers the callers.
+
+The page-capture protocol that used to live here too — the DOM bridge, chunked
+staging, `capture_night`/`capture_bodies` — moved on to `cos_driver_capture`
+(quality drain, batch 3) and is re-imported below, so this module's own path
+for those names is unchanged for every existing caller.
 """
 from __future__ import annotations
 
@@ -18,8 +23,6 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-PAGE_JS = Path(__file__).resolve().parent / "cos_driver_page.js"
 
 #: The read lane this driver elects, recorded on every corpus row. It is NOT a
 #: manifest lane and never claims to be: `brain cos-run-begin` pins the
@@ -369,213 +372,10 @@ def load_sheet(vault: Path) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# capture: drive the tab
+# capture: drive the tab — moved to `cos_driver_capture` (batch 3); every name
+# is re-imported here so this module's own path for them is unchanged.
 # ---------------------------------------------------------------------------
-MAIL_ROOT = "https://outlook.cloud.microsoft/mail/"
-
-
-def assert_ready(tab: ChromeTab) -> dict[str, Any]:
-    """The run-owned tab must ALREADY be seeded. The driver never navigates.
-
-    It used to navigate to the Inbox when the tab was on the wrong view, and
-    that is now a foot-gun rather than a convenience: a navigation destroys the
-    main-world capture hook and the captured envelope with it, so the driver
-    would tidy the tab into a state where it can no longer authenticate and then
-    discover that one HTTP 401 later.
-
-    Both halves of readiness are checked from the HOST's world, which can see
-    neither `window.__cosCap` nor `window.__cosRun` — only the shared DOM. So
-    the page half announces itself through `#__cos_out`, and its `seed_kind` is
-    the seed proof.
-    """
-    state = tab.json(
-        "JSON.stringify({p:location.pathname,"
-        "rows:document.querySelectorAll('[role=\"option\"][data-convid]').length,"
-        "out:!!document.getElementById('__cos_out')})")
-    if not str(state.get("p", "")).rstrip("/").endswith("/mail"):
-        raise DriverStop(
-            f"the run-owned tab is on {state.get('p')!r}, not {MAIL_ROOT}. The "
-            "driver refuses to navigate there itself: a navigation wipes the "
-            "main-world capture hook and the captured envelope with it.")
-    if not state.get("out"):
-        raise DriverStop(
-            "the run-owned tab carries no `#__cos_out` node, so "
-            "`tools/cos_driver_page.js` was never injected into its MAIN world. "
-            "The host's own AppleScript world is ISOLATED — injecting from here "
-            "produces a driver that cannot see the captured envelope and is "
-            "refused 401. Seed the tab first, then start the driver.")
-    if not state.get("rows"):
-        raise DriverStop(
-            "the run-owned tab renders no message rows, so the DOM leg of the "
-            "completeness cross-check would compare the REST census against an "
-            "empty set and pass. A background tab renders no list on this build "
-            "— make the run-owned tab the ACTIVE tab of its window and retry.")
-    return state
-
-
-#: The DOM bridge. `#__cos_in` carries options into the page's main world,
-#: `#__cos_out` mirrors the run state back. Two inert `<script
-#: type="application/json">` nodes — the only thing the host's isolated world
-#: and the page's main world share.
-IN_ID = "__cos_in"
-OUT_ID = "__cos_out"
-SRC_ID = "__cos_src"
-
-#: The one line that has to be run in the page's MAIN world, by whatever surface
-#: can reach it (a browser extension; not this process — see `assert_ready`).
-#: It carries no logic: `--stage` puts `tools/cos_driver_page.js` verbatim into a
-#: DOM node from the host's own repo, and this evaluates THAT. The alternative is
-#: pasting 17 KB of driver through the extension on every run, where the source
-#: of truth stops being the file in git.
-def bootstrap_for(node_id: str) -> str:
-    return (f"(function(){{var e=document.getElementById('{node_id}');"
-            f"return e?eval(JSON.parse(e.textContent)):'no-source';}})()")
-
-
-BOOTSTRAP = bootstrap_for(SRC_ID)
-
-
-def stage(tab: ChromeTab, source: Path | None = None,
-          node_id: str | None = None) -> str:
-    """Put the page-side driver source where the main world can reach it.
-
-    Written in CHUNKS and length-verified. A single 20 KB write through
-    `osascript`'s `execute javascript` silently stored nothing (measured
-    2026-08-10: 0 of 20,534 characters, no error raised anywhere) — which is the
-    same class of failure as the truncating read, and gets the same treatment.
-    """
-    node = node_id or SRC_ID
-    src = json.dumps((source or PAGE_JS).read_text(encoding="utf-8"))
-    tab.js(_fresh_node(node))
-    for off in range(0, len(src), CHUNK):
-        tab.js(f"(function(){{document.getElementById({json.dumps(node)})"
-               f".textContent+={json.dumps(src[off:off + CHUNK])};"
-               f"return 'chunk';}})()")
-    got = tab.js(f"String((document.getElementById({json.dumps(node)})"
-                 f"||{{textContent:''}}).textContent.length)")
-    if int(got) != len(src):
-        raise DriverStop(f"staged {got} of {len(src)} source characters")
-    return bootstrap_for(node)
-
-#: AppleScript returns one string, and a 20-body payload is ~100 KB. Read it in
-#: slices and reassemble on length, so a transport that truncates FAILS instead
-#: of handing back a shorter night that parses.
-CHUNK = 16000
-
-
-def _fresh_node(node_id: str) -> str:
-    """Replace `#<node_id>` with an empty hidden div, whatever it was before.
-
-    Not `if (!el) create`: an earlier attempt may have left a `<script>` node at
-    that id, and Trusted Types then refuses every `textContent` write to it —
-    silently, from the host's side. Recreating the node is one line and removes
-    the whole class.
-    """
-    return (f"(function(){{var old=document.getElementById({json.dumps(node_id)});"
-            f"if(old)old.remove();"
-            f"var e=document.createElement('div');e.hidden=true;"
-            f"e.id={json.dumps(node_id)};document.documentElement.appendChild(e);"
-            f"return 'fresh';}})()")
-
-
-def _start(tab: ChromeTab, seq: int, opts: dict[str, Any]) -> None:
-    payload = json.dumps({"seq": seq, "opts": opts}, ensure_ascii=False)
-    tab.js(_fresh_node(IN_ID))
-    for off in range(0, len(payload), CHUNK):
-        tab.js(f"(function(){{document.getElementById({json.dumps(IN_ID)})"
-               f".textContent+={json.dumps(payload[off:off + CHUNK])};"
-               f"return 'chunk';}})()")
-
-
-def _read_out(tab: ChromeTab, out_id: str = OUT_ID) -> dict[str, Any]:
-    """Read the bridge node back, as BASE64.
-
-    Not as text. Slicing the JSON at a fixed code-unit width splits surrogate
-    pairs, and `osascript` drops the lone halves: measured on run 114, a 204,750
-    character night came back 204,748 characters long — two dropped halves of one
-    emoji in one subject line, and the only reason it was visible at all is that
-    the length is checked. Base64 is pure ASCII, so no boundary can be unsafe.
-    """
-    total = int(tab.js(
-        f"(function(){{var e=document.getElementById({json.dumps(out_id)});"
-        "if(!e)return '-1';"
-        "var b=new TextEncoder().encode(e.textContent);var s='';"
-        "for(var i=0;i<b.length;i++)s+=String.fromCharCode(b[i]);"
-        "window.__cosB64=btoa(s);return String(window.__cosB64.length);})()"))
-    if total < 0:
-        raise DriverStop(f"the `#{out_id}` bridge node vanished mid-run")
-    parts = [tab.js(f"window.__cosB64.substr({off},{CHUNK})")
-             for off in range(0, total, CHUNK)]
-    b64 = "".join(parts)
-    if len(b64) != total:
-        raise DriverStop(f"the bridge read back {len(b64)} of {total} base64 "
-                         "characters — the transport truncated the night")
-    try:
-        return json.loads(base64.b64decode(b64).decode("utf-8"))
-    except (ValueError, UnicodeDecodeError) as exc:
-        raise DriverStop(f"the bridge payload is not JSON ({exc})") from None
-
-
-def capture_night(tab: ChromeTab, *, cap: int, poll_seconds: float,
-                  max_wait: float, now: _dt.datetime) -> dict[str, Any]:
-    """Run the in-page driver and return its raw output. No accounting here."""
-    assert_ready(tab)
-    window_start = _ts(now - _dt.timedelta(hours=24))
-
-    # Pass 1: scan + enumerate + sent, with an EMPTY draw. The draw cannot be
-    # computed until the enumeration exists, and the enumeration is what says
-    # which rows are already read.
-    opts = {"cap": 0, "budget": BODY_BUDGET_CHARS, "sent_window_start": window_start}
-    first = _await_run(tab, 1, opts, poll_seconds, max_wait)
-
-    enumeration = first["out"]["enumeration"] or {}
-    scan = first["out"]["scan"] or {}
-    sent = first["out"]["sent"] or {}
-    return {"scan": scan, "enumeration": enumeration, "sent": sent,
-            "bodies": [], "cap": cap, "window_start": window_start}
-
-
-def capture_bodies(tab: ChromeTab, draw: list[dict[str, str]], *,
-                   poll_seconds: float, max_wait: float,
-                   window_start: str) -> list[dict[str, Any]]:
-    """Pass 2: fetch the drawn bodies. Every element of `draw` is already read."""
-    if not draw:
-        return []
-    opts = {"cap": len(draw), "budget": BODY_BUDGET_CHARS,
-            "sent_window_start": window_start, "draw": draw, "max_scrolls": 0}
-    res = _await_run(tab, 2, opts, poll_seconds, max_wait)
-    return res["out"]["bodies"] or []
-
-
-def _await_run(tab: ChromeTab, seq: int, opts: dict[str, Any],
-               poll_seconds: float, max_wait: float) -> dict[str, Any]:
-    _start(tab, seq, opts)
-    deadline = time.time() + max_wait
-    while time.time() < deadline:
-        time.sleep(poll_seconds)
-        st = tab.json(
-            f"(function(){{var e=document.getElementById({json.dumps(OUT_ID)});"
-            "var s=e?JSON.parse(e.textContent):{};"
-            "return JSON.stringify({done:!!s.done,phase:s.phase,seq:s.seq||0,"
-            "error:s.error||null,seed_kind:s.seed_kind||null});})()")
-        # `seq` is what makes this a read of THIS pass. Without it the first poll
-        # can see the previous pass's terminal state and return its payload.
-        if st.get("seq") == seq and st.get("done"):
-            if st.get("error"):
-                _PARTIAL["seed_kind"] = st.get("seed_kind")
-                raise DriverStop(f"the in-page driver failed in phase "
-                                 f"{st.get('phase')!r} using a "
-                                 f"{st.get('seed_kind')!r} envelope: {st['error']}")
-            return _read_out(tab)
-    raise DriverStop(f"the in-page driver did not finish within {max_wait:.0f}s")
-
-
-
-#: Whatever the run had established when it stopped. Module-level so the stop
-#: path can report a partial night instead of an empty file.
-_PARTIAL: dict[str, Any] = {}
-
-
-#: Whatever the run had established when it stopped. Module-level so the stop
-#: path can report a partial night instead of an empty file.
-_PARTIAL: dict[str, Any] = {}
+from cos_driver_capture import (  # noqa: E402,F401
+    BOOTSTRAP, CHUNK, IN_ID, MAIL_ROOT, OUT_ID, PAGE_JS, SRC_ID, _PARTIAL,
+    _await_run, _fresh_node, _read_out, _start, assert_ready, bootstrap_for,
+    capture_bodies, capture_night, stage)

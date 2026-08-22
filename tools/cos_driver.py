@@ -64,6 +64,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from cos_driver_accounting import (  # noqa: E402,F401  batch-2 drain
     BUCKET_RESIDENT, CONTRACT, READ_LANE, _persist, accounting_from_corpus,
+    body_open_succeeded,
     build_accounting, build_contract_inputs, corpus_extraction, run_contract,
     run_host_checks, write_corpus, write_jsonl, write_report)
 from cos_driver_categories import (  # noqa: E402,F401
@@ -137,8 +138,7 @@ def _bodies_and_accounting(tab: Any, capture: dict[str, Any],
     capture["bodies"] = capture_bodies(tab, draw, poll_seconds=poll_seconds,
                                        max_wait=max_wait,
                                        window_start=capture["window_start"])
-    succeeded = sum(1 for b in capture["bodies"]
-                    if b.get("ok") and int(b.get("body_chars") or 0) > 0)
+    succeeded = sum(1 for b in capture["bodies"] if body_open_succeeded(b))
     evidence["bodies_attempted"] = len(draw)
     evidence["bodies_succeeded"] = succeeded
     evidence["bodies_error"] = len(capture["bodies"]) - succeeded

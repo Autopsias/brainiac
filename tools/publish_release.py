@@ -98,11 +98,20 @@ def _write_split_mirror(src: Path, dest_root: Path) -> Path:
         paths = [p for p in src.rglob("*") if p.is_file()]
         base = src
     for path in paths:
+        # PROBE FIRST, then read the rest (2026-08-21). The docstring above
+        # already said a multi-GB index "would only cost minutes" if it were
+        # scanned — but `read_bytes()` read every one of them WHOLE just to
+        # test its first 8 KB, so the skip cost exactly what it was written to
+        # avoid. `_evidence/` holds 1.6 GB of retired sqlite indexes; the scan
+        # loaded all of it to discard all of it, and the test timed out at
+        # 300s. A binary now costs one 8 KB read.
         try:
-            raw = path.read_bytes()
+            with path.open("rb") as handle:
+                probe = handle.read(8192)
+                if b"\0" in probe:   # binary: same skip as the first pass
+                    continue
+                raw = probe + handle.read()
         except OSError:
-            continue
-        if b"\0" in raw[:8192]:      # binary: same skip as the first pass
             continue
         out = dest_root / path.relative_to(base)
         out.parent.mkdir(parents=True, exist_ok=True)

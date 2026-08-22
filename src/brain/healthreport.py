@@ -178,6 +178,64 @@ def _graph_hygiene_html(state: dict[str, Any], trend: list[dict[str, Any]], vaul
     return "".join(lines)
 
 
+def _remediation_html(state: dict[str, Any], trend: list[dict[str, Any]]) -> str | None:
+    """REG-04: what the automatic repair branches did, and whether they work.
+
+    Returns ``None`` — render nothing, not an empty section — on a vault where
+    the fold has never run, exactly like ``_graph_hygiene_html``. Reads the
+    ``_remediation`` projection in ``maintain-state.json``; the AUTHORITATIVE
+    per-branch state is host-private and deliberately not displayed from here.
+
+    This section exists because suppression makes the lane invisible: once a
+    finding a live branch owns stops bannering, hot.md is the only other
+    record, and AGENTS.md 9 defines hot.md as a log nobody has to open. A
+    working feature and a deleted one must not look the same."""
+    entry = state.get("_remediation")
+    if not isinstance(entry, dict):
+        return None
+    branches = entry.get("branches")
+    if not isinstance(branches, dict) or not branches:
+        return None
+    head = ("<tr><th>branch</th><th>mode</th><th>targets</th><th>healed</th>"
+            "<th>skipped</th><th>remaining</th></tr>")
+    # The opening tag is joined with `+`, NOT by sitting next to the f-strings:
+    # implicit string concatenation binds TIGHTER than a conditional expression,
+    # so `A if c else B f"..." f"..."` puts every cell inside the else branch and
+    # a warn row renders as a bare `<tr class="warn">` with no cells and no
+    # closing tag — exactly the row this section exists to show (llm-review,
+    # 2026-08-21).
+    body = "".join(
+        ("<tr class=\"warn\">" if (r.get("remaining") or 0) else "<tr>")
+        + f"<td>{brief_mod._esc(name)}</td>"
+        f"<td>{brief_mod._esc(r.get('mode', '?'))}</td>"
+        f"<td>{brief_mod._esc(r.get('targets', '?'))}</td>"
+        f"<td>{brief_mod._esc(r.get('healed', '?'))}</td>"
+        f"<td>{brief_mod._esc(r.get('skipped', '?'))}</td>"
+        f"<td>{brief_mod._esc(r.get('remaining', '?'))}</td>"
+        "</tr>"
+        for name, r in sorted(branches.items()) if isinstance(r, dict)
+    )
+    lines = [f'<table class="tbl">{head}{body}</table>',
+             f'<p class="meta">last run: {brief_mod._esc(entry.get("last_run", "?"))}'
+             ' &middot; a branch still in <code>shadow</code> mode writes nothing '
+             'and promotes itself after three proving runs</p>']
+    rows = [r for r in trend if r.get("remediation_healed") is not None]
+    if rows:
+        thead = ("<tr><th>ts</th><th>healed</th><th>remaining</th>"
+                 "<th>branches in shadow</th></tr>")
+        tbody = "".join(
+            "<tr>"
+            f"<td>{brief_mod._esc(r.get('ts', ''))}</td>"
+            f"<td>{brief_mod._esc(r.get('remediation_healed', ''))}</td>"
+            f"<td>{brief_mod._esc(r.get('remediation_remaining', ''))}</td>"
+            f"<td>{brief_mod._esc(r.get('remediation_shadow', ''))}</td>"
+            "</tr>"
+            for r in rows
+        )
+        lines.append(f'<table class="tbl">{thead}{tbody}</table>')
+    return "".join(lines)
+
+
 _INVARIANT_LABELS = {
     "unlinked_sources": "unlinked raw sources",
     "cross_tier_twins": "cross-tier name-twins",
@@ -272,6 +330,9 @@ def render_health_report_html(data: dict[str, Any]) -> str:
                                           _report_date(data))
     if invariants_html is not None:
         sections.append(brief_mod._section("Corpus invariants", invariants_html))
+    remediation_html = _remediation_html(data.get("state") or {}, data.get("trend") or [])
+    if remediation_html is not None:
+        sections.append(brief_mod._section("Automatic repairs", remediation_html))
     coverage_html = _curated_coverage_html(data.get("state") or {})
     if coverage_html is not None:
         sections.append(brief_mod._section("Currency coverage", coverage_html))

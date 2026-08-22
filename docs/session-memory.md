@@ -12,7 +12,7 @@ by two Claude Code CLI hooks (`docs/harness-wiring.md` §"Session hooks").
 <vault>/.brain/memory/
 ├── handoff.md                    ← live handoff — REWRITTEN (not appended) at session end
 ├── hot.md                        ← fold LOG — APPENDED (a record a human MAY read, not a must-clear queue)
-├── inbox.jsonl                   ← Tier-2 owner-decision queue — PUSHED to sessions, answered via /brain-inbox
+├── inbox.jsonl                   ← Tier-2 owner-decision queue — PUSHED to sessions, staged by the session as `AskUserQuestion` (never delegated to /brain-inbox — EXC-03)
 ├── lessons.md                    ← durable lessons — APPENDED
 ├── recommendations-open.jsonl    ← open-recommendations lifecycle (MEM-03, s08)
 ├── recommendations-log.md        ← resolved recommendations — APPENDED (MEM-03, s08)
@@ -103,17 +103,83 @@ stated default**. One JSON object per line:
   via `brain.inbox.enqueue` or `BrainCore.enqueue_question` — refuses an entry
   without ≥2 options and a default that is one of them. Idempotent on
   `(source, question)`.
-- **Push** (every session): the SessionStart hook injects `OWNER INBOX: N
-  pending` (count only — the raw question bodies stay out of injected context;
-  they came from a model reading vault content). Optionally a macOS
-  `display notification` when the count goes non-empty (inside the existing
-  nightly — no third scheduled task).
-- **Answer** (interactive `/brain-inbox` session): `brain inbox` lists,
-  `brain inbox --answer KEY --value TEXT` records the owner's choice. Answering
-  is plain host queue state, NOT an index write.
+- **Push** (every session): superseded by the unified exceptions banner
+  (EXC-03, 2026-08-22) — `brain alerts` reports `N exception(s) — open <page
+  path>` instead of the older `OWNER INBOX: N pending` line (count only —
+  the raw question bodies stay out of injected context; they came from a
+  model reading vault content). The exceptions page (below) is the detail
+  surface. Optionally a macOS `display notification` when the exception key
+  set changes (inside the existing nightly — no third scheduled task).
+- **Answer** (the session itself, in-session — never delegated to
+  `/brain-inbox`): the assistant opens the exceptions page, walks the owner
+  through each open question with `AskUserQuestion`, and records the answer
+  with `brain inbox --answer KEY --value TEXT`. Answering is plain host queue
+  state, NOT an index write.
 - **Consume** (next fold): reads answered entries and executes them through the
   audited `write_note`/host-broker path. The queue is capped (~5); overflow
   aggregates into one summary question.
+
+## The exceptions page — one file that carries everything needing the owner
+## (EXC-01/02/03)
+
+`brain maintain` regenerates the exceptions page at the end of every run
+(`src/brain/exceptions_page.py`): open owner questions, dead/escalated
+automation, untriaged findings, and a "healed lately" summary. It is the
+detail surface behind the exceptions banner both roles now share:
+`N exception(s) — open <page path>`.
+
+**Two pages, tier-split** — a cross-tier question can name a note above what
+this vault's Cowork VM is allowed to read, so one page cannot serve both
+audiences:
+
+- `<vault>/.brain/exceptions.html` — VM-readable (mount). Question ids are
+  OPAQUE random tokens, never real slugs; a pair whose exposure tier is above
+  the VM's egress ceiling renders as a `withheld (tier)` row.
+- `config.index_dir()/exceptions-full.html` — host-only. Real ids, real
+  question text, real options. This is the page a session opens to walk the
+  owner through open questions via `AskUserQuestion`.
+
+**The signed summary — `<vault>/.brain/exceptions.json`.** A machine-readable,
+Ed25519-signed digest (`count`, `keys`, `page_path`, `vault_id`,
+`schema_version`, `html_hash`, `min_engine`) that both roles read for the
+banner. The HOST trusts its own local copy (it wrote it) but still checks
+staleness. The Cowork VM VERIFIES it (`src/brain/exceptions_verify.py`)
+before trusting anything in it — every one of these must pass, or the VM
+reports `unreachable`, never a fabricated zero:
+
+1. `schema_version` is not from the future (a past version is migrated
+   explicitly; a future one is refused loudly).
+2. the signature is valid against a PINNED public key — never a key read off
+   the mount.
+3. `vault_id` matches the PINNED workspace identity — never the mutable
+   `.brain/vault-id` file, which stops a genuinely-signed summary from a
+   DIFFERENT vault (same host, same signing key) from being replayed here.
+4. this runtime's own engine version is not older than the summary's
+   `min_engine` (version skew).
+5. the summary is fresh (same staleness window as the `notify-sent` feed).
+6. `html_hash` recomputed over the mounted `exceptions.html` matches the
+   signed value (catches a post-signing edit to the page).
+
+**The pin — `<vault>/.brain/pinned-verify.json`.** The public key + vault_id
+anchor the VM verifies against, staged ONCE by the HOST-run
+`tools/cowork_workspace_install.sh` (`exceptions_verify.stage_pin`), under a
+Python that can resolve the audit signing key. It is never derived from the
+summary itself or from the mutable `vault-id` file. This is the same trust
+boundary the staged ELF binaries and bundled model already rely on: nothing
+in the Cowork VM's ordinary CLI surface (`VM_ALLOWED`) writes to this path,
+so within that surface it is a fixed anchor — it is not a defense against a
+fully compromised VM with arbitrary shell access rewriting its own staged
+files, and nothing in this system defends against that either.
+
+**Parity is per-vault, and it is a SOFT guarantee.** The criterion is VM
+exception count == host exception count for the SAME `vault_id` — both roles
+read the identical signed file, so they cannot drift apart by construction.
+Cowork has no SessionStart hook, so nothing enforces that a session actually
+runs `brain --role vm alerts` first; the AGENTS.md session-start instruction
+IS the mechanism, not a guarantee the harness enforces. A staged VM runtime
+must be re-staged (`tools/cowork_workspace_install.sh`) whenever the host's
+engine version advances past what the staged copy's `min_engine` gate
+tolerates.
 
 ## `engine-feedback/` — retro-fold engine-bug prompts
 

@@ -55,6 +55,14 @@ from .update_channels import (
 )
 from .update_channels_2 import UpdateFlowCallbacks, run_update_flow
 from .update_plugins import _default_runner as _default_runner  # noqa: F401
+from .update_state import (  # noqa: F401  (facade re-export)
+    UPDATE_RETRY_ESCALATE_AFTER as UPDATE_RETRY_ESCALATE_AFTER,
+    failure_is_moot as failure_is_moot,
+    read_update_state as read_update_state,
+    retry_decision as retry_decision,
+    update_state_path as update_state_path,
+    write_update_state as write_update_state,
+)
 
 # --------------------------------------------------------------------------
 # Runner abstraction — the ONLY place subprocess.run is called from this
@@ -242,56 +250,6 @@ def detect_and_check_update(
     avail = check_update_available(installed, channel, engine_src)
     return {**avail, "channel": channel, "engine_src": engine_src,
             "brain_bin": str(brain_bin) if brain_bin else None}
-
-
-def update_state_path(brainiac_home: Path) -> Path:
-    return brainiac_home / "update-state.json"
-
-
-def read_update_state(brainiac_home: Path) -> Optional[dict]:
-    try:
-        import json
-        return json.loads(update_state_path(brainiac_home).read_text(encoding="utf-8"))
-    except Exception:
-        return None
-
-
-def failure_is_moot(state: Optional[dict], installed: Optional[str]) -> bool:
-    """True when a recorded FAILED update targeted a version the machine has
-    SINCE REACHED — the record describes a past state and must stop nagging.
-
-    Nothing else clears a `failed` record: the availability check writes one
-    only when an update IS available, so once the machine catches up (manually,
-    or by a later version applying cleanly) the stale banner ran on in every
-    session until the hook's 7-day freshness window expired. Judged on the
-    DETERMINED comparison installed >= the version that failed — never on
-    `available: False`, which also means "could not check".
-    """
-    target = (state or {}).get("latest")
-    if not target or not installed:
-        return False
-    try:
-        return _compare(str(installed), str(target)) >= 0
-    except Exception:
-        return False
-
-
-def write_update_state(
-    brainiac_home: Path, *, status: str, installed: Optional[str] = None,
-    latest: Optional[str] = None, source: Optional[str] = None,
-    at: Optional[str] = None, detail: str = "",
-) -> Path:
-    """Persist the auto-update record the session-start hook reads (file-only,
-    no engine call). ``status`` ∈ {available, applied, failed}."""
-    import json
-    p = update_state_path(brainiac_home)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({
-        "status": status, "installed": installed, "latest": latest,
-        "source": source, "at": at, "detail": detail,
-    }), encoding="utf-8")
-    return p
-
 
 # --------------------------------------------------------------------------
 # Workspace re-stage — thin wrapper delegating to workspace_registry; never

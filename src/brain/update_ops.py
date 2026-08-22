@@ -8,7 +8,16 @@ from typing import Any
 
 from . import config
 from . import update as brain_update
-from .lock import WriterLockBusy, vault_writer_lock
+from .lock import WriterLockBusy, vault_writer_lock, writer_lock
+
+#: The host-global update lock (FIX-04, HARDENED:adv-2026-08-20). Update is
+#: ONE engine install shared by every vault on this host, so two vaults'
+#: hourly maintain runs deciding "available" at the same moment must not both
+#: invoke ``run_update()`` — the per-vault ``vault_writer_lock`` below only
+#: ever excludes THIS vault's own index writer, never another vault's
+#: maintain run. Held only around the retry-decide-and-apply section, never
+#: around the whole ``_maybe_auto_update`` call.
+UPDATE_LOCK_FILENAME = "update.lock"
 
 
 def _auto_update_gate() -> dict[str, Any] | None:
@@ -98,8 +107,14 @@ def _record_update_report(
     latest: Any,
     source: Any,
     today: Any,
+    previous_attempts: int = 0,
 ) -> dict[str, Any]:
-    """Persist the verified update outcome for the session-start banner."""
+    """Persist the verified update outcome for the session-start banner.
+
+    FIX-04: a success zeroes the retry counter (a later version failing has
+    nothing to do with THIS one's history); a failure carries
+    ``previous_attempts + 1`` forward so ``retry_decision`` can count to
+    ``UPDATE_RETRY_ESCALATE_AFTER`` across runs."""
     if report.get("ok"):
         brain_update.write_update_state(
             brainiac_home,
@@ -109,8 +124,10 @@ def _record_update_report(
             source=source,
             at=today.isoformat(),
             detail="auto-applied by brain-nightly",
+            attempts=0,
         )
         return {"auto_update": "applied", "latest": latest}
+    attempts = previous_attempts + 1
     brain_update.write_update_state(
         brainiac_home,
         status="failed",
@@ -119,11 +136,15 @@ def _record_update_report(
         source=source,
         at=today.isoformat(),
         detail=(report.get("notes") or "update pipeline reported not-ok")[:200],
+        attempts=attempts,
+        attempted_on=today.isoformat(),
+        escalated=attempts >= brain_update.UPDATE_RETRY_ESCALATE_AFTER,
     )
     return {
         "auto_update": "failed",
         "latest": latest,
         "notes": report.get("notes"),
+        "attempts": attempts,
     }
 
 
@@ -153,16 +174,38 @@ class UpdateOpsMixin:
                 "installed": installed,
                 "latest": latest,
             }
+        previous_attempts = 0
         if (
             previous
             and previous.get("status") == "failed"
             and previous.get("latest") == latest
         ):
-            return {
-                "auto_update": "skipped",
-                "reason": "version already failed",
-                "latest": latest,
-            }
+            # FIX-04: a failed update retries itself, bounded, instead of
+            # nagging forever unattempted. See `brain_update.retry_decision`.
+            previous_attempts = int(previous.get("attempts", 0) or 0)
+            decision = brain_update.retry_decision(previous, today)
+            if decision == "escalate":
+                brain_update.write_update_state(
+                    brainiac_home, status="failed", installed=installed,
+                    latest=latest, source=info.get("source"),
+                    at=today.isoformat(), detail=str(previous.get("detail") or ""),
+                    attempts=previous_attempts, escalated=True,
+                )
+                return {
+                    "auto_update": "escalated",
+                    "reason": (f"retried {previous_attempts} time(s) and still "
+                              "failing — escalated, no more automatic retries "
+                              "for this version"),
+                    "latest": latest,
+                    "attempts": previous_attempts,
+                }
+            if decision == "wait":
+                return {
+                    "auto_update": "skipped",
+                    "reason": "already retried today; waiting for tomorrow",
+                    "latest": latest,
+                    "attempts": previous_attempts,
+                }
         deferred = _defer_for_writer(
             self,
             brainiac_home=brainiac_home,
@@ -173,12 +216,24 @@ class UpdateOpsMixin:
         )
         if deferred is not None:
             return deferred
-        report = brain_update.run_update(brainiac_home=brainiac_home)
-        return _record_update_report(
-            brainiac_home,
-            report=report,
-            installed=installed,
-            latest=latest,
-            source=info.get("source"),
-            today=today,
-        )
+        # Host-global: two vaults' hourly maintain runs must not both apply an
+        # update at once. Busy defers exactly like a busy per-vault writer.
+        try:
+            with writer_lock(brainiac_home / UPDATE_LOCK_FILENAME,
+                             verb="update-retry", timeout=0.1):
+                report = brain_update.run_update(brainiac_home=brainiac_home)
+                return _record_update_report(
+                    brainiac_home,
+                    report=report,
+                    installed=installed,
+                    latest=latest,
+                    source=info.get("source"),
+                    today=today,
+                    previous_attempts=previous_attempts,
+                )
+        except WriterLockBusy as exc:
+            return {
+                "auto_update": "deferred",
+                "reason": f"another host update in progress (pid={exc.holder.get('pid')})",
+                "latest": latest,
+            }

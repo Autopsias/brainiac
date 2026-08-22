@@ -231,7 +231,7 @@ def main() -> int:
     parser.add_argument("--staged", action="store_true",
                         help="Judge only git-staged files (pre-commit mode)")
     parser.add_argument("--generate-baseline", action="store_true",
-                        help="Write current violations as the exceptions baseline")
+                        help="Write current violations as the exceptions baseline. NOT safe in a tree other sessions are editing — it baselines whatever is dirty right now; hand-edit instead (see ratchetlib.py)")
     args = parser.parse_args()
 
     project = Path(args.project).resolve()

@@ -31,6 +31,8 @@ import os
 import sys
 from pathlib import Path
 
+EXC_FILE = ".function-length-exceptions"
+
 try:
     import tomllib
 except ImportError:
@@ -91,17 +93,22 @@ def load_exceptions(project_path: Path) -> dict[str, int]:
     could go from its recorded 1,657 lines to 5,000 and never block, which is
     not a ratchet.
     """
-    exc_file = project_path / ".function-length-exceptions"
+    exc_file = project_path / EXC_FILE
     if not exc_file.exists():
         return {}
+    return parse_exceptions(exc_file.read_text())
+
+
+def parse_exceptions(source: str) -> dict[str, int]:
+    """The baseline text -> {key: lines}. Shared with the parent-version read.
+
+    Rebuilt from each entry's own fields, so a baseline written under the old
+    file:lineno:name scheme keeps working without regeneration.
+    """
     try:
-        with open(exc_file) as f:
-            data = json.load(f)
-        # Rebuilt from each entry's own fields, so a baseline written under the
-        # old file:lineno:name scheme keeps working without regeneration.
         return {
             exception_key(e["file"], e["name"]): e["lines"]
-            for e in data.get("exceptions", {}).values()
+            for e in json.loads(source).get("exceptions", {}).values()
         }
     except Exception:
         return {}
@@ -198,32 +205,102 @@ def find_violations(
     return blocking, warnings
 
 
+
+def parent_lengths_of(project_path: Path, rel: str, name: str) -> list[int]:
+    """How long `name` was in each parent commit's version of `rel`."""
+    import ratchetlib
+
+    out = []
+    for src in ratchetlib.parent_sources(project_path, rel):
+        for _, fname, length in functions_in_source(src):
+            if fname == name:
+                out.append(length)
+    return out
+
+
+def judge_raised_bounds(
+    project_path: Path, config: dict, exceptions: dict[str, int], raised: dict,
+) -> tuple[list[str], list[str]]:
+    """Split this commit's raised bounds into (blocking, warning) lines.
+
+    Judged whether or not the .py file is staged: a "re-record the baselines"
+    commit stages the baseline and no source at all.
+    """
+    bad: list[str] = []
+    ok: list[str] = []
+    for key, was in sorted(raised.items()):
+        rel, name = key.rsplit(":", 1)
+        if is_excluded(Path(rel), config.get("exclude") or []):
+            continue
+        bound = exceptions[key]
+        had = f"was {was}" if was is not None else "not baselined before"
+        line = f"  {rel}:{name}(): baseline raised to {bound} ({had})"
+        # A parent that already carried it this long is the evidence the commit
+        # RECORDS debt; without one, the commit grew it AND wrote its own bar.
+        befores = parent_lengths_of(project_path, rel, name)
+        if befores and max(befores) >= bound:
+            ok.append(f"{line} — a parent had {max(befores)}")
+        elif befores:
+            bad.append(f"{line} — longest parent was {max(befores)}")
+        else:
+            bad.append(f"{line} — no parent has this function")
+    return bad, ok
+
+
+def judge_staged_file(
+    project_path: Path, rel: str, config: dict, exceptions: dict[str, int],
+) -> tuple[list[str], list[str]]:
+    """One staged file's over-bound functions, split into (blocking, inherited)."""
+    import ratchetlib
+
+    parent_lengths: dict[str, int] = {}
+    for src in ratchetlib.parent_sources(project_path, rel):
+        for _, name, length in functions_in_source(src):
+            parent_lengths[name] = max(parent_lengths.get(name, 0), length)
+
+    bad: list[str] = []
+    carried: list[str] = []
+    for lineno, name, length in get_functions(project_path / rel):
+        key = exception_key(rel, name)
+        if key in exceptions:
+            bound, label = exceptions[key], "baseline"
+        else:
+            bound, label = config["limit"], "LIMIT"
+        if length <= bound:
+            continue
+        line = f"  {rel}:{lineno}  {name}()  {length} lines [{label}={bound}]"
+        if name in parent_lengths and length <= parent_lengths[name]:
+            carried.append(line)
+        else:
+            bad.append(line)
+    return bad, carried
+
+
 def check_staged(project_path: Path, config: dict, exceptions: dict[str, int]) -> int:
     """Judge only staged files; block only what THIS commit makes worse."""
     import ratchetlib
 
     blocking: list[str] = []
     inherited: list[str] = []
+    self_recorded: list[str] = []
+    # Bounds this very commit introduces or raises. A ratchet whose bar the
+    # same commit can rewrite is not a ratchet, so these are judged on their
+    # own below — including in a commit that stages no .py file at all.
+    raised = ratchetlib.self_recorded_bounds(
+        project_path, EXC_FILE, parse_exceptions, exceptions,
+    )
     for rel in ratchetlib.staged_py_files(project_path):
         if is_excluded(Path(rel), config.get("exclude") or []):
             continue
-        parent_lengths: dict[str, int] = {}
-        for src in ratchetlib.parent_sources(project_path, rel):
-            for _, name, length in functions_in_source(src):
-                parent_lengths[name] = max(parent_lengths.get(name, 0), length)
-        for lineno, name, length in get_functions(project_path / rel):
-            key = exception_key(rel, name)
-            if key in exceptions:
-                bound, label = exceptions[key], "baseline"
-            else:
-                bound, label = config["limit"], "LIMIT"
-            if length <= bound:
-                continue
-            line = f"  {rel}:{lineno}  {name}()  {length} lines [{label}={bound}]"
-            if name in parent_lengths and length <= parent_lengths[name]:
-                inherited.append(line)
-            else:
-                blocking.append(line)
+        bad, carried = judge_staged_file(project_path, rel, config, exceptions)
+        blocking.extend(bad)
+        inherited.extend(carried)
+
+    raised_bad, raised_ok = judge_raised_bounds(
+        project_path, config, exceptions, raised,
+    )
+    blocking.extend(raised_bad)
+    self_recorded.extend(raised_ok)
 
     if blocking:
         print(f"\n=== Function Length Violations ({len(blocking)} BLOCKING, staged) ===")
@@ -237,14 +314,26 @@ def check_staged(project_path: Path, config: dict, exceptions: dict[str, int]) -
             " pre-existing).\nRe-record the baseline in this commit"
             " (--generate-baseline); CI stays red until you do."
         )
-    if not blocking and not inherited:
+    if self_recorded:
+        print(
+            f"\n=== Baseline raised by this commit ({len(self_recorded)}"
+            " WARNING, staged) ==="
+        )
+        print("\n".join(self_recorded))
+        print(
+            "\nA parent already carried each of these at this length, so the"
+            " commit is\nrecording existing debt, not authoring it. Reported"
+            " rather than blocked —\nbut it is never a silent pass: read the"
+            " diff and confirm that is what it is."
+        )
+    if not blocking and not inherited and not self_recorded:
         print("✓ Staged functions within length limits")
     return 1 if blocking else 0
 
 
 def generate_baseline(project_path: Path, config: dict) -> None:
     blocking, _ = find_violations(project_path, config, {})
-    exc_file = project_path / ".function-length-exceptions"
+    exc_file = project_path / EXC_FILE
 
     # Load existing to preserve any manual entries not in current scan
     existing: dict = {}
@@ -284,7 +373,7 @@ def main() -> None:
     parser.add_argument("--staged", action="store_true",
                         help="Judge only git-staged files (pre-commit mode)")
     parser.add_argument("--generate-baseline", action="store_true",
-                        help="Write current violations as exceptions baseline")
+                        help="Write current violations as exceptions baseline. NOT safe in a tree other sessions are editing — it baselines whatever is dirty right now; hand-edit instead (see ratchetlib.py)")
     parser.add_argument("--json", action="store_true", help="Output as JSON")
     args = parser.parse_args()
 

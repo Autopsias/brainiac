@@ -7,6 +7,7 @@ from ._attachment_store import attachment_metas
 from ._claims_state import _pending_metas
 from ._guards import _safe_basename
 from ._io import _read_jsonl, _write_atomic
+from ._standing_approval import STANDING_ANSWER, standing_approval
 from ._layout import _env_days, _parse_ts, _ts, _utcnow, proposals_dir
 from ._learning_ledger import log_defect
 from ._version_links import version_link_metas
@@ -172,6 +173,19 @@ def _enqueue_batch_locked(core, now: _dt.datetime) -> dict[str, Any]:
     out = {"enqueued": True, "batch_id": batch_id,
            "candidates": [candidate["id"] for candidate in candidates],
            "digest": record["digest"]}
+    # THE OWNER'S STANDING ANSWER (owner ruling 2026-08-21). When this vault
+    # carries one, the question is answered the moment it is asked, from the
+    # host-private record — never routed around. `consume_answers` still runs
+    # on the next fold with its per-candidate content CAS and its signing step
+    # unchanged, so the only thing that becomes standing is the keystroke.
+    # Failure to record the answer is REPORTED, never swallowed: a batch left
+    # unanswered is the manual gate, which is the safe direction.
+    if (standing := standing_approval(vault)) is not None:
+        out["standing_approval"] = {
+            "answered": bool(core.answer_question(question["key"], STANDING_ANSWER)),
+            "recorded": standing.get("recorded"),
+            "reason": standing.get("reason"),
+        }
     if deferred:
         # Over the caps: named, not silently dropped. They join the next batch.
         out["deferred"] = deferred
@@ -281,14 +295,11 @@ def close_expired_batch_questions(core, expired_batch_ids: list[str]) -> int:
     ``open`` entries)."""
     if not expired_batch_ids:
         return 0
-    keys = {BROKER_KEY_PREFIX + b for b in expired_batch_ids}
-    entries = core._read_inbox()
-    closed = 0
-    for e in entries:
-        if (isinstance(e, dict) and e.get("key") in keys
-                and e.get("status", "open") == "open"):
-            e["status"] = "expired"
-            closed += 1
+    from ..inbox import expire_questions
+
+    entries, closed = expire_questions(
+        core._read_inbox(), {BROKER_KEY_PREFIX + b for b in expired_batch_ids},
+        expired=_ts())
     if closed:
         core._write_inbox(entries)
     return closed

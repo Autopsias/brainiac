@@ -73,7 +73,7 @@ def suite_parallel_args(python: str) -> tuple[list[str], str]:
 # host COS ledgers and is machine-bound by design; it is deselected in the
 # sequential gates too, so parallel coverage equals sequential coverage.
 SUITE_DESELECT = (
-    "tests/test_cos_runverify.py::"
+    "tests/test_cos_runverify_body_corpus.py::"
     "test_corpus_join_zero_false_positives_across_every_real_historical_run")
 
 

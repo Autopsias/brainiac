@@ -25,24 +25,8 @@
       "loc": 607
     },
     {
-      "file": "src/brain/rerank.py",
-      "loc": 591
-    },
-    {
       "file": "eval/zone_prior_calibration.py",
       "loc": 590
-    },
-    {
-      "file": "tools/cos_driver_transport.py",
-      "loc": 581
-    },
-    {
-      "file": "src/brain/doctor_plugins.py",
-      "loc": 562
-    },
-    {
-      "file": "tools/cos_mutate.py",
-      "loc": 543
     },
     {
       "file": "eval/ne_upgrade_gate.py",
@@ -51,10 +35,6 @@
     {
       "file": "eval/s06_fusion_residual.py",
       "loc": 526
-    },
-    {
-      "file": "src/brain/doctor.py",
-      "loc": 515
     }
   ]
 }

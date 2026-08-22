@@ -143,14 +143,20 @@ def check_skill_drift(
 
 
 def check_claude_md_import(claude_md_path: Path = REPO_ROOT / "CLAUDE.md") -> dict:
-    """CLAUDE.md's line-1 directive (AGENTS.md is canonical) must still
-    ``@AGENTS.md``-import verbatim on its own line."""
+    """CLAUDE.md must still import the conventions file verbatim on its own
+    line. Since the 2026-08-22 context diet that import is ``@AGENTS-core.md``
+    (the <=200-line Claude Code core) rather than ``@AGENTS.md``; AGENTS.md
+    stays canonical for Codex/Gemini, which read it directly. Either import
+    satisfies the assumption this guard encodes -- Claude Code loads the
+    conventions at startup -- so accept both and fail only on neither."""
     if not claude_md_path.is_file():
         return {"ok": False, "reason": f"missing {claude_md_path}"}
     text = claude_md_path.read_text(encoding="utf-8")
-    if re.search(r"(?m)^@AGENTS\.md\s*$", text):
+    if re.search(r"(?m)^@AGENTS(-core)?\.md\s*$", text):
         return {"ok": True, "reason": None}
-    return {"ok": False, "reason": "CLAUDE.md no longer imports @AGENTS.md on its own line"}
+    return {"ok": False,
+            "reason": "CLAUDE.md imports neither @AGENTS-core.md nor "
+                      "@AGENTS.md on its own line"}
 
 
 def check_agents_md_mirror(

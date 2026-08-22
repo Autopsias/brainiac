@@ -14,7 +14,12 @@ The seven:
    (a wikilink from any note body, a ``source:``/``replaces:`` frontmatter
    link from a ``brain/`` note, or an indexed supersession link). Excludes
    the vault's own re-ingested operational output (ENF-06), which is not
-   knowledge anyone should be writing a note about.
+   knowledge anyone should be writing a note about. **The RAW COUNT is not
+   ratcheted (FIX-05, 2026-08-21):** BAK-04's weekly linking lane works this
+   backlog down, so the count growing is ordinary intake, not a defect. The
+   count still trends in health-history; the alert is keyed to
+   ``invariant_lane_health.lane_health`` — whether the lane itself is
+   working — instead. See that module's docstring for the three legs.
 2. ``cross_tier_twins``  — ``<ingest-date>-<slug>`` / ``<slug>`` id pairs
    whose two notes carry DIFFERENT ``classification`` (an Internal-capped
    reader reaching Restricted substance through the twin).
@@ -86,6 +91,7 @@ from typing import Any
 
 from .invariant_shared import SAMPLE_CAP
 from .invariant_reachability import unreachable_gold
+from .invariant_ingest_guard import ingest_guard
 from .invariant_unsigned_notes import unsigned_notes
 
 # The metric names, in report order. Every consumer (state, health
@@ -113,74 +119,6 @@ DEFAULT_MAX_AGE_DAYS = 3
 REACHABILITY_GLOB_ENV = "BRAIN_INVARIANTS_REACHABILITY_GLOB"
 
 _DATE_PREFIX = re.compile(r"^\d{4}-\d{2}-\d{2}-(?=.)")
-
-
-def ingest_guard(vault: Path, *, cap: int = SAMPLE_CAP) -> dict[str, Any]:
-    """ENF-04 — the ingest guard's verdicts, read back off ``raw/``.
-
-    ``value`` is the count of sources admitted while the guard was UNAVAILABLE
-    (the only non-monotone, should-be-zero number here). Every other status is
-    reported beside it, per leg for raises, so "0 raised" can never quietly
-    mean "the guard never looked"."""
-    from . import frontmatter as fm
-    from .ingest.tierguard import (
-        _NO_CORPUS_ERROR, GUARD_KEY, GUARD_LEG_KEY, GUARD_REASON_KEY,
-        GUARD_STATUSES, NO_CORPUS,
-    )
-
-    by_status = {s: 0 for s in GUARD_STATUSES}
-    by_leg: dict[str, int] = {}
-    unstamped = 0
-    unknown = 0
-    sample: list[str] = []
-    raw = Path(vault) / "raw"
-    total = 0
-    for path in sorted(raw.glob("*.md")):
-        total += 1
-        try:
-            meta, _body = fm.parse_text(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        status = str(meta.get(GUARD_KEY) or "").strip()
-        if not status:
-            # Ingested before ENF-04 shipped. Reported with its own number so
-            # the denominator is honest — never folded into `clear`, which
-            # would claim a check that never happened.
-            unstamped += 1
-            continue
-        if status not in by_status:
-            unknown += 1
-            continue
-        # Sources ingested before the 2026-08-17 split carry `unavailable`
-        # even when the guard RAN against an empty corpus — its own reason
-        # line says so, and `raw/` is immutable so the stamp cannot be
-        # corrected in place. Read the recorded evidence rather than leaving a
-        # permanent false alarm on every vault whose first document predates
-        # the split.
-        if status == "unavailable" and _NO_CORPUS_ERROR in str(
-                meta.get(GUARD_REASON_KEY) or ""):
-            status = NO_CORPUS
-        by_status[status] += 1
-        if status == "raised":
-            leg = str(meta.get(GUARD_LEG_KEY) or "unrecorded")
-            by_leg[leg] = by_leg.get(leg, 0) + 1
-            if len(sample) < cap:
-                sample.append(f"{path.stem} -> {meta.get('classification')} ({leg})")
-    return {
-        "value": by_status["unavailable"],
-        "sources": total,
-        "raised": by_status["raised"],
-        "raised_by_leg": by_leg,
-        "clear": by_status["clear"],
-        "subfloor": by_status["subfloor"],
-        # Reported beside `value`, never inside it: the guard looked and the
-        # corpus held nothing comparable, so there was no higher-tier twin to
-        # leak from. Never hidden — a leg that stops working must still show.
-        "no_corpus": by_status[NO_CORPUS],
-        "unstamped": unstamped,
-        "unknown_status": unknown,
-        "sample": sample,
-    }
 
 
 def subfloor_families(conn: Any, *, cap: int = SAMPLE_CAP) -> dict[str, Any]:
@@ -238,6 +176,7 @@ def subfloor_families(conn: Any, *, cap: int = SAMPLE_CAP) -> dict[str, Any]:
         families.setdefault(find(nid), []).append(nid)
 
     hits: list[str] = []
+    subfloor_members: list[str] = []
     for root, members in sorted(families.items()):
         hashes = {info[m][0] for m in members}
         if len(hashes) != 1:
@@ -245,11 +184,20 @@ def subfloor_families(conn: Any, *, cap: int = SAMPLE_CAP) -> dict[str, Any]:
         if min(info[m][1] for m in members) >= floor:
             continue
         hits.append(f"{min(info[m][1] for m in members)}B: " + ", ".join(sorted(members)))
+        subfloor_members.extend(members)
     return {
         "value": len(hits),
         "families": len(families),
         "floor": floor,
         "sample": hits[:cap],
+        # The FULL population behind `value`, unformatted — the same shape
+        # `ingest_guard()["unguarded"]` already gives FIX-02's `reguard`
+        # branch, so FIX-03's `extract_retry` reads its own targets straight
+        # off the metric instead of re-deriving them from the human-readable
+        # `sample` strings (which are capped and unparseable by design).
+        # Bounded by UNBOUNDED_METRIC_FIELDS at the PERSISTENCE boundary only
+        # (below), never at this in-process return.
+        "members": sorted(set(subfloor_members)),
     }
 
 
@@ -301,6 +249,45 @@ def metric_tolerance(metric: str) -> int:
         return max(0, int(os.environ.get(tolerance_env(metric), "").strip() or 0))
     except ValueError:
         return 0
+
+
+#: Metric keys whose value is an UNBOUNDED population list. They exist for
+#: in-process consumers (the FIX-02 repair branch drives off
+#: ``ingest_guard()["unguarded"]``, which must be complete) and must never
+#: reach the mount-visible ``maintain-state.json``, which is rewritten every
+#: hour: a vault whose guard was down through a bulk ingest would grow that
+#: file by the whole population on every run (llm-review, 2026-08-21).
+#: EXC-01 added the cross-tier PAIR populations and the unreachable-gold DOC
+#: ids under that same rule — the owner-question layer stages one proposal per
+#: pair and must see every pair. Several fields per metric now, because one
+#: cross-tier scan produces both halves of the decided/undecided split.
+UNBOUNDED_METRIC_FIELDS: dict[str, tuple[str, ...]] = {
+    "unguarded_ingests": ("unguarded",),
+    "subfloor_families": ("members",),
+    "cross_tier_twins": ("cross_pairs",),
+    "cross_tier_duplicates": ("pairs", "candidate_pairs"),
+    "cross_tier_candidates": ("pairs",),
+    "unreachable_gold": ("unreachable_docs",),
+}
+
+
+def persistable_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
+    """``metrics`` with every unbounded population list truncated to
+    ``SAMPLE_CAP`` — the persistence boundary, NOT the walk.
+
+    Truncated rather than dropped, and to the same cap its sibling ``sample``
+    already honours, so the state file keeps a diagnostic tail. The COUNT is
+    unaffected: it lives in ``value``, which is what every consumer reads."""
+    out = dict(metrics)
+    for metric, fields in UNBOUNDED_METRIC_FIELDS.items():
+        row = out.get(metric)
+        for field in fields if isinstance(row, dict) else ():
+            population = row.get(field)
+            if not isinstance(population, list) or len(population) <= SAMPLE_CAP:
+                continue
+            row = out[metric] = {**row, field: population[:SAMPLE_CAP],
+                                 f"{field}_truncated": len(population) - SAMPLE_CAP}
+    return out
 
 
 def metric_values(metrics: dict[str, Any]) -> dict[str, int]:
@@ -496,5 +483,13 @@ from .invariants_metrics import cross_tier_duplicates as cross_tier_duplicates  
 from .invariant_floors import (  # noqa: E402,F401  (facade re-export)
     declined_floors as declined_floors, metric_populations as metric_populations,
     POPULATION_SUFFIX as POPULATION_SUFFIX, update_floors_guarded as update_floors_guarded,
+)
+# FIX-05 — invariant:unlinked_sources is rekeyed to BAK-04 lane health rather
+# than the ratchet; see invariant_lane_health.py's module docstring.
+from .invariant_lane_health import (  # noqa: E402,F401  (facade re-export)
+    lane_health as lane_health, LANE_HEALTH_ESCALATE_AFTER as LANE_HEALTH_ESCALATE_AFTER,
+    LANE_MAX_AGE_DAYS as LANE_MAX_AGE_DAYS, LANE_MIN_HISTORY_DAYS as LANE_MIN_HISTORY_DAYS,
+    lane_health_regression as lane_health_regression, STATE_SUBKEY as LANE_HEALTH_STATE_SUBKEY,
+    update_lane_health as update_lane_health,
 )
 

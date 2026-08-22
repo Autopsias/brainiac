@@ -121,6 +121,7 @@ must_refuse "cos priority map"      brain cos-priority-map
 must_refuse "cos calibration report" brain cos-report
 must_refuse "cos commitment spine"  brain cos-spine radar
 must_refuse "cos hold"              brain cos-hold list
+must_refuse "cos standing approval" brain cos-standing-approval
 must_refuse "cos downloads sweep"   brain cos-ingest-sweep
 must_refuse "audit chain query"     brain verify-audit
 must_refuse "index rebuild"         brain rebuild

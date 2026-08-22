@@ -28,6 +28,35 @@ def _len_or_none(d: dict[str, Any], key: str) -> int | None:
     return len(d[key]) if key in d else None
 
 
+def _remediation_fields(results: dict[str, Any]) -> dict[str, Any]:
+    """REG-04: what the repair branches did this run.
+
+    WAT-01 binds a fix to its metric, and these branches SHRINK two invariants
+    that already trend here — so without a number of their own, "the repairs
+    are working" and "the fold was deleted" produce the identical history.
+    ``healed``/``remaining`` are summed across branches; ``shadow`` counts the
+    branches still in their report-only window, so a lane stuck in shadow is
+    visible rather than reading as a lane with nothing to do."""
+    rem = results.get("remediation")
+    branches = rem.get("branches") if isinstance(rem, dict) else None
+    if not isinstance(branches, dict) or not branches:
+        return {"remediation_healed": None, "remediation_remaining": None,
+                "remediation_shadow": None, "remediation_cost_usd": None}
+    rows = [r for r in branches.values() if isinstance(r, dict)]
+    # SPD-01: total spend across every branch this run. A mechanical branch
+    # never sets `cost_usd` (default 0.0), so a run with no model-backed
+    # spend sums to exactly 0 — and per design-freeze (d) rule 1, a bare 0 is
+    # recorded as None (indistinguishable from "never measured"), never a
+    # healthy trend point of zero.
+    cost_total = sum(float(r.get("cost_usd", 0) or 0) for r in rows)
+    return {
+        "remediation_healed": sum(int(r.get("healed", 0) or 0) for r in rows),
+        "remediation_remaining": sum(int(r.get("remaining", 0) or 0) for r in rows),
+        "remediation_shadow": sum(1 for r in rows if r.get("mode") == "shadow"),
+        "remediation_cost_usd": cost_total if cost_total > 0 else None,
+    }
+
+
 def _link_lane_consumed(results: dict[str, Any]) -> int | None:
     """BAK-04 (F3, 2026-08-18): lane candidates consumed today, cumulative
     within the day (see ``invariants.lane_consumption``). A week of zeros
@@ -121,6 +150,9 @@ def _collect_health_metrics_impl(
         "autodedup_skipped_short_body": _len_or_none(autodedup, "skipped_short_body"),
         "autodedup_skipped_classification": _len_or_none(autodedup, "skipped_classification"),
         "autodedup_skipped_recurring": _len_or_none(autodedup, "skipped_recurring"),
+        # REG-04: the repair branches' own numbers, so a working lane is
+        # distinguishable from a deleted one in the trend.
+        **_remediation_fields(results),
         # WAT-01 invariant fields are kept in one extracted mapping.
         **invariant_health_history_fields(inv_values, inv_metrics, inv_age),
     }
@@ -132,6 +164,8 @@ def health_trend(
     latency_regression_pct: float | None = None,
     quarantine_regression_pct: float | None = None,
     golden_regression_pct: float | None = None,
+    remediation_cost_regression_multiple: float | None = None,
+    remediation_cost_alert_usd: float | None = None,
 ) -> list[dict[str, Any]]:
     """Week-over-week regression findings. Each finding is
     ``{metric, severity, current, baseline, delta_pct, summary}``.
@@ -148,12 +182,19 @@ def health_trend(
       the latest non-null value against the PREVIOUS non-null value
       regardless of window/day-count (correction 1). A null on either side
       skips the check — a null is "absent", never a "-100%" drop.
+    - ``remediation_cost`` (sparse, SPD-01) fires on a >= 5x week-over-week
+      jump, on the FIRST night any model-backed branch ever records nonzero
+      spend, or on any night crossing the absolute
+      ``BRAIN_REMEDIATION_COST_ALERT_USD`` floor — never on a cap, because
+      there is none (owner ruling: unlimited spend, trend-alerted).
     """
     return _health_trend_impl(
         history, today, sparse_history=sparse_history,
         latency_regression_pct=latency_regression_pct,
         quarantine_regression_pct=quarantine_regression_pct,
         golden_regression_pct=golden_regression_pct,
+        remediation_cost_regression_multiple=remediation_cost_regression_multiple,
+        remediation_cost_alert_usd=remediation_cost_alert_usd,
     )
 
 
@@ -219,12 +260,64 @@ def _append_health_golden_finding(
         })
 
 
+def _append_health_remediation_cost_finding(
+    findings: list[dict[str, Any]], ordered: list[dict[str, Any]],
+    sparse_history: list[dict[str, Any]] | None, *,
+    regression_multiple: float, alert_floor: float,
+) -> None:
+    """SPD-01 — no cap on remediation spend, but a jump is an exception.
+
+    Sparse, same shape as ``golden_score``: compares the latest non-null
+    ``remediation_cost_usd`` against the previous non-null point. TWO grill
+    rulings fire OUTSIDE the plain week-over-week comparison, because a trend
+    check has nothing to compare against on the very first data point:
+
+    1. **First occurrence** — the first night ANY model-backed branch ever
+       records nonzero spend, with no previous point to compare against.
+    2. **Absolute floor** — ``current >= alert_floor``
+       (``$BRAIN_REMEDIATION_COST_ALERT_USD``, default 5), regardless of the
+       trend, so a single expensive night alerts even without a prior data
+       point to jump from.
+
+    Either reason alone is enough for the ONE finding this appends; both can
+    be true at once and still produce a single finding, never two."""
+    records = [record for record in _union_by_run_id(ordered, sparse_history or [])
+               if record.get("remediation_cost_usd") is not None]
+    points = [record["remediation_cost_usd"]
+              for record in sorted(records, key=lambda r: str(r.get("ts") or ""))]
+    if not points or not isinstance(points[-1], (int, float)) or points[-1] <= 0:
+        return
+    current = points[-1]
+    previous = points[-2] if len(points) >= 2 and isinstance(points[-2], (int, float)) else None
+    reasons = []
+    if previous is None:
+        reasons.append("first recorded remediation spend")
+    elif previous > 0 and current / previous >= regression_multiple:
+        reasons.append(
+            f"{round(current / previous, 1)}x jump over the previous "
+            f"${previous}")
+    if current >= alert_floor:
+        reasons.append(f">= the ${alert_floor} alert floor")
+    if not reasons:
+        return
+    findings.append({
+        "metric": "remediation_cost", "severity": "regression",
+        "current": current, "baseline": previous, "delta_pct": (
+            None if not previous else round((current - previous) / previous * 100, 1)),
+        "summary": f"remediation branch spend ${current} this run "
+                   f"({'; '.join(reasons)}) — no cap is enforced, this is a "
+                   "trend alert only",
+    })
+
+
 def _health_trend_impl(
     history: list[dict[str, Any]], today: datetime.date, *,
     sparse_history: list[dict[str, Any]] | None = None,
     latency_regression_pct: float | None = None,
     quarantine_regression_pct: float | None = None,
     golden_regression_pct: float | None = None,
+    remediation_cost_regression_multiple: float | None = None,
+    remediation_cost_alert_usd: float | None = None,
 ) -> list[dict[str, Any]]:
     import os
 
@@ -234,6 +327,14 @@ def _health_trend_impl(
         os.environ.get("BRAIN_HEALTH_QUARANTINE_REGRESSION_PCT", DEFAULT_QUARANTINE_REGRESSION_PCT))
     gold_pct = golden_regression_pct if golden_regression_pct is not None else float(
         os.environ.get("BRAIN_HEALTH_GOLDEN_REGRESSION_PCT", DEFAULT_GOLDEN_REGRESSION_PCT))
+    cost_multiple = (
+        remediation_cost_regression_multiple
+        if remediation_cost_regression_multiple is not None else float(
+            os.environ.get("BRAIN_HEALTH_REMEDIATION_COST_REGRESSION_MULTIPLE",
+                           DEFAULT_REMEDIATION_COST_REGRESSION_MULTIPLE)))
+    cost_floor = remediation_cost_alert_usd if remediation_cost_alert_usd is not None else float(
+        os.environ.get(BRAIN_REMEDIATION_COST_ALERT_USD_ENV,
+                       DEFAULT_REMEDIATION_COST_ALERT_USD))
 
     findings: list[dict[str, Any]] = []
     if not history:
@@ -262,6 +363,9 @@ def _health_trend_impl(
         metric="quarantine", pct=quar_pct, label="quarantine growth",
     )
     _append_health_golden_finding(findings, ordered, sparse_history, gold_pct)
+    _append_health_remediation_cost_finding(
+        findings, ordered, sparse_history,
+        regression_multiple=cost_multiple, alert_floor=cost_floor)
     return findings
 
 
@@ -275,6 +379,10 @@ _union_by_run_id = _maintenance._union_by_run_id
 DEFAULT_GOLDEN_REGRESSION_PCT = _maintenance.DEFAULT_GOLDEN_REGRESSION_PCT
 DEFAULT_LATENCY_REGRESSION_PCT = _maintenance.DEFAULT_LATENCY_REGRESSION_PCT
 DEFAULT_QUARANTINE_REGRESSION_PCT = _maintenance.DEFAULT_QUARANTINE_REGRESSION_PCT
+DEFAULT_REMEDIATION_COST_REGRESSION_MULTIPLE = (
+    _maintenance.DEFAULT_REMEDIATION_COST_REGRESSION_MULTIPLE)
+DEFAULT_REMEDIATION_COST_ALERT_USD = _maintenance.DEFAULT_REMEDIATION_COST_ALERT_USD
+BRAIN_REMEDIATION_COST_ALERT_USD_ENV = _maintenance.BRAIN_REMEDIATION_COST_ALERT_USD_ENV
 HEALTH_TREND_MIN_BASELINE_DAYS = _maintenance.HEALTH_TREND_MIN_BASELINE_DAYS
 HEALTH_TREND_MIN_CURRENT_SAMPLES = _maintenance.HEALTH_TREND_MIN_CURRENT_SAMPLES
 HEALTH_TREND_MIN_DAYS = _maintenance.HEALTH_TREND_MIN_DAYS

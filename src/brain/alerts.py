@@ -32,6 +32,19 @@ import re
 from pathlib import Path
 from typing import Any
 
+from . import config as _config
+from .alerts_staging import (  # noqa: F401 — re-exported for callers/tests
+    _UNTRIAGED_FALLBACK,
+    _UNTRIAGED_PREFIX_FALLBACK,
+    _remediation,
+    _staged_versions,
+    _untriaged,
+    _untriaged_key,
+    _unwrap_untriaged,
+    host_vaults,
+    staging_alerts,
+)
+
 # `brain maintain` overwrites `notify-sent/current.json` at the end of every
 # run with the findings TRUE AT THAT MOMENT. That file is this digest's feed.
 #
@@ -55,6 +68,14 @@ UPDATE_STATE_MAX_AGE_DAYS = 7
 
 # A weekly task that has not succeeded in longer than this has missed a run.
 SYNTHESIS_STALE_DAYS = 8
+
+# The feed's `findings[].key` vocabulary is closed (see maintenance_notify.py:
+# "blocked", "synthesis-watchdog", "trend:<metric>", "invariant:<metric>",
+# "branch-escalate:<branch>", "ingest_quarantine*", ...). The dir is on the
+# VirtioFS mount the Cowork VM can write, so a key failing this shape must
+# never reach the rendered alert text — it is the one thing standing between
+# a forged feed and attacker-authored text in the host SessionStart context.
+_FINDING_KEY_RE = re.compile(r"[a-z0-9:_-]{1,64}")
 
 
 def _read_json(path: Path) -> Any:
@@ -105,18 +126,21 @@ def update_alerts(home: Path, today: datetime.date) -> list[dict[str, str]]:
     status = state.get("status")
     running = _running_version()
     if status == "applied":
-        if running is not None and latest != running:
-            # A LATER update has since landed, so this marker describes a
-            # superseded one. It kept announcing "auto-updated to 0.20.14" for
-            # its whole 7-day window while 0.20.18 was running (measured
-            # 2026-08-18) — an alert that is wrong every session is an alert
-            # nobody reads.
-            return []
-        return [_alert("update:applied",
-                       f"Brainiac auto-updated to {latest} (if the Cowork Desktop "
-                       "skill store is stale, one click finishes it)")]
+        # FIX-04 (registry: `update:applied` is LOG, "good news is not an
+        # alert"). Until 2026-08-21 this branch banner'd it here for up to
+        # `UPDATE_STATE_MAX_AGE_DAYS` (7 days) every session — the dead banner
+        # this fold's own hot.md line (written where the update is recorded,
+        # `folds.reporting.auto_update_fold`) now replaces. Never re-add a
+        # banner for it here; that is the exact regression this fix closes.
+        return []
     if status == "failed":
         detail = state.get("detail") or "unknown step"
+        if state.get("escalated"):
+            attempts = state.get("attempts") or "several"
+            return [_alert("update:failed",
+                           f"Brainiac auto-update to {latest} FAILED {attempts} "
+                           f"time(s) and has stopped retrying (last: {detail}) "
+                           "— run 'brain update' by hand")]
         return [_alert("update:failed",
                        f"Brainiac auto-update to {latest} FAILED at {detail} "
                        "— run 'brain update'")]
@@ -161,9 +185,11 @@ def synthesis_alerts(home: Path, today: datetime.date) -> list[dict[str, str]]:
 # Per-vault sources — on the shared mount, so BOTH roles read them
 # ---------------------------------------------------------------------------
 
-def vault_alerts(vault: Path, today: datetime.date) -> list[dict[str, str]]:
-    """Engine-feedback backlog, owner-decision queue, and whatever is degraded
-    right now per ``degradation_alerts`` below."""
+def vault_alerts(
+    vault: Path, today: datetime.date, *, role: str = "host",
+) -> list[dict[str, str]]:
+    """Engine-feedback backlog, the exceptions banner, and whatever is
+    degraded right now per ``degradation_alerts`` below."""
     name = vault.parent.name or str(vault)
     out: list[dict[str, str]] = []
 
@@ -173,20 +199,68 @@ def vault_alerts(vault: Path, today: datetime.date) -> list[dict[str, str]]:
                           f"{len(pending_bugs)} engine-feedback bug prompt(s) waiting",
                           name))
 
-    try:
-        with open(vault / ".brain" / "memory" / "inbox.jsonl", encoding="utf-8") as fh:
-            open_questions = sum(
-                1 for line in fh
-                if line.strip() and json.loads(line).get("status", "open") == "open")
-    except Exception:
-        open_questions = 0
-    if open_questions:
-        out.append(_alert("owner-inbox",
-                          f"{open_questions} owner decision(s) queued (use /brain-inbox)",
-                          name))
-
+    out += exceptions_alerts(vault, today, name, role=role)
     out += degradation_alerts(vault, today, name)
     return out
+
+
+def exceptions_alerts(
+    vault: Path, today: datetime.date, name: str, *, role: str,
+) -> list[dict[str, str]]:
+    """The one exceptions banner both roles now share: ``N thing(s) need
+    you — run `brain exceptions --open`, or read <page path>``. NEVER reads ``inbox.jsonl`` directly any more (GRILL
+    ruling 2026-08-20: "inbox.jsonl stays host-only doctrine; attacker-writable
+    file existence is not evidence") — both roles read the SAME signed
+    machine summary ``exceptions_page.generate()`` writes at the end of every
+    ``brain maintain`` run (``.brain/exceptions.json``), which is what makes
+    the VM count and the host count the SAME NUMBER by construction. The VM
+    additionally VERIFIES that summary (signature, pinned vault_id, schema,
+    freshness, page hash — ``exceptions_verify.verify``) before trusting
+    anything in it; an unverifiable summary is reported unreachable, never a
+    fabricated zero (HARDENED:adv-2026-08-20 / codex-verify-r1). The host
+    trusts its own local file (it wrote it) but still checks staleness — the
+    same posture ``degradation_alerts`` takes on the sibling feed."""
+    from . import exceptions_page as _exc_page
+
+    if role == "vm":
+        from . import exceptions_verify as _exc_verify
+
+        ok, summary, reason = _exc_verify.verify(vault, today)
+        if not ok:
+            return [_alert("exceptions:unreachable",
+                           f"exceptions summary unreachable — {reason}", name)]
+    else:
+        summary = _read_json(_config.brain_runtime_dir(vault) / _exc_page.JSON_FILENAME)
+        if not isinstance(summary, dict):
+            # Same distinction `degradation_alerts` makes for its own feed: a
+            # vault that ran `maintain` but predates this feature is
+            # reportable; a vault that never ran `maintain` at all is
+            # genuinely quiet.
+            if _config.maintain_state_path(vault).exists():
+                return [_alert("exceptions:no-summary",
+                               "no exceptions summary yet — the engine "
+                               "running this vault's `brain maintain` "
+                               "predates it, so exceptions are UNREPORTED "
+                               "until the next run", name)]
+            return []
+        at = _date(summary.get("generated_at"))
+        if at is None or (today - at).days > FINDINGS_STALE_DAYS:
+            return [_alert("exceptions:stale",
+                           "exceptions summary is stale or unparseable — "
+                           "nothing is watching this vault's exceptions", name)]
+
+    count = int(summary.get("count") or 0)
+    if not count:
+        return []
+    page = str(summary.get("page_path") or "")
+    # Name the COMMAND, not only the path. This line fires at session start in
+    # Claude Code, Codex and Cowork, and a bare path is unopenable in two of
+    # the three — `brain exceptions --open` works on the host and reports why
+    # it cannot in a sandbox, where `--text` prints the page instead.
+    return [_alert(
+        "exceptions",
+        f"{count} thing(s) need you — run `brain exceptions --open` "
+        f"(or --text), or read {page}", name)]
 
 
 def degradation_alerts(
@@ -214,100 +288,61 @@ def degradation_alerts(
         return []
 
     at = _date(feed.get("at"))
-    if at is not None and (today - at).days > FINDINGS_STALE_DAYS:
+    if at is None:
+        # Missing or malformed `at` — the host's own writer always sets it, so
+        # a forged/broken feed fails CLOSED to stale rather than being read as
+        # permanently current (a missing timestamp must not buy permanence).
+        return [_alert("maintain:unparseable-feed",
+                       "current-findings feed has a missing or malformed "
+                       "timestamp — treating it as stale", name)]
+    if (today - at).days > FINDINGS_STALE_DAYS:
         return [_alert("maintain:stale",
                        f"`brain maintain` last ran {at.isoformat()} "
                        f"({(today - at).days}d ago) — nothing is watching this "
                        "vault and its findings are that old", name)]
 
-    keys = {str(item.get("key")) for item in feed.get("findings") or []
-            if isinstance(item, dict) and item.get("key")}
+    raw_keys = {str(item.get("key")) for item in feed.get("findings") or []
+                if isinstance(item, dict) and item.get("key")}
     # The synthesis watchdog duplicates `synthesis_alerts` above; the blocked,
     # trend and invariant keys are news.
-    keys.discard("synthesis-watchdog")
-    if not keys:
-        return []
-    return [_alert("degradation",
-                   "degradation finding(s) now: " + ", ".join(sorted(keys)), name)]
+    raw_keys.discard("synthesis-watchdog")
 
+    keys = set()
+    unrecognised = 0
+    for key in raw_keys:
+        if _FINDING_KEY_RE.fullmatch(key):
+            keys.add(key)
+        else:
+            unrecognised += 1
 
-def _staged_versions(vault: Path) -> set[str]:
-    """Every version stamp a staged Cowork workspace carries, as file reads.
+    # REG-01/REG-02: a key no remediation disposition covers is DRIFT, and it
+    # says so on its own line. Folding it into the roll-up would hide the one
+    # thing the registry exists to make loud — a finding shipped without anyone
+    # deciding what happens to it. Resolution is pure data (no I/O), so this
+    # stays at the import floor `brain alerts` promises.
+    untriaged_keys = {k for k in keys if _untriaged(k)}
+    keys -= untriaged_keys
+    # REG-03 stamps the key `untriaged:<key>` in the FEED, so a consumer that
+    # is not this module still sees that nothing declared it. Unwrapped for
+    # display: the reader wants the finding's own name, not the wrapper.
+    untriaged = sorted(_unwrap_untriaged(k) for k in untriaged_keys)
 
-    Two stamp kinds exist: the staged engine's ``_version.py`` and the
-    ``brain-linux-*.version`` sidecars beside the VM ELFs. A missing stamp
-    contributes nothing — absence means "never staged", which is not
-    staleness."""
-    found: set[str] = set()
-    try:
-        text = (vault / ".brain" / "engine" / "brain" / "_version.py").read_text(
-            encoding="utf-8")
-        m = re.search(r'__version__\s*=\s*"([^"]+)"', text)
-        if m:
-            found.add(m.group(1))
-    except OSError:
-        pass
-    try:
-        for stamp in sorted((vault / ".brain" / "bin").glob("brain-linux-*.version")):
-            v = stamp.read_text(encoding="utf-8").strip()
-            if v:
-                found.add(v)
-    except OSError:
-        pass
-    return found
-
-
-def staging_alerts(home: Path) -> list[dict[str, str]]:
-    """Staged Cowork workspaces that lag the engine running on this host.
-
-    This is the channel that did not exist on 2026-08-20, when both vaults'
-    workspaces sat at 0.20.19 for two releases: `brain doctor` reported the
-    staleness, but only to someone who ran doctor, and `update_alerts` above
-    reads a marker that only `brain update` writes — so NOT running the one
-    command that fixes the drift was exactly the case that produced silence.
-    A finding needs a channel to the session; this is that channel, and it is
-    pure file reads like everything else here."""
-    running = _running_version()
-    if running is None:
-        return []
-    registry = _read_json(home / ".brainiac" / "workspaces.json")
-    if not isinstance(registry, dict):
-        return []
-    out: list[dict[str, str]] = []
-    seen: set[str] = set()
-    for entry in registry.get("entries", []):
-        if not isinstance(entry, dict) or entry.get("target") != "cowork-vm":
-            continue
-        raw = entry.get("vault_path")
-        if not raw or raw in seen:
-            continue
-        seen.add(raw)
-        stale = sorted(_staged_versions(Path(raw)) - {running})
-        if stale:
-            out.append(_alert(
-                "staging:stale",
-                f"Cowork workspace staged at {', '.join(stale)} while this host "
-                f"runs {running} — run 'brain update' on the host",
-                scope=raw))
+    out = []
+    if keys:
+        out.append(_alert("degradation",
+                          "degradation finding(s) now: " + ", ".join(sorted(keys)), name))
+    if untriaged:
+        out.append(_alert(_untriaged_key(),
+                          f"{len(untriaged)} finding(s) have NO declared "
+                          "remediation disposition — nothing decided whether "
+                          "the engine fixes, asks, or logs these: "
+                          + ", ".join(untriaged), name))
+    if unrecognised:
+        out.append(_alert("degradation:unrecognised-key",
+                          f"{unrecognised} finding(s) in the current-findings "
+                          "feed had a key outside the recognised alphabet and "
+                          "were withheld", name))
     return out
-
-
-def host_vaults(home: Path) -> list[Path]:
-    """Every host-target vault in the workspace registry, deduped, in order."""
-    registry = _read_json(home / ".brainiac" / "workspaces.json")
-    if not isinstance(registry, dict):
-        return []
-    seen: list[Path] = []
-    for entry in registry.get("entries", []):
-        if not isinstance(entry, dict) or entry.get("target") != "host":
-            continue
-        raw = entry.get("vault_path")
-        if not raw:
-            continue
-        path = Path(raw)
-        if path not in seen:
-            seen.append(path)
-    return seen
 
 
 # ---------------------------------------------------------------------------
@@ -359,7 +394,7 @@ def collect(
                 "given; run `brain alerts --vault <path>`")
 
     for path in vaults:
-        alerts += vault_alerts(path, today)
+        alerts += vault_alerts(path, today, role=role)
 
     return {
         "role": role,

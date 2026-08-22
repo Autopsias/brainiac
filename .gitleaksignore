@@ -16,10 +16,11 @@
 # Verified by reading the line on 2026-07-28: the file has no auth, no network
 # I/O and no env reads.
 #
-# The line was 143 when pinned and is 142 since 4cfb55a (2026-08-05), which
-# dropped one line above the docstring. Same line, same text, same entropy —
-# re-read 2026-08-15. From 2026-08-15 the plan-execute egress guard keys a pin
+# The line was 143 when pinned, 142 since 4cfb55a (2026-08-05), and is 144
+# since the docstring gained two lines above it. Same line, same text, same
+# entropy — re-read 2026-08-21 and re-confirmed by a working-tree scan, which
+# flagged 144 while this pin still said 142. From 2026-08-15 the plan-execute egress guard keys a pin
 # on <path>:<rule> and uses the COUNT of pins as the bound, so a finding that
 # merely MOVES stays pinned while a second one here still refuses. Keep the
 # number current anyway: gitleaks' own -i is still line-exact.
-src/brain/embed.py:generic-api-key:142
+src/brain/embed.py:generic-api-key:144

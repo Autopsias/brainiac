@@ -7,6 +7,157 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.26] — 2026-08-22
+### Added
+- **`brain exceptions` — one command that reaches the page needing the owner,
+  from every harness.** The nightly already wrote an exceptions page per
+  vault; nothing but a bare filesystem path pointed at it, and a bare path is
+  unopenable in two of the three harnesses. `--open` hands the page to the
+  desktop, `--text` prints it where there is no browser (Codex, Cowork), and
+  the bare form lists EVERY registered vault with its count and its path. It
+  sweeps the same workspace registry `brain alerts` does, so the two surfaces
+  cannot disagree about which vaults exist, and a vault whose nightly has not
+  written a summary reports UNKNOWN with the reason — never `0`, which is the
+  fabricated all-clear this repo has now shipped twice. **VM_ALLOWED**,
+  pointed at the tier-gated mount copy. Not folded into `brain doctor`: that
+  would be a third copy of a fact `alerts` already carries.
+- **The exceptions page says what to DO, and now takes the decision itself.**
+  It named findings in engine vocabulary — `extract_retry`,
+  `invariant:unlinked_sources` — all accurate, none of it telling the owner
+  anything. Every repair lane renders a sentence (pinned against
+  remediation's own registry, so a lane added later cannot ship without one),
+  every card with items states what to do about them, a shadow lane says it
+  is watching and not fixing, and the withheld row keeps the tier word
+  because that word is the REASON the row is blank. The healed section
+  renders on the empty page too — "nothing needs you" is worth less than
+  "nothing needs you, and here is what it repaired".
+
+  Then the page became operable. Every waiting question is a radio group of
+  its own options, every finding a checkbox, and a sticky bar turns the
+  selection into ONE plain-English prompt copied to the clipboard, ready to
+  paste into Claude Code, Codex or Cowork. Four things are deliberate: the
+  prompt is plain English, not a script, because only the assistant on the
+  other side knows which harness it is and what it may run; a WITHHELD
+  question gets no picker at all, or its text would walk out through the
+  clipboard; the two pages carry different references and so different
+  closing instructions (the host page names `brain inbox --answer`, the mount
+  page — whose ids are per-render display tokens — says to match by text);
+  and each group opens on "Not now", since a radio cannot be un-picked and a
+  mis-click must stay retractable. Nothing is fetched — style and script ship
+  inside the page, which is opened from a file path, often with no network.
+- **The owner questions had a page to be read on, and the unlabelled finding
+  now names where its notes are.** `exceptions:unlabelled` told the owner to
+  classify each note and named none: the producer computed the ids and threw
+  them away. They are written to a host-private listing under the index dir,
+  off the mount, and the finding names its PATH — where, never which. The
+  listing is rewritten whole each run and deleted when nothing is unlabelled;
+  a stale id is worse than no id.
+- **Cost accounting for the nightly repair work.** Each model-backed branch
+  reports `{tokens, cost_usd}` in its run outcome, the total joins the health
+  history as `remediation_cost_usd` (sparse, last-non-null — an all-zero run
+  records `None`, since a bare zero reads as unmeasured), and a regression
+  raises `trend:remediation_cost` like any other finding. Three channels,
+  because a trend cannot see a first occurrence.
+- **An owner-class finding becomes a question the owner can answer**, and the
+  nightly can now repair a defect it names rather than only naming it. A
+  health finding with no declared owner meant nothing could act on it; a
+  failure nobody retried was a finding forever.
+- **`cos-run-begin --approve-cap=N`** — the attended archive gate answered
+  from the session. The owner ruled on 2026-08-22 that approval moves into
+  the assistant session; nothing implemented it, so the block printed `type
+  GO` and did a bare `read`, reachable only from a TTY. What is approved is
+  the BOUND, not the list: at most N archives, enforced in the planner and
+  RE-CHECKED against the frozen plan before anything dispatches. Both halves
+  are checked — run162's own plan recorded `archive_abort_cap: null` with 15
+  archives in it. `--archive-cap=N` is untouched: the typed GO is still the
+  only way in there, and the scheduled lane still skips the block entirely.
+
+### Fixed
+- **The desktop-ping kill switch spent the news instead of holding it.**
+  `maybe_ping` recorded the new key-set hash BEFORE sending, so a ping
+  suppressed by `BRAIN_NOTIFY=off`, or by running off macOS, was lost
+  permanently — the next run read an unchanged set and never pinged again.
+  The hash now advances only when there was nothing to send or the send was
+  delivered. Separately, the suite-wide `BRAIN_NOTIFY=off` fixture had made
+  every ping assertion vacuous; the guard is now a stub at the one
+  `subprocess.run` site, so the path is genuinely exercised and no test can
+  reach the owner's real Notification Center — which is what wrote 28 real
+  banners in one day, measured 2026-08-21.
+- **Default-deny was stated as a read rule and never as a write rule.** A
+  missing or mis-cased `classification` normalizes to MNPI, which is right
+  for READING and wrong anywhere a tier is CHOSEN. On an `("", "Internal")`
+  pair the UNLABELLED note ranked highest, so accepting the cross-tier
+  remediation raised the correctly-labelled Internal note to MNPI on the
+  strength of a MISSING label — hiding it from every capped reader, the
+  Cowork VM included — while the real defect reached nobody. A lane that
+  picks a tier now REFUSES a default-denied one and reports the missing label
+  as its own finding.
+- **The COS read lane lost healthy nights to arming that had lapsed.**
+  `prepare(ego)` arms the mail tab at the top of the night; the read scan runs
+  6-7 minutes later, and OWA's user-agent brand gate can close again inside
+  that gap. Two runs scanned a degraded page (`aria-setsize=0` on every row)
+  and fetched no body at all. The read lane now re-arms before its scan, as
+  the mutation lane already did. The first re-arm gate then died on the FIRST
+  non-zero rc, which stopped run163 — a page that was fine, one second before
+  a bare re-run came back armed; the retry is bounded at two and gated exactly
+  as the first attempt, so a genuinely degraded page still stops the run, it
+  just has to fail twice. A lapsed sign-in does not retry, because no retry
+  can sign anyone in. The degraded state also got its own branch and its own
+  words: it had been reported as a scanner that stopped short, which reads as
+  a scrolling bug and cost a diagnosis pass hunting one.
+- **One unopenable email was invalidating every COS run.** Two spellings of
+  one concept: the driver banked any extraction above ZERO characters as a
+  landed body open, while `cos_runverify` fails the run at or below 42 — the
+  bare shell OWA drops a tab to when a conversation will not deep-link. So a
+  REFUSED open was recorded as a landed one and the verifier failed the run
+  over the row the driver had just certified. An INVALID run never permits
+  claiming, so ONE unopenable email quarantined all 12 ingestion candidates
+  on each of two nights. `body_open_succeeded()` is the one definition now,
+  importing the verifier's constant rather than restating it.
+- **A carriage return in an email body made a candidate unclaimable forever**
+  — `read_text()` strips `\r`, so the content digest never matched again.
+- **The Cowork VM reported a count it could not verify**, and could write the
+  text a host session read as instructions. The VM leg now verifies the
+  signed exceptions summary — signature, workspace identity, schema,
+  freshness — against an identity anchor staged at install time, and reports
+  `unreachable` rather than a fabricated zero.
+- **A half-dead load was served to the next caller as a hit** (`runverify`),
+  a backlog count alerted while the lane that clears it was unwatched, and a
+  tier guard reported a candidate it could not READ as one it had CLEARED.
+- **`cos-run-begin` had lost `--attended` in the CLI split**, so no attended
+  run could start at all.
+- **The context diet moved CLAUDE.md's import and left the guard on the old
+  name.** `framework_sync.check_claude_md_import` feeds
+  `maintenance_outcomes`, so the nightly reported the framework as drifted
+  every run. The guard accepts either import on its own line now — it
+  encodes the assumption (Claude Code loads the conventions at startup),
+  not the filename of the day.
+
+### Changed
+- **CLAUDE.md is a ≤200-line core plus path-scoped rules.** It imported the
+  whole 89.6 KB AGENTS.md on every call. `AGENTS.md` stays byte-for-byte
+  canonical for Codex, Gemini and the Desktop Code tab; Claude Code reads
+  `AGENTS-core.md` and loads the rest from `.claude/rules/*.md` only when a
+  matching file is touched. Measured first-call tokens: 97336 → 73228.
+  Content preservation verified by sorted-lines diff: nothing missing.
+- **The session-start banner names a command, not a path** — `N thing(s) need
+  you — run \`brain exceptions --open\`` — and it is ONE unified line over
+  open owner questions, dead automation and untriaged findings.
+- **`/brain-inbox` is gone from every string the owner can see.** Two
+  survived the move to dialogue, one of them LIVE in `brain brief` and `brain
+  status`. A source-level guard now scans every string in the package so the
+  text cannot come back one call site at a time; comments and docstrings are
+  exempt, since naming the command is not the same as sending the owner to
+  run it.
+- **Twenty-three end-to-end probes over the disposition paths**, each seeded
+  from the real producer and asserting the RECORDED REASON rather than the
+  outcome, and each ending in an `_inverse()` that re-runs the assertions
+  with the mechanism broken. Three engine guards were deleted to prove the
+  probes go red for real.
+- **The vendored quality checkers are re-synced** and the five files a merge
+  pushed over the limit are recorded, so the self-written bar is closed here
+  too.
+
 ## [0.20.25] — 2026-08-20
 ### Fixed
 - **`brain alerts` reported what had been ANNOUNCED, not what was true.** It

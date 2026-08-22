@@ -63,6 +63,72 @@ _CADENCE_DAYS = {
 }
 
 
+def _cadence_days(branch: str) -> int:
+    """How often ``branch`` is expected to run, in days.
+
+    A branch this module's own map does not name falls back to the remediation
+    registry, where a REMEDIATION branch declares its cadence
+    (``remediation.BRANCH_CADENCE_DAYS``). The two maps are read as ONE, so a
+    weekly lane like ``link_lane`` is not judged against the daily default and
+    reported dead after two days. Unknown to both -> daily, as before.
+
+    An UNLOADABLE registry (its import runs ``validate()``, so a broken table
+    raises) falls back to daily EXPLICITLY. Letting that propagate would be
+    caught by the caller's ``except ValueError`` — ``RegistryError`` is one —
+    and a table bug would silently switch liveness escalation OFF instead of
+    degrading it to the behaviour that shipped before this fallback existed."""
+    if branch in _CADENCE_DAYS:
+        return _CADENCE_DAYS[branch]
+    try:
+        from . import remediation
+    except Exception:  # noqa: BLE001 — a broken table must not silence liveness
+        return 1
+
+    return remediation.BRANCH_CADENCE_DAYS.get(branch, 1)
+
+
+def _validate_cadence_maps() -> None:
+    """Refuse, at import, two cadence maps that DISAGREE about one branch.
+
+    ``_cadence_days`` gives this module's own map silent precedence over the
+    remediation registry's, while both this module's docstring and
+    ``remediation``'s claim the two are read as ONE and that the registry owns
+    a remediation branch's cadence. Nothing checked it. A later remediation
+    branch reusing an existing branch NAME (``health``, say) and declaring
+    cadence 1 in the registry would keep being judged at 7 days — a dead
+    branch staying quiet for 14 days instead of 2, with no test anywhere
+    noticing (s01 review finding, 2026-08-21).
+
+    Disjoint is fine and agreeing is fine; only a disagreement raises, and it
+    raises HERE rather than at the unlucky lookup. A registry that cannot be
+    imported at all is NOT this function's problem — ``_cadence_days`` already
+    degrades that to the daily default explicitly.
+
+    Blast radius, considered and checked (adversarial review round 2): raising
+    at import fails every surface that imports this module, ``brain doctor``
+    included. That is accepted because the trigger is a source-level mistake
+    the suite catches before it ships, and because the ONE surface that must
+    never go dark does not reach here — ``brain alerts`` imports
+    ``remediation`` for the disposition table and never this module, so a
+    session-start digest still runs on a vault whose maps disagree."""
+    try:
+        from . import remediation
+    except Exception:  # noqa: BLE001 — see _cadence_days: a broken table is its own bug
+        return
+    conflicts = {
+        branch: (_CADENCE_DAYS[branch], days)
+        for branch, days in remediation.BRANCH_CADENCE_DAYS.items()
+        if branch in _CADENCE_DAYS and _CADENCE_DAYS[branch] != days
+    }
+    if conflicts:
+        raise ValueError(
+            "cadence maps disagree — maintenance_escalation._CADENCE_DAYS "
+            "silently wins over remediation.BRANCH_CADENCE_DAYS, so a branch "
+            "named in both is judged against a cadence its registry entry does "
+            f"not declare: {conflicts}. Rename the branch, or make the two "
+            "agree.")
+
+
 def branch_escalation(
     branch: str, entry: dict[str, Any], today: datetime.date,
 ) -> dict[str, Any]:
@@ -95,7 +161,7 @@ def branch_escalation(
     if last_run:
         try:
             age_days = (today - datetime.date.fromisoformat(str(last_run))).days
-            cadence = _CADENCE_DAYS.get(branch, 1)
+            cadence = _cadence_days(branch)
             if age_days > cadence * _STALE_CADENCE_MULTIPLIER:
                 reasons.append(f"last_run {age_days}d ago (expected every ~{cadence}d)")
         except ValueError:
@@ -193,3 +259,6 @@ def maintain_branches(
 # `_recommendations_log.md` (schema/pattern only, per Appendix B — never
 
 # Cross-section binds, deferred past this module's own defs.
+
+
+_validate_cadence_maps()

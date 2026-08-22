@@ -102,30 +102,9 @@ def _read_json(path: Path) -> Optional[dict]:
         return None
 
 
-def marketplace_install_location(claude_home: Path, name: str = "brainiac") -> Optional[Path]:
-    """The one already-persisted authoritative pointer to the marketplace's
-    on-disk checkout (RC1/RC3/RC4). ``~/.claude/plugins/known_marketplaces.json``
-    is a FLAT dict keyed by marketplace name (verified on-machine: no
-    "marketplaces" wrapper — same read as ``check_stale_name_plugins``), each
-    value carrying an ``installLocation``. A directory-source marketplace (this
-    machine: ``installLocation`` == the engine checkout) records the REAL path
-    there, so reading it fixes three bugs at once: the hardcoded
-    ``marketplaces/<name>`` guess that read a directory-source install as "not
-    installed" (RC3), the ``__file__``-inference that mislocated ``repo_root``
-    on a wheel install (RC1/RC4), and the ``~/brainiac`` engine-src fallback
-    (RC1). Returns ``None`` when the file, the key, or the dir is absent —
-    every caller keeps its own fallback."""
-    known = _read_json(claude_home / "plugins" / "known_marketplaces.json")
-    if not isinstance(known, dict):
-        return None
-    entry = known.get(name)
-    if not isinstance(entry, dict):
-        return None
-    loc = entry.get("installLocation")
-    if not loc:
-        return None
-    p = Path(str(loc)).expanduser()
-    return p if p.is_dir() else None
+# marketplace_install_location moved to doctor_context.py (s19 size ratchet);
+# re-exported below so every `brain.doctor.marketplace_install_location`
+# caller (update.py, tests) keeps working unchanged.
 
 
 # --------------------------------------------------------------------------
@@ -304,9 +283,7 @@ def run_doctor(
     ``brain doctor --check-registry`` wires up the real HTTPS fetcher.
     """
     from . import __version__ as engine_version
-    # The surface-resolution stages live in :mod:`brain.doctor_context` (s18)
-    # and are imported HERE, lazily, because that module imports this one for
-    # ``marketplace_install_location`` — a module-level import would cycle.
+    # The surface-resolution stages live in :mod:`brain.doctor_context` (s18).
     from . import doctor_context as _ctx
     from .index import SCHEMA_VERSION
 
@@ -447,9 +424,13 @@ def _demo() -> None:
 
 
 
-# The plugin/marketplace, staged-workspace, VM-stage, and liveness checks live
-# in their own modules since the 2026-08-16 size ratchet; re-exported so every
+# The plugin/marketplace, staged-workspace, VM-stage, desktop-registration,
+# surface-resolution, and liveness checks live in their own modules since the
+# 2026-08-16/2026-08-21 size ratchets; re-exported so every
 # `brain.doctor.<name>` caller is unchanged.
+from .doctor_context import (  # noqa: E402,F401  (facade re-export)
+    marketplace_install_location as marketplace_install_location,
+)
 from .doctor_health import (  # noqa: E402,F401  (facade re-export)
     _RECOVERABLE_BUCKETS as _RECOVERABLE_BUCKETS,
     check_audit_content_drift as check_audit_content_drift,
@@ -474,15 +455,17 @@ from .doctor_plugins import (  # noqa: E402,F401  (facade re-export)
     _CHANNEL_UPGRADE_CMD as _CHANNEL_UPGRADE_CMD,
     _running_engine_version as _running_engine_version,
     _version_tuple as _version_tuple,
-    check_desktop_plugin_store as check_desktop_plugin_store,
     check_dist_compat as check_dist_compat,
     check_host_venv as check_host_venv,
     check_installed_cli_plugins as check_installed_cli_plugins,
-    check_mcp_vault_paths as check_mcp_vault_paths,
-    check_mcpb_desktop_collision as check_mcpb_desktop_collision,
     check_plugin_manifests as check_plugin_manifests,
     check_stale_name_plugins as check_stale_name_plugins,
     detect_install_channel as detect_install_channel,
+)
+from .doctor_desktop import (  # noqa: E402,F401  (facade re-export)
+    check_desktop_plugin_store as check_desktop_plugin_store,
+    check_mcp_vault_paths as check_mcp_vault_paths,
+    check_mcpb_desktop_collision as check_mcpb_desktop_collision,
 )
 from .doctor_staging import (  # noqa: E402,F401  (facade re-export)
     _cowork_vault_dir as _cowork_vault_dir,

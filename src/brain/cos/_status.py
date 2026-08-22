@@ -77,7 +77,8 @@ def batch_liveness(vault, now: _dt.datetime | None = None) -> dict[str, Any]:
         out["alert_text"] = (
             f"COS ingestion batch unanswered for {out['oldest_open_batch_hours']}h "
             f"(threshold {int(threshold)}h) — {out['pending_behind_backpressure']} "
-            f"candidate(s) held behind it; answer it via /brain-inbox")
+            f"candidate(s) held behind it; the assistant will walk you "
+            f"through it")
     return out
 
 def status_block(vault, role: str) -> dict[str, Any]:

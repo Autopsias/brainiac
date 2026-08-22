@@ -106,6 +106,72 @@ def latest_synthesis_cost(vault: Path, state_path: Path | None = None) -> float 
     return float(cost) if isinstance(cost, (int, float)) and cost > 0 else None
 
 
+#: FIX-04 — synthesis retries by SCHEDULING, never by maintain re-firing the
+#: model itself (HARDENED:adv-2026-08-20: model-backed work must never run
+#: under the maintain writer lock). At most one re-fire per night: the FIRST
+#: sighting of a failure marks a retry-intent and stays quiet (LOG); the
+#: existing synthesis launchd lane is what actually re-fires; the NEXT time
+#: maintain reads the state, either the newest attempt has advanced (the
+#: retry happened) or it has not. A newer attempt that ALSO failed escalates;
+#: the SAME failure sitting unattempted past one day escalates too, rather
+#: than waiting forever for a re-fire that may never come.
+def synthesis_retry_observation(
+    entry: dict[str, Any] | None, today: datetime.date, row: dict[str, Any],
+    stale_days: int = SYNTHESIS_STALE_DAYS,
+) -> str:
+    """``"healthy" | "retry-marked" | "escalate"`` for this run — mutates
+    ``row`` (the ``synthesis_retry`` branch's own host-private state row) in
+    place with the bookkeeping the next run reads.
+
+    ``row`` deliberately lives in ``remediation_state``'s HOST-PRIVATE store
+    (grill ruling 2026-08-20), never on the VM-visible mount: a forged
+    ``retry_marked_for`` there could make a genuinely-still-failing night
+    read as merely "retry marked" forever."""
+    if entry is None:
+        row.pop("retry_marked_for", None)
+        row.pop("retry_marked_on", None)
+        return "healthy"
+    last_ok = entry.get("last_success")
+    last_attempt = entry.get("last_attempt")
+    ref = last_attempt or last_ok
+    if not ref:
+        return "healthy"
+    failing = entry.get("rc", 0) != 0 and last_ok != last_attempt
+    try:
+        age = (today - datetime.date.fromisoformat(str(ref)[:10])).days
+    except ValueError:
+        return "healthy"
+    if not failing and age <= stale_days:
+        row.pop("retry_marked_for", None)
+        row.pop("retry_marked_on", None)
+        return "healthy"
+    marked_for = row.get("retry_marked_for")
+    if marked_for is None:
+        row["retry_marked_for"] = str(ref)
+        row["retry_marked_on"] = today.isoformat()
+        return "retry-marked"
+    if marked_for != str(ref):
+        # A NEWER attempt has landed since the retry was marked, and it is
+        # STILL the failure/staleness condition — the re-fire happened and
+        # failed again (or never happened and time simply passed, which the
+        # day-bound below also catches).
+        row["retry_marked_for"] = str(ref)
+        row["retry_marked_on"] = today.isoformat()
+        return "escalate"
+    try:
+        marked_on = datetime.date.fromisoformat(
+            str(row.get("retry_marked_on") or ref)[:10])
+    except ValueError:
+        marked_on = today
+    if (today - marked_on).days >= 1:
+        # No newer attempt showed up by the next calendar day — whatever "the
+        # existing launchd lane re-fires it" assumes, it did not happen in
+        # time, and silence must not be able to mean "still just waiting"
+        # forever.
+        return "escalate"
+    return "retry-marked"
+
+
 # ---------------------------------------------------------------------------
 # WD-01 (2026-07-12) — off-host watchdog of last resort. If launchd itself
 # dies (or its plists get wiped), the brain-nightly umbrella — and the

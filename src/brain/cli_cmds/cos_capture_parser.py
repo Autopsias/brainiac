@@ -35,6 +35,12 @@ def _add_cos_run_begin(sub) -> None:
     sp.add_argument(
         "--skill", default=None, help="assert the executing SKILL.md path outright"
     )
+    sp.add_argument("--attended", action="store_true",
+                    help="a human is about to approve this run's plan and "
+                         "watch it apply. REFUSES a dirty or non-git working "
+                         "tree: the manifest's `git_commit` is the record of "
+                         "WHICH CODE he approved, and it says nothing if "
+                         "uncommitted edits sat beside it.")
     sp.add_argument("--json", action="store_true")
 
 

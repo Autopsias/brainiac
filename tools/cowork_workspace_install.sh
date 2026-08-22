@@ -233,6 +233,27 @@ fi
 PYTHONPATH="$REPO/src" "$HOST_PY" -m brain.cli snapshot --dest "$BRAIN_DIR/snapshot" \
   --json | tee "$BRAIN_DIR/snapshot/export-snapshot.json"
 
+# (c1b) EXC-03: stage the pinned verification identity (public key +
+# vault_id) the Cowork VM's `brain --role vm alerts` checks the signed
+# exceptions.json summary against. Run under $HOST_PY so it can resolve the
+# audit signing key (OS keychain / Credential Manager) -- never available to
+# the VM leg. Best-effort: a failure here means the VM will report the
+# exceptions summary `unreachable` until this vault's audit key exists and
+# this installer re-runs, never a silent security regression.
+echo "[install] staging pinned verification identity for the Cowork VM leg..."
+if ! PYTHONPATH="$REPO/src" "$HOST_PY" - "$VAULT" <<'PYEOF'
+import sys
+from pathlib import Path
+from brain.exceptions_verify import stage_pin
+stage_pin(Path(sys.argv[1]))
+PYEOF
+then
+  echo "[install]   WARNING: could not stage pinned verification identity" >&2
+  echo "            (no audit signing key resolvable?) -- brain --role vm" >&2
+  echo "            alerts will report exceptions as unreachable until this" >&2
+  echo "            vault's audit key exists and this installer re-runs." >&2
+fi
+
 # (c2) VERIFY the offline semantic stack the VM will use (DV-03/DV-04). The VM
 # queries through the shim's python3 (pinned Python 3.10), which needs the
 # vendored onnxruntime + numpy + tokenizers + sqlite-vec staged above (the

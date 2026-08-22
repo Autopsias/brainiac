@@ -299,7 +299,53 @@ def _run_cos_spine(args, ctx) -> int:
     return 0
 
 
+def _run_cos_standing_approval(args, ctx) -> int:
+    from .. import cos
+
+    core = ctx.core
+    if args.accept_all and args.clear:
+        _emit("give exactly ONE of --accept-all or --clear", args.json)
+        return 3
+    try:
+        core._require_host("record a standing ingestion approval")
+        if args.accept_all:
+            if not (args.reason or "").strip():
+                raise ValueError(
+                    "--reason is required: a standing approval removes a human "
+                    "gate, and the record must say on whose words it stands")
+            res = {"state": "recorded",
+                   "record": cos.set_standing_approval(core.vault, reason=args.reason)}
+        elif args.clear:
+            res = {"state": "cleared" if cos.clear_standing_approval(core.vault)
+                   else "none-recorded"}
+        else:
+            rec = cos.standing_approval(core.vault)
+            res = {"state": "recorded" if rec else "none-recorded", "record": rec}
+        res["path"] = str(cos.standing_approval_path(core.vault))
+    except Exception as exc:  # RoleError / HostPathUnsafe / ValueError -> fail closed
+        _emit(
+            {"error": type(exc).__name__, "detail": str(exc)}
+            if args.json
+            else f"cos-standing-approval refused ({type(exc).__name__}): {exc}",
+            args.json,
+        )
+        return 3
+    if args.json:
+        _emit(res, True)
+    elif res["state"] == "recorded" and res.get("record"):
+        _emit(f"standing approval ACTIVE: every ingestion batch is answered "
+              f"{cos.STANDING_ANSWER!r} on enqueue (recorded "
+              f"{res['record'].get('recorded')} — {res['record'].get('reason')}). "
+              f"Batches are still signed and still consumed with their content "
+              f"CAS; clear it with --clear to restore the manual gate.", False)
+    else:
+        _emit(f"no standing approval: every ingestion batch waits for the "
+              f"owner's answer ({res['path']})", False)
+    return 0
+
+
 _HANDLERS = {
+    "cos-standing-approval": _run_cos_standing_approval,
     "cos-broker": _run_cos_broker,
     "cos-correct": _run_cos_correct,
     "cos-evidence": _run_cos_evidence,

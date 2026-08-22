@@ -37,6 +37,7 @@ from ._hold_release import _still_eligible_at_release, _return_hold_to_owner, _q
 from ._run_manifest_write import write_run_manifest
 from ._version_apply import _apply_version_link
 from ._autocap import auto_capture_fold, _auto_capture_fold_locked
+from ._standing_approval import STANDING_APPROVAL_SCHEMA, STANDING_ANSWER, standing_approval_path, standing_approval, set_standing_approval, clear_standing_approval
 from ._batches import _batches_path, _write_batches, batch_digest, open_batches, enqueue_batch, _enqueue_batch_locked, _signal_phrases, _human_bytes, _candidate_descriptions, expire_batches, close_expired_batch_questions, parse_batch_answer
 from ._claim_binding import claim_drops, _claim_drops_locked, _bind_claim, _release_quarantined_claims
 from ._proposal_state import undecided_proposal_ids, quarantine_gate_bypass, run_proposal_drops, run_proposal_drop_record, BRIDGE_SETTLEMENT_SCHEMA, BRIDGE_SETTLEMENT_KINDS, bridge_conversation_key, bridge_receipts_root, record_bridge_settlement, bridge_settlements

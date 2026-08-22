@@ -184,6 +184,13 @@ def retention_fold(vault: Path, today: datetime.date, *, dry_run: bool = False) 
 
 #: Quarantine reasons whose fix is an operator action on THIS host rather than
 #: a judgement call about the file. Each maps to the exact remedy.
+#:
+#: `remediation.MECHANICAL_QUARANTINE_REASONS` READS these keys (REG-01), so a
+#: reason added here also becomes an `extract_retry` AUTO-retry rather than an
+#: owner question. That is deliberate — this dict is where "mechanical" is
+#: decided — but it means a SECURITY refusal (`symlink_rejected`,
+#: `zip_bomb_suspected`) or a naming COLLISION belongs in neither: retrying
+#: those is a loop that cannot converge.
 _QUARANTINE_REMEDY = {
     "pdf_no_text_layer":
         "this PDF is a SCAN. Install the local OCR engine "

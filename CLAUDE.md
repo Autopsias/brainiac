@@ -1,12 +1,18 @@
 # CLAUDE.md — Profile A `brain` (Claude Code + Claude Desktop Code tab)
 
-@AGENTS.md
+@AGENTS-core.md
 
-> **AGENTS.md is canonical.** The line above imports it verbatim — Claude Code
-> expands `@AGENTS.md` at startup, so there is ONE source of truth for the note
-> shape, link style, capture rules, the four interactions, and the security
-> posture. Do not duplicate that content here; edit `AGENTS.md` and every harness
-> (Codex, Claude Code, Gemini CLI, the Desktop Code tab) sees the change.
+> **AGENTS.md is canonical; AGENTS-core.md is its ≤200-line Claude Code core.**
+> Codex, Gemini CLI, and the Desktop Code tab all still read the full,
+> unmodified `AGENTS.md` — that stays ONE source of truth for the note shape,
+> link style, capture rules, the four interactions, and the security posture.
+> Claude Code alone imports the smaller `AGENTS-core.md` instead, to keep base
+> context down; the rest of AGENTS.md's content loads CONDITIONALLY from
+> `.claude/rules/*.md` (path-scoped — see AGENTS-core.md's pointer table) only
+> when a matching file is touched. Do not duplicate content across
+> `AGENTS.md`/`AGENTS-core.md`/`.claude/rules/`; edit `AGENTS.md` for the
+> canonical text, then mirror any structural change into the split (context
+> diet, s05, 2026-08-22).
 
 ## Brain usage (one paragraph)
 

@@ -260,6 +260,12 @@ VM_ALLOWED = frozenset(
         # files on the shared mount that `maintain` already wrote. Its host-home
         # sources are unreachable there and are REPORTED as such, never skipped.
         "alerts",
+        # The page `alerts` points at. VM_ALLOWED for the same reason
+        # `alerts` is: a Cowork session must be able to READ what needs
+        # the owner, and on that leg it reads only the tier-gated mount
+        # copy `maintain` already wrote there. It never writes, and
+        # never reaches the host-only full page.
+        "exceptions",
         "mcp-config",  # prints a config string; no index/key/vault read
         "search",
         "hybrid-search",

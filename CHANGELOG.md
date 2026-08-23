@@ -7,6 +7,63 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.27] — 2026-08-23
+### Added
+- **The attachment lane actually ingests.** A COS night now fetches the
+  attachment bytes over the read lane's own envelope and hands them to the
+  vault. Before this the lane had no producer at all: it asked a candidate's
+  CATEGORY whether a file existed instead of asking whether a file existed, and
+  a `both` lane demanded a file no lane could ever claim. Presence wins now —
+  a candidate naming a real non-inline file claims it regardless of its
+  category's lane.
+- **`Brainiac · Ingested` — the mailbox says what the vault took.** A second
+  axis, not a fifth priority chip, so it never competes with the priority
+  ranking. The mark is planned from the ingestion MANIFEST rather than from the
+  judge's verdict, so it records what the vault actually took, and the mutation
+  lane may only ADD it, never remove it. It covers a thread ingested by its
+  TEXT as well as by its attachments; it previously read attachments only, so
+  it fired on nothing.
+
+### Fixed
+- **The run validator's mutation toolchain never rode the wheel.**
+  `cos_runverify_io.tools_dir()` selects a directory by testing for two files
+  and then loads a third, `cos_mutate.py`, which no release mirrored. On every
+  installed engine the resolver picked the wheel's own `_assets/tools/`, the
+  plan-binding control could not re-hash the frozen plan, and every mutating
+  night scored INCONCLUSIVE — quarantining its own proposals instead of
+  ingesting them. 28 files added to the mirror, guarded by a test that reads
+  the real `_load_script` call sites out of the engine source and walks their
+  import closure.
+- **Two batches of the same files on one day minted one id.** The broker pins
+  its clock to 03:00Z when the CLI hands it a date, so a content-only id
+  repeated across enqueues, appending an `open` row for an id the ledger had
+  already `consumed`. That row could never be answered and blocked every night
+  at exit 18 until its expiry.
+- **An attached email is not a file**, and one of them stopped a whole night.
+- **An attended backfill with no ingest bridge is a paid night that ingests
+  nothing.** It now refuses before the browser and before any model call.
+- **A commit killed the night that was reading the script.** Bash reads a shell
+  script incrementally, so committing `tools/cos_nightly.sh` mid-run shifts its
+  byte offsets and kills it with a syntax error on a valid line. A pre-commit
+  hook refuses that commit while a night runs.
+- **A frozen fixture date rotted into a rule threshold.** The grounding canary's
+  honest ACT row carried a hard-coded received stamp; `draft.stale_ask_form`
+  refuses a standard-form ACT row older than 7 days, so the canary passed for
+  exactly eight days and then failed forever. The row is fresh by construction
+  now.
+- **The anti-quote guard threw away the verdicts it was meant to protect**, and
+  only ever hit the rows that named the right note.
+- **The file lane's staging directory lived only in the other job's plist.**
+- Exit code 20 (attachment lane short delivery) was written `##`, so it never
+  lined up with its own table.
+- A run-begin refusal surfaced as a bare `KeyError`.
+- E4 joined on the drop file, which is the wrong record to prove the mark.
+- A drawn row whose body-open was refused was filed as starved.
+
+### Changed
+- The 2026-08-14 chip ruling narrows to PRIORITY chips, so the ingestion mark
+  is out of its scope by construction.
+
 ## [0.20.26] — 2026-08-22
 ### Added
 - **`brain exceptions` — one command that reaches the page needing the owner,

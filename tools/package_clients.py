@@ -178,6 +178,25 @@ ENGINE_ASSET_FILES = [
     "tools/cos_contract_ledger_scan.py", "tools/cos_contract_provenance.py",
     "tools/cos_reconcile_rows.py", "tools/cos_reconcile_guard.py", "tools/cos_reconcile_append.py",
     "tools/cos_reconcile_steps.py",  # closure: cos_reconcile_metrics imports it at module load
+    # The MUTATION toolchain, for the same reason and one measured bug.
+    # `cos_runverify_io.tools_dir()` picks a directory by testing for TWO files
+    # (cos_contract + cos_reconcile_metrics) and then loads a THIRD, cos_mutate,
+    # which no release mirrored — so every mutating night on an installed engine
+    # scored INCONCLUSIVE and quarantined its own proposals (101 on this host,
+    # measured 2026-08-23 on 0.20.26). The driver family cannot be pruned:
+    # `cos_mutate_gates` declares `class MutationStop(drv.DriverStop)`, and a
+    # base class cannot be imported lazily. Guarded by test_release.py.
+    "tools/cos_mutate.py", "tools/cos_mutate_apply.py", "tools/cos_mutate_bridge.py",
+    "tools/cos_mutate_canary.py", "tools/cos_mutate_cli.py", "tools/cos_mutate_evidence.py",
+    "tools/cos_mutate_gates.py", "tools/cos_mutate_ledger.py", "tools/cos_mutate_passes.py",
+    "tools/cos_mutate_plan.py", "tools/cos_mutate_policy.py", "tools/cos_mutate_rehearsal.py",
+    "tools/cos_mutate_selfcheck.py", "tools/cos_mutate_shapes.py", "tools/cos_mutate_shapestore.py",
+    "tools/cos_cdp_capture.py", "tools/cos_driver.py", "tools/cos_driver_accounting.py",
+    "tools/cos_driver_capture.py", "tools/cos_driver_categories.py", "tools/cos_driver_cli.py",
+    "tools/cos_driver_completeness.py", "tools/cos_driver_draw.py",
+    "tools/cos_driver_enumeration.py", "tools/cos_driver_gate.py",
+    "tools/cos_driver_night_records.py", "tools/cos_driver_selfcheck.py",
+    "tools/cos_driver_transport.py",
     # `brain graph-report` HTML shell — the payload <script type="application/
     # json"> block is spliced in at render time by src/brain/graphreport.py;
     # everything else here is static (CSS/JS/WebGL viewer).

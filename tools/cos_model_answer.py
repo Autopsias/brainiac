@@ -127,7 +127,7 @@ from cos_model_answer_schema import (                            # noqa: E402,F4
     ADMITTED_FIELDS, ALLOWED_KEYS, CATEGORY_KEYS, DEFAULT_FIELD_MAX,
     DEFAULT_LIST_MAX, DRAFT_KEYS, DRAFT_TYPES, FIELD_BYTE_FACTOR, FIELD_MAX,
     KEY_TYPES, LIST_MAX, PLACEHOLDER_CAP, SPAN_KEYS, STRUCTURED_KEYS,
-    _BOOL, _STR, _STRLIST, _count, _key_bucket, _strings, _too_long,
+    _BOOL, _STR, _STRLIST, _count, _key_bucket, _strings, _too_long, blank_field,
     _too_many, _typed, field_bytes, project_draft_value, project_keys,
     project_span_value,
 )
@@ -293,9 +293,9 @@ def project_row(row: dict[str, Any], block_text: str | None,
                 allowed: frozenset[str] = ALLOWED_KEYS) -> dict[str, Any] | None:
     """One row, projected onto the closed schema. `None` means REFUSED.
 
-    Refused, never truncated and never masked — the same posture
-    `load_categories` takes toward a stray id. A refused row costs one verdict;
-    a truncated one is a short answer wearing a full one's shape.
+    Never truncated. Refused for a bad shape, an unenumerated id or an oversize
+    row; the OVERLAP rule BLANKS its field and keeps the verdict instead, bar
+    `conversation_id` (a forged join key) — why in `blank_field`.
 
     The per-key walk (unknown-key counting, the `draft`/`evidence_span`
     sub-objects, the declared-type and per-field ceilings) lives in
@@ -313,10 +313,14 @@ def project_row(row: dict[str, Any], block_text: str | None,
     if block_text:
         uniq = block_shingles(block_text, own_row_text)
         for label, text in _strings(out):
-            if overlap_hit(text, uniq):
-                stats["refused_grounding_overlap"][label] = \
-                    stats["refused_grounding_overlap"].get(label, 0) + 1
+            if not overlap_hit(text, uniq):
+                continue
+            hit = stats["refused_grounding_overlap" if label == "conversation_id"
+                        else "blanked_grounding_overlap"]
+            hit[label] = hit.get(label, 0) + 1
+            if label == "conversation_id":
                 return None
+            blank_field(out, label)
     # THE ROW'S OWN SERIALIZED SIZE, last, on exactly the bytes that would be
     # written. Per-field ceilings bound no row: ~16 string fields at their caps
     # is still tens of kilobytes per row, and the row is what `--out` serializes.
@@ -360,10 +364,12 @@ def project(rows: list[Any], blocks: dict[str, Any],
     stats: dict[str, Any] = {"rows_in": len(rows), "rows_out": 0,
                              "dropped_unknown_keys": {},
                              "refused_grounding_overlap": {},
+                             "blanked_grounding_overlap": {},
                              "refused_oversize_field": {},
                              "refused_oversize_row": 0,
                              "refused_unenumerated_id": 0,
-                             "refused_shape": 0}
+                             "refused_shape": 0,
+                             "refused_ids": []}  # why: projection_refused_ids
     out: list[Any] = []
     for row in rows:
         if not isinstance(row, dict):
@@ -378,6 +384,8 @@ def project(rows: list[Any], blocks: dict[str, Any],
                                 allowed)
         if projected is not None:
             out.append(projected)
+        else:
+            stats["refused_ids"].append(cid)
     stats["rows_out"] = len(out)
     return out, stats
 

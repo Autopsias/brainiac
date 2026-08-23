@@ -112,6 +112,16 @@ repos:
         language: system
         pass_filenames: false
 
+      # A commit that lands while a night is running kills it: bash reads the
+      # script incrementally, so shifted offsets become a syntax error on a
+      # valid line (run176, 2026-08-23). See the script's own header.
+      - id: no-live-nightly
+        name: no COS night is running against the script being committed
+        entry: bash tools/check_no_live_nightly.sh
+        language: system
+        pass_filenames: false
+        files: '^tools/cos_nightly\.sh$'
+
       - id: file-size-ratchet
         name: no staged file grows past the size limit (baseline only shrinks)
         entry: python3 tools/check_file_sizes.py --staged

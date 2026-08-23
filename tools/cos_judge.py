@@ -221,6 +221,11 @@ def judge_night(vault: Path, run_id: str, verdicts: list[dict[str, Any]], *,
     rejection_rate = round(len(rejected) / total, 4) if total else 0.0
     mark_candidates(accepted, ctx_by_id)
 
+    # A ROW THE HOST DISCARDED IS `judgment-refused`, NOT `unjudged`. The
+    # projection runs in another process and only its COUNTS used to cross
+    # back, so every discarded row reached the ledger claiming the model had
+    # not answered for it (run170, 2026-08-23).
+    refused_cids |= cos_judge_grounding.projection_refused_ids(chunks_dir)
     applied = apply_judgment(rows, accepted, refused=refused_cids)
     # THE BRIEF'S PRODUCTS (holds, staged spans, triage, drafts, the
     # malformed-draft count, the owner footer) live in

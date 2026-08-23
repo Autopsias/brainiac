@@ -102,8 +102,20 @@ def _signed_batch_record(now: _dt.datetime, candidates: list[dict[str, str]]) ->
     """Create one signed open-batch record."""
     from .. import audit
 
+    # THE ID MUST BE UNIQUE PER ENQUEUE, NEVER PER (DAY, CONTENTS). When the CLI
+    # hands the broker a DATE, `cos_broker_fold` pins `now` to 03:00Z, so
+    # `_ts(now)` is one string for every broker run that day. Two enqueues of
+    # the same candidate list then mint the SAME batch_id. Measured 2026-08-23:
+    # the 12 attachments accepted at 09:56 were re-fetched that afternoon and
+    # re-quarantined, and the new batch reused `cosb-5c4c65bdf065` — appending
+    # an `open` row for an id already `consumed`. Its inbox key was already
+    # answered, so it could never be answered again, and it blocked every night
+    # at exit 18 (backpressure) until its 2026-08-30 expiry. The real clock
+    # reads distinctly per call; `created` stays `now`, so the ledger's day
+    # semantics and every consumer of `created` are unchanged.
     batch_id = "cosb-" + hashlib.sha256(
-        (_ts(now) + json.dumps(candidates, sort_keys=True)).encode()).hexdigest()[:12]
+        (_utcnow().isoformat() + _ts(now)
+         + json.dumps(candidates, sort_keys=True)).encode()).hexdigest()[:12]
     created = _ts(now)
     digest = batch_digest(batch_id, created, candidates)
     key_obj, _src = audit.resolve_signing_key()  # KeyUnavailable → fail closed

@@ -124,10 +124,18 @@ def substance_sentence(run: dict[str, Any], union: set[str],
     refused = projection.get("refused_grounding_overlap")
     n_refused = (sum(refused.values()) if isinstance(refused, dict)
                  else (refused or 0))
+    # THE BLANKED COUNT BELONGS BESIDE THE REFUSED ONE. Since 2026-08-23 the
+    # overlap rule clears the offending FIELD and keeps the verdict, so the
+    # refusal count alone reads as "the rule fired on nothing" on a night it
+    # fired constantly. Both numbers, or the sentence understates the guard.
+    blanked = projection.get("blanked_grounding_overlap")
+    n_blanked = (sum(blanked.values()) if isinstance(blanked, dict)
+                 else (blanked or 0))
     return (f"{len(with_content)} of {len(union)} delivered id(s) carried "
             f"vault content" + (f"; per leg with_content: {per_leg}"
                                 if per_leg else "")
-            + f"; {n_refused} row(s) refused for reproducing their block")
+            + f"; {n_blanked} field(s) blanked and {n_refused} row(s) refused "
+            f"for reproducing their block")
 
 
 def grounding_clause(run: dict[str, Any], g: dict[str, Any],

@@ -33,6 +33,15 @@ def load_categories(path: Path | None) -> dict[str, str]:
 
 
 
+#: The held reason for a row the draw DID reach and whose open failed anyway.
+#: `shell` is the bare `<origin>/mail/` page OWA drops a tab to when a
+#: conversation will not deep-link; `error` is the lane never getting a body at
+#: all. Anything else — including `None`, meaning the row was never drawn —
+#: leaves the `over-cap` fall-through alone.
+_REFUSED_HELD_REASON = {"shell": "navigation-refused-row-unreachable",
+                        "error": "no-body-access-on-lane"}
+
+
 def mechanical_disposition(row: dict[str, Any]) -> dict[str, Any] | None:
     """What the DRIVER's own facts already settle — never a judgment.
 
@@ -54,6 +63,15 @@ def mechanical_disposition(row: dict[str, Any]) -> dict[str, Any] | None:
                 "dedup_check": "not-run"}
     if row.get("read_state") != "read":
         return {"disposition": "held", "held_reason": "unread-read-state-invariant",
+                "dedup_check": "not-run"}
+    # A DRAWN row whose open did not land is not a starved row, and calling it
+    # `over-cap` cost run166 its verdict: `body_order` read that P1 as starved
+    # behind opened `other` rows and scored the night INVALID. The driver
+    # records WHICH refusal it was (`cos_driver_accounting.open_outcome`); both
+    # words are already in `cos_runverify_checks._HELD_REASONS`.
+    held = _REFUSED_HELD_REASON.get(row.get("body_open_outcome"))
+    if held:
+        return {"disposition": "held", "held_reason": held,
                 "dedup_check": "not-run"}
     return {"disposition": "held", "held_reason": "over-cap", "dedup_check": "not-run"}
 
@@ -223,6 +241,7 @@ def grounding_facts(rows: list[dict[str, Any]],
                                "refused_unenumerated_id": 0,
                                "dropped_unknown_keys": {},
                                "refused_grounding_overlap": {},
+                               "blanked_grounding_overlap": {},
                                "refused_oversize_field": {}}
         for f in sorted(chunks_dir.glob("chunk-*/projection.json")):
             try:
@@ -235,8 +254,34 @@ def grounding_facts(rows: list[dict[str, Any]],
                            "refused_unenumerated_id"):
                 agg[scalar] += d.get(scalar, 0)
             for key in ("dropped_unknown_keys", "refused_grounding_overlap",
-                        "refused_oversize_field"):
+                        "blanked_grounding_overlap", "refused_oversize_field"):
                 for k, v in (d.get(key) or {}).items():
                     agg[key][k] = agg[key].get(k, 0) + v
         facts["projection"] = agg
     return facts
+
+
+def projection_refused_ids(chunks_dir: Path | None) -> set[str]:
+    """Every conversation id the PROJECTION discarded, across this run's chunks.
+
+    The counts in `projection.json` say how many rows the host threw away and
+    on which field; these are WHICH ones. `cos_judge` unions them into its
+    `refused_cids` so such a row is stamped `judgment-refused` — a verdict
+    arrived and the host would not use it — instead of `unjudged`, which
+    asserts the model never answered. Measured 2026-08-23 (run170): 17 rows
+    read as `unjudged` when the model had answered for every one of them, and
+    the wrong word sent four nights of diagnosis at the attachment lane.
+
+    Missing, unreadable or old projection files yield nothing: this NARROWS a
+    row's held_reason when there is evidence, and never invents one.
+    """
+    out: set[str] = set()
+    if not chunks_dir or not chunks_dir.is_dir():
+        return out
+    for f in sorted(chunks_dir.glob("chunk-*/projection.json")):
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        out |= {str(x) for x in (d.get("refused_ids") or []) if x}
+    return out

@@ -129,6 +129,50 @@ def bridge_conversation_key(conversation_id: Any) -> str:
     return sha256_text(str(conversation_id or ""))[:12]
 
 
+def bridge_drop_ident(run_id: str, conversation_id: Any) -> str:
+    """The deterministic name the bridge drops one candidate under.
+
+    ONE DEFINITION, because two readers now need it: the bridge writes here,
+    and both the mutation planner (which marks a thread `Brainiac · Ingested`
+    when this run dropped it) and E4 (which verifies that mark) ask whether
+    the file exists. A second copy of the naming rule is how the two answers
+    drift apart."""
+    return safe_slug(f"cosbridge-{run_id}-"
+                     f"{bridge_conversation_key(conversation_id)}")
+
+
+def bridge_dropped_row(row: dict[str, Any], run_id: str) -> bool:
+    """Did the bridge take delivery of THIS ledger row, in THIS run?
+
+    THE STAMP, NOT THE FILE. The bridge stamps `proposals_dropped: true` and
+    `proposal_id: <ident>` onto the row at the moment it drops, and those stay
+    on the run's ingestion ledger for good. The DROP FILE does not: the hourly
+    claim sweep binds it into an owner batch and the drop directory empties
+    behind it — measured 2026-08-23, run169's three drops were gone from
+    `drop/proposal-drop/` within the hour while the ledger stamps remained. A
+    join on file existence therefore answers "was the sweep slow tonight",
+    which is not the question.
+
+    ONE STAMP PER CANDIDATE, WHATEVER THE LANE, so this covers the text lane
+    and the file lane alike — unlike the ingest manifest, which carries one
+    line per ATTACHMENT and says nothing at all about a text-only night.
+
+    STATED LIMIT: the ingestion ledger is mount-resident, so on the trust
+    boundary this is the RUN'S CLAIM rather than host evidence (the same
+    reading E16 gives it). It is the right authority for CHOOSING what to mark
+    — the planner already trusts this ledger for every verdict, tier and date
+    it reads — and the mark it drives is add-only and reversible through the
+    undo ledger.
+    """
+    if row.get("proposals_dropped") is not True:
+        return False
+    try:
+        want = bridge_drop_ident(run_id, row.get("conversation_id"))
+    except ValueError:
+        return False
+    return str(row.get("proposal_id") or "") == want
+
+
 def bridge_receipts_root(vault) -> Path:
     """The ingestion bridge's host-private dir for THIS vault, proven off-mount.
 
@@ -245,5 +289,6 @@ def bridge_settlements(vault, run_id: str) -> dict[str, dict[str, int]]:
 __all__ = ['undecided_proposal_ids', 'quarantine_gate_bypass',
            'run_proposal_drops', 'run_proposal_drop_record',
            'BRIDGE_SETTLEMENT_SCHEMA', 'BRIDGE_SETTLEMENT_KINDS',
-           'bridge_conversation_key', 'bridge_receipts_root',
+           'bridge_conversation_key', 'bridge_drop_ident', 'bridge_dropped_row',
+           'bridge_receipts_root',
            'record_bridge_settlement', 'bridge_settlements']

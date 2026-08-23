@@ -73,7 +73,10 @@ def write_answer(args: argparse.Namespace, rows: list[Any],
           f"row(s), dropped {sum(stats['dropped_unknown_keys'].values())} "
           f"unknown key(s), refused "
           f"{sum(stats['refused_grounding_overlap'].values())} on grounding "
-          f"overlap / {sum(stats['refused_oversize_field'].values())} oversize "
+          f"overlap (blanked "
+          f"{sum(stats.get('blanked_grounding_overlap', {}).values())} field(s) "
+          f"for the same reason) "
+          f"/ {sum(stats['refused_oversize_field'].values())} oversize "
           f"/ {stats['refused_oversize_row']} oversize row(s) "
           f"/ {stats['refused_unenumerated_id']} unenumerated id(s) "
           f"/ {stats['refused_shape']} on shape")

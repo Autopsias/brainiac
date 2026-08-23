@@ -47,14 +47,82 @@ def content_choice_for(category: str, taxonomy: dict) -> str:
                                DEFAULT_CONTENT_CHOICE)
 
 
+def choice_for_candidate(category: str, taxonomy: dict, row: dict) -> str:
+    """The content choice for ONE accepted candidate: its category's lane,
+    widened to `both` when the row names a real file.
+
+    A LANE IS A FLOOR ON WHAT A CANDIDATE INGESTS, NEVER A CEILING (owner
+    ruling 2026-08-23). Choosing the file lane from the category alone
+    answered a question nobody asked. Measured on run 2026-08-23-run171 (221
+    threads): six threads carried a real non-inline document and only ONE sat
+    in a file-carrying category. An IBM technical proposal and its SAP
+    requirements annex sat on `counterparty-position`; a CAQ tender evaluation
+    pair sat on `commitment`. Both lanes are text-only, so the threads that
+    MENTIONED those documents were ingested and the documents were skipped.
+
+    Two rules bound the widening. A `never` category never reaches here
+    (`_never_category` returns first), so this can only widen what an
+    ALREADY-accepted candidate carries — it can never manufacture one. And
+    inline parts are not files (`_attachment_names`), so a signature logo
+    never triggers it.
+    """
+    choice = content_choice_for(category, taxonomy)
+    if choice == CONTENT_TEXT and _attachment_names(row):
+        return CONTENT_BOTH
+    return choice
+
+
+def _is_attached_message(a: dict) -> bool:
+    """True for an attached EMAIL rather than a file, on TWO agreeing signals.
+
+    Either alone is too sharp. `content_type` is the faithful one — OWA sets a
+    type on every real file and none on a nested message — but a partial or
+    older capture can omit it for a genuine file, and skipping that file would
+    be a silent loss. An absent EXTENSION agrees independently: an attached
+    message is named by its subject. Requiring BOTH means this skips only what
+    looks like neither a typed file nor a named one, and a real file missing
+    just one signal is still claimed.
+    """
+    if a.get("content_type"):
+        return False
+    name = str(a.get("filename") or "")
+    stem, dot, ext = name.rpartition(".")
+    return not (dot and stem and 1 <= len(ext) <= 8 and ext.isalnum())
+
+
 def _attachment_names(row: dict) -> list[str]:
-    """Attachment filenames, basename-guarded (`_safe_basename`, the one
-    bare-name rule, INT-05), or []. `attachments` is an ADD-ONLY ledger
-    extension no producer writes yet; the caller quarantines rather than
-    guess."""
+    """Attachment filenames the FILE LANE should carry, basename-guarded
+    (`_safe_basename`, the one bare-name rule, INT-05), or [].
+
+    AN ATTACHED MESSAGE IS NOT A FILE, and a missing `content_type` is how
+    this build says so. OWA returns an attached email as an attachment like
+    any other — a name, a size, an id — but no content type and no extension,
+    and the file-download route cannot render it, so the fetch failed it with
+    the unhelpful string `NoError`. One such item among 13 real files stopped
+    the whole night at exit 20 (run173, 2026-08-23): 12 documents were already
+    on disk and none could be archived, because a night must not archive mail
+    whose attachment it failed to preserve. Measured on that run, the split is
+    exact — all 13 files carried a content type (pdf, xlsx, docx, zip, csv,
+    png) and the sole attached message carried none. STATED CEILING: this is
+    a proxy. OWA's own discriminator is the attachment's `__type`
+    (`FileAttachment` vs `ItemAttachment`), which `cos_driver_page.js` does
+    not capture; if a real file ever arrives with no content type it will be
+    skipped silently, and capturing `__type` is the upgrade. The thread's own
+    TEXT lane still runs, so the conversation is not lost — only the nested
+    message is, and it is mail, not a document.
+
+    INLINE PARTS ARE EXCLUDED, and that is the difference between a working
+    lane and a vault full of `image001.png`. OWA marks a signature logo and an
+    embedded screenshot `IsInline: true`; measured on the live mailbox
+    2026-08-22, 5 of the 6 opened threads carried nothing but inline PNGs of
+    481-12,805 bytes, and the sixth carried a real 19 KB CSV alongside them.
+    The LEDGER keeps every part, inline included — that is the record of what
+    the mail held; this is only which of them the manifest claims.
+    """
     return [n for n in (cos._safe_basename(str(a.get("filename") or ""))
                         for a in row.get("attachments") or []
-                        if isinstance(a, dict)) if n]
+                        if isinstance(a, dict) and not a.get("is_inline")
+                        and not _is_attached_message(a)) if n]
 
 
 def _claims(row: dict, corpus_row: dict | None) -> dict:

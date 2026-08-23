@@ -84,6 +84,28 @@ both:
 A category scoped to one lane is simply not consulted on the other; the other
 lane's default (`propose`) applies.
 
+**A lane is a FLOOR on what a candidate ingests, never a ceiling (owner ruling
+2026-08-23).** Once a candidate is accepted, a row naming a real non-inline
+attachment claims that file whatever its category's lane says — a `text`
+category carrying a document is upgraded to `both`. Two rules bound it: a
+`never` category never becomes a candidate, so this can only widen what an
+already-accepted candidate carries and can never manufacture one; and inline
+parts are not files, so a signature logo never triggers the upgrade.
+
+*Why:* choosing the file lane from the category alone answered a question
+nobody asked. Measured on run 2026-08-23-run171 (221 threads), six threads
+carried a real document and only one sat in a file-carrying category — an IBM
+technical proposal was on `counterparty-position` and a CAQ tender evaluation
+on `commitment`, so both documents were skipped while the threads that merely
+MENTIONED them were ingested. Separately, `regulatory-filing` — the only
+`attachment` category — occurred 0 times in those 221 threads, so before this
+rule the attachment lane reported `requested: 0` for four consecutive nights.
+
+`both` also means what §3 says it means: meaningful on EITHER lane. A `both`
+row naming no file keeps its text and drops normally. Only the PURE
+`attachments` lane refuses a row with no filename, because there the text is
+not taken either and a guessed name would be the manifest's only claim.
+
 ---
 
 ## 4 · The categories

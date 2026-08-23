@@ -35,6 +35,35 @@ LEGACY_ACTION = "Action"
 #: message belongs to the owner and must survive every write untouched.
 MANAGED_CATEGORIES = frozenset(CHIPS) | {LEGACY_ACTION}
 
+# --------------------------------------------------------------------------
+# THE INGESTION MARK IS A SECOND AXIS, NOT A FIFTH PRIORITY CHIP
+# --------------------------------------------------------------------------
+#: `Brainiac · Ingested` answers a DIFFERENT question from every name above.
+#: The four P-chips answer "how urgent is this", are mutually exclusive, and
+#: are stripped and rewritten on every reconciliation. This one answers "did
+#: the vault take this thread's text or files", is a FACT the ingest manifest
+#: already recorded, and is never a judgment.
+#:
+#: So it is deliberately NOT in `CHIPS` and NOT in `MANAGED_CATEGORIES`. Both
+#: consequences are the point:
+#:
+#: - `desired_categories()` strips `MANAGED_CATEGORIES` and keeps everything
+#:   else in the owner's own order. Leaving this name OUT is what makes an
+#:   ingested `P1 · Today` thread keep BOTH marks — put it in, and the next
+#:   night's priority write would silently erase the ingestion history. A
+#:   thread's urgency changing is not evidence that its files left the vault.
+#: - The s02b capability assertion checks `len(CHIPS) == 4`. Keeping the
+#:   priority surface at exactly four is what lets that guard keep meaning
+#:   "no fifth PRIORITY name appeared" while this axis grows beside it.
+#:
+#: `WRITABLE_CATEGORIES` is the widened surface — what the mutation lane may
+#: add or remove at all — and is the set the page-side `isManaged()` guard
+#: mirrors. Adding a name THERE widens the mailbox blast radius; adding one to
+#: `CHIPS` changes the owner's priority vocabulary. They are different risks
+#: and they now have different names.
+CHIP_INGESTED = "Brainiac · Ingested"
+WRITABLE_CATEGORIES = MANAGED_CATEGORIES | {CHIP_INGESTED}
+
 CHIP_COLORS = {CHIP_P0: "red", CHIP_P1: "orange", CHIP_P2: "blue",
                CHIP_P3: "grey"}
 

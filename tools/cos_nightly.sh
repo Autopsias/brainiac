@@ -48,6 +48,10 @@
 #   19 the ingest bridge could not take the vault writer lock — contention with
 #      the hourly brain-nightly rebuild, NOT a bad candidate. Nothing dropped,
 #      nothing dispatched; re-run once the holder finishes.
+#   20 the attachment lane did not deliver every file this run's manifest lines
+#      claim. The drops are already written; what is missing is the FILE the
+#      sweep would claim, so the night stops before archiving the mail that
+#      carried it. The per-file reason is in the report line above the die.
 #
 # THE BROWSER. It drives a COPIED Chrome profile with a debug port
 # (`~/Library/Application Support/Google/Chrome-COS`) — never the owner's own
@@ -354,6 +358,24 @@ trap 'on_signal HUP'  HUP
 cd "$REPO" || die "no repo at $REPO"
 [ -d "$BRAIN_VAULT" ] || die "no vault at $BRAIN_VAULT"
 
+# AN ATTENDED BACKFILL WITHOUT THE BRIDGE IS A PAID NIGHT THAT INGESTS NOTHING.
+# The bridge is default-off (see the ingest-bridge block), and that default is
+# right for a SCHEDULED night. It is never right for an attended backfill:
+# `--approve-cap` exists to run the ingestion lane on purpose. Measured
+# 2026-08-23 (run175): the flag was omitted from a hand-typed launch line, the
+# night spent five chunked model legs over 215 rows, exited 0, and dropped
+# nothing — no `ingest bridge:` line, no attachment fetch, `categorize: 0`, so
+# no `Brainiac · Ingested` mark either. Exit 0 read as success. This refuses
+# BEFORE the browser and before any model call, which is the only point where
+# refusing is free.
+if [ -n "$ARCHIVE_CAP" ] && [ "$SESSION_APPROVED" -eq 1 ] \
+   && [ "${COS_INGEST_BRIDGE:-0}" != "1" ]; then
+  die "an attended backfill (--approve-cap=$ARCHIVE_CAP) was started with
+ COS_INGEST_BRIDGE unset, so the ingest bridge would not run and the night
+ would judge candidates and drop none of them. Re-run with
+ COS_INGEST_BRIDGE=1, or drop --approve-cap for a triage-only night."
+fi
+
 log "=== cos-nightly start (dry=$DRY model=$MODEL scope=$SCOPE_DESC, lanes uncapped) ==="
 
 # --- 1. the browser ---------------------------------------------------------
@@ -404,10 +426,23 @@ $PY tools/cos_verify_doctrine.py >> "$LOG" 2>&1 \
 # worktree) carrying the superseded v5.62 constitution and its 30-check
 # self-eval obligation. One doctrine, one digest, in this tree.
 DOCTRINE="$REPO/.claude/skills/chief-of-staff/DOCTRINE.md"
-RUN_ID="$($PY -m brain.cli cos-run-begin --lane codex-automation \
-          --skill "$DOCTRINE" $ATTENDED_ARGS --json \
-          | $PY -c 'import json,sys; print(json.load(sys.stdin)["run_id"])')"
-[ -n "$RUN_ID" ] || die "cos-run-begin produced no run id"
+# READ THE REFUSAL, DO NOT PIPE PAST IT. `cos-run-begin` answers a refusal as
+# JSON — `{"error": ..., "detail": ...}` — and the detail is the whole message
+# ("refusing to begin an ATTENDED run from a dirty working tree", and which
+# files). Piping straight into `…["run_id"]` turned every one of those into a
+# bare `KeyError: 'run_id'` on stderr, so a night that stopped for a nameable,
+# fixable reason reported nothing a reader could act on (measured 2026-08-23:
+# the whole-mailbox run died in 16 s and the cause took a hand re-run to find).
+# Capture first, then parse: the engine's own words reach $LOG either way.
+BEGIN_JSON="$($PY -m brain.cli cos-run-begin --lane codex-automation \
+          --skill "$DOCTRINE" $ATTENDED_ARGS --json 2>>"$LOG")"
+RUN_ID="$(printf '%s' "$BEGIN_JSON" \
+          | $PY -c 'import json,sys
+try:
+    print(json.load(sys.stdin).get("run_id") or "")
+except Exception:
+    pass')"
+[ -n "$RUN_ID" ] || die "cos-run-begin produced no run id: ${BEGIN_JSON:-(no output)}"
 log "run: $RUN_ID${ARCHIVE_CAP:+ (ATTENDED, archive cap $ARCHIVE_CAP)}"
 
 # --- BEGIN grounding declaration ---
@@ -1203,6 +1238,66 @@ fi
 # the 401 path, where it is the whole diagnosis.
 REPRIME_TS="$(date -u +%FT%TZ)"
 # --- END reprime gate ---
+
+# THE STAGING DIR THE FETCH WRITES INTO, RECOVERED FROM THE JOB THAT HAS IT.
+# `$BRAIN_COS_DOWNLOADS_DIR` names a dedicated host-only directory; without it
+# the fetch stops with "the attachment lane is BLOCKED". Only the MAINTENANCE
+# plist (`com.brainiac.nightly.*`) carries it — `com.brainiac.cos-nightly.plist`
+# does not, so the scheduled COS job and every hand-run night hit that stop
+# even on a host where the directory is configured and exists. `cos-run-now.sh`
+# already recovered it this exact way for the Codex lane (its comment cites
+# run 59); the same recovery belongs HERE, where every lane passes. Measured
+# 2026-08-23 (run172): the bridge claimed 13 files, all 13 were unreachable,
+# and the night reported a blocked lane that was only a missing variable.
+# An unset value after this stays unset, and the fetch still stops loudly —
+# this recovers a configured directory, it never invents one.
+if [ -z "${BRAIN_COS_DOWNLOADS_DIR:-}" ]; then
+  BRAIN_COS_DOWNLOADS_DIR="$(plutil -extract \
+      EnvironmentVariables.BRAIN_COS_DOWNLOADS_DIR raw -o - \
+      "$HOME"/Library/LaunchAgents/com.brainiac.nightly.*.plist 2>/dev/null \
+      | head -1)"
+  if [ -n "$BRAIN_COS_DOWNLOADS_DIR" ]; then
+    export BRAIN_COS_DOWNLOADS_DIR
+    log "downloads dir: $BRAIN_COS_DOWNLOADS_DIR (recovered from the nightly job)"
+  fi
+fi
+
+# --- BEGIN attachment fetch (the file lane's bytes) --------------------------
+# THE SECOND EVIDENCE LANE, AND UNTIL 2026-08-22 IT HAD NO PRODUCER. The bridge
+# writes an ingest-manifest line per attachment; `ingest_sweep` claims the FILE
+# those lines name out of $BRAIN_COS_DOWNLOADS_DIR. Nothing ever put a file
+# there — the v5.38 design triggered an in-browser download and hoped, and the
+# ingest manifests stop at 2026-07-17 as a result. This fetches the bytes over
+# the run's own captured envelope and the HOST writes them, so a response
+# cannot land in the wrong folder.
+#
+# WHY IT SITS HERE, after the re-prime and before the plan: the envelope the
+# read lane captured is dead by now (the judgment leg takes 12-40 minutes), so
+# this needs the FRESH one; and the ordering rule the bridge established holds
+# just as hard for files — a night must not archive mail whose attachment it
+# failed to preserve. So it runs before any mutation-lane traffic, the dry run
+# included.
+#
+# It is bound to $COS_INGEST_BRIDGE for the same reason the bridge is: without
+# the bridge there are no manifest lines, so there is nothing to claim.
+#
+# Read as a block by `tests/test_cos_attachment_nightly.py`, which SLICES THESE
+# LINES OUT AND RUNS THEM against a stub tool — the same marker trick the
+# re-prime gate and the bridge block use. It depends on $PY, $BRAIN_VAULT,
+# $RUN_ID and log()/die(), and nothing else.
+if [ "${COS_INGEST_BRIDGE:-0}" = "1" ]; then
+  ATT_OUT="$($PY tools/cos_attachment_fetch.py --vault "$BRAIN_VAULT" \
+      --run "$RUN_ID" 2>&1)"; ATT_RC=$?
+  log "attachment fetch: $(printf '%s' "$ATT_OUT" | tr -d '\n')"
+  # rc 2 is a STOP (no staging directory, an unreadable ledger): the lane
+  # cannot deliver, so nothing may be archived on top of it. rc 1 means some
+  # part came back empty — the report names which, and the same rule applies.
+  [ "$ATT_RC" -eq 0 ] || die "the attachment lane did not deliver every file
+ this run's manifest lines claim (rc=$ATT_RC): a night that cannot preserve an
+ attachment does not go on to archive the mail that carried it. The per-file
+ reason is in the report line above. Nothing was dispatched" 20
+fi
+# --- END attachment fetch ----------------------------------------------------
 
 # --- BEGIN one frozen plan ---
 # ONE PLAN IS BUILT ONCE AND THE OTHER TWO LEGS CONSUME IT (review 2026-08-13,

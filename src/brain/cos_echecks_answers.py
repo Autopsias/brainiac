@@ -117,6 +117,19 @@ def _e3(run: dict[str, Any], vault, run_id: str) -> dict[str, Any]:
                    f"signal ({sig})")
 
 
+def _e4_mark(r: dict[str, Any]) -> str | None:
+    """The INGESTION MARK's own rule. It is a second axis, so the four-chip
+    (bucket, tier) matrix does not apply to it — but "does not apply" must not
+    mean "is not checked". A mark is legitimate when this run's own ledger row
+    carries the bridge's drop stamp, and when the thread did not already carry
+    the mark (re-writing it is a no-op that spends a slot and an undo key)."""
+    if not r["dropped"]:
+        return f"{r['digest']}:the-ingestion-mark-with-no-drop-stamp-this-run"
+    if cos_chips.CHIP_INGESTED in r["before_image"]:
+        return f"{r['digest']}:the-thread-already-carried-the-ingestion-mark"
+    return None
+
+
 def _e4(run: dict[str, Any], vault, run_id: str) -> dict[str, Any]:
     rows = chip_join(vault, run_id, run)
     of = "categorize row(s) in the undo ledger"
@@ -125,6 +138,15 @@ def _e4(run: dict[str, Any], vault, run_id: str) -> dict[str, Any]:
     managed = set(cos_chips.CHIPS)
     bad = []
     for r in rows:
+        # TWO AXES, TWO RULES (owner ruling 2026-08-22). A priority chip ranks
+        # urgency and answers to the matrix; the ingestion mark records a fact
+        # and answers to the drop stamp. Judging the mark by the matrix failed
+        # run169 for writing exactly what it was told to write.
+        if r["chip"] == cos_chips.CHIP_INGESTED:
+            problem = _e4_mark(r)
+            if problem:
+                bad.append(problem)
+            continue
         if r["chip"] not in managed:
             bad.append(f"{r['digest']}:chip={r['chip']!r}-not-one-of-the-four")
         elif not r["in_ledger"]:
@@ -139,15 +161,19 @@ def _e4(run: dict[str, Any], vault, run_id: str) -> dict[str, Any]:
             bad.append(f"{r['digest']}:the-thread-already-carried-a-managed-chip")
     if bad:
         return _answer(4, FAIL, len(rows), of,
-                       f"{len(bad)} of {len(rows)} chip write(s) disagree with "
-                       f"the four-chip (bucket, tier) matrix: {bad[:8]}")
+                       f"{len(bad)} of {len(rows)} categorize write(s) breach "
+                       f"their axis's rule — priority chips the four-chip "
+                       f"(bucket, tier) matrix, the ingestion mark this run's "
+                       f"drop stamp: {bad[:8]}")
     per: dict[str, int] = {}
     for r in rows:
         per[str(r["chip"])] = per.get(str(r["chip"]), 0) + 1
+    marks = sum(1 for r in rows if r["chip"] == cos_chips.CHIP_INGESTED)
     return _answer(4, PASS, len(rows), of,
-                   f"all {len(rows)} chip(s) are one of the four managed names, "
-                   f"match the (bucket, tier) matrix and landed on a bare "
-                   f"thread ({per})")
+                   f"all {len(rows) - marks} priority chip(s) are one of the "
+                   f"four managed names, match the (bucket, tier) matrix and "
+                   f"landed on a bare thread; all {marks} ingestion mark(s) "
+                   f"carry this run's drop stamp ({per})")
 
 
 def _e5(run: dict[str, Any]) -> dict[str, Any]:

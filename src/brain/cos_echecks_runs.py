@@ -241,6 +241,12 @@ def chip_join(vault, run_id: str, run: dict[str, Any] | None = None
             "verdict": v.get("verdict"),
             "judged_tier": v.get("judged_tier"),
             "before_image": r.get("before_image") or [],
+            # The INGESTION MARK's authority (E4). The mark is not a priority
+            # write, so the (bucket, tier) matrix cannot judge it; what makes
+            # it legitimate is that this run's own ledger row carries the
+            # bridge's drop stamp. ONE definition, the engine's — the planner
+            # chose the mark by the same call.
+            "dropped": cos.bridge_dropped_row(v, run_id),
             "verification": r.get("verification"),
             "state": r.get("state"),
         })

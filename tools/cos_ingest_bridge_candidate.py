@@ -21,7 +21,7 @@ from brain.notes import sha256_text
 
 from tools.cos_ingest_bridge_content import (
     CONTENT_ATTACHMENTS, CONTENT_BOTH, CONTENT_TEXT, _anomaly_doc,
-    _anomaly_nid, _attachment_names, _proposal_content, content_choice_for)
+    _anomaly_nid, _attachment_names, _proposal_content, choice_for_candidate)
 from tools.cos_ingest_bridge_store import (
     _SETTLEMENT_CLAIM_KEYS, _bridge_ident, _claim_settlement, _conv_key,
     _row_shape, _write_manifest_lines)
@@ -177,9 +177,25 @@ def _candidate_content(run_id: str, row: dict, *, choice: str,
         text, defect = _corpus_text(row, crow, report, run_id)
         if defect:
             return None, [], defect
-    wants_files = choice in (CONTENT_ATTACHMENTS, CONTENT_BOTH)
-    attachments = _attachment_names(row) if wants_files else []
-    if wants_files and not attachments:
+    attachments = _attachment_names(row) if choice != CONTENT_TEXT else []
+    if choice == CONTENT_ATTACHMENTS and not attachments:
+        # ONLY the PURE file lane refuses here, and the distinction is the
+        # whole reason the attachment lane was dark. `both` means the category
+        # is meaningful on EITHER lane (docs/cos-ingest-taxonomy.md §3), so a
+        # `both` row with no file still has its text and is a perfectly good
+        # candidate; refusing it made a file-carrying lane quarantine every
+        # candidate that happened to carry no file, and at 6 quarantines the
+        # night refused outright. That is what drove the owner to narrow
+        # `contract-version`, `governance-material`, `key-number` and
+        # `working-draft` from `both` to `text` on 2026-08-21 — after which
+        # NO reachable category could claim a file at all: `regulatory-filing`
+        # was the only `attachments` lane left and it occurred 0 times in 221
+        # threads (run171, 2026-08-23). Six threads carried real files —
+        # an IBM technical proposal, a DXC proposal, a CAQ evaluation — and
+        # every one of them sat in a `text` category, so `requested: 0` for
+        # four consecutive nights. `attachments` alone still refuses, because
+        # there the text is not taken either and a guessed filename would be
+        # the manifest's only claim.
         return None, [], {
             "reason": "attachment-names-missing",
             "detail": f"content_choice {choice!r} but the ledger row names no "
@@ -218,7 +234,7 @@ def _decide_candidate(vault, run_id: str, row: dict, outcome: dict, *,
                        dry_run=dry_run):
         return
 
-    choice = content_choice_for(category, taxonomy)
+    choice = choice_for_candidate(category, taxonomy, row)
     outcome["content_choice"] = choice
     shape = _row_shape(row)
 

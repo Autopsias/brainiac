@@ -257,6 +257,32 @@ def _strings(row: dict[str, Any]) -> list[tuple[str, str]]:
     return out
 
 
+def blank_field(out: dict[str, Any], label: str) -> None:
+    """Clear ONE field of a projected row in place, keeping its declared type.
+
+    WHY THE OVERLAP RULE BLANKS RATHER THAN REFUSES (2026-08-23). Keeping vault
+    prose off disk needs the offending string cleared, not the whole verdict
+    destroyed, and destroying it hit the BEST-grounded rows: `merge_candidate`
+    is by contract a note id COPIED FROM THE BLOCK, and `_norm_tokens` splits
+    on hyphens, so a CORRECT id is a five-token verbatim run against the block
+    and a wrong one is not — a guard that fired only on right answers. Run170
+    (223 threads) lost 17 verdicts that way, 15 of them on `merge_candidate`,
+    and 11 of the mailbox's 14 attachment-bearing threads were among them: no
+    verdict, no candidate, no `content_choice`, and a fourth night of
+    `attachment fetch: nothing-claimed`.
+
+    `""` for a string, `[]` for a list, so the row still satisfies the schema
+    it was projected onto and the validator decides if it is still usable.
+    `draft.<k>` addresses the nested object, as `_strings` labels it.
+    """
+    key, _, sub = label.partition(".")
+    target = out.get(key)
+    if sub and isinstance(target, dict):
+        target[sub] = [] if isinstance(target.get(sub), list) else ""
+        return
+    out[key] = [] if isinstance(target, list) else ""
+
+
 def project_keys(row: dict[str, Any], allowed: frozenset[str],
                  stats: dict[str, Any]) -> dict[str, Any] | None:
     """One row's key walk, projected onto `allowed`. `None` means REFUSED.

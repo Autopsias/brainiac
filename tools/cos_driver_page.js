@@ -249,6 +249,39 @@
     });
   }
 
+  /* ---------------- attachments, off the SAME GetItem ----------------------
+   * `AllProperties` already asks for every first-class property, attachments
+   * included, so this is a READ of a response the run has always paid for —
+   * no second call, no new authorization, nothing added to the envelope.
+   *
+   * The read lane has NEVER written an attachment name. `attachment_lane:
+   * "not-exercised"` was hardcoded on every ledger row, `row["attachments"]`
+   * was consumed by `cos_ingest_bridge_content._attachment_names` and produced
+   * by nothing, and the live taxonomy routes 3 of its 12 categories to a
+   * file-carrying lane (`regulatory-filing` -> attachment, `market-digest` and
+   * `system-notification` -> both). A candidate in any of those quarantines
+   * `attachment-names-missing` — the bridge correctly refuses to guess a file
+   * the manifest would claim.
+   *
+   * `has_attachments` and `item_keys` ride along DELIBERATELY: if this build
+   * withholds `Attachments` under `AllProperties`, the run says so in its own
+   * evidence instead of reporting an empty list that reads as "no attachment".
+   * An absent list and an empty one are different facts.
+   */
+  function attachmentsOf(item) {
+    var raw = (item && item.Attachments) || [];
+    if (!raw.length) return [];
+    return raw.map(function (a) {
+      return {
+        filename: (a && a.Name) || "",
+        approx_size_bytes: (a && typeof a.Size === "number") ? a.Size : null,
+        content_type: (a && a.ContentType) || null,
+        attachment_id: (a && a.AttachmentId && a.AttachmentId.Id) || null,
+        is_inline: !!(a && a.IsInline),
+      };
+    }).filter(function (a) { return a.filename; });
+  }
+
   /* ---------------- GetItem body ------------------------------------------ */
   function fetchBody(itemId, isRead, budget) {
     if (isRead !== true) {
@@ -280,6 +313,10 @@
           raw_chars: text.length,
           body_sha256: clipped ? digest : null,
           is_read_after_fetch: item ? item.IsRead : null,
+          attachments: attachmentsOf(item),
+          has_attachments: item ? !!item.HasAttachments : null,
+          item_keys: (item && !(item.Attachments || []).length
+                      && item.HasAttachments) ? Object.keys(item).sort() : null,
           sender: (item && item.From && item.From.Mailbox
                    && (item.From.Mailbox.EmailAddress || item.From.Mailbox.Name)) || null,
           sent: (item && (item.DateTimeSent || item.DateTimeReceived)) || null,
@@ -410,7 +447,10 @@
       // the PREVIOUS pass's `done: true` and accept pass 1's payload as pass 2's.
       state.seq = msg.seq;
       state.done = false;
-      window.__cosDriverRun(msg.opts || {});
+      // The bridge carries an ACTION now. Absent, it is the read pass — every
+      // caller that predates the attachment lane keeps working unchanged.
+      if (msg.action === "attachments") window.__cosFetchAttachments(msg.opts || {});
+      else window.__cosDriverRun(msg.opts || {});
     }
     mirror();
   }
@@ -430,6 +470,100 @@
   var stale = document.getElementById(IN_ID);
   if (stale) stale.textContent = "";
   mirror();
+
+  /* ---------------- the attachment BYTES ----------------------------------
+   * `GetAttachment` over the SAME captured envelope every other read uses.
+   * There is deliberately no browser download here: v5.38 (ING-06) had the
+   * lane trigger an in-browser download and hope it landed where the host
+   * sweeper reads, and every file went to the browser's default folder
+   * instead — which is why the ingest manifests stop at 2026-07-17. Bytes
+   * that come back through the response cannot land in the wrong folder,
+   * cannot be `download_status: "landed-elsewhere"`, and need no
+   * `Browser.setDownloadBehavior` on anyone's profile.
+   *
+   * NO `AttachmentShape`, AND THAT IS MEASURED, NOT TIDINESS. Probed on the
+   * live mailbox 2026-08-22 over one real 19 KB CSV, six variants, one thing
+   * varied at a time: sending an `AttachmentResponseShape` is HTTP 500
+   * `ErrorInternalServerError` with `IncludeMimeContent` either true OR false,
+   * while omitting the shape entirely returns 200 `NoError` and 25,412 base64
+   * characters. The `RequestAttachmentId` `__type` is optional — bare, typed
+   * and mistyped all returned the same bytes. The GET route OWA is often said
+   * to use, `/owa/service.svc/s/GetFileAttachment?id=…`, is also 500 here.
+   */
+  function fetchAttachment(attachmentId, maxBytes) {
+    var body = {
+      __type: "GetAttachmentJsonRequest:#Exchange",
+      Header: header(),
+      Body: {
+        __type: "GetAttachmentRequest:#Exchange",
+        AttachmentIds: [{__type: "RequestAttachmentId:#Exchange",
+                         Id: attachmentId}],
+      },
+    };
+    return call("GetAttachment", body).then(function (r) {
+      var msg = firstItem(r);
+      if (!msg) {
+        /* A REFUSAL MUST SAY WHAT IT WAS. `no-content` told run-166's probe
+         * nothing: the call was HTTP 500 and the report could not say so.
+         * Only typed fault fields travel — never the error page's text, which
+         * can carry session detail. */
+        var b = r.json && r.json.Body;
+        return {ok: false, status: r.status, code: (b && b.ResponseCode) || null,
+                fault: (b && (b.MessageText || b.ResponseClass)) || null,
+                non_json: r.non_json, bytes: 0, content: null,
+                error: "no-response-message"};
+      }
+      var att = msg && msg.Attachments && msg.Attachments[0];
+      var b64 = (att && att.Content) || "";
+      /* The DECODED length, not the base64 length: the host writes bytes and
+       * checks bytes, and a size compared in the wrong unit is a check that
+       * passes on a truncated file. */
+      var bytes = b64 ? Math.floor(b64.replace(/=+$/, "").length * 3 / 4) : 0;
+      if (maxBytes && bytes > maxBytes) {
+        return {ok: false, status: r.status, code: msg && msg.ResponseCode,
+                bytes: bytes, content: null, error: "over-max-bytes"};
+      }
+      return {
+        ok: !!(msg && msg.ResponseCode === "NoError" && att && b64),
+        status: r.status, ms: r.ms, code: msg && msg.ResponseCode,
+        name: (att && att.Name) || "", content_type: (att && att.ContentType) || null,
+        bytes: bytes, content: b64 || null,
+      };
+    }).catch(function (e) {
+      return {ok: false, status: null, code: null, bytes: 0, content: null,
+              error: String(e).slice(0, 200)};
+    });
+  }
+
+  /* One call, one attachment, results in request order. The host drives the
+   * list so the SELECTION (which files are worth the bytes) stays a host
+   * decision — the page never picks. */
+  window.__cosFetchAttachments = function (opts) {
+    var o = opts || {};
+    var ids = o.ids || [];
+    var maxBytes = o.max_bytes || 0;
+    state.phase = "attachments"; state.done = false; state.error = null;
+    try { buildSeed(); } catch (e) {
+      state.error = String(e).slice(0, 400); state.phase = "error";
+      state.done = true; mirror(); return "error";
+    }
+    var out = [];
+    function next(i) {
+      if (i >= ids.length) return Promise.resolve();
+      return fetchAttachment(ids[i], maxBytes).then(function (r) {
+        out.push(Object.assign({attachment_id: ids[i], seq: i + 1}, r));
+        state.out.attachments = out;
+        return next(i + 1);
+      });
+    }
+    return next(0).then(function () {
+      state.out.attachments = out;
+      state.phase = "done"; state.done = true; return "ok";
+    }).catch(function (e) {
+      state.error = String(e).slice(0, 400); state.phase = "error";
+      state.done = true; return "error";
+    });
+  };
 
   /* ---------------- the run ------------------------------------------------ */
   window.__cosDriverRun = function (opts) {

@@ -53,7 +53,15 @@ from pathlib import Path
 PASS, FINDINGS, INDETERMINATE = 0, 1, 2
 
 #: Severities that BLOCK. Everything else is printed and allowed through.
-BLOCKING = {"high", "critical"}
+#: Matches the bundled gate's own floor (`llm_review_ledger.BLOCKING_SEVERITY`),
+#: which gained "blocker" on 2026-08-22; a wrapper floor that is NARROWER than
+#: the gate it wraps silently reverses the gate's decision.
+BLOCKING = {"high", "critical", "blocker"}
+
+#: Fallback vocabulary, used only when the bundled ledger cannot be imported.
+#: Mirrors `llm_review_ledger.KNOWN_SEVERITIES`.
+_KNOWN_SEVERITIES = {"blocker", "critical", "high", "medium", "low",
+                     "info", "minor", "nit", "trivial"}
 
 #: The bundled gate, resolved the same way the registry entry resolves it.
 _BUNDLED = Path.home() / ".claude" / "skills" / "plan-execute" / "scripts" / "llm_review_gate.py"
@@ -66,6 +74,31 @@ def _bundled_path() -> Path | None:
         return _BUNDLED
     local = Path("skills/plan-execute/scripts/llm_review_gate.py")
     return local if local.is_file() else None
+
+
+def _blocks(severity) -> bool:
+    """Does this finding block? Fails CLOSED on a missing or unknown severity.
+
+    Delegates to the bundled gate's single definition
+    (`llm_review_ledger.blocks`, 2026-08-22) rather than keeping a second
+    vocabulary here. That rule exists because "the reviewer did not say" must
+    never be the cheapest way past the gate — and this wrapper has the FINAL
+    say, so a laxer rule here would undo the gate's fail-closed decision. The
+    local fallback below applies the same rule when the module cannot be
+    imported; it never fails open.
+    """
+    sev = str(severity or "").strip().lower()
+    gate = _bundled_path()
+    if gate is not None:
+        sys.path.insert(0, str(gate.parent))
+        try:
+            import llm_review_ledger as ledger
+            return ledger.blocks(sev, BLOCKING)
+        except ImportError:
+            pass
+        finally:
+            sys.path.pop(0)
+    return sev in BLOCKING or sev not in _KNOWN_SEVERITIES
 
 
 def _findings(text: str) -> list[dict] | None:
@@ -95,10 +128,13 @@ def _run_in_own_process_group(argv: list[str]) -> subprocess.CompletedProcess:
     window breeds a longer-lived orphan.
 
     So the child gets its own process group (`start_new_session=True`) and the
-    signals that kill this process kill that whole group first. The gate's own
-    `subprocess.run(..., timeout=...)` at `llm_review_gate.py:305` has the same
-    single-child defect one layer further down; that file is a DEPLOY TARGET
-    (`~/.claude`) and must be fixed at its source repo, not here.
+    signals that kill this process kill that whole group first.
+
+    The gate below had the same single-child defect. FIXED AT SOURCE on
+    2026-08-23 (gearbox-private 3ace70f): `llm_review_gate.run_once` now goes
+    through the skill's own `proc_group.run`, so the reviewer and its helpers
+    are one killable group too. This wrapper keeps its own copy because it must
+    reap the gate itself, which is one layer above that.
     """
     proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, start_new_session=True)
@@ -170,8 +206,7 @@ def main(argv=None) -> int:
               "unreadable verdict is never a pass.", file=sys.stderr)
         return INDETERMINATE
 
-    blocking = [f for f in found
-                if str(f.get("severity", "")).strip().lower() in BLOCKING]
+    blocking = [f for f in found if _blocks(f.get("severity"))]
     advisory = [f for f in found if f not in blocking]
 
     for f in advisory:

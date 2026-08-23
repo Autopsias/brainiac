@@ -124,6 +124,18 @@
   var DRAFT_FOLDER = "drafts";
   var SAVE_ONLY = "SaveOnly";
   var MANAGED_CHIPS = ["P0 · Now", "P1 · Today", "P2 · This week", "P3 · Read"];
+  /* THE INGESTION MARK IS A SECOND AXIS, and this half mirrors
+   * `brain.cos_chips.WRITABLE_CATEGORIES`. It is DUPLICATED for the same
+   * reason MANAGED_CHIPS is: this file is injected as source and cannot
+   * import. `tests/test_cos_mutate.py` pins both halves.
+   *
+   * ADD-ONLY, and the asymmetry is the guard. The mark records that the vault
+   * TOOK this thread's text or files — a fact, not a judgment — so the lane
+   * may put it on and may never take it off. Removing it would assert the
+   * vault gave the content back. So `isWritable` widens what may be ADDED,
+   * while everything TAKEN OFF still has to pass `isManaged`, and the explicit
+   * CategoriesToRemove gate below is left on `isManaged` untouched. */
+  var CHIP_INGESTED = "Brainiac · Ingested";
   var SET_FIELD = "SetItemField:#Exchange";
   var CATEGORIES_URI = "item:Categories";
 
@@ -235,6 +247,7 @@
   }
 
   function isManaged(c) { return MANAGED_CHIPS.indexOf(c) !== -1; }
+  function isWritable(c) { return isManaged(c) || c === CHIP_INGESTED; }
 
   /* ---------------- the validator ------------------------------------------
    * Returns null when the payload may be dispatched, or a plain-language reason
@@ -405,13 +418,15 @@
         }
         var addedIn = after.filter(function (x) { return was.indexOf(x) === -1; });
         var takenOut = was.filter(function (x) { return after.indexOf(x) === -1; });
-        var notManaged = addedIn.concat(takenOut).filter(function (x) {
-          return !isManaged(x);
-        });
+        /* ADDED may be any writable category (the four chips, or the ingestion
+         * mark); TAKEN OFF must be a managed chip. See CHIP_INGESTED above. */
+        var notManaged = addedIn.filter(function (x) { return !isWritable(x); })
+          .concat(takenOut.filter(function (x) { return !isManaged(x); }));
         if (notManaged.length) {
-          return "the chip write would add or remove non-managed categories ("
-            + notManaged.join(", ") + "); only the managed priority chips may "
-            + "change and every other category is preserved";
+          return "the chip write would add or remove categories this lane does "
+            + "not own (" + notManaged.join(", ") + "); only a managed priority "
+            + "chip may change, the ingestion mark may only be ADDED, and every "
+            + "other category is preserved";
         }
         if (addedIn.length + takenOut.length !== 1) {
           return "a chip write moves exactly one managed chip (got "
@@ -508,12 +523,14 @@
       }
       var changedIn = after.filter(function (x) { return before.indexOf(x) === -1; });
       var changedOut = before.filter(function (x) { return after.indexOf(x) === -1; });
-      var unmanaged = changedIn.concat(changedOut).filter(function (x) {
-        return !isManaged(x);
-      });
+      /* Same asymmetry as the conversation-level gate: the ingestion mark may
+       * be ADDED and never taken off. */
+      var unmanaged = changedIn.filter(function (x) { return !isWritable(x); })
+        .concat(changedOut.filter(function (x) { return !isManaged(x); }));
       if (unmanaged.length) {
-        return "UpdateItem would add or remove non-managed categories ("
-          + unmanaged.join(", ") + "); only the managed priority chips may change";
+        return "UpdateItem would add or remove categories this lane does not own ("
+          + unmanaged.join(", ") + "); only a managed priority chip may change and "
+          + "the ingestion mark may only be ADDED";
       }
       if (setEq(before, after)) {
         return "UpdateItem would write the category set it already has — a "
@@ -2157,6 +2174,7 @@
     ABSENT_TARGET_OUTCOMES: ABSENT_TARGET_OUTCOMES,
     PERMITTED_FOLDERS: PERMITTED_FOLDERS,
     MANAGED_CHIPS: MANAGED_CHIPS,
+    CHIP_INGESTED: CHIP_INGESTED,
     BANNED_DISPOSITIONS: BANNED_DISPOSITIONS,
     SAVE_ONLY: SAVE_ONLY,
     /* the run surface */

@@ -81,6 +81,19 @@ NOTE_CREATION_POLICIES: dict[str, dict[str, str]] = {
                   "(LNK-01); raw/ itself carries no linking obligation "
                   "(AGENTS.md §3 binds brain/ only) — this is opportunistic",
     },
+    "ingest.deliverables.write_anchor": {
+        "path": "ingest.deliverables.write_anchor (the `inbox/_deliverables/` "
+                "drop lane's brain-zone anchor note, DLV-09)",
+        "kind": "chained",
+        "reason": "the anchor body deterministically cites the raw source it "
+                  "marks as [[<bare-id>]] — the form that creates a graph edge, "
+                  "never the no-edge [[raw/<id>]] of `source:` frontmatter "
+                  "(BAK-04) — plus [[<project>]] when the drop used a "
+                  "<project>/ subfolder. A drop with NO subfolder links only "
+                  "raw/, which is outside the brain-zone knowledge layer, so it "
+                  "lands as an orphan and is caught by the kl_orphans watch "
+                  "(LNK-03b); using the subfolder is the fix",
+    },
     "ingest.transcript.ingest_transcript": {
         "path": "ingest.transcript.ingest_transcript (transcript promotion "
                 "-> raw/)",
@@ -104,6 +117,15 @@ NOTE_CREATION_POLICIES: dict[str, dict[str, str]] = {
                   "any body change, so it can only ever re-sign or re-stamp an "
                   "EXISTING note — no new note body is created and no unlinked "
                   "note can appear",
+    },
+    "deliverables_apply._apply_row": {
+        "path": "deliverables_apply._apply_row (the audited batch-apply verb's "
+                "per-row write, used by the deliverable backfill)",
+        "kind": "exempt",
+        "reason": "the row's pre-image is the EXISTING note's own bytes and the "
+                  "apply refuses unless the on-disk hash still equals it, so it "
+                  "can only ever re-stamp an existing note — a missing note "
+                  "hashes to \"\" and is refused, never created",
     },
     "core._supersession._supersede_locked": {
         "path": "core/_supersession.py BrainCore._supersede_locked "

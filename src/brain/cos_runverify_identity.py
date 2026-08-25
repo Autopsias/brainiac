@@ -362,13 +362,63 @@ def _mislabel_problems(ledger: list[dict[str, Any]]) -> list[str]:
             "`pass-ended-by-identity-stop`"]
 
 
+#: Read lanes that CANNOT produce the four page facts a refusal is defined by.
+#: `read_lane: "rest"` reads bodies off a `GetItem` call — the tab never moves,
+#: so `open_method` and `url_has_id` have no producer in that lane and never
+#: can. A refusal word there is a MISLABEL, not a forgery: nothing was opened
+#: to launder, because nothing navigated. The producer's own lane-aware word is
+#: `rest-read-returned-shell` (`cos_judge_grounding.shell_held_reason`).
+_NON_NAVIGATING_LANES = frozenset({"rest"})
+
+
+def _refusal_worded(ledger: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rows wearing the navigation refusal word, whatever produced them."""
+    return [r for r in ledger
+            if str(r.get("held_reason") or "")
+            == "navigation-refused-row-unreachable"]
+
+
+def _refusal_mislabel_problems(ledger: list[dict[str, Any]]) -> list[str]:
+    """(v7.2) A row whose LANE cannot be refused may not wear the refusal word.
+
+    Kept apart from the forgery rule below because the two are different
+    defects with different consequences. A forgery hides a wrong-conversation
+    landing behind a gentler word and must FAIL. A mislabel is a lane using the
+    only word its producer had: measured run 178, whose 218 rows are all
+    `read_lane: "rest"` and whose ONE shell-length read wrote the navigation
+    word — the first production use of it in 14,874 ledger rows. That scored
+    the night INVALID and quarantined 55 ingestion candidates over a word no
+    lane-aware producer existed for yet, so pre-v7.2 ledgers are DEGRADED on
+    this and never retro-failed (the same gate E30(g) applies to pre-v5.60
+    instrumentation). The caller owns that gate; this only counts them.
+    """
+    bad = [r for r in _refusal_worded(ledger)
+           if str(r.get("read_lane") or "") in _NON_NAVIGATING_LANES]
+    if not bad:
+        return []
+    lanes = sorted({str(r.get("read_lane")) for r in bad})
+    return [f"{len(bad)} ledger row(s) carry "
+            "`navigation-refused-row-unreachable` on a read lane that never "
+            f"navigates ({', '.join(lanes)}) — the body came off a `GetItem` "
+            "call, so `open_method` and `url_has_id` have no producer in that "
+            "lane and the four page facts a refusal is defined by can never be "
+            "written. The word for a REST read at or under the shell length is "
+            "`rest-read-returned-shell`"]
+
+
 def _forged_refusal_problems(ledger: list[dict[str, Any]]) -> list[str]:
     """(v5.62) The refusal word may only sit on a row that really was refused —
     recounted from the page facts, never from the word. Without this the new
     word is a way to launder a wrong-conversation landing out of the mutation
-    stop, which is the one thing this split must never buy."""
-    forged = [r for r in ledger
-              if str(r.get("held_reason") or "") == "navigation-refused-row-unreachable"
+    stop, which is the one thing this split must never buy.
+
+    (v7.2) Scored on NAVIGATING rows only. A row from a lane that cannot
+    navigate is judged by `_refusal_mislabel_problems` instead — convicting it
+    here would read a missing producer as a laundered open, and its four facts
+    are absent for a reason no run can fix.
+    """
+    forged = [r for r in _refusal_worded(ledger)
+              if str(r.get("read_lane") or "") not in _NON_NAVIGATING_LANES
               and not _is_refusal(r)]
     if not forged:
         return []

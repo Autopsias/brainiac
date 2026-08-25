@@ -9,7 +9,8 @@ from .. import classification, config, frontmatter
 from ..audit import AuditChain, KeyUnavailable
 from ..draft_drain import DraftDrainMixin
 from ..folds import (
-    CosFoldsMixin, DailyFoldsMixin, GraphFoldsMixin, GoldenFoldsMixin,
+    CosFoldsMixin, DailyFoldsMixin, DeliverablesFoldsMixin, GraphFoldsMixin,
+    GoldenFoldsMixin,
     IntakeFoldsMixin, InvariantFoldsMixin, MaintenanceOrchestratorMixin,
     OrganizationFoldsMixin, PreflightFoldsMixin, PublishFoldsMixin,
     RemediationFoldsMixin, ReportingFoldsMixin, RetentionFoldsMixin,

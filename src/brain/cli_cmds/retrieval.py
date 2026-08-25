@@ -40,6 +40,7 @@ def _search_hits(args, core, capture_enabled: bool):
             rerank_gate=args.rerank_gate,
             rerank_fused=args.rerank_fused,
             return_trace=True,
+            include_retired=getattr(args, "include_retired", False),
         )
         hits = [hit.to_dict() for hit in fan_hits]
     elif args.explain or capture_enabled:
@@ -50,6 +51,7 @@ def _search_hits(args, core, capture_enabled: bool):
             rerank_top=args.rerank_top,
             rrf_k=args.rrf_k,
             rerank_gate=args.rerank_gate,
+            include_retired=getattr(args, "include_retired", False),
         )
         hits = [hit.to_dict() for hit in trace_hits]
     else:
@@ -62,6 +64,7 @@ def _search_hits(args, core, capture_enabled: bool):
                 rerank_top=args.rerank_top,
                 rrf_k=args.rrf_k,
                 rerank_gate=args.rerank_gate,
+                include_retired=getattr(args, "include_retired", False),
             )
         ]
     return hits, trace, fanout

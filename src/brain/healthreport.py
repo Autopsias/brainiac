@@ -245,6 +245,9 @@ _INVARIANT_LABELS = {
     "subfloor_families": "sub-floor supersession families",
     "unreachable_gold": "unreachable gold documents",
     "unsigned_notes": "notes with no audit-chain entry",
+    "unshelved_deliverables": "deliverables missing from the shelf",
+    "stale_shelf_entries": "shelf entries whose note is gone",
+    "unanchored_deliverable_payloads": "dropped payloads with no anchor note",
 }
 
 

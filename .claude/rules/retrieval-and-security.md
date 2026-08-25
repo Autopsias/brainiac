@@ -157,11 +157,19 @@ choice" anyway — recommending IT re-baseline on an unadopted scenario. When
 a fresh raw source *conflicts* with the decision layer, surface the tension
 ("newer material proposes X; the recorded decision state is still Y") —
 never silently promote the proposal.
-`search`/`get` results also carry `is_latest_version` on every hit (a plain
-semantic-search agent can prefer the current claim without a second
-round-trip). Both temporal flags stay **VM_ALLOWED** — they are read-only
-filters over already-gated rows, no different in trust from any other
-`bases-query`.
+**Plain `search` HIDES retired versions by default (owner ruling A,
+2026-08-25).** A note a supersede chain retired (`is_latest_version:
+false`) leaves the lexical and dense legs before fusion; `--include-retired`
+brings it back for a "previous version" question. Measured before the
+change on the reference vault: 522 of 2003 sources were retired and still
+took 29% of the top-10 slots across 15 document queries, with a retired
+version at rank 1 on 5 of them — the chain was written and never read at
+query time. The exact-identity leg is deliberately untouched: a query that IS
+a retired note's title or alias names that note. Every surfaced hit still
+carries `is_latest_version` (a plain semantic-search agent can prefer the
+current claim without a second round-trip). Both temporal flags stay
+**VM_ALLOWED** — they are read-only filters over already-gated rows, no
+different in trust from any other `bases-query`.
 
 **Breadth-intent routing (RTE-01).** A heuristic adapted from NapMem's
 observed navigator behavior (arXiv 2607.05794) — the paper never classifies

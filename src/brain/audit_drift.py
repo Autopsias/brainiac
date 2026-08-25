@@ -168,4 +168,8 @@ def drift_summary(vault: Path, chain: "AuditChain") -> dict:
         "total": len(records),
         "unexplained": sum(1 for r in records if not r.get("disposition")),
         "records": records,
+        # What the number above can SPEAK FOR. A path the chain never bound
+        # with a content hash cannot drift, so "0 unexplained" over a chain
+        # that is half unbound is not the all-clear it reads as.
+        "coverage": chain.content_coverage(),
     }

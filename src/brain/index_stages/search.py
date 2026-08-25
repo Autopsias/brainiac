@@ -26,12 +26,15 @@ def run_hybrid_search(
     rerank_gate: bool | None,
     trace: Any | None,
     hit_factory: Callable[..., Any],
+    include_retired: bool = False,
 ) -> list[Any]:
     """Execute the fixed retrieval-stage sequence."""
     if k <= 0:
         return []
     candidate_limit = max(k * candidate_factor, k)
-    candidates = generate_candidates(index, query, candidate_limit, rrf_k, trace)
+    candidates = generate_candidates(
+        index, query, candidate_limit, rrf_k, trace, include_retired=include_retired
+    )
     scores = fuse_candidates(index, candidates, rrf_k, trace)
     ranking = apply_ranking_priors(index, query, candidates, scores, trace)
     ordered = suppress_candidates(index, ranking, trace)

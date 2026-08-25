@@ -259,6 +259,18 @@ def _run_status(args, ctx) -> int:
         # attribute to a VALID run — quarantined, never silently bound.
         if live.get("quarantine_text"):
             skew_lines.append(f"  WARNING: {live['quarantine_text']}")
+        # DLV-03: the resolved deliverables shelf path, or its refusal — so
+        # the folder is discoverable without reading docs.
+        dlv = res.get("deliverables") or {}
+        if dlv.get("path"):
+            deliverables_line = f"deliverables shelf: {dlv['path']}"
+        elif dlv.get("refused"):
+            deliverables_line = (
+                f"deliverables shelf: REFUSED ({dlv.get('notify_key', '?')}) "
+                f"— {dlv.get('reason', '?')}"
+            )
+        else:
+            deliverables_line = f"deliverables shelf: {dlv.get('error', 'unknown')}"
         _emit(
             None,
             False,
@@ -272,7 +284,8 @@ def _run_status(args, ctx) -> int:
                 if sn.get("snapshot") == "present"
                 else ""
             )
-            + ("\n" + "\n".join(skew_lines) if skew_lines else ""),
+            + ("\n" + "\n".join(skew_lines) if skew_lines else "")
+            + f"\n{deliverables_line}",
         )
     return 0
 

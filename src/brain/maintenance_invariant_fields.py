@@ -20,5 +20,11 @@ def invariant_health_history_fields(
         "invariant_subfloor_families": values.get("subfloor_families"),
         "invariant_unreachable_gold": values.get("unreachable_gold"),
         "invariant_unsigned_notes": values.get("unsigned_notes"),
+        # DLV-05's three shelf counters. The record is a fixed dict literal, so
+        # a metric not named here never persists and never trends.
+        "invariant_unshelved_deliverables": values.get("unshelved_deliverables"),
+        "invariant_stale_shelf_entries": values.get("stale_shelf_entries"),
+        "invariant_unanchored_deliverable_payloads": values.get(
+            "unanchored_deliverable_payloads"),
         "invariant_age_days": age_days,
     }

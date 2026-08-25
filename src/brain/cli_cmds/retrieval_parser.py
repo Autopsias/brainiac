@@ -45,6 +45,12 @@ def _add_search(sub, name: str, help_text: str) -> None:
         help="Reciprocal Rank Fusion constant (default: 60)",
     )
     sp.add_argument(
+        "--include-retired",
+        dest="include_retired",
+        action="store_true",
+        help="also rank notes a supersede chain has retired (is_latest_version: false). Hidden by default since 0.20.28 — measured 2026-08-25: 29%% of top-10 slots went to old versions of documents whose chain was already recorded. Use it for 'previous version' questions; --as-of on bases-query and `get` on a hit's previous_version remain the temporal routes",
+    )
+    sp.add_argument(
         "--variant",
         action="append",
         default=None,

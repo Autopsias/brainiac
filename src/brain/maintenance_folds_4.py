@@ -21,8 +21,31 @@ import os
 # ---------------------------------------------------------------------------
 _WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)(?:\|.+?)?\]\]")
 _PARA_ZONES = ("projects", "areas", "resources", "archive")
-_VERSION_ID_RE = re.compile(r"^(?P<base>.+?)-v(?P<num>\d{1,3})$")
+#: A RENDITION marker: the same document version in another format
+#: (``…_v52_PREVIEW.pdf`` beside ``…_v52.md``). Closed list, one word so far —
+#: measured 2026-08-25: 11 preview renders of one memo landed in a day, all
+#: live, and took 8 of 10 slots on the memo's own query. A rendition is
+#: retired under its primary (same family, same number, no marker), never
+#: chained as a version of its own.
+RENDITION_MARKERS = ("preview",)
+_VERSION_ID_RE = re.compile(
+    r"^(?P<base>.+?)-v(?P<num>\d{1,3})"
+    r"(?:-(?P<rendition>" + "|".join(RENDITION_MARKERS) + r"))?$")
 _LEADING_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-")
+_DATE_ONLY_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def parse_version_id(note_id: str) -> tuple[str, int, str] | None:
+    """(family, version, rendition) for an id that names an explicit document
+    version (``…-v12``, ``…-v12-preview``), else None. ``rendition`` is ``""``
+    for the primary copy. See :func:`version_family_key` for the family rule."""
+    m = _VERSION_ID_RE.match(note_id)
+    if not m:
+        return None
+    base = _LEADING_DATE_RE.sub("", m.group("base"), count=1)
+    if not base or _DATE_ONLY_RE.fullmatch(base):
+        return None  # `2026-07-11-v17`: a date is not a family name
+    return base, int(m.group("num")), m.group("rendition") or ""
 
 
 def version_family_key(note_id: str) -> tuple[str, int] | None:
@@ -31,12 +54,48 @@ def version_family_key(note_id: str) -> tuple[str, int] | None:
     prefix so re-captures of the same document line up
     (``2026-07-09-…-annex-v12`` and ``2026-05-27-…-annex-v10`` are one
     family). Deliberately conservative: only a trailing ``-v<digits>``
-    counts — ``-v4-0``, ``-vf``, ``-vcomentada-26`` never chain."""
-    m = _VERSION_ID_RE.match(note_id)
-    if not m:
-        return None
-    base = _LEADING_DATE_RE.sub("", m.group("base"), count=1)
-    return base, int(m.group("num"))
+    counts — ``-v4-0``, ``-vf``, ``-vcomentada-26`` never chain. A trailing
+    rendition marker (``-v12-preview``) keys to the SAME (family, 12)."""
+    parsed = parse_version_id(note_id)
+    return None if parsed is None else (parsed[0], parsed[1])
+
+
+def _retire_renditions(
+    core: Any,
+    renditions: dict[tuple[str, int], list[tuple[str, dict[str, str]]]],
+    primaries: dict[tuple[str, int], list[str]],
+    report: dict[str, Any],
+) -> list[tuple[str, dict[str, str]]]:
+    """Retire each rendition under its ONE primary through the audited
+    ``core.supersede``. Returns the renditions that have no primary — those
+    stand in as the version itself and join the chain like any member. A
+    rendition with two primaries, or already retired elsewhere, is left alone
+    and reported."""
+    standalone: list[tuple[str, dict[str, str]]] = []
+    for key, copies in sorted(renditions.items()):
+        owners = primaries.get(key, [])
+        if not owners:
+            standalone.extend(copies)
+            continue
+        if len(owners) > 1:
+            report["skipped_ambiguous"].append(f"{key[0]}-v{key[1]}")
+            continue
+        primary = owners[0]
+        for nid, meta in copies:
+            if meta["superseded_by"] == primary:
+                continue  # already retired under it — idempotent re-run
+            if meta["superseded_by"] or meta["is_latest"] == "false":
+                report["skipped_conflict"].append(nid)
+                continue
+            try:
+                core.supersede(nid, primary,
+                               reason="auto rendition (same version, other format)")
+                report["renditions"].append(
+                    {"rendition": nid, "primary": primary, "family": key[0]})
+            except Exception as exc:  # noqa: BLE001 — one bad copy never aborts the fold
+                report["errors"].append({"family": key[0], "old": nid,
+                                         "new": primary, "error": str(exc)})
+    return standalone
 
 
 def auto_version_chains(core: Any) -> dict[str, Any]:
@@ -73,17 +132,27 @@ def auto_version_chains(core: Any) -> dict[str, Any]:
         "COALESCE(NULLIF(effective_date,''), NULLIF(document_date,''), created) "
         "FROM notes").fetchall()
     families: dict[str, list[tuple[int, str, str, dict[str, str]]]] = {}
+    renditions: dict[tuple[str, int], list[tuple[str, dict[str, str]]]] = {}
+    primaries: dict[tuple[str, int], list[str]] = {}
+    vdates: dict[str, str] = {}
     for nid, ilv, sup_by, vdate in rows:
-        key = version_family_key(str(nid))
-        if key is None:
+        parsed = parse_version_id(str(nid))
+        if parsed is None:
             continue
-        fam, num = key
-        families.setdefault(fam, []).append(
-            (num, str(vdate or ""), str(nid),
-             {"is_latest": str(ilv or ""), "superseded_by": str(sup_by or "")}))
+        fam, num, rendition = parsed
+        meta = {"is_latest": str(ilv or ""), "superseded_by": str(sup_by or "")}
+        vdates[str(nid)] = str(vdate or "")
+        if rendition:
+            renditions.setdefault((fam, num), []).append((str(nid), meta))
+            continue
+        primaries.setdefault((fam, num), []).append(str(nid))
+        families.setdefault(fam, []).append((num, vdates[str(nid)], str(nid), meta))
 
-    report: dict[str, Any] = {"chained": [], "skipped_conflict": [],
+    report: dict[str, Any] = {"chained": [], "renditions": [], "skipped_conflict": [],
                               "skipped_ambiguous": [], "errors": []}
+    for nid, meta in _retire_renditions(core, renditions, primaries, report):
+        fam, num, _rendition = parse_version_id(nid)  # type: ignore[misc]
+        families.setdefault(fam, []).append((num, vdates[nid], nid, meta))
     for fam, members in sorted(families.items()):
         if len(members) < 2:
             continue

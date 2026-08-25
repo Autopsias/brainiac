@@ -108,6 +108,7 @@ def dispatch_search(
     use_rerank = rerank_enabled()
     rerank_top = RERANK_TOP_DEFAULT
     variants = _variant_queries(args)
+    include_retired = bool(args.get("include_retired", False))
     if len(variants) > 1:
         hits = [
             hit.to_dict()
@@ -116,6 +117,7 @@ def dispatch_search(
                 k=int(args.get("k", 10)),
                 rerank=use_rerank,
                 rerank_top=rerank_top,
+                include_retired=include_retired,
             )
         ]
     elif capture_enabled:
@@ -124,6 +126,7 @@ def dispatch_search(
             k=int(args.get("k", 10)),
             rerank=use_rerank,
             rerank_top=rerank_top,
+            include_retired=include_retired,
         )
         hits = [hit.to_dict() for hit in trace_hits]
     else:
@@ -134,6 +137,7 @@ def dispatch_search(
                 k=int(args.get("k", 10)),
                 rerank=use_rerank,
                 rerank_top=rerank_top,
+                include_retired=include_retired,
             )
         ]
     surfaced, report = _filtered(hits, max_tier)

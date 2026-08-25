@@ -77,6 +77,14 @@ _HELD_REASONS = {
     "preview-insufficient", "over-cap", "no-substance", "browser-not-visible",
     "target-identity-mismatch", "target-identity-unconfirmed",
     "never-category", "over-candidate-cap",
+    # (v7.2) THE REST LANE'S OWN WORD FOR A SHELL-LENGTH BODY.
+    # `navigation-refused-row-unreachable` is defined by four PAGE facts a
+    # NAVIGATING open produces (`_is_refusal`). The v7 read lane is
+    # `read_lane: "rest"` — bodies come off a `GetItem` call and nothing
+    # navigates, so `open_method` and `url_has_id` have no producer and never
+    # can. Run 178 wrote the navigation word from a REST read and scored
+    # INVALID on the first production use of that word in 14,874 ledger rows.
+    "rest-read-returned-shell",
     "pass-ended-by-identity-stop", "host-eval-timeout",
     # (v5.62) OWA refused the navigation — the bare shell, no conversation
     # opened, the pane never moved — AND the click fallback could not scroll the
@@ -84,6 +92,18 @@ _HELD_REASONS = {
     # costs the run a body; a recovered one is an ordinary open.
     "navigation-refused-row-unreachable",
 }
+
+#: (v7.2, DORM-01) DORMANT words — valid in a ledger, NEVER offered to the model.
+#: `over-candidate-cap` names a rule-6 candidate cap that nothing in this engine
+#: declares, computes or enforces. It stays in `_HELD_REASONS` so every ledger
+#: already carrying it still validates; `cos_judge_prompts` subtracts THIS set
+#: from the closed vocabulary it prints, so the judge can no longer choose it.
+#: Measured run 178 (2026-08-23): the model reached for it on 38 of 218 rows
+#: (17%), withholding their substance for a bound that does not exist.
+_DORMANT_HELD_REASONS = {"over-candidate-cap"}
+
+#: The model-facing slice: what the judge may actually choose from.
+_MODEL_HELD_REASONS = _HELD_REASONS - _DORMANT_HELD_REASONS
 
 #: (2026-08-14, run 135) HOST-WRITTEN reasons for a row that reached the ledger
 #: with NO USABLE MODEL VERDICT. Run 135 applied 41 of 41 mutations and still

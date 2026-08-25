@@ -321,6 +321,27 @@ def check_mutation_counters(vault, run_id: str, row: dict[str, Any]
                 reexecuted=True), dispatched
 
 
+def _dormant_cap_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rows held under a cap NOTHING in this run declared.
+
+    SKILL.md Phase 1.6 rule 6 has promised this FAIL since v5.42 — *"while NO
+    cap is declared, an `over-candidate-cap` row is a FAIL ... a dormant
+    vocabulary firing anyway is how a removed cap comes back by accident"* —
+    and E29(b)/EXT-06b repeats it for the `uncapped` state v5.43 made standing.
+    Nothing ever checked it, so the accident it names happened: run 178 held
+    **38 of 218 rows** under a bound no code computes.
+
+    The declared-cap side is deliberately absent, not forgotten. NOTHING in
+    this engine declares a staging cap: `cos_driver_accounting` writes a
+    per-row `staging_cap`, but it copies `BODY_OPEN_CAP` — the READ cap — and
+    no consumer has ever read the field. Re-introducing a real cap means
+    giving it a producer and reading it HERE; until then `uncapped` is the
+    only state, which is exactly what rule 6 says it should be.
+    """
+    return [r for r in rows
+            if str(r.get("held_reason") or "") == "over-candidate-cap"]
+
+
 def check_ledger_vocabulary(run_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
     """(b2) The ingestion ledger uses the CLOSED vocabulary E29(b) names.
 
@@ -349,6 +370,28 @@ def check_ledger_vocabulary(run_id: str, rows: list[dict[str, Any]]) -> dict[str
     bad_disp, bad_reason, bad_dedup, missing_reason = _vocabulary_counts(rows)
     problems = _vocabulary_problems(bad_disp, bad_reason, bad_dedup,
                                     missing_reason)
+    dormant = _dormant_cap_rows(rows)
+    if dormant and not _declares(rows, (7, 2)):
+        # (v7.2, DORM-01) REPORTED, NEVER RETRO-FAILED — and the reason is that
+        # the defect was OURS. `_HELD_REASONS` is printed verbatim into the
+        # judge's closed vocabulary, so until v7.2 subtracted it there the
+        # model was OFFERED this word and had no way to know no cap existed.
+        # Failing a run for choosing a word we handed it is the "instrument
+        # that fails a correct run" shape E29 already refuses (E30(i)).
+        return _row("ledger_vocabulary", DEGRADED,
+                    f"{len(dormant)} of {len(rows)} ingestion ledger row(s) "
+                    "held `over-candidate-cap` while NO cap was declared "
+                    "(rule 6 makes that a FAIL) — this ledger predates v7.2, "
+                    "the first bundle to stop advertising the dormant word to "
+                    "the judge, so the withheld rows are reported and the run "
+                    "is not retro-failed (E30(i))",
+                    reexecuted=True)
+    if dormant:
+        problems.append(
+            f"{len(dormant)} row(s) held `over-candidate-cap` while no cap is "
+            "declared — the reason asserts a bound this engine does not "
+            "compute, and every row wearing it was withheld from ingestion "
+            "for it (SKILL.md Phase 1.6 rule 6; E29(b)/EXT-06b)")
     if problems:
         return _row("ledger_vocabulary", FAIL,
                     f"{len(rows)} ingestion ledger row(s): " + "; ".join(problems)
@@ -372,6 +415,7 @@ from .cos_runverify import (  # noqa: E402
     PASS as PASS,
     _SKILL_ECHECK_RE as _SKILL_ECHECK_RE,
     _bundle_at_least as _bundle_at_least,
+    _declares as _declares,
     _row as _row,
     _vocabulary_counts as _vocabulary_counts,
     _vocabulary_problems as _vocabulary_problems,

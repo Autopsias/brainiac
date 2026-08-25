@@ -94,9 +94,14 @@ def _e3(run: dict[str, Any], vault, run_id: str) -> dict[str, Any]:
         return _answer(3, NA, 0, of, "this run archived nothing")
     bad = []
     for r in rows:
+        # (v7.3, AGED-01) `read` is legal for the AGED-READ lane and nothing
+        # else — the same widening `cos_judge_rules._r_floor` applies, kept in
+        # the same shape so the two cannot drift apart silently.
+        aged = r["noise_signal"] == AGED_READ_SIGNAL
+        legal = {"noise", "read"} if aged else {"noise"}
         if not r["in_ledger"]:
             bad.append(f"{r['digest']}:not-enumerated")
-        elif r["verdict"] != "noise":
+        elif r["verdict"] not in legal:
             bad.append(f"{r['digest']}:verdict={r['verdict']}")
         elif r["read_state"] != "read":
             bad.append(f"{r['digest']}:read_state={r['read_state']}")
@@ -113,8 +118,8 @@ def _e3(run: dict[str, Any], vault, run_id: str) -> dict[str, Any]:
         sig[str(r["noise_signal"])] = sig.get(str(r["noise_signal"]), 0) + 1
     return _answer(3, PASS, len(rows), of,
                    f"all {len(rows)} archived thread(s) were READ, sit in "
-                   f"bucket `noise`, are not P0/P1 and cite a recognized typed "
-                   f"signal ({sig})")
+                   f"bucket `noise` (or `read` on the aged-read lane), are not "
+                   f"P0/P1 and cite a recognized typed signal ({sig})")
 
 
 def _e4_mark(r: dict[str, Any]) -> str | None:
@@ -221,6 +226,7 @@ CHECKS: dict[int, Callable[..., dict[str, Any]]] = {
 # tests that monkeypatch `cos_echecks.X` continue to control behaviour only
 # where they did before — the parent re-exports these very objects).
 from .cos_echecks import (  # noqa: E402
+    AGED_READ_SIGNAL as AGED_READ_SIGNAL,
     ARCHIVING_SIGNALS as ARCHIVING_SIGNALS,
     EcheckError as EcheckError,
     FAIL as FAIL,

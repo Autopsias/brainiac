@@ -54,9 +54,23 @@ PROVENANCE_BOOL_KEYS = ("provenance.verified",)
 PROVENANCE_KEYS = set(PROVENANCE_DATE_KEYS) | set(PROVENANCE_BOOL_KEYS) | {
     "provenance.trust", "provenance.sender", "provenance.conversation_id",
     "provenance.subject",
+    # DLV-09 — the producing surface that created this note
+    # (`inbox-deliverables`, or a kernel skill's name). Stamped automatically
+    # and INDEPENDENTLY of `deliverable:`, which is the judgment step: the
+    # difference between the two is exactly the "produced but unmarked" set.
+    "provenance.produced_by",
 }
+# DLV-01 — the deliverable marker. Both optional, both valid on a note of ANY
+# type, and deliberately NOT members of the `type:` vocabulary: `type` is
+# single-valued and load-bearing for retrieval (`type: decision` IS the
+# decision layer, selected by exact equality; `type: project` drives PARA
+# filing), so retagging a produced decision document would remove it from the
+# decision layer. A produced decision stays `type: decision` and gains a key.
+DELIVERABLE_KEYS = ("deliverable", "project")
 # Frontmatter keys recognised by the optional OKF-aligned lint profile.
-OKF_ALLOWED_KEYS = REQUIRED_BRAIN | REQUIRED_RAW | BITEMPORAL_KEYS | PROVENANCE_KEYS | {
+OKF_ALLOWED_KEYS = REQUIRED_BRAIN | REQUIRED_RAW | BITEMPORAL_KEYS | PROVENANCE_KEYS | set(
+    DELIVERABLE_KEYS
+) | {
     "source", "tags", "sha256", "status", "provenance", "related", "aliases",
     # ENF-04 — the ingest cross-tier guard's verdict, stamped on every note the
     # ingest pipeline writes (`brain.ingest.tierguard`). The status is on EVERY
@@ -73,17 +87,6 @@ WIKILINK = re.compile(r"\[\[([^\]|#]+)(?:\|.+?)?\]\]")
 # HYG-03 (ADR-0003) — the four PARA zones inside brain/ that get a generated
 # --catalogs catalog.md (light PARA remains the only directory taxonomy).
 PARA_ZONES = ("projects", "areas", "resources", "archive")
-# HYG-03 — state-MOC / index.md freshness-stamp pattern: any heading whose
-# very next non-blank line is "Updated: YYYY-MM-DD" is a freshness-stamped
-# section (the state-MOC template's "## Section: ..." headings, and index.md's
-# own zone headings once stamped). Warn-only, never blocks the gate.
-SECTION_UPDATED = re.compile(r"^Updated:\s*(\d{4}-\d{2}-\d{2})\s*$")
-# ponytail: no threshold is pinned in ADR-0003 for state-MOC sections
-# specifically; reuses the ADR's one existing staleness precedent
-# (DEFAULT_AUTORESEARCH_STALE_DAYS in src/brain/maintenance.py, also 90) so
-# the vault has one staleness convention instead of two. Bump here if a
-# tighter cadence turns out to matter more for live "state of play" notes.
-STATE_MOC_STALE_DAYS = 90
 
 
 def link_id(val) -> str | None:
@@ -328,12 +331,37 @@ def check_provenance(rel: str, meta: dict) -> None:
 
 
 
+def check_deliverable(rel: str, meta: dict) -> None:
+    """DLV-01 type-checks for the orthogonal deliverable marker. Both keys are
+    optional; a note carrying neither is untouched by this function.
+
+    Type errors only — whether a marked note is a GOOD deliverable is the
+    warn-only lint in :func:`check_type_lint`, never a gate failure."""
+    raw = meta.get("deliverable")
+    if raw is not None and parse_bool(raw) is None:
+        err(f"{rel}: deliverable must be a boolean, got {raw!r}")
+    project = meta.get("project")
+    if project is not None and str(project).strip() and link_id(project) is None:
+        err(f"{rel}: project must be a note id or [[wikilink]], got {project!r}")
+
+
+def _source_anchored(meta: dict, body: str, raw_ids: set) -> bool:
+    """Whether a note anchors its claim to a source: either a `source:`
+    frontmatter key, or at least one wikilink resolving to a raw/ note."""
+    if meta.get("source"):
+        return True
+    linked = {m.group(1).strip() for m in WIKILINK.finditer(body)}
+    return bool(linked & raw_ids)
+
+
 def check_type_lint(notes: list[dict]) -> None:
     """TMP-05 type-specific quality lint, warn-only (ADR-0003 ruling 3).
 
     - concept notes must carry a counter-arguments section.
-    - decision notes must anchor their claim to a source: either a `source:`
-      frontmatter key, or at least one wikilink resolving to a raw/ note.
+    - decision notes must anchor their claim to a source.
+    - a note marked `deliverable: true` must anchor the output it marks the
+      same way (DLV-01). Warn-only, and deliberately: the marker is valid on a
+      note of any type, including one whose payload has not been captured yet.
     """
     raw_ids = {n["meta"].get("id") for n in notes if n["zone"] == "raw"}
     for n in notes:
@@ -341,13 +369,13 @@ def check_type_lint(notes: list[dict]) -> None:
         ntype = meta.get("type")
         if ntype == "concept" and not COUNTER_ARGUMENTS_HEADING.search(body):
             warn(f"{rel}: concept note has no Counter-Arguments section")
-        if ntype == "decision":
-            if meta.get("source"):
-                continue
-            linked = {m.group(1).strip() for m in WIKILINK.finditer(body)}
-            if not (linked & raw_ids):
-                warn(f"{rel}: decision note has no source anchor "
-                     f"(no source: key and no wikilink to a raw/ note)")
+        anchored = _source_anchored(meta, body, raw_ids)
+        if ntype == "decision" and not anchored:
+            warn(f"{rel}: decision note has no source anchor "
+                 f"(no source: key and no wikilink to a raw/ note)")
+        if parse_bool(meta.get("deliverable")) and not anchored:
+            warn(f"{rel}: deliverable: true has no source anchor "
+                 f"(no source: key and no wikilink to a raw/ note)")
 
 
 def check_alias_collisions(notes: list[dict]) -> None:
@@ -371,37 +399,6 @@ def check_alias_collisions(notes: list[dict]) -> None:
         ids = sorted({note_id for note_id, _alias in claimed})
         if len(ids) > 1:
             warn(f"aliases collision {norm!r} claimed by notes {ids}")
-
-
-def check_section_staleness(notes: list[dict], today: object = None) -> None:
-    """HYG-03 — state-MOC freshness-stamp lint (warn-only). Any heading whose
-    next non-blank line is ``Updated: YYYY-MM-DD`` is a freshness-stamped
-    section; flag it once it is older than STATE_MOC_STALE_DAYS. Applies to
-    every brain/ note generically (the state-MOC template's ``## Section:``
-    headings, and index.md's own stamped zone headings) — not gated on
-    ``type: moc`` because index.md is ``type: index``."""
-    today = today or datetime.date.today()
-    for n in notes:
-        if n["zone"] != "brain":
-            continue
-        lines = n["body"].splitlines()
-        for i, line in enumerate(lines):
-            if not line.lstrip().startswith("#"):
-                continue
-            j = i + 1
-            while j < len(lines) and not lines[j].strip():
-                j += 1
-            if j >= len(lines):
-                continue
-            m = SECTION_UPDATED.match(lines[j].strip())
-            if not m:
-                continue
-            stamped = datetime.date.fromisoformat(m.group(1))
-            age = (today - stamped).days
-            if age > STATE_MOC_STALE_DAYS:
-                heading = line.lstrip("#").strip()
-                warn(f"{n['rel']}: section '{heading}' stale "
-                     f"({age}d since {stamped.isoformat()}, threshold {STATE_MOC_STALE_DAYS}d)")
 
 
 def build_zone_catalog(zone: str, zone_notes: list[dict]) -> str:
@@ -458,6 +455,7 @@ def check_note(path: Path, zone: str, okf: bool) -> dict | None:
     check_aliases(rel, zone, meta)
     check_bitemporal_note(rel, meta)
     check_provenance(rel, meta)
+    check_deliverable(rel, meta)
 
     ntype = meta.get("type")
     if ntype:
@@ -480,7 +478,13 @@ def check_note(path: Path, zone: str, okf: bool) -> dict | None:
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.modules.setdefault("tools.validate", sys.modules[__name__])
-from tools.validate_invariants import check_bitemporal_global, main  # noqa: E402,F401
+from tools.validate_invariants import (  # noqa: E402,F401
+    SECTION_UPDATED,
+    STATE_MOC_STALE_DAYS,
+    check_bitemporal_global,
+    check_section_staleness,
+    main,
+)
 
 if __name__ == "__main__":
     sys.exit(main())

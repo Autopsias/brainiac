@@ -44,10 +44,42 @@ class FusedRanking:
     valid_date: dict[int, str]
 
 
+def _retired_rowids(index: Any, rowids: set[int]) -> set[int]:
+    """The candidates a supersede chain has retired (``is_latest_version:
+    false``) — the SAME predicate ``bases-query --latest-only`` applies, so
+    "retired" means one thing across the CLI."""
+    if not rowids:
+        return set()
+    placeholders = ",".join("?" * len(rowids))
+    return {
+        int(rowid)
+        for (rowid,) in index.conn.execute(
+            f"SELECT rowid FROM notes WHERE rowid IN ({placeholders}) "  # nosec B608 — placeholders only
+            "AND LOWER(COALESCE(is_latest_version, '')) = 'false'",
+            tuple(rowids),
+        )
+    }
+
+
 def generate_candidates(
-    index: Any, query: str, limit: int, rrf_k: int, trace: Any | None
+    index: Any,
+    query: str,
+    limit: int,
+    rrf_k: int,
+    trace: Any | None,
+    *,
+    include_retired: bool = False,
 ) -> SearchCandidates:
-    """Run each ranking leg then collapse duplicate families."""
+    """Run each ranking leg then collapse duplicate families.
+
+    Retired versions leave the lexical and dense legs HERE, before fusion,
+    unless ``include_retired`` asks for them. Measured 2026-08-25 on the
+    reference vault: with 522 of 2003 sources retired by supersede chains,
+    29% of top-10 slots went to old versions and 5 of 15 queries ranked one at
+    rank 1 — the chain was recorded and never read. The exact-identity leg is
+    deliberately left alone: a query that IS a retired note's title or alias
+    names that note, and the collision order relies on retired owners.
+    """
     lexical = index._lexical_ranked(query, limit)
     dense_result = index._dense_ranked(query, limit)
     if len(dense_result) == 3:
@@ -56,6 +88,17 @@ def generate_candidates(
     else:
         dense, best_text, best_rowid, best_score = dense_result
     exact = index._exact_leg(query, rrf_k)
+    if not include_retired:
+        retired = _retired_rowids(index, set(lexical) | set(dense))
+        # A retired note that OWNS the query's identity (exact alias/title)
+        # stays: the query names it, and collision slot ordering counts every
+        # owner, including one beyond the exact-injection cap (ADR-0008).
+        retired -= set(exact.owner_rowids)
+        if retired:
+            lexical = [rid for rid in lexical if rid not in retired]
+            dense = [rid for rid in dense if rid not in retired]
+        if trace is not None:
+            trace.retired_hidden = sorted(retired)
     collapse = index._collapse_duplicate_families(lexical, dense, exact)
     if collapse.canonical_of:
         lexical = collapse.fold(lexical)

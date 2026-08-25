@@ -41,7 +41,7 @@ an engineer (Technical), or both (Mixed).
 | [`harness-wiring.md`](harness-wiring.md) | Which client reads which file / uses which surface (per-harness matrix) |
 | [`../SECURITY.md`](https://github.com/Autopsias/brainiac/blob/main/SECURITY.md) | Vulnerability reporting, supported versions, audit-key rotation |
 | [`SECURITY_NOTES.md`](SECURITY_NOTES.md) | Triaged static-scanner findings (accepted false positives, per site) |
-| [`session-memory.md`](session-memory.md) · [`ingestion.md`](ingestion.md) · [`corpus-migration.md`](corpus-migration.md) | Operational internals |
+| [`session-memory.md`](session-memory.md) · [`ingestion.md`](ingestion.md) · [`corpus-migration.md`](corpus-migration.md) · [`deliverables-shelf.md`](deliverables-shelf.md) | Operational internals |
 | [`adr/`](adr/) · [`release-runbook.md`](release-runbook.md) · [`dependency-inventory.md`](dependency-inventory.md) | Decision records + release/dependency process |
 
 ---

@@ -152,6 +152,25 @@ treated as MNPI and withheld at every read surface (AGENTS.md §5) — so the
 question of what classification this note carries is part of the rationale
 you present, not an afterthought filled in after writing.
 
+**Is this a deliverable? (DLV-01, AGENTS.md §4)** One extra step, asked once
+before you draft the frontmatter: does this note anchor a *finished output
+produced for an audience* — a deck, a memo, an analysis someone receives —
+rather than material that came in or a working note? If yes, add two keys:
+
+```yaml
+deliverable: true                  # orthogonal to `type:` — NEVER change `type`
+project: <project-id>              # bare id or [[wikilink]]; groups the shelf
+provenance.produced_by: promote    # the producing surface; always stamped
+```
+
+`deliverable` is **not** a member of the `type:` vocabulary. `type` is
+single-valued and load-bearing — `type: decision` IS the decision layer — so a
+produced decision document keeps `type: decision` and gains the marker. Stamp
+`provenance.produced_by: promote` on every note this skill writes, deliverable
+or not: it is automatic where the marker is a judgment, and the difference
+between the two is what makes adoption measurable. A new version of a
+deliverable is a **supersede**, never an edit.
+
 ## Archival path (when the filter says "archive instead")
 
 Target: `vault/brain/archive/<id>.md`. The PARA taxonomy is flat — `archive/`

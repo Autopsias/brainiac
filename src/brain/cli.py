@@ -133,11 +133,17 @@ def _excluded_note(res: dict[str, Any]) -> str:
 _SUPPRESS_ELEVATION_HINT = False
 
 
-def _filter_dicts(items: list[dict], max_tier: str) -> tuple[list[dict], dict]:
+def _filter_dicts(
+    items: list[dict], max_tier: str, key: str = "classification"
+) -> tuple[list[dict], dict]:
     # THE single egress chokepoint — every content-returning subcommand routes
     # through egress.apply_gate so a new content path cannot silently bypass the
     # deny-by-default gate (SEC-01, r2-codex). The MCP adapter shares it too.
-    surfaced, report = egress.apply_gate(items, max_tier)
+    # ``key`` names the field holding the tier, for the one surface whose rows
+    # are not notes: the deliverables census, whose EFFECTIVE tier is the higher
+    # of the note's and its anchored raw payload's, and so cannot be the note's
+    # own ``classification``. It is a different field name, never a second gate.
+    surfaced, report = egress.apply_gate(items, max_tier, key=key)
     # Actionable-elevation nudge (RET-08): a starved result at the default
     # Internal cap reads to the agent as "the vault is empty" and drives it to
     # web search — leaking internal topics outward. Say WHY it's thin and HOW to

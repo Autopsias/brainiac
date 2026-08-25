@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from . import deliverables as DLV
 from . import handlers as H
 from . import pipeline_stages as stages
 from . import tierguard as TG
@@ -30,9 +31,15 @@ def run_ingest(core: Any, *, dry_run: bool = False) -> dict[str, Any]:
     processing_dir = inbox / facade.PROCESSING_DIRNAME
     quarantine_dir = inbox / facade.QUARANTINE_DIRNAME
     duplicate_dir = inbox / facade.DUPLICATE_DIRNAME
+    # DLV-09: `_scan_candidates` sees only the IMMEDIATE files under inbox/, so
+    # the deliverables lane is scanned separately and merged in — including for
+    # the dry run, which would otherwise under-report what a drain would do.
+    deliverables = DLV.scan(inbox)
     if dry_run:
         candidates, symlinks = _scan_candidates(inbox)
-        return _dry_run_preview(vault, report, candidates, symlinks)
+        return _dry_run_preview(
+            vault, report, candidates + sorted(deliverables), symlinks,
+        )
     failures = facade._load_failures(vault)
     manifest = facade._load_manifest(vault)
     drain = stages.DrainRecord(
@@ -49,12 +56,18 @@ def run_ingest(core: Any, *, dry_run: bool = False) -> dict[str, Any]:
         report=report,
     )
     drain = stages.sweep_stage(drain)
+    DLV.recover(core, report)
     candidates, symlinks = _scan_candidates(inbox)
+    candidates = candidates + sorted(deliverables)
     if not _load_release_guard(drain, candidates):
         return report
     _quarantine_symlinks(drain, symlinks)
     for path in candidates:
         record = stages.ClaimRecord(drain=drain, path=path, orig_name=path.name)
+        if path in deliverables:
+            record.deliverable = True
+            record.project = deliverables[path]
+            record.requested_classification = DLV.classification_for(path, inbox)
         record = stages.claim_stage(record)
         record = stages.nofollow_read_stage(record)
         record = stages.acceptance_anchor_stage(record)

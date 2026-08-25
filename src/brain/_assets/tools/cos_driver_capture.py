@@ -134,6 +134,20 @@ def stage(tab: ChromeTab, source: Path | None = None,
 #: of handing back a shorter night that parses.
 CHUNK = 16000
 
+#: READS come back far larger than writes go out, and the cost is per CALL, not
+#: per byte. `_read_out` issues one `Runtime.evaluate` per slice, so the 16 KB
+#: write slice made run 178's attachment payload — ~55 MB of base64 across 32
+#: files — take ~3,430 sequential round-trips. The renderer wedged on the LAST
+#: one (`substr(54896000,16000)` timed out after 3 tries) and the night stopped
+#: with nothing dispatched. Measured on the ego transport 2026-08-23, against a
+#: 55,000,000-character string in the live mail tab: 16 KB → 6 ms, 256 KB → 2 ms,
+#: 1 MB → 6 ms, 4 MB → 71 ms. Size is nearly free; the call is not. 1 MB turns
+#: that same payload into 55 round-trips.
+#: WRITES keep `CHUNK`: `_start` embeds each slice as a JS string LITERAL inside
+#: the evaluated expression, which is a different limit from returning a
+#: substring, and no measurement here covers it.
+READ_CHUNK = 1_000_000
+
 
 def _fresh_node(node_id: str) -> str:
     """Replace `#<node_id>` with an empty hidden div, whatever it was before.
@@ -180,8 +194,8 @@ def _read_out(tab: ChromeTab, out_id: str = OUT_ID) -> dict[str, Any]:
         "window.__cosB64=btoa(s);return String(window.__cosB64.length);})()"))
     if total < 0:
         raise _t.DriverStop(f"the `#{out_id}` bridge node vanished mid-run")
-    parts = [tab.js(f"window.__cosB64.substr({off},{CHUNK})")
-             for off in range(0, total, CHUNK)]
+    parts = [tab.js(f"window.__cosB64.substr({off},{READ_CHUNK})")
+             for off in range(0, total, READ_CHUNK)]
     b64 = "".join(parts)
     if len(b64) != total:
         raise _t.DriverStop(f"the bridge read back {len(b64)} of {total} base64 "

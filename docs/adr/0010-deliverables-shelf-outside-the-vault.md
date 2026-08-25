@@ -74,8 +74,13 @@ needing:
   could retire the real note against the convenience copy.
 
 Outside the tree, none of these are guards that can be forgotten; they are absent problems.
-The same structural argument already governs `cos-corpus`, which AGENTS.md keeps outside
-`vault/` so that "no indexing rule was weakened to get it".
+The same placement principle already governs the COS stores: INT-03 requires every `.md`
+under `vault/` to be either a note the conventions validator checks or excluded by an
+anchored top-level rule — "never a third state" — and the approved queue, the attachment
+anchors and `cos-corpus` are all kept under the INDEX DIR rather than earning another
+exclusion inside the tree. (Checked 2026-08-24: AGENTS.md states the INT-03 rule and
+lists those three as living outside `vault/`; it does not carry the phrase "no indexing
+rule was weakened", which an earlier draft of this ADR quoted as if it did.)
 
 **The fold never deletes.** A displaced copy moves to `<shelf>/_previous/<run-id>/`, the
 same way retired vault files move to `inbox/_quarantine/_resolved/<batch>/` rather than

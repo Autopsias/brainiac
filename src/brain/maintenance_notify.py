@@ -62,7 +62,18 @@ def degradation_findings(
     pairs: list[tuple[str, str]] = []
     blocked = (outcomes.get("counts") or {}).get("blocked", 0)
     if blocked:
-        pairs.append(("blocked", f"{blocked} blocked finding(s) this maintain run"))
+        # NAME them. Only the COUNT ever reached the health record, so the
+        # exceptions page told the owner "ask your assistant to look at these"
+        # about findings whose text no artifact still held — the run results
+        # are not persisted, and `hot.md` never receives a blocked item. The
+        # items are right here in `outcomes`; the count alone is a finding
+        # that cannot be acted on.
+        why = "; ".join(
+            str(it.get("finding", "")) for it in (outcomes.get("blocked") or [])
+            if it.get("finding"))
+        pairs.append(("blocked",
+                      f"{blocked} blocked finding(s) this maintain run"
+                      + (f": {why}" if why else "")))
     for item in outcomes.get("action_required") or []:
         finding = str(item.get("finding", ""))
         if finding.startswith("brain-synthesis watchdog:"):

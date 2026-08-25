@@ -45,6 +45,10 @@ registry, not the other way round. That consumption is real, not a claim —
 its own does not name, so a weekly lane declared here is judged against seven
 days and not against the daily default.
 
+The ROW TYPE and the three rules are in ``remediation_schema`` since the
+2026-08-24 size split; every name is re-exported here, so this module stays the
+one public surface.
+
 This module is PURE DATA plus lookups. No I/O, no index, no state — ``brain
 alerts`` imports it at session start and must stay at the engine's import
 floor. Its one engine import (``maintenance_retention``) is stdlib-only at
@@ -54,95 +58,20 @@ copied.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from .maintenance_retention import _QUARANTINE_REMEDY
-
-AUTO = "auto"
-OWNER = "owner"
-LOG = "log"
-BANNER = "banner"
-DISPOSITIONS = (AUTO, OWNER, LOG, BANNER)
-
-#: An ``auto`` remedy must be one of these kinds of reversible. There is no
-#: ``none``: an automatic repair that cannot be undone through the audited
-#: path is an owner decision, not a branch.
-#:  * ``additive``  — it only ADDS (a signature, a link, an extracted body);
-#:  * ``raising``   — it only ever raises a classification (ENF-04's rule);
-#:  * ``process``   — it re-runs an existing process (an update, a synthesis
-#:    run, an extraction) and writes nothing the process would not have.
-REVERSIBILITY = ("additive", "raising", "process")
-
-#: What ``brain alerts`` renders for a key the table does not know.
-UNTRIAGED = "UNTRIAGED"
-
-#: How the ROUTING step (REG-03, ``remediation_routing``) stamps an undeclared
-#: key on its way to the banner, so the findings FEED itself records that
-#: nothing had decided what to do with it — not only the surface that renders
-#: it. Deliberately NOT a table entry: a row here would make ``resolve``
-#: answer for it, and the whole point of the wrapper is that nothing does.
-#: Lowercase because ``alerts._FINDING_KEY_RE`` is the one thing standing
-#: between a forged feed and attacker-authored text at session start, and
-#: widening that alphabet to carry a prefix would be a poor trade.
-UNTRIAGED_PREFIX = "untriaged:"
-
-
-class RegistryError(ValueError):
-    """The table itself is wrong — raised at import/validation time."""
-
-
-class AmbiguousKey(RegistryError):
-    """One key matched more than one pattern. Never first-match-wins."""
-
-
-@dataclass(frozen=True)
-class Remedy:
-    """One row of the table."""
-
-    disposition: str
-    owning_branch: str | None = None
-    escalate_after: int | None = None
-    reversibility: str | None = None
-    shadow_nights: int = 0
-    #: OWNER-only. Whether an answer settles the QUESTION but not the
-    #: CONDITION. Default False: for almost every owner question "decided" is
-    #: a finished terminal state — the owner has ruled on that file and the
-    #: ruling stands, so re-surfacing it would be nagging. Set True only where
-    #: the condition RECURS and keeps blocking work after the ruling; such a
-    #: finding is never re-asked, but it keeps its banner/alerts surface,
-    #: because a lane that has quietly stopped repairing must not look
-    #: identical to one with nothing to do.
-    keeps_blocking: bool = False
-    note: str = ""
-
-
-# ---------------------------------------------------------------------------
-# The banner class — declared SEPARATELY from the table so a table entry can be
-# checked against it. These are the keys whose entire content is "something
-# stopped": the ones automation is structurally unable to report about itself.
-# ---------------------------------------------------------------------------
-UNSUPPRESSIBLE_KEYS = frozenset({
-    "blocked",
-    "invariants-liveness",
-    "synthesis-watchdog",
-    "maintain:stale",
-    "maintain:no-feed",
-    "maintain:unparseable-feed",
-    "degradation:unrecognised-key",
-    "exceptions",
-    "exceptions:unreachable",
-    "exceptions:no-summary",
-    "exceptions:stale",
-    UNTRIAGED,
-})
-UNSUPPRESSIBLE_PREFIXES = ("branch-escalate:", UNTRIAGED_PREFIX)
-
-
-def is_unsuppressible(key: str) -> bool:
-    """Whether ``key`` belongs to the class that may only ever be ``banner``."""
-    return key in UNSUPPRESSIBLE_KEYS or any(
-        key.startswith(p) for p in UNSUPPRESSIBLE_PREFIXES)
-
+# The ROW TYPE and the rules that judge one live in `remediation_schema`; this
+# module is the TABLE. Re-exported wholesale so `remediation.Remedy`,
+# `remediation.AUTO`, `remediation.RegistryError` and friends stay the one
+# public surface for every caller and every test.
+from .remediation_schema import (  # noqa: F401  (facade re-export)
+    AmbiguousKey as AmbiguousKey, AUTO as AUTO, BANNER as BANNER,
+    DISPOSITIONS as DISPOSITIONS, is_unsuppressible as is_unsuppressible,
+    LOG as LOG, OWNER as OWNER, Remedy as Remedy, RegistryError as RegistryError,
+    REVERSIBILITY as REVERSIBILITY, UNSUPPRESSIBLE_KEYS as UNSUPPRESSIBLE_KEYS,
+    UNSUPPRESSIBLE_PREFIXES as UNSUPPRESSIBLE_PREFIXES, UNTRIAGED as UNTRIAGED,
+    UNTRIAGED_PREFIX as UNTRIAGED_PREFIX,
+)
+from . import remediation_schema as _schema
 
 # ---------------------------------------------------------------------------
 # Owning branches and their cadences (in days). The scheduler reads THIS, so a
@@ -231,9 +160,54 @@ _OWNER_INVARIANTS = {
         OWNER, note="usually a retirement mistake; reinstating is an owner act"),
 }
 
+#: DLV-05's three shelf counters. BANNER, and deliberately neither of the two
+#: dispositions its neighbours in this block carry.
+#:
+#: NOT ``auto``: an auto row is a promise about the REMEDIATION apparatus — an
+#: owning branch that writes a `_remediation.branches.<name>` row every night,
+#: which `branch_liveness`, `coverage` and `thrashing_targets` then read to
+#: decide whether to suppress the finding. The nightly fold that actually
+#: converges these three (`deliverables_shelf_fold`, and the drop lane's
+#: recovery pass at the top of every drain) is an ordinary maintain fold, not a
+#: remediation branch, and writes no such row — so declaring `auto` here would
+#: claim an escalation apparatus that does not exist and park a permanently
+#: empty branch on the exceptions page.
+#:
+#: NOT ``owner``: an owner row must be ONE decidable question with options and
+#: a stated default. A count that stayed above its floor is not that — and each
+#: CAUSE already has its own named, answerable surface (`shelf:move-cap`,
+#: `shelf:refused`, `shelf:diverged`, `shelf:sole-copy`, the five
+#: `deliverables:*` resolver refusals). Asking a second time here would be the
+#: same finding twice.
+#:
+#: So: the same "something stopped" class as those nine keys, and structurally
+#: visible for as long as it is true.
+_SHELF_INVARIANTS = {
+    "invariant:unshelved_deliverables": Remedy(
+        BANNER,
+        note="marked deliverables the shelf ledger claims no copy of. The "
+             "nightly shelf fold copies every censused deliverable, so a count "
+             "above the floor means that fold declined or could not finish — "
+             "and the reason it declined carries its own key"),
+    "invariant:stale_shelf_entries": Remedy(
+        BANNER,
+        note="shelf ledger rows whose note has left the census. Nothing is "
+             "lost (the shelf never deletes; displaced copies go to "
+             "_previous/), but the shelf has stopped telling the truth about "
+             "what the vault holds"),
+    "invariant:unanchored_deliverable_payloads": Remedy(
+        BANNER,
+        note="drop-lane payloads with no anchor note. The lane's own recovery "
+             "pass retries the anchor at the top of every drain, so a count "
+             "that stays up means that write keeps failing — the one metric "
+             "that can see the shelf mechanism having stopped entirely, since "
+             "the other two read 0 of 0 when nothing is being marked at all"),
+}
+
 _EXACT: dict[str, Remedy] = {
     **_AUTO_INVARIANTS,
     **_OWNER_INVARIANTS,
+    **_SHELF_INVARIANTS,
     # Engine auto-update.
     "update:available": Remedy(AUTO, "update_retry", 3, "process"),
     "update:failed": Remedy(AUTO, "update_retry", 3, "process"),
@@ -278,6 +252,55 @@ _EXACT: dict[str, Remedy] = {
              "lane is re-enabled. keeps_blocking because the redirect RECURS: "
              "the same path stalls the batch every hour until the cause is "
              "fixed, so the answer settles the question and not the condition"),
+    # DLV-03 — the deliverables shelf path resolver. All five are fail-closed
+    # refusals (never a write) that mean the shelf is simply not working
+    # until a config change clears them — not an owner-answerable QUESTION
+    # with options (there is exactly one fix, named in the refusal text
+    # itself), so BANNER: the same "something stopped" class as
+    # maintain:stale/blocked, structurally unsuppressible rather than routed
+    # through the owner-question apparatus.
+    "deliverables:home_dir_parent": Remedy(
+        BANNER,
+        note="the resolved shelf parent is the user's home dir; set "
+             "$BRAIN_DELIVERABLES_DIR to a non-home path"),
+    "deliverables:git_root_parent": Remedy(
+        BANNER,
+        note="the resolved shelf parent is a git working tree root with no "
+             "explicit $BRAIN_DELIVERABLES_DIR — an untracked copy of note "
+             "content there is one `git add -A` from a confidentiality leak"),
+    "deliverables:shadow_conflict": Remedy(
+        BANNER,
+        note="the resolved target equals, lies inside, or contains an "
+             "existing non-empty directory the shelf binding registry does "
+             "not name; the refusal text carries the one recovery move"),
+    "deliverables:no_vault_id": Remedy(
+        BANNER,
+        note="no stable vault id could be established (read-only vault?); "
+             "the shelf must never resolve to a directory named 'None'"),
+    "deliverables:bound_elsewhere": Remedy(
+        BANNER,
+        note="the resolved target is already bound to a different vault in "
+             "the host-private registry; two vaults must never interleave "
+             "writes into one shelf"),
+    # DLV-10 — the shelf's own guards. Three are the resolver-refusal class:
+    # the fold declined to act, and the one fix is named in the finding itself.
+    "shelf:refused": Remedy(
+        BANNER, note="the census read zero deliverables while the ledger "
+        "still claimed files; a failed read looks exactly like a vault that "
+        "emptied, so the run moved nothing"),
+    "shelf:move-cap": Remedy(
+        BANNER, note="one run planned more moves than $BRAIN_SHELF_MAX_MOVES "
+        "allows and moved nothing; a run that large usually means the vault "
+        "was read wrong"),
+    "shelf:diverged": Remedy(
+        BANNER, note="a shelf file holds bytes the fold did not write, so it "
+        "is neither overwritten nor moved aside — and stops being updated"),
+    # OWNER: keep the last surviving copy of a deleted note's payload, or
+    # remove it. `keeps_blocking` False — once ruled on, that file is settled.
+    "shelf:sole-copy": Remedy(
+        OWNER, note="a retired copy is past the _previous/ window and no "
+        "byte-identical content exists in the vault or on the live shelf, so "
+        "it may be the last copy"),
     # Log-only.
     "engine-feedback": Remedy(LOG, note="a backlog count, never a banner"),
     # SPD-01: a remediation cost regression (the FIRST night any model-backed
@@ -362,57 +385,12 @@ def validate(
 ) -> None:
     """Raise :class:`RegistryError` if the table breaks any structural rule.
 
-    Called at import on the shipped table, and by tests on hand-built ones —
-    which is why the bad-table failure is a VALIDATION failure, not a lookup
-    that happens to go wrong later."""
-    exact = _EXACT if exact is None else exact
-    prefixes = _PREFIXES if prefixes is None else prefixes
-
-    for pattern, remedy in [*exact.items(), *prefixes]:
-        _validate_row(pattern, remedy)
-
-    for i, (a, _) in enumerate(prefixes):
-        for b, _ in prefixes[i + 1:]:
-            if a.startswith(b) or b.startswith(a):
-                raise RegistryError(
-                    f"prefixes {a!r} and {b!r} overlap — a key could match "
-                    "both, and the registry never resolves ambiguity by order")
-
-
-def _validate_row(pattern: str, remedy: Remedy) -> None:
-    if remedy.disposition not in DISPOSITIONS:
-        raise RegistryError(
-            f"{pattern!r}: unknown disposition {remedy.disposition!r}")
-    if is_unsuppressible(pattern) and remedy.disposition != BANNER:
-        raise RegistryError(
-            f"{pattern!r} is a liveness/dead-man key and may only be "
-            f"'{BANNER}', not '{remedy.disposition}' — a fold that died cannot "
-            "report its own death, so it must never be routed to something "
-            "that could suppress it")
-    if remedy.disposition == AUTO:
-        if not remedy.owning_branch:
-            raise RegistryError(f"{pattern!r}: auto needs an owning_branch")
-        if remedy.owning_branch not in BRANCH_CADENCE_DAYS:
-            raise RegistryError(
-                f"{pattern!r}: branch {remedy.owning_branch!r} has no declared "
-                "cadence in BRANCH_CADENCE_DAYS")
-        if not isinstance(remedy.escalate_after, int) or remedy.escalate_after < 1:
-            raise RegistryError(f"{pattern!r}: auto needs escalate_after >= 1")
-        if remedy.reversibility not in REVERSIBILITY:
-            raise RegistryError(
-                f"{pattern!r}: auto needs reversibility in {REVERSIBILITY} — "
-                "an irreversible repair is an owner decision, not a branch")
-    else:
-        if (remedy.owning_branch or remedy.reversibility or remedy.shadow_nights
-                or remedy.escalate_after is not None):
-            raise RegistryError(
-                f"{pattern!r}: only auto carries owning_branch/escalate_after/"
-                "reversibility/shadow_nights")
-    if remedy.keeps_blocking and remedy.disposition != OWNER:
-        raise RegistryError(
-            f"{pattern!r}: keeps_blocking is about what happens AFTER an owner "
-            f"answers, so it only means anything on '{OWNER}' — a "
-            f"'{remedy.disposition}' key is never asked in the first place")
+    The rules themselves are ``remediation_schema.validate``; this wrapper
+    supplies THIS module's table and cadence map as the defaults, so a caller
+    (and every existing test) still says ``remediation.validate()``."""
+    _schema.validate(_EXACT if exact is None else exact,
+                     _PREFIXES if prefixes is None else prefixes,
+                     BRANCH_CADENCE_DAYS)
 
 
 def resolve(
@@ -421,22 +399,10 @@ def resolve(
     prefixes: tuple[tuple[str, Remedy], ...] | None = None,
 ) -> Remedy | None:
     """The declared remedy for ``key``, or ``None`` when nothing declares it.
-
-    Exact declarations are strictly more specific and win outright. Otherwise
-    the prefix patterns are scanned and a key matching TWO of them raises
-    :class:`AmbiguousKey` — first-match-wins would silently pick a disposition
-    nobody chose."""
-    exact = _EXACT if exact is None else exact
-    prefixes = _PREFIXES if prefixes is None else prefixes
-    if key in exact:
-        return exact[key]
-    matched = [(p, r) for p, r in prefixes if key.startswith(p)]
-    if len(matched) > 1:
-        raise AmbiguousKey(
-            f"{key!r} matches {len(matched)} patterns "
-            f"({', '.join(sorted(p for p, _ in matched))}) — the registry "
-            "refuses to resolve by order")
-    return matched[0][1] if matched else None
+    Defaults to the shipped table; see ``remediation_schema.resolve``."""
+    return _schema.resolve(key,
+                           _EXACT if exact is None else exact,
+                           _PREFIXES if prefixes is None else prefixes)
 
 
 def declared_keys() -> tuple[str, ...]:

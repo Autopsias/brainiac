@@ -192,8 +192,10 @@ temporal query surface FIRST, before plain semantic search:
   brain get <id> --json                            # inspect previous_version /
                                                      # superseded_by / is_latest_version
                                                      # on any single hit ("previous version")
-search/get results also carry `is_latest_version` on every hit, so even a plain
-semantic-search agent can prefer the current claim without a second round-trip.
+search HIDES versions a supersede chain retired (`is_latest_version: false`)
+by default — `--include-retired` brings them back for a "previous version"
+question. Every surfaced hit still carries `is_latest_version`, so an agent can
+prefer the current claim without a second round-trip.
 
 retrieval discipline (non-negotiable; details in AGENTS.md §5):
   - every search hit carries `type` — the AUTHORITY signal. A `type: decision`

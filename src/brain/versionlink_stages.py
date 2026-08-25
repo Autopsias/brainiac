@@ -5,6 +5,21 @@ from typing import Any, Iterable
 
 from .index import _boilerplate_patterns, _matches_boilerplate_pattern
 
+#: Which format of ONE version is the primary when a pair are format twins:
+#: earlier wins. The curated text extraction first, the render last; a format
+#: not listed ranks after every listed one, and two unlisted formats never
+#: orient (no rule, no proposal).
+FORMAT_PREFERENCE = (".md", ".txt", ".docx", ".doc", ".pptx", ".ppt",
+                     ".xlsx", ".xls", ".html", ".htm", ".pdf")
+
+
+def format_rank(ext: str) -> int:
+    """Position in :data:`FORMAT_PREFERENCE`; ``len`` for an unlisted one."""
+    try:
+        return FORMAT_PREFERENCE.index(ext.casefold())
+    except ValueError:
+        return len(FORMAT_PREFERENCE)
+
 
 def _direction_signals(old: Any, new: Any) -> tuple[dict[str, Any], dict[str, Any] | None]:
     signals: dict[str, Any] = {}
@@ -13,6 +28,23 @@ def _direction_signals(old: Any, new: Any) -> tuple[dict[str, Any], dict[str, An
                          "signals": signals}
     signals["newer_date"] = {"old": old.valid_date, "new": new.valid_date}
     return signals, None
+
+
+def _rendition_signals(old: Any, new: Any, signals: dict[str, Any]) -> bool:
+    """The format-twin exception to the date rule: a shared name stem, two
+    DIFFERENT original formats, no advancing version marker, and ``new`` the
+    preferred format. Sets ``signals["rendition"]`` and returns True; a pair
+    that fails any part is left to the date rule's verdict."""
+    if old.email_claimed or new.email_claimed:
+        return False
+    if not (old.stems & new.stems) or not old.ext or not new.ext or old.ext == new.ext:
+        return False
+    if old.marker != new.marker:
+        return False  # an advancing marker is a version, not a rendition
+    if format_rank(new.ext) >= format_rank(old.ext):
+        return False
+    signals["rendition"] = {"old_format": old.ext, "new_format": new.ext}
+    return True
 
 
 def _add_family_signals(old: Any, new: Any, signals: dict[str, Any]) -> bool:
@@ -38,6 +70,8 @@ def _marker_result(
     threshold: float,
 ) -> tuple[bool, dict[str, Any] | None]:
     marker_ok = False
+    if signals.get("rendition"):
+        return False, None  # equal markers are expected on one version twice
     if old.marker and new.marker:
         signals["version_markers"] = {"old": list(old.marker), "new": list(new.marker)}
         same_scale = old.marker[0] == new.marker[0]
@@ -68,7 +102,7 @@ def analyze(old: "NoteView", new: "NoteView", *, similarity: float | None,
     values — evidence the owner sees, never a bare confidence number.
     """
     signals, early = _direction_signals(old, new)
-    if early:
+    if early and not _rendition_signals(old, new, signals):
         return early
     if not _add_family_signals(old, new, signals):
         return {"verdict": "skip",
@@ -90,10 +124,17 @@ def analyze(old: "NoteView", new: "NoteView", *, similarity: float | None,
                 "reason": f"content similarity {similarity!r} below "
                           f"{threshold} and no advancing version marker",
                 "signals": signals}
+    if signals.get("rendition") and not near_dup:
+        return {"verdict": "skip",
+                "reason": f"format twin by name, but content similarity "
+                          f"{similarity!r} below {threshold}: the two formats "
+                          "may not carry the same text", "signals": signals}
     if near_dup:
         signals["near_duplicate"] = {"score": round(similarity or 0.0, 6),
                                       "threshold": threshold}
-    return {"verdict": "propose", "reason": "deduced from email context",
+    return {"verdict": "propose",
+            "reason": ("another format of the same version"
+                       if signals.get("rendition") else "deduced from email context"),
             "signals": signals}
 
 
@@ -138,6 +179,18 @@ def _partner_ids(
     return partners
 
 
+def _orient(a: "NoteView", b: "NoteView") -> tuple["NoteView", "NoteView"]:
+    """(predecessor, successor). Dates order a pair when they can; a pair the
+    dates cannot order (equal, or one missing) is oriented by format
+    preference so a format twin's PRIMARY is the successor, then by id."""
+    if a.valid_date and b.valid_date and a.valid_date != b.valid_date:
+        return (a, b) if a.valid_date < b.valid_date else (b, a)
+    ra, rb = format_rank(a.ext), format_rank(b.ext)
+    if ra != rb:
+        return (a, b) if ra > rb else (b, a)
+    return (a, b) if (a.valid_date, a.id) <= (b.valid_date, b.id) else (b, a)
+
+
 def _skip_pair(old: "NoteView", new: "NoteView", proposed_ids: set[str]) -> bool:
     if old.retired or old.id == new.id:
         return True
@@ -149,7 +202,7 @@ def _skip_pair(old: "NoteView", new: "NoteView", proposed_ids: set[str]) -> bool
         return True
     if not (old.email_claimed or new.email_claimed) and old.untrusted != new.untrusted:
         return True
-    first, second = (old, new) if old.valid_date <= new.valid_date else (new, old)
+    first, second = _orient(old, new)
     return (first.id in proposed_ids or second.id in proposed_ids
             or second.has_predecessor)
 
@@ -186,7 +239,7 @@ def _process_partner(
         return True
     report["pairs_examined"] += 1
     seen.add(key)
-    first, second = (old, new) if old.valid_date <= new.valid_date else (new, old)
+    first, second = _orient(old, new)
     similarity = _versionlink._similarity(core.index, cache, first, second)
     verdict = analyze(first, second, similarity=similarity, threshold=threshold)
     _append_verdict(report, verdict, first, second, key)

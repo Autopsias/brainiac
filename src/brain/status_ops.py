@@ -82,6 +82,16 @@ def _cos_status(core: Any) -> dict[str, Any]:
         return {"error": f"{type(exc).__name__}: {exc}"}
 
 
+def _deliverables_status(core: Any) -> dict[str, Any]:
+    """DLV-03: the resolved shelf path, or the refusal + notify_key."""
+    try:
+        from . import deliverables_shelf
+
+        return deliverables_shelf.status_block(core.vault)
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
 class StatusOpsMixin:
     """Provide BrainCore's host/VM status operation."""
 
@@ -115,4 +125,5 @@ class StatusOpsMixin:
         out["maintain_heartbeat"] = self._maintain_heartbeat_summary(today=today)
         out["graph"] = self._graph_status()
         out["cos"] = _cos_status(self)
+        out["deliverables"] = _deliverables_status(self)
         return out

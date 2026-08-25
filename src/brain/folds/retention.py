@@ -5,7 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from .context import MaintenanceRun
-from .. import cos_corpus, maintenance, querylog
+from .. import (cos_corpus, deliverables_ledger, deliverables_previous,
+                deliverables_shelf, maintenance, querylog)
 
 
 class RetentionFoldsMixin:
@@ -20,6 +21,7 @@ class RetentionFoldsMixin:
         self.duplicate_retention_fold(run)
         self.query_capture_retention_fold(run)
         self.cos_corpus_retention_fold(run)
+        self.deliverables_previous_retention_fold(run)
 
     def duplicate_retention_fold(self, run: MaintenanceRun) -> None:
         """Prune only provenance-verified aged duplicates."""
@@ -152,3 +154,57 @@ class RetentionFoldsMixin:
                     "next maintain run",
                 )
             )
+
+    def deliverables_previous_retention_fold(self, run: MaintenanceRun) -> None:
+        """Age out the deliverables shelf's ``_previous/`` bin — but never a
+        sole copy.
+
+        HOST-ONLY, for the same reason the shelf fold is: the bin holds real
+        payload bytes at their true tier. It rides this existing lane rather
+        than growing a scheduled task of its own (AGENTS.md §6).
+
+        A retained entry is ONE owner decision, not a nag: an entry reaches
+        ``_previous/`` when its note was superseded or is GONE, and for a note
+        deleted from the vault the retired copy can be the last surviving
+        bytes. Deleting a possibly-sole copy is reserved for the owner.
+        """
+        self._require_host("prune the deliverables shelf's _previous/ bin")
+        if run.dry_run:
+            return
+        try:
+            result = deliverables_previous.prune(self.vault)
+        except Exception as exc:  # noqa: BLE001 — never fail a maintain run
+            run.blocked.append(maintenance.blocked_item(
+                f"deliverables _previous retention fold failed: "
+                f"{type(exc).__name__}: {exc}",
+                "deliverables shelf filesystem",
+                "next maintain run",
+            ))
+            return
+        run.results["deliverables_previous_retention"] = result
+        if result.get("refused"):
+            return          # the shelf fold already reported the same refusal
+        if result["pruned"]:
+            run.auto_fixed.append(maintenance.auto_fixed_item(
+                "deliverables-previous-retention",
+                result["shelf"],
+                f"pruned {len(result['pruned'])} retired copy/copies older "
+                f"than {result['window_days']}d (a byte-identical copy still "
+                f"exists in the vault or on the shelf)",
+            ))
+        if result["retained"]:
+            run.action_required.append({
+                **maintenance.action_required_item(
+                    f"{len(result['retained'])} retired shelf copy/copies are "
+                    f"past the {result['window_days']}d window but may be the "
+                    f"only copy left",
+                    "no byte-identical content was found in the vault or on "
+                    "the live shelf, and deleting a possibly-sole copy is an "
+                    "owner decision, never a timer's",
+                    "confirm whether the bytes matter, then keep or remove "
+                    f"them by hand under {result['shelf']}/"
+                    f"{deliverables_ledger.PREVIOUS_DIRNAME}",
+                    result["shelf"],
+                ),
+                "notify_key": deliverables_shelf.NOTIFY_SOLE_COPY,
+            })

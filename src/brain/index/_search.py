@@ -141,12 +141,16 @@ class _SearchMixin:
         reranker: Any | None = None,
         rerank_top: int = 15,
         rerank_gate: bool | None = None,
+        include_retired: bool = False,
     ) -> list[Hit]:
-        """Normal fused retrieval path, deliberately free of trace records."""
+        """Normal fused retrieval path, deliberately free of trace records.
+
+        Retired versions (``is_latest_version: false``) are hidden unless
+        ``include_retired`` — see ``search_ranking.generate_candidates``."""
         return self._hybrid_search_impl(
             query, k=k, rrf_k=rrf_k, candidate_factor=candidate_factor,
             rerank=rerank, reranker=reranker, rerank_top=rerank_top,
-            rerank_gate=rerank_gate, trace=None,
+            rerank_gate=rerank_gate, trace=None, include_retired=include_retired,
         )
 
     def hybrid_search_with_trace(
@@ -160,6 +164,7 @@ class _SearchMixin:
         reranker: Any | None = None,
         rerank_top: int = 15,
         rerank_gate: bool | None = None,
+        include_retired: bool = False,
     ) -> tuple[list[Hit], _SearchTrace]:
         """Run the production ranking with opt-in, pre-egress attribution.
 
@@ -182,7 +187,7 @@ class _SearchMixin:
         hits = self._hybrid_search_impl(
             query, k=k, rrf_k=rrf_k, candidate_factor=candidate_factor,
             rerank=rerank, reranker=reranker, rerank_top=rerank_top,
-            rerank_gate=rerank_gate, trace=trace,
+            rerank_gate=rerank_gate, trace=trace, include_retired=include_retired,
         )
         return hits, trace
 
@@ -198,6 +203,7 @@ class _SearchMixin:
         rerank_top: int = 15,
         rerank_gate: bool | None = None,
         trace: _SearchTrace | None,
+        include_retired: bool = False,
     ) -> list[Hit]:
         """Run the production ranking stages without applying CLI egress."""
         from ..index_stages.search import run_hybrid_search
@@ -214,6 +220,7 @@ class _SearchMixin:
             rerank_gate=rerank_gate,
             trace=trace,
             hit_factory=Hit,
+            include_retired=include_retired,
         )
 
     def _diagnose_lexical_rank(self, query: str, rowid: int) -> int | None:

@@ -376,6 +376,30 @@ if [ -n "$ARCHIVE_CAP" ] && [ "$SESSION_APPROVED" -eq 1 ] \
  COS_INGEST_BRIDGE=1, or drop --approve-cap for a triage-only night."
 fi
 
+# AN OPEN PROPOSAL BATCH KILLS THE NIGHT AT THE BRIDGE, THIRTY MINUTES IN.
+# The bridge refuses on backpressure (see the ingest-bridge block) and that
+# refusal is right — but it fires AFTER the browser, the read scan and every
+# model leg. Measured 2026-08-24 (run187): the 03:00 scheduled night left one
+# batch open, and the attended re-run spent 32 minutes and a full judgment leg
+# (7/7 chunks, 217 rows) before dying 18 on a condition readable in under a
+# second. This is the same refusal, moved to where refusing is free. It never
+# drains the batch itself: draining is an owner-facing write, and `brain
+# cos-broker` is the audited path that does it.
+# --- BEGIN open-batch preflight ---
+if [ "${COS_INGEST_BRIDGE:-0}" = "1" ]; then
+  OPEN_BATCHES="$(PYTHONPATH=src $PY -c 'import sys
+from brain.cos import open_batches
+print(len(open_batches(sys.argv[1])))' "$BRAIN_VAULT" 2>>"$LOG")" || OPEN_BATCHES=""
+  case "$OPEN_BATCHES" in
+    ""|0) : ;;
+    *) die "$OPEN_BATCHES proposal batch(es) are already open, so the ingest
+ bridge would abort on backpressure after the whole read and judgment lane had
+ run (run187 lost 32 minutes to exactly this). Drain them on the audited path
+ — \`brain cos-broker\` — then re-run the night. Nothing was dispatched" 18 ;;
+  esac
+fi
+# --- END open-batch preflight ---
+
 log "=== cos-nightly start (dry=$DRY model=$MODEL scope=$SCOPE_DESC, lanes uncapped) ==="
 
 # --- 1. the browser ---------------------------------------------------------
@@ -1298,6 +1322,36 @@ if [ "${COS_INGEST_BRIDGE:-0}" = "1" ]; then
  reason is in the report line above. Nothing was dispatched" 20
 fi
 # --- END attachment fetch ----------------------------------------------------
+
+# --- BEGIN mutation rearm gate ---
+# THE DOWNLOADS WEDGE THE TAB. The reprime gate above is the one the attachment
+# fetch needs (by then the read lane's envelope is dead), but the fetch then
+# drives 32 files and ~2.3 MB through that SAME renderer and nothing re-arms it
+# before the mutation lane starts evaluating. Run 185 (2026-08-24) died exactly
+# there: `Runtime.evaluate timed out` after 3 tries, four minutes after a
+# 32-of-32 fetch, holding a frozen plan of 43 archives / 11 categorize / 4
+# drafts and not one mutation dispatched. The invariant is one line long: the
+# tab is armed IMMEDIATELY before every leg that drives it, and the fetch is
+# itself such a leg.
+#
+# This is a SECOND arm, never a moved one. `tests/test_cos_attachment_nightly.py`
+# asserts the fetch runs AFTER the reprime gate and it must, or the fetch has no
+# envelope to use. Arming is also the REPAIR: `cos_ego_arm.py` reloads the page,
+# so a wedged renderer is either fixed here or reported here with a diagnosis
+# instead of surfacing 200 lines downstream as a driver traceback.
+if [ "${COS_TRANSPORT:-ego}" = "ego" ]; then
+  REARM="$($PY tools/cos_ego_arm.py 2>&1)"; RC=$?
+else
+  REARM="$($PY tools/cos_cdp_capture.py --prepare 2>&1)"; RC=$?
+fi
+log "re-arm after the attachment fetch: $(printf '%s' "$REARM" | tr -d '\n ')"
+[ "$RC" -eq 0 ] || die "the automation browser did not answer the re-arm after
+ the attachment fetch (rc=$RC) — the downloads left the tab unable to drive the
+ mutation lane, which is how run 185 lost a frozen plan. Nothing was
+ dispatched" 5
+# The envelope was just retaken, so the age this stamp measures restarts here.
+REPRIME_TS="$(date -u +%FT%TZ)"
+# --- END mutation rearm gate ---
 
 # --- BEGIN one frozen plan ---
 # ONE PLAN IS BUILT ONCE AND THE OTHER TWO LEGS CONSUME IT (review 2026-08-13,

@@ -158,7 +158,7 @@ CONDITIONALLY, only when a matching file is touched, from:
 |---|---|---|
 | `.claude/rules/indexing-exceptions.md` | `vault/**`, `**/.brain/**` | indexing-scope exceptions (cos-ops, approved queue, corpus, runs) |
 | `.claude/rules/note-shape.md` | `vault/brain/**`, `vault/raw/**`, `templates/**` | frontmatter schema, link style |
-| `.claude/rules/capture-and-invariants.md` | `vault/raw/**`, `vault/brain/**`, `src/brain/invariants.py`, `tools/validate.py` | capture rules, corpus invariants |
+| `.claude/rules/capture-and-invariants.md` | `vault/raw/**`, `vault/brain/**`, `src/brain/invariants.py`, `src/brain/ingest/**`, `src/brain/deliverables_*.py`, `src/brain/folds/deliverables.py`, `tools/validate.py` | capture rules, corpus invariants (incl. the deliverable capture rule, its drop lane, and the generated shelf outside `vault/`) |
 | `.claude/rules/retrieval-and-security.md` | `vault/**`, `src/brain/**`, `eval/**` | the four interactions in detail, agentic tool surface, retrieval discipline, security posture |
 | `.claude/rules/host-vm-trust.md` | `src/brain/**`, `vault/.brain/**`, cowork paths | host/VM capability split, capture protocol, single-writer discipline |
 | `.claude/rules/pre-commit.md` | always | test-suite invocation, quality-ratchet detail |

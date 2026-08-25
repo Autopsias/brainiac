@@ -193,18 +193,33 @@ def check_audit_content_drift(vault: Path) -> dict:
                     remediation="brain verify-audit --check-content --json")
     total, unexplained = summary["total"], summary["unexplained"]
     explained = total - unexplained
+    # COVERAGE QUALIFIES THE VERDICT. A path the chain never bound with a
+    # content hash is skipped by content_drift, so an edit to it is
+    # undetectable — "0 unexplained" over a half-unbound chain reads as an
+    # all-clear it has not earned. Reported, never gated: the fix is a
+    # backfill, and a backfill signs today's bytes as the baseline, which
+    # would bless every edit already made (owner ruling 2026-08-24: report
+    # first, decide the backfill separately).
+    cov = summary.get("coverage") or {}
+    blind = ""
+    if cov.get("uncovered"):
+        pct = 100 * cov["uncovered"] / cov["paths"]
+        blind = (f"; {cov['uncovered']} of {cov['paths']} chain path(s) "
+                 f"({pct:.0f}%) carry no signed content hash and cannot be "
+                 f"checked at all")
     if unexplained:
         return _row(
             surface, STALE,
             f"{unexplained} signed note(s) changed after signing with no recorded "
-            f"disposition ({explained} triaged, {total} total)",
+            f"disposition ({explained} triaged, {total} total){blind}",
             remediation="brain verify-audit --check-content --json  # then triage into "
                         "the host-private disposition file (brain doctor --json shows "
                         "its path) or restore the note",
-            raw={"total": total, "unexplained": unexplained})
+            raw={"total": total, "unexplained": unexplained, "coverage": cov})
     detail = ("no drift — every signed note matches its signed bytes" if not total
               else f"0 unexplained ({explained} triaged historical drift record(s))")
-    return _row(surface, CURRENT, detail, raw={"total": total, "unexplained": 0})
+    return _row(surface, CURRENT, detail + blind,
+                raw={"total": total, "unexplained": 0, "coverage": cov})
 
 
 #: Quarantine buckets whose cause is an operator action on THIS host, not a

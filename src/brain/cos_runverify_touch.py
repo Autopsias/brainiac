@@ -254,6 +254,35 @@ def check_target_identity(run_id: str, rows: list[dict[str, Any]],
                 reexecuted=True)
 
 
+def _lane_mislabel_split(ledger: list[dict[str, Any]],
+                         acts: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
+    """(v7.2) The lane mislabel, split into what FAILS and what only DEGRADES.
+
+    A row from a lane that never navigates may not wear the navigation refusal
+    word. Grandfathered exactly as E30(g) grandfathers pre-v5.60
+    instrumentation: a ledger written by a bundle whose producer had only ONE
+    shell word to give is REPORTED and DEGRADED, never retro-failed. Measured
+    run 178 (2026-08-23): 218 rows, all ``read_lane: "rest"``, one shell-length
+    read, INVALID on this alone — and 55 ingestion candidates quarantined
+    behind a verdict no rerun could change.
+    """
+    notes = _refusal_mislabel_problems(ledger)
+    if _declares(ledger, (7, 2)) or _declares(acts, (7, 2)):
+        return notes, []
+    return [], notes
+
+
+def _lane_mislabel_row(ledger: list[dict[str, Any]],
+                       mislabels: list[str]) -> dict[str, Any]:
+    """The DEGRADED verdict a pre-v7.2 lane mislabel earns."""
+    return _row("open_instrumentation", DEGRADED,
+                f"{len(ledger)} ledger row(s): " + "; ".join(mislabels[:2])
+                + " — this ledger predates v7.2, whose producer is the first to "
+                "carry a lane-aware shell word, so the mislabel is reported and "
+                "never retro-failed (E30(i))",
+                reexecuted=True)
+
+
 #: (v5.60, INS-02) What a v5.60 attempt row owes, per attempt and EVEN WHEN THE
 #: ATTEMPT FAILED. `open_method`/`open_url` because run 106 landed every one of
 #: its twenty opens on attempt 2 while recording neither, which makes that night
@@ -304,6 +333,9 @@ def check_open_instrumentation(vault, run_id: str,
     problems += _forged_refusal_problems(ledger)
     problems += _cascade_problems(ledger, acts)
 
+    hard, mislabels = _lane_mislabel_split(ledger, acts)
+    problems += hard
+
     gated = _declares(ledger, (5, 60)) or _declares(acts, (5, 60))
     attempts: list[dict[str, Any]] = []
     if gated:
@@ -318,6 +350,8 @@ def check_open_instrumentation(vault, run_id: str,
                     + "; ".join(problems[:4])
                     + " (E30(g)/(h); SKILL.md A MISMATCH STOPS THE LINE)",
                     reexecuted=True)
+    if mislabels:
+        return _lane_mislabel_row(ledger, mislabels)
     if not gated:
         return _row("open_instrumentation", PASS,
                     f"no row of this run claims v5.60, so the per-attempt "
@@ -378,6 +412,7 @@ from .cos_runverify import (  # noqa: E402
     _missing_pre_problem_row as _missing_pre_problem_row,
     _post_mismatch_mutation_row as _post_mismatch_mutation_row,
     _recovery_problems as _recovery_problems,
+    _refusal_mislabel_problems as _refusal_mislabel_problems,
     _refusal_problem_row as _refusal_problem_row,
     _undetected_problem_row as _undetected_problem_row,
 )

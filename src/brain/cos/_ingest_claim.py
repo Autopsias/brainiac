@@ -79,7 +79,7 @@ def _manifest_candidate(vault, downloads: Path, entry: dict[str, Any], *, now: _
                           "file the VM manifest cannot claim")
         return None
     expected_size = entry.get("approx_size_bytes")
-    tolerance = max(expected_size * INGEST_SWEEP_SIZE_TOLERANCE, 4096) if isinstance(expected_size, int) else 0
+    tolerance = max(expected_size * INGEST_SWEEP_SIZE_TOLERANCE, INGEST_SWEEP_SIZE_FLOOR) if isinstance(expected_size, int) else 0
     if isinstance(expected_size, int) and expected_size > 0 and abs(stat.st_size - expected_size) > tolerance:
         _report_unmatched(report, [filename],
                           f"size mismatch: on disk {stat.st_size}B, manifest expects {expected_size}B "
@@ -92,6 +92,36 @@ def _manifest_candidate(vault, downloads: Path, entry: dict[str, Any], *, now: _
                           f"stale namesake: file mtime is {age_hours:.1f}h OLDER than the manifest's "
                           f"download ts {entry_time.isoformat()} (skew allowance {INGEST_SWEEP_SKEW_SECONDS}s) "
                           "— the VM's download did not land; this is a pre-existing file with the same name")
+        return None
+    # ...AND THE SAME BOUND IN THE OTHER DIRECTION. Until 2026-08-23 this check
+    # only refused a file OLDER than its manifest line, so a line could claim a
+    # file downloaded 40 days after it was written. `_sweep_manifest_lines`
+    # walks manifests in FILENAME sort order, which is chronological, so the
+    # OLDEST line matching a name claims first. Measured on a live vault:
+    # a 2026-07-14 line carrying `attachment_filename` for a PDF — no
+    # `approx_size_bytes`, so no size check could stop it — was first in line to
+    # claim the same-named PDF that run 178 fetched over its own envelope, which
+    # would have anchored it `unclassified` with NO provenance while run 178's
+    # own line, carrying the conversation id, sender and `working-draft`, went
+    # unmatched. A line and its file belong to ONE download episode; the recency
+    # window is already this design's name for that episode.
+    # MEASURED AGAINST THE SWEEP'S OWN CLOCK, not the raw mtime. The sweep reads
+    # the downloads directory AT `now`, so a file cannot have been fetched after
+    # that instant — an mtime past it is a clock artifact, never evidence. The
+    # sibling freshness check above already bounds mtime to `[now - 6h, ...)`;
+    # clamping here bounds it from the other side so both read the same clock.
+    # Without this, 49 tests broke: they inject a frozen `now` while writing
+    # their files at the real one, so every same-episode pair measured weeks
+    # apart. The refusal it exists for is UNAFFECTED — a live sweep's `now` is
+    # the real clock, so run 178's 965h gap still refuses.
+    fetched_at = min(stat.st_mtime, now.timestamp())
+    if entry_time is not None and fetched_at > entry_time.timestamp() + _sweep_recency_seconds():
+        age_hours = (fetched_at - entry_time.timestamp()) / 3600.0
+        _report_unmatched(report, [filename],
+                          f"fresh namesake: file mtime is {age_hours:.1f}h NEWER than the manifest's "
+                          f"download ts {entry_time.isoformat()} (recency window "
+                          f"{_sweep_recency_seconds() // 3600}h) — this file was fetched for a "
+                          "different, later manifest line")
         return None
     return candidate, filename
 

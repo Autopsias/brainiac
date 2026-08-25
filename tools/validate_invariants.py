@@ -1,6 +1,8 @@
 """Validate supersession invariants."""
 from __future__ import annotations
 
+import datetime
+import re
 import sys
 from pathlib import Path
 
@@ -12,7 +14,6 @@ from tools.validate import (
     build_zone_catalog,
     check_alias_collisions,
     check_note,
-    check_section_staleness,
     check_type_lint,
     err,
     errors,
@@ -24,6 +25,49 @@ from tools.validate import (
 )
 
 __doc__ = _source.__doc__
+
+# HYG-03 — state-MOC / index.md freshness-stamp pattern: any heading whose
+# very next non-blank line is "Updated: YYYY-MM-DD" is a freshness-stamped
+# section (the state-MOC template's "## Section: ..." headings, and index.md's
+# own zone headings once stamped). Warn-only, never blocks the gate.
+SECTION_UPDATED = re.compile(r"^Updated:\s*(\d{4}-\d{2}-\d{2})\s*$")
+# ponytail: no threshold is pinned in ADR-0003 for state-MOC sections
+# specifically; reuses the ADR's one existing staleness precedent
+# (DEFAULT_AUTORESEARCH_STALE_DAYS in src/brain/maintenance.py, also 90) so
+# the vault has one staleness convention instead of two. Bump here if a
+# tighter cadence turns out to matter more for live "state of play" notes.
+STATE_MOC_STALE_DAYS = 90
+
+
+def check_section_staleness(notes: list[dict], today: object = None) -> None:
+    """HYG-03 — state-MOC freshness-stamp lint (warn-only). Any heading whose
+    next non-blank line is ``Updated: YYYY-MM-DD`` is a freshness-stamped
+    section; flag it once it is older than STATE_MOC_STALE_DAYS. Applies to
+    every brain/ note generically (the state-MOC template's ``## Section:``
+    headings, and index.md's own stamped zone headings) — not gated on
+    ``type: moc`` because index.md is ``type: index``."""
+    today = today or datetime.date.today()
+    for n in notes:
+        if n["zone"] != "brain":
+            continue
+        lines = n["body"].splitlines()
+        for i, line in enumerate(lines):
+            if not line.lstrip().startswith("#"):
+                continue
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            if j >= len(lines):
+                continue
+            m = SECTION_UPDATED.match(lines[j].strip())
+            if not m:
+                continue
+            stamped = datetime.date.fromisoformat(m.group(1))
+            age = (today - stamped).days
+            if age > STATE_MOC_STALE_DAYS:
+                heading = line.lstrip("#").strip()
+                warn(f"{n['rel']}: section '{heading}' stale "
+                     f"({age}d since {stamped.isoformat()}, threshold {STATE_MOC_STALE_DAYS}d)")
 
 
 def _add_edge(

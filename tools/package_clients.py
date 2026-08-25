@@ -189,7 +189,7 @@ ENGINE_ASSET_FILES = [
     "tools/cos_mutate.py", "tools/cos_mutate_apply.py", "tools/cos_mutate_bridge.py",
     "tools/cos_mutate_canary.py", "tools/cos_mutate_cli.py", "tools/cos_mutate_evidence.py",
     "tools/cos_mutate_gates.py", "tools/cos_mutate_ledger.py", "tools/cos_mutate_passes.py",
-    "tools/cos_mutate_plan.py", "tools/cos_mutate_policy.py", "tools/cos_mutate_rehearsal.py",
+    "tools/cos_mutate_plan.py", "tools/cos_mutate_plan_aged.py", "tools/cos_mutate_policy.py", "tools/cos_mutate_rehearsal.py",
     "tools/cos_mutate_selfcheck.py", "tools/cos_mutate_shapes.py", "tools/cos_mutate_shapestore.py",
     "tools/cos_cdp_capture.py", "tools/cos_driver.py", "tools/cos_driver_accounting.py",
     "tools/cos_driver_capture.py", "tools/cos_driver_categories.py", "tools/cos_driver_cli.py",

@@ -39,10 +39,23 @@ class DailyFoldsMixin:
             self.auto_para_fold(run)
             self.navigation_fold(run)
             self.knowledge_orphan_fold(run)
-            self.corpus_invariants_fold(run)
             self.retention_schedule_fold(run)
             self.quarantine_summary_fold(run)
             self.decision_capture_fold(run)
+            # AFTER version_chain_fold, which is what can retire a
+            # deliverable this run: the census reads `is_latest_version`
+            # from frontmatter, so a supersession applied earlier in this
+            # same block must be visible before the shelf is materialized.
+            self.deliverables_shelf_fold(run)
+            # AFTER the shelf fold, for the same reason `remediation_fold`
+            # runs after the sync (DLV-05). Three of the eleven corpus
+            # invariants compare the marked set against the shelf ledger.
+            # Measured BEFORE the fold that materializes the shelf, every
+            # deliverable marked since the last nightly would be counted
+            # unshelved and fire a ratchet regression on the ordinary act of
+            # producing one — and the alert would be gone by the time anyone
+            # looked, because the very next fold in this block fixed it.
+            self.corpus_invariants_fold(run)
             self.synthesis_watchdog_fold(run)
             self.publish_daily_fold(run)
         except WriterLockBusy as exc:

@@ -59,10 +59,17 @@ CAPABILITY_BLOCKS: tuple[tuple[str, str, str], ...] = (
     ("cos_mutate_page.js", "/* --- denylist", "/* --- end denylist"),
 )
 
+#: (v7.3, AGED-01) The aged-read signal. E3 is the FOURTH belt on this lane and
+#: the one that shipped stale: run 179 archived 19 threads the judge, the
+#: planner and the verifier all approved, and E3 called every one of them a
+#: breach because it read the bucket alone.
+AGED_READ_SIGNAL = "aged-read-no-action"
+
 #: The signals that may JUSTIFY an auto-archive. `none` is a descriptive label
 #: and `automated-mail-marker` was retired at run 127 (no typed field validates
 #: it), so neither can carry a row into the archive lane.
-ARCHIVING_SIGNALS = frozenset({"recurring-automated-sender", "read-noise-bucket"})
+ARCHIVING_SIGNALS = frozenset({"recurring-automated-sender", "read-noise-bucket",
+                               AGED_READ_SIGNAL})
 
 #: Mutation primitives this build may dispatch. Anything else in the ledger's
 #: `primitive` column is an action the zero-send boundary never admitted.

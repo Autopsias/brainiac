@@ -20,6 +20,12 @@ The decision rule (deliberately narrower than "≥2 signals, ≥1 metadata")
 A pair is proposed only when ALL of these hold:
 
 1. **Direction** — the candidate successor's valid date is strictly newer.
+   ONE exception, the **format twin** (2026-08-25): a shared name stem, two
+   DIFFERENT original formats, no advancing marker — one version rendered
+   twice, landed together, so no date can order it. Direction is then by
+   ``versionlink_stages.FORMAT_PREFERENCE`` (the ``.md`` stays, the ``.pdf``
+   retires under it) and near-duplicate content is REQUIRED (a deck's pdf
+   and md measured shingle 0.53 — a name match alone proves nothing).
 2. **A LINK** — one of exactly two, never both:
 
    * ``FAMILY_EMAIL`` — a **HOST-VERIFIED** email link: the two notes share a
@@ -82,6 +88,7 @@ from typing import Any, Mapping
 
 from . import frontmatter, provenance
 from .maintenance import version_family_key as version_family_key
+from .maintenance_folds_4 import RENDITION_MARKERS
 from .notes import sha256_text
 
 # -- owner-tunable knobs ------------------------------------------------------
@@ -101,7 +108,7 @@ DEFAULT_WINDOW_DAYS = 14
 #: The graduation key's ruleset component (mirrors the producer's
 #: ``extraction_rules_version``): bump ONLY when the signal rules above change,
 #: which resets this class's accumulated owner evidence. See cos.category_stats.
-RULES_VERSION = "vl-2"
+RULES_VERSION = "vl-3"
 
 #: Which JOIN produced a pair — recorded on every proposal so a run's log line
 #: says what the currency layer is actually seeing.
@@ -156,9 +163,12 @@ _MARKER_WORDS = {"draft": 0, "rascunho": 0, "borrador": 0,
 _NUMERIC_MARKER_WORDS = ("revisión", "revisão", "revisao", "revision",
                          "versión", "versão", "versao", "version",
                          "rev", "ver", "v")
-#: Everything a family STEM must lose before two names can be compared.
+#: Everything a family STEM must lose before two names can be compared. The
+#: rendition markers come from the nightly fold (`…_v52_PREVIEW.pdf` is the
+#: same version as `…_v52.md`, not a different document) — one list, so the
+#: lane and the fold agree on what a rendition is.
 _MARKER_STRIP_WORDS = (*_MARKER_WORDS, "clean", "copy", "comentada",
-                       "marked[ _-]?up")
+                       *RENDITION_MARKERS, "marked[ _-]?up")
 _NUMERIC_MARKER_RE = re.compile(
     r"\b(?:" + "|".join(_NUMERIC_MARKER_WORDS) + r")[ ._-]*(\d{1,3})\b",
     re.IGNORECASE)
@@ -274,7 +284,7 @@ class NoteView:
     __slots__ = ("id", "title", "path", "zone", "classification", "content_hash",
                  "body_sha", "meta", "prov", "valid_date", "commit_date",
                  "names", "stems", "marker", "retired", "has_predecessor", "body",
-                 "email_linkable", "email_claimed", "untrusted")
+                 "email_linkable", "email_claimed", "untrusted", "ext")
 
     def __init__(self, *, row: Mapping[str, Any], meta: Mapping[str, Any],
                  body: str) -> None:
@@ -318,6 +328,8 @@ class NoteView:
         # actually called the file).
         origin = nfc(meta.get("origin")).strip()
         origin_name = Path(origin).name if origin else ""
+        #: the archived original's format — what tells a format twin apart
+        self.ext = Path(origin_name).suffix.casefold() if origin_name else ""
         self.names = tuple(n for n in (origin_name, self.title, self.id) if n)
         self.stems = {s for s in (family_stem(n) for n in self.names) if s}
         # The SUBJECT is deliberately excluded from the identity stems and used

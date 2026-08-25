@@ -97,6 +97,7 @@ from .cos_runverify_checks import (DEGRADED, FAIL, INCONCLUSIVE, PASS,
                                    _HELD_REASONS,             # noqa: F401
                                    _HOST_HELD_REASONS,        # noqa: F401
                                    _LEDGER_DISPOSITIONS,      # noqa: F401
+                                   _MODEL_HELD_REASONS,       # noqa: F401
                                    _MARKER_DISPOSITION, _READ_IMPLYING_REASON,
                                    _category_dominance,
                                    _category_dominance_problem,
@@ -115,6 +116,7 @@ from .cos_runverify_identity import (_NON_IDENTITY_EVENTS,
                                      _missing_pre_problem_row,
                                      _post_mismatch_mutation_row,
                                      _recovery_problems, _refusal_problem_row,
+                                     _refusal_mislabel_problems,
                                      _undetected_problem_row)
 from .cos_runverify_chipdraw import (_bundle_at_least, _chip_draw_state,
                                       _chip_epoch0_verdict,
@@ -224,8 +226,9 @@ RETIRED_CONTROLS = {
 SCORED_CONTROLS = (
     "completion", "self_eval", "repairs", "metrics_row", "ledger_vocabulary",
     "category_stamp", "ingestion_ledger", "body_pass", "body_order",
-    "body_open_count", "open_instrumentation", "plan_binding", "corpus_join",
-    "candidate_stamps", "artifact_naming", "degrade_consistency", "contract",
+    "body_open_count", "aged_read_lane", "open_instrumentation",
+    "plan_binding", "corpus_join", "candidate_stamps", "artifact_naming",
+    "degrade_consistency", "contract",
 )
 
 
@@ -301,6 +304,7 @@ def verify_run(vault, run_id: str, *, now: _dt.datetime | None = None,
     checks.append(check_body_pass(run_id, rows))
     checks.append(check_body_order(run_id, rows))
     checks.append(check_body_open_count(run_id, rows, row))
+    checks.append(check_aged_read_lane(run_id, rows))
     acts = action_rows(vault, run_id)
     checks.append(check_open_instrumentation(vault, run_id, rows, acts))
     checks.append(check_plan_binding(vault, run_id))
@@ -391,6 +395,7 @@ from .cos_runverify_ledger import (  # noqa: E402,F401  (facade re-export)
 
 from .cos_runverify_join import (  # noqa: E402,F401  (facade re-export)
     check_artifact_naming as check_artifact_naming,
+    check_aged_read_lane as check_aged_read_lane,
     check_body_open_count as check_body_open_count,
     check_corpus_join as check_corpus_join,
 )

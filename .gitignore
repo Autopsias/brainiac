@@ -27,6 +27,11 @@ build/
 # the host-private base (off the Cowork mount, outside any checkout), so this is
 # belt-and-braces for an operator who points $BRAIN_INDEX_DIR inside a clone.
 cos-corpus/
+# DLV-03: the deliverables shelf (ADR-0010) resolves OUTSIDE vault/ by default —
+# `<vault>/../brain-deliverables`, which in THIS repo is the git root. Belt and
+# braces alongside the resolver's own git-root refusal: an untracked tree of
+# note copies here is one `git add -A` from a confidentiality incident.
+/brain-deliverables/
 # The derived SQLite index lives under app-data, never in-repo, but ignore any
 # stray local index/snapshot just in case.
 *.sqlite

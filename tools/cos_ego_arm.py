@@ -85,7 +85,24 @@ const t = tabs.find(x => String(x.url || '').includes({json.dumps(match)}));
 if (!t) {{ fence({{status: 'no-tab'}}); }}
 else {{
   await switchTab(t.targetId);
-  const ua = await js('navigator.userAgent');
+  // A WEDGED RENDERER CANNOT BE ARMED, ONLY RENAVIGATED. Run 185 (2026-08-24)
+  // drove 32 attachment downloads through this tab and left `Runtime.evaluate`
+  // timing out on every expression -- `navigator.userAgent` included, which is
+  // the FIRST thing below. Arming could not repair that and did not claim to:
+  // it returned `degraded`, and the night lost a frozen plan of 43/11/4.
+  //
+  // `gotoAndWait` does not need the dead document, so it is the repair, and it
+  // was MEASURED as one at 13:26 that day: the same tab that had refused every
+  // evaluate answered `navigator.userAgent` immediately after. It runs ONLY on
+  // the failure path -- a healthy tab is never renavigated, because a
+  // navigation costs an OWA reload and would be pure latency on every night.
+  let ua;
+  try {{ ua = await js('navigator.userAgent'); }}
+  catch (e) {{
+    cliLog('arm: evaluate is dead, renavigating to repair: ' + String(e).slice(0, 120));
+    await gotoAndWait(String(t.url));
+    ua = await js('navigator.userAgent');
+  }}
   await cdp('Emulation.setUserAgentOverride', {{
     userAgent: String(ua),
     userAgentMetadata: {{

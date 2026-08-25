@@ -93,6 +93,7 @@ from .invariant_shared import SAMPLE_CAP
 from .invariant_reachability import unreachable_gold
 from .invariant_ingest_guard import ingest_guard
 from .invariant_unsigned_notes import unsigned_notes
+from .invariant_deliverables import computers as _deliverable_computers, DELIVERABLE_METRICS
 
 # The metric names, in report order. Every consumer (state, health
 # record, report, alerting) iterates THIS tuple rather than re-listing them.
@@ -105,6 +106,7 @@ INVARIANT_METRICS = (
     "subfloor_families",
     "unreachable_gold",
     "unsigned_notes",
+    *DELIVERABLE_METRICS,   # DLV-05 — 9/10/11, see invariant_deliverables.py
 )
 
 # The state key this fold owns inside maintain-state.json. It is a plain
@@ -227,6 +229,7 @@ def corpus_invariants(conn: Any, vault: Path, *, cap: int = SAMPLE_CAP) -> dict[
         "subfloor_families": lambda: subfloor_families(conn, cap=cap),
         "unreachable_gold": lambda: unreachable_gold(vault),
         "unsigned_notes": lambda: unsigned_notes(conn, vault, cap=cap),
+        **_deliverable_computers(vault, cap=cap),
     }
     for name in INVARIANT_METRICS:
         try:

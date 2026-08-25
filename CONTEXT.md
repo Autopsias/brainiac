@@ -198,13 +198,32 @@ layer. It stays `type: decision` and gains a key. A new version of a deliverable
 *proposed* (CUR-01), so "latest" on this engine means "not explicitly retired", not "the
 newest of a family". The shelf reports that ambiguity rather than hiding it.
 
+**Producing surface** — the thing that created a note, recorded on it as the flat dotted
+key `provenance.produced_by`. Two exist: the **drop lane** (`vault/inbox/_deliverables/`,
+optionally one level of `<project>/` beneath it — the payload ingests exactly as any
+drop-zone file does and one brain-zone anchor note carrying the marker lands with it,
+together or not at all) and the **kernel note-writing skills** (`promote`,
+`save-conversation`, `kb-curator`). The stamp is unconditional and the marker is a
+judgment, which is the point of keeping them separate: *produced but unmarked* — stamped,
+no `deliverable: true` — is exactly the set an adoption metric needs, and it is
+unknowable if the two are one field. The drop lane also declares its own
+**classification**, read from a `.classification` file in the drop folder (most specific
+wins) and applied to the raw source and the anchor before the tier guard runs, defaulting
+to **MNPI**: the drop zone otherwise declares `Internal` for every ingest and the guard
+only ever RAISES against an existing higher-tier twin, so a unique synthesis would enter
+at `Internal` however sensitive it is — and the raw source is independently retrievable,
+so a high anchor over a low source protects nothing.
+
 **Shelf** — the generated, human-facing folder of latest-version-only COPIES, grouped by
 project. It lives **outside `vault/`** and is bound to one vault (default
 `<vault>/../brain-deliverables`, override `$BRAIN_DELIVERABLES_DIR`); that placement is
 load-bearing, not cosmetic: `scan_vault`
 (`notes.py:217`) is the only whole-vault walker, so a shelf outside the tree is excluded
 from retrieval **structurally** — no indexing rule is weakened, and walkers not yet written
-inherit the exclusion for free. The same argument AGENTS.md already makes for `cos-corpus`.
+inherit the exclusion for free. It is INT-03's placement principle: every `.md` under
+`vault/` is validated or excluded by an anchored top-level rule, never a third state, which
+is why the COS stores (approved queue, attachment anchors, `cos-corpus`) live under the
+index dir rather than earning another exclusion inside the tree.
 Inside `vault/` the copies would additionally be tarred by `backup.py`, carried by
 `brain project`, collide with the path-keyed audit chain, and — being byte-identical to
 their own notes — feed `auto_dedup_tier1`, which could retire the real note against its

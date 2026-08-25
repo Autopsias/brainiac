@@ -166,6 +166,10 @@ class _SearchTrace:
     family_collapse: dict[str, Any] = field(
         default_factory=lambda: {"enabled": True, "collapsed": 0, "declined": 0}
     )
+    # Candidates a supersede chain retired and this query dropped before
+    # fusion (empty under --include-retired). Rowids only; the egress gate
+    # never sees them, so nothing here needs redacting.
+    retired_hidden: list[int] = field(default_factory=list)
     _records: dict[int, dict[str, Any]] = field(default_factory=dict)
     _id_by_rowid: dict[int, str] = field(default_factory=dict)
 

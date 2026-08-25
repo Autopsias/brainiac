@@ -243,9 +243,27 @@ def _invariant_extra(name: str, metric: dict[str, Any], inv_module: Any) -> str:
                  f"family/families, floor {brief_mod._esc(metric.get('floor', '?'))}B")
     elif name == "unreachable_gold":
         extra = _unreachable_gold_extra(metric)
+    elif name in ("unshelved_deliverables", "stale_shelf_entries",
+                  "unanchored_deliverable_payloads"):
+        extra = _deliverable_extra(name, metric)
     if metric.get("error"):
         extra = f"ERROR: {brief_mod._esc(metric['error'])}"
     return extra
+
+
+def _deliverable_extra(name: str, metric: dict[str, Any]) -> str:
+    """DLV-05's three shelf counters. Each names its own DENOMINATOR: 0 of 0
+    on a vault that stopped marking anything reads identically to 0 of 40 on a
+    healthy one, and the whole reason the third counter exists is that the
+    first two cannot tell those apart."""
+    if name == "unanchored_deliverable_payloads":
+        return (f"of {brief_mod._esc(metric.get('payloads', '?'))} drop-lane "
+                f"payload(s) ingested through inbox/_deliverables/")
+    if name == "stale_shelf_entries":
+        return (f"of {brief_mod._esc(metric.get('ledger_entries', '?'))} file(s) "
+                f"the shelf ledger claims")
+    return (f"of {brief_mod._esc(metric.get('deliverables', '?'))} marked "
+            f"deliverable(s), {brief_mod._esc(metric.get('shelved', '?'))} on the shelf")
 
 
 def _render_invariant_rows(

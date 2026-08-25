@@ -92,11 +92,17 @@ def serve(vault: str | None = None) -> None:  # pragma: no cover - transport glu
         variants: list[str] | None = None,
         k: int = 10,
         max_tier: str = cls.HOST_MCP_DEFAULT_MAX_TIER,
+        include_retired: bool = False,
     ) -> dict:
-        """Search the vault with optional multilingual query variants."""
+        """Search the vault with optional multilingual query variants.
+
+        Versions retired by a supersede chain are hidden unless
+        ``include_retired`` — ask for them only for a 'previous version'
+        question."""
         return dispatch(
             "search",
-            {"query": query, "variants": variants or [], "k": k, "max_tier": max_tier},
+            {"query": query, "variants": variants or [], "k": k,
+             "max_tier": max_tier, "include_retired": include_retired},
             core=core,
         )
 

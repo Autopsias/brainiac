@@ -3,6 +3,7 @@
 from .cos import CosFoldsMixin
 from .context import MaintenanceRun
 from .daily import DailyFoldsMixin
+from .deliverables import DeliverablesFoldsMixin
 from .graph import GraphFoldsMixin
 from .golden import GoldenFoldsMixin
 from .intake import IntakeFoldsMixin
@@ -20,6 +21,7 @@ from .weekly import WeeklyFoldsMixin
 __all__ = [
     "CosFoldsMixin",
     "DailyFoldsMixin",
+    "DeliverablesFoldsMixin",
     "GraphFoldsMixin",
     "GoldenFoldsMixin",
     "IntakeFoldsMixin",

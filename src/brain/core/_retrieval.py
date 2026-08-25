@@ -23,17 +23,20 @@ class _CoreRetrievalMixin:
     def hybrid_search(
         self, query: str, k: int = 10, *, rerank: bool = False, rerank_top: int = 15,
         rrf_k: int = 60, rerank_gate: bool | None = None,
+        include_retired: bool = False,
     ) -> list[Hit]:
         """Fused RRF(k) BM25 + dense retrieval (RET-01), optional skippable
-        reranker (RET-02), RK-02 adaptive rerank gate. UNFILTERED — the CLI
-        applies the egress gate."""
+        reranker (RET-02), RK-02 adaptive rerank gate. UNFILTERED by tier —
+        the CLI applies the egress gate. Retired versions are hidden unless
+        ``include_retired``."""
         return self.index.hybrid_search(
             query, k=k, rerank=rerank, rerank_top=rerank_top, rrf_k=rrf_k,
-            rerank_gate=rerank_gate,
+            rerank_gate=rerank_gate, include_retired=include_retired,
         )
     def hybrid_search_with_trace(
         self, query: str, k: int = 10, *, rerank: bool = False,
         rerank_top: int = 15, rrf_k: int = 60, rerank_gate: bool | None = None,
+        include_retired: bool = False,
     ):
         """Production hybrid search plus opt-in, pre-egress S03 attribution.
 
@@ -42,7 +45,7 @@ class _CoreRetrievalMixin:
         """
         return self.index.hybrid_search_with_trace(
             query, k=k, rerank=rerank, rerank_top=rerank_top, rrf_k=rrf_k,
-            rerank_gate=rerank_gate,
+            rerank_gate=rerank_gate, include_retired=include_retired,
         )
     def diagnose_target(
         self, query: str, target_id: str, *, max_tier: str, trace: Any,
@@ -118,7 +121,12 @@ class _CoreRetrievalMixin:
         # must never come back empty just because the top-k was crowded
         # (measured on the live corpus: decisions at rank ~30 on a broad
         # decision-state query). Scanning deeper is one indexed query.
-        pool = [h.to_dict() for h in self.hybrid_search(query, k=max(k * 2, 60))]
+        # The sweep asks for retired hits ON PURPOSE: it excludes them itself
+        # and reports the count, which is the caller's signal that version
+        # noise existed and was handled (search hides them by default since
+        # 2026-08-25; this pool keeps its own accounting truthful).
+        pool = [h.to_dict() for h in self.hybrid_search(
+            query, k=max(k * 2, 60), include_retired=True)]
         live = [h for h in pool if h.get("is_latest_version") != "false"]
         retired_excluded = len(pool) - len(live)
         decisions = [h for h in live if h.get("type") == "decision"]

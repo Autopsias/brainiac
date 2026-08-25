@@ -5,7 +5,8 @@ import os
 from pathlib import Path
 
 from ._shared import (
-    Any, AuditChain, BrainIndex, CosFoldsMixin, DailyFoldsMixin, DraftDrainMixin,
+    Any, AuditChain, BrainIndex, CosFoldsMixin, DailyFoldsMixin,
+    DeliverablesFoldsMixin, DraftDrainMixin,
     GoldenFoldsMixin, GoldenOpsMixin, GraphFoldsMixin, GraphOpsMixin, Hit,
     IntakeFoldsMixin, InvariantFoldsMixin, KeyUnavailable, MaintenanceOrchestratorMixin,
     MULTI_GUARD_STRONG_RANK, MULTI_MAX_VARIANTS, MULTI_RRF_K,
@@ -48,6 +49,7 @@ class BrainCore(
     DraftDrainMixin,
     CosFoldsMixin,
     DailyFoldsMixin,
+    DeliverablesFoldsMixin,
     GoldenOpsMixin,
     GraphOpsMixin,
     GraphFoldsMixin,

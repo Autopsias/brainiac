@@ -167,6 +167,16 @@ with each finding.
 - **Classification is never inferred or auto-assigned.** A note that fails
   `lint-stale`'s frontmatter check gets reported, not silently patched with a
   guessed `classification:`.
+- **Every note this skill writes carries `provenance.produced_by: kb-curator`,
+  and `promote-lesson` asks the deliverable question once** (DLV-01,
+  AGENTS.md §4): if the note anchors a *finished output produced for an
+  audience* rather than a working note, add `deliverable: true` and
+  `project: <project-id>`. Never change `type:` to mark one — `type` is
+  single-valued and load-bearing (`type: decision` IS the decision layer), so a
+  produced decision keeps its type and gains the marker. The stamp is
+  automatic, the marker is the judgment; the gap between them is what makes
+  adoption measurable. `lint-stale` REPORTS an unmarked produced note like any
+  other finding — it never stamps one.
 
 ## Why the Bases checks retire instead of repointing
 

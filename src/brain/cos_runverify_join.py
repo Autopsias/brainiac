@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import datetime as _dt
 from typing import Any
 
 from . import cos
@@ -64,6 +65,91 @@ def check_body_open_count(run_id: str, rows: list[dict[str, Any]],
     return _row("body_open_count", PASS,
                 f"`body_open_actual: {claimed_n}` survives a recount of the "
                 f"run's own ingestion ledger ({len(rows)} row(s))",
+                reexecuted=True)
+
+
+
+#: (v7.3, AGED-01) The owner's floor, recounted a THIRD time. `0` is the live
+#: setting (2026-07-26, re-affirmed 2026-07-31: "if it's read it's game") and
+#: means NO AGE GATE — never coerce it back to a default by a falsy check.
+_AGED_READ_SIGNAL = "aged-read-no-action"
+_AGED_READ_MIN_DAYS = 0
+
+
+def _aged_read_bad(rows: list[dict[str, Any]], today) -> list[str]:
+    """Every aged-read archive the ledger's OWN facts refuse."""
+    bad = []
+    for r in rows:
+        if r.get("noise_signal") != _AGED_READ_SIGNAL or not r.get("auto_archive"):
+            continue
+        cid = str(r.get("conversation_id"))[:16]
+        if r.get("read_state") != "read":
+            bad.append(f"{cid}: read_state {r.get('read_state')!r}")
+        elif r.get("judged_tier") in ("P0", "P1"):
+            bad.append(f"{cid}: tier {r.get('judged_tier')}")
+        elif not r.get("body_opened"):
+            bad.append(f"{cid}: the body never opened, so the action screens "
+                       "could not run")
+        else:
+            rec = str(r.get("received") or "")[:10]
+            try:
+                age = (today - _dt.date.fromisoformat(rec)).days
+            except ValueError:
+                bad.append(f"{cid}: unparseable received {rec!r}")
+                continue
+            if age < _AGED_READ_MIN_DAYS:
+                bad.append(f"{cid}: {age} day(s) old")
+    return bad
+
+
+def check_aged_read_lane(run_id: str, rows: list[dict[str, Any]],
+                         *, today=None) -> dict[str, Any]:
+    """(c8) The aged-read lane archived only what the owner's ruling allows.
+
+    THE THIRD BELT, and it exists because the two before it see different
+    evidence and neither is this one. `cos_judge_rules._aged_read_refusal`
+    refuses the model's CLAIM off the batch context (the action screens live
+    there and nowhere else); `cos_mutate_plan._aged_read_refusal` re-screens
+    what the ledger row can prove before a single mutation is dispatched; this
+    recounts the same row facts AFTER the fact, off the artifact alone, which
+    is the only one of the three a later reader can reproduce.
+
+    IT ALSO STATES THE COUNT WHEN THE COUNT IS ZERO, and that half is not
+    decoration. The lane's proposing half is a model flag, so it can fail the
+    way run 136's did — the model set `auto_archive: true` on ONE of 57
+    eligible `noise` rows and the night read as delivered. A lane that fires on
+    a handful of an obviously larger population is a finding, and a verdict
+    line that says `0 aged-read archive(s)` is what makes it one instead of a
+    silence.
+    """
+    today = today or _dt.datetime.now(_dt.timezone.utc).date()
+    claimed = [r for r in rows if r.get("noise_signal") == _AGED_READ_SIGNAL]
+    archived = [r for r in claimed if r.get("auto_archive")]
+    bad = _aged_read_bad(rows, today)
+    if bad:
+        return _row("aged_read_lane", FAIL,
+                    f"{len(bad)} of {len(archived)} aged-read archive(s) the "
+                    "ledger's own facts refuse: " + "; ".join(bad[:4])
+                    + " — the owner's 2026-07-26 ruling archives mail he has "
+                      "READ, whose action screens actually RAN and found "
+                      "nothing owed (AGED-01)",
+                    reexecuted=True)
+    if not archived:
+        # AN ALL-CLEAR THAT EQUALS NO INPUT IS NOT AN ALL-CLEAR (DOCTRINE §8
+        # r3). Nothing rode the lane, so nothing was verified — say that,
+        # rather than reciting conditions over an empty set.
+        return _row("aged_read_lane", PASS,
+                    f"no row rode the aged-read lane tonight ({len(claimed)} "
+                    f"claim(s) over {len(rows)} ledger row(s)), so this "
+                    "control verified nothing — a persistently empty lane on a "
+                    "backlog that qualifies is itself the finding (AGED-01)",
+                    reexecuted=True)
+    return _row("aged_read_lane", PASS,
+                f"{len(archived)} aged-read archive(s) from {len(claimed)} "
+                f"claim(s) over {len(rows)} ledger row(s); every one is read, "
+                f"at or past the owner's floor of {_AGED_READ_MIN_DAYS} day(s), "
+                "above P1, and had its body opened so the action screens could "
+                "run",
                 reexecuted=True)
 
 

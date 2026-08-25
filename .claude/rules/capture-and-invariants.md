@@ -3,6 +3,10 @@ paths:
   - "vault/raw/**"
   - "vault/brain/**"
   - "src/brain/invariants.py"
+  - "src/brain/ingest/**"
+  - "src/brain/deliverables_sync.py"
+  - "src/brain/deliverables_shelf.py"
+  - "src/brain/folds/deliverables.py"
   - "tools/validate.py"
 ---
 
@@ -231,10 +235,17 @@ paths:
 
 **Supersession beyond `…-vN` is PROPOSED, never applied (CUR-01,
 2026-08-04).** Only two tiers auto-supersede: sha256-identical duplicates
-(DDP-01) and explicit `…-vN` id families (VER-01, rule 4 above). Everything
+(DDP-01) and explicit `…-vN` id families (VER-01, rule 4 above — which
+since 2026-08-25 also retires a RENDITION, `…-v52-preview`, under its
+primary `…-v52` instead of leaving two live copies of one version). Everything
 else the nightly deduces — a HOST-VERIFIED email family, or a **name family**
-(`Draft`/`Final`, `Rev N`, `vF`, `versão`/`versión N`, or an unmarked
-near-duplicate pair sharing one document name) — is staged as a propose-only
+(`Draft`/`Final`, `Rev N`, `vF`, `versão`/`versión N`, an unmarked
+near-duplicate pair sharing one document name, or — since 2026-08-25 — a
+**format twin**: one version in two original formats, `.pdf` beside `.md`,
+landed together so no date can order them; oriented by
+`versionlink_stages.FORMAT_PREFERENCE`, the curated `.md` stays and the render
+retires under it, and near-duplicate content is required because a deck's
+pdf and md measured shingle 0.53) — is staged as a propose-only
 candidate and rides the SAME single nightly owner question as the ingestion
 lane: one batch, default `reject all`, expiring unanswered after
 `$BRAIN_COS_PROPOSAL_TTL_DAYS` (14 days), and a decided pair is never
@@ -246,4 +257,64 @@ proposal is not a covered note). The per-run engagement line is
 `{"event": "version-link-run", …}` in
 `<vault>/.brain/cos/host/proposals/version-links/runs.jsonl` (host-only,
 gitignored, never indexed).
+
+**A final output produced FROM vault content is a deliverable, and it is
+captured like anything else (DLV-01/DLV-09, 2026-08-24).** When you finish a
+deck, a memo or an analysis for an audience, save it through the normal
+capture path — the payload goes to `raw/` via the ingest lane, and the
+`brain/` note that anchors it carries `deliverable: true` plus an optional
+`project:`. **Never by changing `type:`**: `type` is single-valued and
+load-bearing — `type: decision` IS the decision layer, selected by exact
+equality — so retagging a produced decision document would succeed at marking
+it and fail by removing it from the decision layer. It keeps its type and
+gains a key. Two surfaces produce one without hand-authored frontmatter, and
+both stamp `provenance.produced_by` on every note they write (automatic, and
+independent of the marker, so "produced but unmarked" is a countable set): the
+**drop lane** — a file in `vault/inbox/_deliverables/`, or in one level of
+`_deliverables/<project>/` beneath it, is ingested exactly as today AND gets
+one brain-zone anchor through the audited write path, payload and anchor
+together or not at all; and the **kernel note-writing skills** (`promote`,
+`save-conversation`, `kb-curator`), which now ask the question once before
+drafting frontmatter. The drop lane takes its own classification from a
+`.classification` file in the drop folder and applies it to BOTH the raw
+source and the anchor **before** the tier guard runs, defaulting to **MNPI**:
+the drop zone otherwise declares `Internal` for every ingest and the guard
+only ever RAISES against an existing higher-tier twin, so a unique synthesis
+would enter at `Internal` however sensitive it is — and its raw source is
+independently retrievable, so a high anchor over a low source protects
+nothing. A new version is a **supersede**, never an edit (§2's identity test;
+the shelf shows the latest member of a chain, so editing in place erases the
+old version instead of retiring it). **The shelf itself is a generated view
+OUTSIDE the vault tree** — default `<vault>/../brain-deliverables`, override
+`$BRAIN_DELIVERABLES_DIR` — so it is kept out of retrieval *structurally*: no
+indexing rule was weakened to get it, and whole-vault walkers not yet written
+inherit the exclusion for free. That is INT-03's own placement principle —
+every `.md` under `vault/` is validated or excluded by an anchored top-level
+rule, never a third state, which is why the COS stores (`cos-corpus` among
+them) live under the index dir instead of earning another exclusion inside the
+tree. See [ADR 0010](../../docs/adr/0010-deliverables-shelf-outside-the-vault.md).
+
+**The shelf is MAINTAINED, and it is never hand-edited (DLV-04, 2026-08-24).**
+A fold on every `brain-nightly` firing keeps `<shelf>/<project-slug>/` equal to
+the census: one real copy per marked, non-retired deliverable — the
+`source:`-anchored archived original when there is one, else the note's own
+`.md` — swapped within the hour when a new version lands. Copies, never
+symlinks (those break under Windows, cloud sync and the VirtioFS mount). The
+folder is owner-only (`0700`/`0600`, verified every run, and the bytes are
+copied without the source's mode), and its **effective tier is the HIGHER of
+the note's and its payload's** — an `Internal` note anchoring an MNPI original
+puts MNPI bytes on the shelf. **Nothing there is ever deleted:** a displaced
+copy MOVES to `<shelf>/_previous/`, and a file the fold did not write is
+reported and left alone. **What may be moved is decided by a HOST-PRIVATE
+ledger**, beside the index dir with the approved queue and the writer lock —
+the `shelf-manifest.json` inside the shelf is an advisory view that nothing
+reads back, because anything able to edit a folder can edit a manifest inside
+it. Ask what is on the shelf with **`brain shelf census --json`** — the one
+enumeration the fold, the metrics and the acceptance checks all share. It reads
+frontmatter, not the index: `brain bases-query` cannot answer this question at
+all (its column allowlist carries no `deliverable` key) and truncates at k=50,
+so a check built on it would agree with a fold that had silently stopped at
+fifty. Read `is_latest_version` literally while you are there — on this engine
+"latest" means *not explicitly retired*, not *the newest of a family* (§2), so
+two hand-saved versions of one deck are both current and both reach the shelf.
 

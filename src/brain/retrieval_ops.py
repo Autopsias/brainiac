@@ -155,6 +155,7 @@ def _collect_variant_hits(
     rerank_top: int,
     rrf_k: int,
     rerank_gate: bool | None,
+    include_retired: bool = False,
 ) -> tuple[dict[str, list[Any]], Hit | None]:
     """Run each prepared variant and accumulate outer-RRF contributions."""
     fused: dict[str, list[Any]] = {}
@@ -168,6 +169,7 @@ def _collect_variant_hits(
             rerank_top=rerank_top,
             rrf_k=rrf_k,
             rerank_gate=rerank_gate,
+            include_retired=include_retired,
         )
         plan.trace["per_variant"].append(
             {
@@ -298,6 +300,7 @@ class RetrievalOpsMixin:
         max_variants: int | None = None,
         guard: bool | None = None,
         return_trace: bool = False,
+        include_retired: bool = False,
     ) -> list[Hit] | tuple[list[Hit], dict[str, Any]]:
         """Fuse guarded query variants through RET-05's outer RRF layer.
 
@@ -333,11 +336,13 @@ class RetrievalOpsMixin:
                     rerank_top=rerank_top,
                     rrf_k=rrf_k,
                     rerank_gate=rerank_gate,
+                    include_retired=include_retired,
                 )
             )
         fused, original_top = _collect_variant_hits(
             self,
             plan,
+            include_retired=include_retired,
             rerank=rerank,
             rerank_top=rerank_top,
             rrf_k=rrf_k,

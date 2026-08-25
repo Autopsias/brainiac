@@ -349,6 +349,41 @@ def read_nofollow(target: Path) -> tuple[str, tuple[int, int]]:
     return b"".join(chunks).decode("utf-8"), (info.st_dev, info.st_ino)
 
 
+def _vault_relative(vault: Path, rel_path: str) -> str:
+    """Vault-relative form of ``rel_path``, which a caller may hand over absolute.
+
+    The index stores ABSOLUTE paths, so a caller that takes its path from an
+    index row (``remediation_answers.accept_pair``) passed one straight through
+    and nothing complained: ``vault / <abs>`` IS ``<abs>``, so the write landed
+    on the right file. Two things then broke silently.
+
+    The audit chain is keyed on the path STRING, so a raise recorded under an
+    absolute key is a key ``verify-audit --check-content`` never matches, and a
+    correctly signed note reads back as unexplained content drift (measured
+    2026-08-24 on the live reference vault's chain: 3 of 4594 entries
+    absolute, all three cross-tier raises, two reported as drift). And the
+    redirect
+    check below degrades: ``vault.resolve() / <abs>`` is that same absolute
+    path, so a resolved path is compared against an UNRESOLVED one and a
+    symlinked parent directory stops being caught.
+
+    ``rel_path`` itself is never resolved here — resolving a symlinked leaf
+    would rewrite it to the link's target and hand the redirect check a path
+    that passes by construction. Only the VAULT root is resolved, and only as
+    a second attempt, for a vault reached through a symlink."""
+    p = Path(rel_path)
+    if not p.is_absolute():
+        return rel_path
+    for base in (vault, vault.resolve()):
+        try:
+            return str(p.relative_to(base))
+        except ValueError:
+            continue
+    raise ReversibilityError(
+        f"{rel_path}: an absolute path outside the vault is never a repair "
+        "target")
+
+
 def audited_write(
     core: Any, rel_path: str, new_text: str, reason: str, *, write_class: str,
 ) -> dict[str, Any]:
@@ -367,6 +402,7 @@ def audited_write(
     if write_class not in EXPECTED_WRITE_CLASSES:
         raise ReversibilityError(f"{rel_path}: unknown write class {write_class!r}")
     vault = Path(core.vault)
+    rel_path = _vault_relative(vault, rel_path)
     target = vault / rel_path
     if not target.is_file():
         raise ReversibilityError(

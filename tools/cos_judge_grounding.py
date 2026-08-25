@@ -41,6 +41,32 @@ def load_categories(path: Path | None) -> dict[str, str]:
 _REFUSED_HELD_REASON = {"shell": "navigation-refused-row-unreachable",
                         "error": "no-body-access-on-lane"}
 
+#: …AND THE SHELL WORD DEPENDS ON THE LANE THAT READ IT (v7.2).
+#: `navigation-refused-row-unreachable` is defined by four PAGE facts —
+#: `open_method: "navigate"`, no produced id, `url_has_id: false`, a
+#: shell-length body (`cos_runverify._is_refusal`) — and only a NAVIGATING open
+#: produces them. The v7 read lane is `read_lane: "rest"`
+#: (`cos_driver_transport.READ_LANE`): bodies come off a `GetItem` call, the tab
+#: never moves, and `open_method`/`url_has_id` appear nowhere in the driver, so
+#: they have no producer and never can. Writing the navigation word from a REST
+#: read is a MISLABEL, and the verifier is right to say so — measured run 178,
+#: the first production use of that word in 14,874 ledger rows, which scored the
+#: night INVALID and quarantined 55 ingestion candidates.
+#: A REST read that comes back at or under the 42-character shell is its own
+#: fact and gets its own word.
+_SHELL_HELD_REASON_BY_LANE = {"rest": "rest-read-returned-shell"}
+
+
+def shell_held_reason(row: dict[str, Any]) -> str:
+    """Which shell word does THIS row's read lane earn?
+
+    Falls back to the navigation word for any lane not named above, so a
+    genuinely navigating lane keeps the word its four page facts define.
+    """
+    lane = str(row.get("read_lane") or "")
+    return _SHELL_HELD_REASON_BY_LANE.get(
+        lane, "navigation-refused-row-unreachable")
+
 
 def mechanical_disposition(row: dict[str, Any]) -> dict[str, Any] | None:
     """What the DRIVER's own facts already settle — never a judgment.
@@ -69,8 +95,11 @@ def mechanical_disposition(row: dict[str, Any]) -> dict[str, Any] | None:
     # behind opened `other` rows and scored the night INVALID. The driver
     # records WHICH refusal it was (`cos_driver_accounting.open_outcome`); both
     # words are already in `cos_runverify_checks._HELD_REASONS`.
-    held = _REFUSED_HELD_REASON.get(row.get("body_open_outcome"))
+    outcome = row.get("body_open_outcome")
+    held = _REFUSED_HELD_REASON.get(outcome)
     if held:
+        if outcome == "shell":
+            held = shell_held_reason(row)
         return {"disposition": "held", "held_reason": held,
                 "dedup_check": "not-run"}
     return {"disposition": "held", "held_reason": "over-cap", "dedup_check": "not-run"}

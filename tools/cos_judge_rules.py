@@ -42,8 +42,10 @@ SUBSTANCE_KINDS = {"decision", "commitment", "counterparty-position", "key-numbe
 #: below, host code, shipped in this same edit (the run-135 lesson: a word with
 #: no producer is a coin-flip night).
 READ_NOISE_SIGNAL = "read-noise-bucket"
+#: (v7.3, AGED-01) The aged-read lane is its own module (the 500-LOC bound).
+from cos_judge_rules_aged import AGED_READ_SIGNAL, aged_read_refusal  # noqa: E402
 NOISE_SIGNALS = {"recurring-automated-sender", "automated-mail-marker", "none",
-                 READ_NOISE_SIGNAL}
+                 READ_NOISE_SIGNAL, AGED_READ_SIGNAL}
 RESOLUTIONS = {"owner-reply-latest": "owner_reply_is_latest",
                "deadline-passed": "deadline_passed",
                "approval-granted": "approval_granted",
@@ -73,8 +75,6 @@ FIREWALL_CLOSE = "⟦END UNTRUSTED DATA⟧"
 BRIEF_ORDER = ["Banner", "TL;DR", "TODAY", "DRAFTS READY", "REQUIRED ACTIONS",
                "READ", "BATTLECARDS", "LATE + RADAR", "OVERNIGHT LEDGER",
                "TOMORROW", "INBOX-ZERO METRICS", "CALIBRATION"]
-
-
 
 
 class JudgeStop(Exception):
@@ -235,7 +235,12 @@ def _r_evidence(v, ctx):
 def _r_floor(v, ctx):
     if not v.get("auto_archive"):
         return None
-    if v.get("bucket") != "noise":
+    # (v7.3, AGED-01) `read` is legal for the AGED-READ lane and nothing else:
+    # the ruling is about mail he HAS read, so forcing it through `noise` would
+    # make the verdict lie about the thread — and `noise` is what the drift
+    # monitor watches. The lane's own conditions live in `cos_judge_rules_aged`.
+    aged = v.get("noise_signal") == AGED_READ_SIGNAL
+    if v.get("bucket") not in ({"noise", "read"} if aged else {"noise"}):
         return f"auto-archive claimed on a `{v.get('bucket')}` verdict"
     if v.get("tier") in ("P0", "P1"):
         return ("a P0/P1 `noise` verdict is NEVER auto-archived, at any "
@@ -263,6 +268,8 @@ def _r_signal(v, ctx):
                     f"reports as {_g(ctx, 'read_state') or 'unknown'} — the "
                     "UNREAD SHIELD stands under every lane (DOCTRINE §2.2/§4.2)")
         return None
+    if sig == AGED_READ_SIGNAL:
+        return aged_read_refusal(v, ctx)
     if sig == "recurring-automated-sender":
         if int(_g(ctx, "sender_rows_this_run", 0)) < 3 \
                 and not _g(ctx, "recurring_prior_night"):
@@ -477,7 +484,6 @@ def _r_substance(v, ctx):
         return (f"substance_kind {v.get('substance_kind')!r} is not one of the "
                 "four shapes rule 2 stages")
     return None
-
 
 
 def _age_days(received: Any) -> int:

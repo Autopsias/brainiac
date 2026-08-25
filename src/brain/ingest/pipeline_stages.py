@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from . import deliverables as DLV
 from . import handlers as H
 from . import tierguard as TG
 from .handlers.base import NO_TEXT_MARKER
@@ -57,6 +58,12 @@ class ClaimRecord:
     depth: int = 0
     budget: dict[str, int] = field(default_factory=lambda: {"bytes": 0, "items": 0})
     parent: str | None = None
+    # DLV-09 — set only for a drop under `inbox/_deliverables/`. The declared
+    # tier governs ADMISSION and is applied before the guard runs; see
+    # `brain.ingest.deliverables`.
+    deliverable: bool = False
+    project: str | None = None
+    requested_classification: str = ""
 
     def append(self, bucket: str, entry: dict[str, Any]) -> None:
         if self.parent is not None:
@@ -238,6 +245,10 @@ def extraction_handler_stage(record: ClaimRecord) -> ClaimRecord:
     retry_of: str | None = None
     if record.original_sha in record.drain.manifest:
         existing_id = record.drain.manifest[record.original_sha]
+        if record.deliverable:
+            refused = DLV.refuse_low_twin(record, existing_id)
+            if refused is not None:
+                return refused
         if not prior_extraction_failed(record.drain.vault, existing_id):
             return record_duplicate(record, existing_id)
         # The prior ingest failed to read this file. Let it through and see
@@ -337,6 +348,8 @@ def tierguard_stage(record: ClaimRecord) -> ClaimRecord:
         hashlib.sha256(record.linked_markdown.encode("utf-8")).hexdigest(),
         provenance,
     )
+    if record.deliverable:
+        DLV.declare_tier(record)
     record.verdict = record.drain.guard.verdict(
         record.linked_markdown,
         str(record.meta["classification"]),
@@ -344,6 +357,8 @@ def tierguard_stage(record: ClaimRecord) -> ClaimRecord:
     record.meta["classification"] = record.verdict.tier
     record.meta.update(record.verdict.frontmatter())
     record.classification = str(record.meta["classification"])
+    if record.deliverable:
+        DLV.open_journal(record)
     return record
 
 
@@ -438,6 +453,8 @@ def signed_note_write_stage(record: ClaimRecord) -> ClaimRecord:
     }
     if record.verdict.status != TG.CLEAR:
         entry["guard_reason"] = record.verdict.reason
+    if record.deliverable:
+        DLV.anchor_for(record, entry)
     record.append("processed", entry)
     _expand_nested(record)
     record.terminal = True

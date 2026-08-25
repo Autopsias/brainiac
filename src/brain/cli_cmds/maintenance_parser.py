@@ -138,7 +138,29 @@ def _add_graphify(sub) -> None:
     add_common(sp)
 
 
+def _add_shelf(sub) -> None:
+    sp = sub.add_parser(
+        "shelf",
+        help="deliverables shelf (host): inspect what the nightly fold materializes",
+        description=(
+            "The deliverables shelf lives OUTSIDE vault/ and is maintained by a "
+            "fold on every brain-nightly firing. `census` is the ONE enumeration "
+            "of marked, non-retired deliverables — the fold, the metrics and the "
+            "acceptance check all read it. NOTE: `brain bases-query` cannot "
+            "answer this question at all: its column allowlist does not carry "
+            "`deliverable`, and it truncates at k=50."
+        ),
+    )
+    shelf_sub = sp.add_subparsers(dest="shelf_cmd", required=True)
+    census = shelf_sub.add_parser(
+        "census",
+        help="every deliverable the shelf would show, read from frontmatter (never the capped index)",
+    )
+    add_common(census)
+
+
 def add_parser(sub) -> None:
+    _add_shelf(sub)
     _add_check(sub)
     _add_health(sub)
     _add_curate(sub)

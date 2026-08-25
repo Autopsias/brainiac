@@ -7,6 +7,26 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.28] — 2026-08-25
+### Changed
+- `search` / `hybrid-search` / the MCP `search` verb HIDE versions a supersede
+  chain retired (`is_latest_version: false`) by default; `--include-retired`
+  (CLI) / `include_retired` (MCP) brings them back. Measured on the reference
+  vault before the change: 522 of 2003 sources retired, 29% of top-10 slots
+  going to old versions, a retired version at rank 1 on 5 of 15 queries.
+  `search --explain` traces the dropped rowids as `retired_hidden`.
+- The nightly VER-01 fold reads a RENDITION marker (`…-v52-preview`) and
+  retires the rendition under its primary (`…-v52`) instead of leaving a second
+  live copy per version; the version-link lane strips the same marker from
+  its family stem.
+- The version-link lane proposes FORMAT TWINS (owner ruling A, second
+  part): two live notes with one name stem, different original formats
+  (`.pdf` beside `.md`), no advancing version marker and near-duplicate
+  content — a pair the "strictly newer date" rule could never order because
+  both landed the same day. Oriented by `versionlink_stages.FORMAT_PREFERENCE` (the curated
+  `.md` extraction stays, the `.pdf` retires under it), propose-only, one
+  owner question per batch. Rules version `vl-3`.
+
 ## [0.20.27] — 2026-08-23
 ### Added
 - **The attachment lane actually ingests.** A COS night now fetches the

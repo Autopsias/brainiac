@@ -15,6 +15,10 @@ from cos_mutate_policy import CHIP_RANK  # noqa: E402
 from cos_reconcile_metrics import MUTATION_VERBS  # noqa: E402
 
 
+#: (v7.3, AGED-01) Belt 2 lives in its own module (the 500-LOC bound).
+from cos_mutate_plan_aged import aged_read_refusal  # noqa: E402
+
+
 def screen_ledger_rows(rows: list[dict[str, Any]], exclude: Callable,
                        *, short: Callable, chip_for: Callable,
                        managed_chips: tuple[str, ...]) -> list[dict[str, Any]]:
@@ -31,6 +35,8 @@ def screen_ledger_rows(rows: list[dict[str, Any]], exclude: Callable,
                                         "from auto-archive under every lane")
             elif row.get("judgment_pending"):
                 exclude(cid, "archive", "the row carries no verdict")
+            elif aged_read_refusal(row):
+                exclude(cid, "archive", aged_read_refusal(row))
             else:
                 planned.append({
                     "verb": "archive", "conversation_id": cid,
@@ -57,6 +63,18 @@ def screen_ledger_rows(rows: list[dict[str, Any]], exclude: Callable,
                                            "chip; only the four may be written")
             elif row.get("judgment_pending"):
                 exclude(cid, "categorize", "the row carries no verdict")
+            elif row.get("read_state") != "read":
+                # THE SHIELD IS NOT ARCHIVE-ONLY. The archive branch above says
+                # an unread row is "untouchable by any lane", and the plan's own
+                # census rule says an unread row can be neither archived NOR
+                # categorized — but this branch never read `read_state`, so the
+                # shield only ever covered half of what it claimed. Run188
+                # (2026-08-24) chipped one unread thread `P3 · Read`; e-check E2
+                # caught it after the mutation had already landed on the
+                # mailbox. A post-apply check is a report, not a shield.
+                exclude(cid, "categorize", "read_state is not `read` — an "
+                                           "unread row is untouchable by any "
+                                           "lane, the chip lane included")
             elif row.get("tier"):
                 exclude(cid, "categorize",
                         f"the thread already carries a {row.get('tier')} chip and "

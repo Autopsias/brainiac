@@ -225,6 +225,10 @@ def _signal_phrases(signals: dict[str, Any]) -> list[str]:
                  else (lambda r: r))
         out.append(f"version marker {label(adv.get('old'))} -> "
                    f"{label(adv.get('new'))}")
+    rend = signals.get("rendition")
+    if isinstance(rend, dict):
+        out.append(f"the same version in two formats — the {rend.get('new_format')} "
+                   f"copy stays, the {rend.get('old_format')} copy retires under it")
     dup = signals.get("near_duplicate")
     if isinstance(dup, dict):
         out.append(f"content {float(dup.get('score', 0)) * 100:.1f}% similar")

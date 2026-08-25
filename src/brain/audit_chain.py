@@ -37,6 +37,18 @@ class AuditChain:
                 return s
         return None
 
+    def head(self) -> str:
+        """The value the NEXT entry's ``prev_hash`` will carry — i.e. the chain
+        tip. ``NULL_PREV_HASH`` on an empty or absent log.
+
+        Exists so a caller can bind a decision to a chain STATE and refuse if
+        the chain moved between deciding and writing (DLV-11's batch-level
+        expected head). It is deliberately the same expression ``append`` uses
+        one line below, rather than a second notion of "where the chain is".
+        """
+        prev = self._last_entry()
+        return _sha256(prev) if prev else NULL_PREV_HASH
+
     def append(self, verb: str, path: str, reason: str, ts: str | None = None,
                content_sha256: str | None = None) -> dict:
         """Sign + append one entry. Raises KeyUnavailable (fail closed) if no key.
@@ -155,7 +167,11 @@ class AuditChain:
             path = obj.get("path")
             if not isinstance(path, str):
                 continue
-            if verb in ("write", "ingest") and isinstance(csha, str):
+            # `bind` records a content hash for a path an older entry wrote
+            # WITHOUT one, on the evidence of the note's own capture-time
+            # `sha256:` field. It is NOT a write and never claims to be: the
+            # bytes are unchanged, only the chain's knowledge of them is new.
+            if verb in ("write", "ingest", "bind") and isinstance(csha, str):
                 latest[path] = csha
             elif verb in ("delete", "write_failed"):
                 latest.pop(path, None)
@@ -174,6 +190,43 @@ class AuditChain:
             rec["disposition"], rec["disposition_reason"] = _drift_disposition_label(
                 rec, dispositions)
         return drift
+
+    def content_coverage(self) -> dict:
+        """``{"paths": n, "covered": n, "uncovered": n}`` — how much of the
+        chain ``content_drift`` can actually speak for.
+
+        A path whose write entries never carried a ``content_sha256`` is
+        skipped by ``content_drift`` entirely: the chain never bound its bytes,
+        so it cannot drift, and an edit to it is undetectable. That is a
+        BLIND SPOT, not a clean bill, and the drift row must say so — on the
+        live reference vault 1637 of 3215 live paths (50.9%) were unbound,
+        which is why only one side of a hand-edited PAIR was ever reported
+        (2026-08-24 investigation of the F10 repair script).
+
+        Deliberately no backfill: signing today's bytes as the baseline would
+        bless every edit already made to those paths."""
+        live: set[str] = set()
+        covered: set[str] = set()
+        for raw in self._lines():
+            s = raw.strip()
+            if not self._is_entry(s):
+                continue
+            try:
+                obj = json.loads(s)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            path, verb = obj.get("path"), obj.get("verb")
+            if not isinstance(path, str):
+                continue
+            if verb in ("write", "ingest", "bind"):
+                live.add(path)
+                if isinstance(obj.get("content_sha256"), str):
+                    covered.add(path)
+            elif verb in ("delete", "write_failed"):
+                live.discard(path)
+                covered.discard(path)
+        return {"paths": len(live), "covered": len(covered),
+                "uncovered": len(live) - len(covered)}
 
 
 # --------------------------------------------------------------------------

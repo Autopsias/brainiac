@@ -344,7 +344,37 @@ def _run_graphify(args, ctx) -> int:
     return 0
 
 
+def _run_shelf(args, ctx) -> int:
+    """`brain shelf census` — the single public deliverable enumeration.
+
+    Reads frontmatter through `deliverables_sync.census`, NOT the index: the
+    capped `bases-query` surface truncates at k=50 and cannot filter on the
+    `deliverable` key, so an acceptance check built on it would falsely pass.
+    """
+    from .. import deliverables_sync
+
+    result = deliverables_sync.census(ctx.core.vault)
+    surfaced, report = _filter_dicts(result["entries"], args.max_tier, key="tier")
+    if args.json:
+        _emit({**result, "entries": surfaced, "egress": report}, True)
+    else:
+        lines = [f"{e['project_slug']}/  {e['note_id']}  [{e['tier']}]  "
+                 f"{e['payload_kind']}" for e in surfaced]
+        # Say the surfaced count AND the total. A bare total over an empty list
+        # reads as "the census is broken" rather than "your cap hid them", which
+        # is the exact misread the elevation hint exists to prevent.
+        head = (f"deliverables census: {len(surfaced)} of {result['count']} "
+                f"marked (max-tier={args.max_tier})")
+        if report.get("withheld"):
+            lines.append(f"-- {report['withheld']} withheld")
+        if report.get("hint"):
+            lines.append(report["hint"])
+        _emit(None, False, "\n".join([head, *lines]))
+    return 0
+
+
 _HANDLERS = {
+    "shelf": _run_shelf,
     "check": _run_check,
     "health": _run_health,
     "curate": _run_curate,

@@ -151,6 +151,15 @@ QUESTION_SHAPES: dict[str, tuple[tuple[str, ...], str]] = {
     # question rather than promising it stays open (the metric itself keeps
     # trending regardless of the answer, and a genuinely repeating regression
     # raises again on its own next week-over-week comparison).
+    # DLV-10: a retired deliverable copy past its window that may be the only
+    # one left. The fold NEVER deletes on a schedule, so both options are
+    # things the owner does — the default is what already happens, and it
+    # SETTLES the question rather than promising the finding stays open (the
+    # registry therefore leaves `keeps_blocking` False).
+    "shelf:sole-copy": (
+        ("keep the retained copy on the deliverables shelf",
+         "delete it by hand once another copy is confirmed"),
+        "keep the retained copy on the deliverables shelf"),
     "trend:remediation_cost": (
         ("investigate what the model-backed branch spent on",
          "acknowledge the spend as expected"),

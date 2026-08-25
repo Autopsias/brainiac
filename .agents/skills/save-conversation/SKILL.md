@@ -133,6 +133,24 @@ There is no `tags:` taxonomy beyond the optional, emergent field AGENTS.md
 §2 allows — skip it unless something obvious surfaces, and never invent a
 controlled vocabulary.
 
+**Is this a deliverable? (DLV-01, AGENTS.md §4)** Ask it here, once: does this
+note anchor a *finished output produced for an audience* — a deck, a memo, an
+analysis someone receives — rather than a working note or captured material?
+If yes, add two keys:
+
+```yaml
+deliverable: true                          # orthogonal to `type:`
+project: <project-id>                      # bare id or [[wikilink]]
+provenance.produced_by: save-conversation  # always stamped, deliverable or not
+```
+
+Never change `type:` to mark a deliverable — `type` is single-valued and
+load-bearing (`type: decision` IS the decision layer), so a produced decision
+keeps its type and gains the marker. Stamp `provenance.produced_by` on every
+note this skill writes: the stamp is automatic, the marker is the judgment, and
+"produced but unmarked" is exactly the gap worth seeing. A new version of a
+deliverable is a **supersede**, never an edit.
+
 ---
 
 ## Phase 5 — ask (single structured question)

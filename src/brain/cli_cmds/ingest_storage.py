@@ -109,6 +109,24 @@ def _run_ingest_transcript(args, ctx) -> int:
 def _run_write(args, ctx) -> int:
     core = ctx.core
     content = args.content if args.content is not None else sys.stdin.read()
+    if getattr(args, "untrusted_author", False):
+        # Signing attests that these are the bytes; it does not attest that the
+        # author was trusted. Everything the audited draft path checks before it
+        # signs, this checks too — one implementation, in draft_drain.
+        from ..draft_drain import UntrustedAuthorRefusal, sanitize_untrusted_note
+
+        try:
+            content = sanitize_untrusted_note(
+                content, path=core.vault / args.relpath, vault=core.vault
+            )
+        except UntrustedAuthorRefusal as exc:
+            _emit(
+                {"error": "UntrustedAuthorRefusal", "detail": str(exc)}
+                if args.json
+                else f"write refused (untrusted author): {exc}",
+                args.json,
+            )
+            return 3
     try:
         res = core.write_note(args.relpath, content, reason=args.reason)
     except Exception as exc:  # KeyUnavailable / ValueError -> fail closed

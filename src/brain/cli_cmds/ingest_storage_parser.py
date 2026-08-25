@@ -51,6 +51,15 @@ def _add_write(sub) -> None:
     sp.add_argument("relpath")
     sp.add_argument("--content", default=None, help="content (default: read stdin)")
     sp.add_argument("--reason", default="")
+    sp.add_argument(
+        "--untrusted-author",
+        action="store_true",
+        help=(
+            "the note text was written by an untrusted leg (a confined model "
+            "session, a VM): apply the draft-drain's controls — safe id, no "
+            "forged host-only provenance, trust marker — before signing"
+        ),
+    )
     sp.add_argument("--json", action="store_true")
 
 

@@ -212,6 +212,13 @@ _EXACT: dict[str, Remedy] = {
     "update:available": Remedy(AUTO, "update_retry", 3, "process"),
     "update:failed": Remedy(AUTO, "update_retry", 3, "process"),
     "update:applied": Remedy(LOG, note="good news is not an alert"),
+    "update:attestation-held": Remedy(
+        BANNER,
+        note="A-03: the newer version is not attested to this project's own\n"
+             "CI publisher, so the UNATTENDED upgrade refused it. No branch can\n"
+             "remedy this — installing anyway is the thing being refused — and it\n"
+             "is not an owner QUESTION either: the owner answers it by running\n"
+             "`brain update` himself, which runs the whole chain end to end"),
     "staging:stale": Remedy(
         AUTO, "update_retry", 3, "process",
         note="a stale Cowork staging is healed by the same `brain update` "

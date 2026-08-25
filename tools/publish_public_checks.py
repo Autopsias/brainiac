@@ -147,20 +147,49 @@ def _load_denylist_terms(denylist: Path) -> list[str]:
     return terms
 
 
+def _scan_once(target: Path, pat: str) -> int:
+    """One whole-word, case-insensitive fixed-string pass; returns hit count.
+    Ripgrep preferred: BSD grep effectively hangs on multi-MB single-line
+    JSON."""
+    if shutil.which("rg"):
+        proc = _pp._run(["rg", "-Foiw", "--hidden", "--no-ignore", "-f", pat, str(target)])
+    else:
+        proc = _pp._run(["grep", "-rFoiwI", "-f", pat, str(target)])
+    return len([ln for ln in (proc.stdout or "").splitlines() if ln.strip()])
+
+
 def _scan_tree(target: Path, terms: list[str]) -> int:
-    """Whole-word, case-insensitive fixed-string scan; returns hit count.
-    Same rg/grep split as tools/publish_release.py (ripgrep preferred: BSD
-    grep effectively hangs on multi-MB single-line JSON)."""
+    """Direct hits PLUS hits that only appear once identifiers are split.
+
+    Whole-word matching is the owner's ruling (2026-08-17) and it stays: ordinary
+    English words like "artificial" and "tender" were firing as substrings and
+    drowning the gate, and 267 terms remain precisely because that was fixed.
+
+    But a word character INCLUDES the underscore, so `-w` treats
+    `sensitive_project` as one word and never matches `sensitive` inside it
+    (2026-08-25 Codex round). Slugs, filenames and generated symbols are exactly
+    where a client name leaks, so a gate blind to them is not a gate. The second
+    pass runs the SAME whole-word matcher over a boundary-split mirror of the
+    tree, which is what `tools/publish_release.py` has done since 2026-08-21 —
+    reused here rather than reimplemented, so the two scanners cannot disagree
+    about what "contaminated" means. That is the whole reason this gap existed:
+    the fix landed in one scanner and this pipeline calls the other.
+
+    Ordinary English is unaffected — splitting on identifier boundaries does not
+    make `tender` appear inside `tenderness`.
+    """
+    from tools.publish_release import _write_split_mirror
+
     with tempfile.NamedTemporaryFile("w", suffix=".denylist", delete=False,
                                      encoding="utf-8") as tf:
         tf.write("\n".join(terms) + "\n")
         pat = tf.name
     try:
-        if shutil.which("rg"):
-            proc = _pp._run(["rg", "-Foiw", "--hidden", "--no-ignore", "-f", pat, str(target)])
-        else:
-            proc = _pp._run(["grep", "-rFoiwI", "-f", pat, str(target)])
-        return len([ln for ln in (proc.stdout or "").splitlines() if ln.strip()])
+        direct = _scan_once(target, pat)
+        with tempfile.TemporaryDirectory(prefix="contamination-split-") as tmp:
+            mirror = _write_split_mirror(target, Path(tmp))
+            split_total = _scan_once(mirror, pat)
+        return direct + max(0, split_total - direct)
     finally:
         Path(pat).unlink(missing_ok=True)
 
@@ -170,15 +199,24 @@ def scanner_self_test(terms: list[str], scan=_scan_tree) -> None:
     Plants a real denylist term in a scratch tree; the scan must find it.
     (The 0.16.0 contamination gate returned 0 for every release for months —
     a gate that cannot fail is indistinguishable from a gate that passes.)"""
-    with tempfile.TemporaryDirectory(prefix="canary-") as d:
-        canary = Path(d) / "canary.txt"
-        canary.write_text(f"planted {terms[0]} canary\n", encoding="utf-8")
-        found = scan(Path(d), terms)
-    if found < 1:
-        raise _pp.PublishError(
-            "contamination scanner FAILED ITS SELF-TEST: a planted denylist "
-            "term was not detected — every all-clear it has produced is "
-            "untrustworthy; fix the scanner before releasing anything")
+    for shape, text in (
+        ("bare word", f"planted {terms[0]} canary\n"),
+        # The identifier canary is the second half, and it is the one that was
+        # missing (2026-08-25). A canary that is only ever a bare word proves
+        # the whole-word pass works and says NOTHING about the split pass — so
+        # the split pass could have been broken, or absent, and this self-test
+        # would still have gone green.
+        ("inside an identifier", f"planted_{terms[0]}_canary = 1\n"),
+    ):
+        with tempfile.TemporaryDirectory(prefix="canary-") as d:
+            (Path(d) / "canary.txt").write_text(text, encoding="utf-8")
+            found = scan(Path(d), terms)
+        if found < 1:
+            raise _pp.PublishError(
+                f"contamination scanner FAILED ITS SELF-TEST ({shape}): a "
+                "planted denylist term was not detected — every all-clear it "
+                "has produced is untrustworthy; fix the scanner before "
+                "releasing anything")
 
 
 def phase_export(worktree: Path, scratch: Path, denylist: Path) -> Path:

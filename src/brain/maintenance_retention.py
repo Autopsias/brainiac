@@ -228,11 +228,22 @@ def ingest_quarantine_findings(
                 str(entry.get("file", "?")))
     findings = []
     for reason, files in sorted(by_reason.items(), key=lambda kv: -len(kv[1])):
-        shown = ", ".join(sorted(files)[:5])
-        more = f" (+{len(files) - 5} more)" if len(files) > 5 else ""
+        # A COUNT, NOT THE NAMES (2026-08-25, Codex cloud security round). This
+        # text used to list the first five quarantined filenames, and it does
+        # not stay in the log: `record_current_findings` persists every
+        # finding's text into `.brain/notify-sent/current.json`, which the
+        # Cowork Linux VM can read. Quarantined drops are attacker-supplied or
+        # confidential documents, so their NAMES alone carry PII, client names
+        # and deal titles straight past the classification gate — the one place
+        # the whole egress design says nothing may cross uninspected.
+        #
+        # The names were never what made this finding actionable. The directory
+        # is already named below, the owner opens it to triage either way, and
+        # five of forty names told them nothing the count does not.
         item = action_required_item(
             f"{len(files)} dropped file(s) quarantined as `{reason}` and NOT "
-            f"ingested: {shown}{more}",
+            f"ingested (names withheld — they are unclassified document titles; "
+            f"open the directory below to see them)",
             "a quarantined file never reaches `raw/` and is never retrievable — "
             "it is not in the vault, and nothing else reports this within the month",
             _QUARANTINE_REMEDY.get(

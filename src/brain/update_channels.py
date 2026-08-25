@@ -8,7 +8,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
-
 from .doctor import (
     CHANNEL_EDITABLE,
     CHANNEL_PIP_USER,
@@ -17,6 +16,14 @@ from .doctor import (
     CHANNEL_VENV_WHEEL,
 )
 
+
+#: A workspace re-stage runs a REAL vault sync, and the shared runner's
+#: default (120s, sized for `claude plugin` calls) is not that bound: measured
+#: 2026-08-25 on the reference vault, `sync --publish` over 2955 notes takes
+#: 3m41s. Under the short bound EVERY `brain update` on that machine died with
+#: an unhandled TimeoutExpired at the first vault, so the second stayed at the
+#: old version — silently, because the crash pre-empted the report.
+WORKSPACE_SYNC_TIMEOUT_S = 1800
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 ChannelDetector = Callable[[Optional[Path]], str]
@@ -221,6 +228,35 @@ def stage_engine_and_skills(
     }
 
 
+def _workspace_sync(
+    run: Runner, brain_bin: Path, vault_path: str
+) -> "subprocess.CompletedProcess[str] | None":
+    """The workspace's real sync, or ``None`` when it outran its bound."""
+    try:
+        return run(
+            [str(brain_bin), "sync", "--publish"],
+            env={**os.environ, "BRAIN_VAULT": vault_path},
+            timeout=WORKSPACE_SYNC_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+
+
+def _sync_timeout_result(workspace_path: str, target: Any) -> dict:
+    """One slow vault must never abort the update: the loop still has other
+    workspaces to stage, and an unhandled TimeoutExpired left every one after
+    it at the OLD version with no report saying so."""
+    return {
+        "workspace_path": workspace_path,
+        "target": target,
+        "status": "failed",
+        "reason": (
+            f"sync --publish exceeded {WORKSPACE_SYNC_TIMEOUT_S}s — re-stage "
+            "this workspace with tools/cowork_workspace_install.sh"
+        ),
+    }
+
+
 def _restage_cowork_workspace(
     entry: dict[str, Any],
     engine_src: Path,
@@ -301,10 +337,10 @@ def _restage_cowork_workspace(
             model_source,
             model_source_error,
         )
-    sync_out = run(
-        [str(brain_bin), "sync", "--publish"],
-        env={**os.environ, "BRAIN_VAULT": vault_path},
-    )
+    sync_out = _workspace_sync(run, brain_bin, vault_path)
+    if sync_out is None:
+        timed_out = _sync_timeout_result(workspace_path, target)
+        return timed_out, model_source, model_source_error
     ok = sync_out.returncode == 0
     result = {
         "workspace_path": workspace_path,

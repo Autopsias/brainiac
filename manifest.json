@@ -76,6 +76,7 @@
     ".github/workflows/distribution-matrix.yml",
     ".github/workflows/lint.yml",
     ".github/workflows/npm-publish.yml",
+    ".github/workflows/pypi-publish.yml",
     ".github/workflows/quality-ratchet.yml",
     ".github/workflows/semgrep.yml",
     ".github/workflows/skill-mirror-sync.yml",
@@ -141,6 +142,7 @@
     "docs/operations/wd01-offhost-watchdog-spec.md",
     "docs/query-variant-entry-points.md",
     "docs/release-runbook.md",
+    "docs/security-acceptances.md",
     "docs/security-overview.html",
     "docs/session-memory.md",
     "docs/soak-runbook.md",
@@ -356,6 +358,7 @@
     "src/brain/alerts_staging.py",
     "src/brain/anchor.py",
     "src/brain/atomic_temp.py",
+    "src/brain/attestation.py",
     "src/brain/audit.py",
     "src/brain/audit_chain.py",
     "src/brain/audit_drift.py",
@@ -846,6 +849,7 @@
     "tools/publish_public.py",
     "tools/publish_public_checks.py",
     "tools/publish_public_uploads.py",
+    "tools/publish_public_verify.py",
     "tools/publish_release.py",
     "tools/publish_release_steps.py",
     "tools/publish_steps.py",
@@ -874,5 +878,5 @@
     "vault/raw/2026-06-27-arctic-vs-e5-benchmark.md",
     "vault/raw/README.md"
   ],
-  "count": 873
+  "count": 877
 }

@@ -264,10 +264,10 @@ def display_title(raw: str, slug: str) -> str:
     """A readable title for an anchor whose only name is a source FILENAME.
 
     The drop lane and the absorption driver both title an anchor from the file
-    it came from, so the shelf README rendered `GILC1638_Steering_Memo.docx` in
+    it came from, so the shelf README rendered `NORTHWIND2210_Rollout_Memo.docx` in
     the same column as written sentences. This turns the filename into prose
     WITHOUT inventing anything: the extension goes, `_` becomes a space, runs of
-    whitespace collapse. Nothing else — the identifier in `GILC1638` is the part
+    whitespace collapse. Nothing else — the identifier in `NORTHWIND2210` is the part
     an owner searches for, so case and digits are left exactly as they are.
 
     A title that is not filename-shaped is returned untouched, so the 76 notes

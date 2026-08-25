@@ -41,12 +41,39 @@ def quarantine_retry_targets(vault: Path) -> dict[str, list[str]]:
         reason_dir = qdir / reason
         if not reason_dir.is_dir():
             continue
+        if reason_dir.resolve() != qdir.resolve() / reason:
+            # A symlinked reason DIRECTORY: every leaf inside it is contained
+            # relative to its own resolved parent, so the per-file check below
+            # cannot see this. Skip the whole directory instead.
+            continue
         files = sorted(
             str(p.relative_to(vault)) for p in reason_dir.iterdir()
-            if p.is_file() and not p.name.endswith(".reason.txt"))
+            if _is_contained_file(p, reason_dir)
+            and not p.name.endswith(".reason.txt"))
         if files:
             out[f"quarantine:{reason}"] = files
     return out
+
+
+def _is_contained_file(candidate: Path, reason_dir: Path) -> bool:
+    """A real file that LIVES in ``reason_dir`` — never a link out of it.
+
+    ``Path.is_file()`` follows symlinks, and the quarantine tree sits on the
+    VirtioFS mount the Cowork VM can write. A planted link named like a
+    quarantined document therefore offered the host any file on the machine as
+    a retry target, and a retry re-ingests its bytes into the vault as a signed
+    source. The parent is checked as well as the leaf: a symlinked reason
+    DIRECTORY passes every leaf-only test.
+    """
+    if candidate.is_symlink():
+        return False
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError:
+        return False
+    if resolved != reason_dir.resolve() / candidate.name:
+        return False
+    return resolved.is_file()
 
 
 def subfloor_retry_targets(core: Any) -> list[tuple[str, Path]]:

@@ -8,6 +8,7 @@ quarantine reason) out.
 """
 from __future__ import annotations
 
+import os
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -111,18 +112,41 @@ def ocr_lang() -> str | None:
 NO_TEXT_MARKER = "[no text detected]"
 
 
+#: Seconds one OCR call may run before tesseract is killed. Untrusted bytes
+#: reach this: a page-sized scan is seconds, but an attacker-shaped or simply
+#: pathological image can hold the process for as long as it likes, and this
+#: runs inside the hourly `brain-nightly` under the single-writer lock — so a
+#: hang here is not one slow file, it is every vault on the host waiting.
+#: `pytesseract` kills the child and raises on expiry, which the handler below
+#: already degrades to a warning. Raise it with `$BRAIN_OCR_TIMEOUT_SECONDS`
+#: for a genuinely huge scan; 0 restores the old unbounded behaviour.
+OCR_TIMEOUT_SECONDS = 120
+
+
+def ocr_timeout() -> int:
+    raw = os.environ.get("BRAIN_OCR_TIMEOUT_SECONDS", "").strip()
+    if not raw:
+        return OCR_TIMEOUT_SECONDS
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return OCR_TIMEOUT_SECONDS
+
+
 def ocr_image(img: Any) -> tuple[str, list[str]]:
     """LOCAL-only OCR of one PIL image. Never raises: a missing binding, a
-    missing tesseract binary, or any engine failure all degrade to empty text
-    plus a warning — there is no cloud fallback to reach for, so a failure
-    here is reported, never fatal to the ingest."""
+    missing tesseract binary, a timeout, or any engine failure all degrade to
+    empty text plus a warning — there is no cloud fallback to reach for, so a
+    failure here is reported, never fatal to the ingest."""
     if not _HAS_PYTESSERACT:
         return "", ["ocr_unavailable: pytesseract not installed"]
     lang = ocr_lang()
     if lang is None:
         return "", ["ocr_unavailable: no local tesseract binary / traineddata"]
     try:
-        return pytesseract.image_to_string(img, lang=lang).strip(), []
+        text = pytesseract.image_to_string(
+            img, lang=lang, timeout=ocr_timeout())
+        return text.strip(), []
     except Exception as exc:
         return "", [f"ocr_unavailable: {type(exc).__name__}: {exc}"]
 

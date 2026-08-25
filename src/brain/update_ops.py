@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from . import attestation
 from . import config
 from . import update as brain_update
 from .lock import WriterLockBusy, vault_writer_lock, writer_lock
@@ -148,6 +149,47 @@ def _record_update_report(
     }
 
 
+def _hold_unattested(
+    brainiac_home: Path, *, installed: Any, latest: Any, source: Any,
+    today: Any, attempts: int,
+) -> dict[str, Any] | None:
+    """The A-03 gate: ``None`` to proceed, a HELD result to stop.
+
+    Owner decision, 2026-08-25. An UNATTENDED upgrade must come from our own
+    CI. PyPI accepts a PEP 740 attestation only from a Trusted Publisher, so
+    this asks the one question that catches an account takeover — did this
+    version come out of the same publisher every other version did?
+
+    HELD, never FAILED: `failed` means an install was attempted and broke, and
+    the retry ladder keys on it. Nothing was attempted here. The owner clears
+    it by running `brain update` himself, which does NOT gate — his direction
+    is the authority; the risk here is unattended execution, not the upgrade.
+    """
+    verdict = attestation.verify_publisher(str(latest))
+    if verdict["ok"]:
+        return None
+    brain_update.write_update_state(
+        brainiac_home, status="held", installed=installed, latest=latest,
+        source=source, at=today.isoformat(), detail=verdict["reason"],
+        attempts=attempts,
+    )
+    return {
+        "auto_update": "held",
+        "reason": (f"not installed unattended: {verdict['reason']}. "
+                   "Run `brain update` yourself to apply it end to end."),
+        "installed": installed,
+        "latest": latest,
+        "notify_key": ATTESTATION_HELD_KEY,
+    }
+
+
+#: A-03. Nothing automated can clear this — installing anyway is exactly what
+#: is being refused — so it banners for the owner, who answers it by running
+#: `brain update` himself. Read by `remediation`'s registry and by the
+#: enumeration test; never retyped as a literal.
+ATTESTATION_HELD_KEY = "update:attestation-held"
+
+
 class UpdateOpsMixin:
     """Provide BrainCore's scheduled auto-update operation."""
 
@@ -206,6 +248,12 @@ class UpdateOpsMixin:
                     "latest": latest,
                     "attempts": previous_attempts,
                 }
+        held = _hold_unattested(
+            brainiac_home, installed=installed, latest=latest,
+            source=info.get("source"), today=today, attempts=previous_attempts,
+        )
+        if held is not None:
+            return held
         deferred = _defer_for_writer(
             self,
             brainiac_home=brainiac_home,

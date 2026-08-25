@@ -1,0 +1,144 @@
+name: pypi-publish
+
+# Publishes brainiac-cli to PyPI from CI, over PyPI Trusted Publishing (OIDC).
+#
+# Why this exists (2026-08-25, from the Codex cloud security round): until now
+# the wheel and sdist were built on the maintainer's Mac and pushed with
+# `twine` using a long-lived API token. SLSA defines Build L0 as software
+# "built and run on the same machine" -- that was us -- and L2 requires
+# provenance signed by a HOSTED build platform, which a laptop cannot reach at
+# any level of care. The npm side already published this way (see
+# npm-publish.yml); the Python side never did.
+#
+# Two things fall out of the move, neither of which is extra work here:
+#   1. There is no long-lived PyPI token to steal. PyPI mints a token from the
+#      OIDC identity that dies 15 minutes later.
+#   2. `pypa/gh-action-pypi-publish` attaches a PEP 740 attestation by default
+#      -- a signed receipt naming the repository, workflow and commit that
+#      produced the file. PyPI REFUSES attestations that did not come from a
+#      Trusted Publisher, so this artifact could not be produced locally.
+#
+# The trusted publisher registered on both indexes names this file BY NAME.
+# Renaming this workflow breaks publishing until the form is edited to match:
+#   pypi.org / test.pypi.org -> brainiac-cli -> Manage -> Publishing
+#   owner Autopsias · repository brainiac · workflow pypi-publish.yml
+#   environment `pypi` (production) / `testpypi` (rehearsal)
+#
+# The tag push is what publishes, exactly as it already does for npm. The
+# pipeline's `pypi` phase is gone; `phase_post_verify` waits for this workflow
+# and then proves the SERVED artifact matches what was built locally, member by
+# member (`_archive_content_diff`) -- a comparison written to survive a rebuild,
+# which is precisely what a CI build is.
+#
+# `workflow_dispatch` is kept, and it is the recovery path. A failed OIDC
+# exchange publishes NOTHING -- it is not the irreversible half of a release --
+# so if the trusted-publisher form and this file ever disagree, fix the form and
+# re-run this workflow with `ref` set to the tag. Nothing has to be rebuilt and
+# no version is burned.
+
+on:
+  push:
+    # The public repo's release tags. This is the production publish path.
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which index to publish to"
+        required: true
+        default: testpypi
+        type: choice
+        options: [testpypi, pypi]
+      ref:
+        description: "Tag or commit to build (default: this branch)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pypi-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build sdist + wheel
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Build
+        # Pinned exactly: tools/check_workflow_supply_chain.py rejects an
+        # unpinned install, and this job's output is what the privileged job
+        # below uploads to a public index.
+        run: |
+          set -euo pipefail
+          python -m pip install build==1.5.0
+          python -m build
+
+      - name: Show what was built
+        # A publish job that uploads an empty dist/ would otherwise succeed
+        # silently. Fail here instead, where it is cheap and reversible.
+        run: |
+          set -euo pipefail
+          ls -l dist/
+          test -n "$(ls -A dist/)" || { echo "::error::dist/ is empty"; exit 1; }
+          test "$(ls dist/*.whl | wc -l)" -eq 1 || { echo "::error::expected exactly one wheel"; exit 1; }
+          test "$(ls dist/*.tar.gz | wc -l)" -eq 1 || { echo "::error::expected exactly one sdist"; exit 1; }
+
+      - name: Upload dist
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
+  publish:
+    name: Publish to ${{ inputs.target || 'pypi' }}
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The environment is what the trusted publisher was registered against, and
+    # it is where a manual-approval rule can be attached later without touching
+    # this file.
+    environment: ${{ inputs.target || 'pypi' }}
+    permissions:
+      # Mandatory for Trusted Publishing: it is how this job proves its
+      # identity to the index. Held at JOB level, not workflow level, so the
+      # build job above never carries it.
+      id-token: write
+    steps:
+      - name: Download dist
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist/
+
+      # NOTE: this job deliberately installs NOTHING. Everything it needs comes
+      # from the pinned action below. An unpinned install in a job holding
+      # `id-token: write` is the exact finding that created
+      # tools/check_workflow_supply_chain.py.
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          repository-url: ${{ inputs.target == 'testpypi' && 'https://test.pypi.org/legacy/' || 'https://upload.pypi.org/legacy/' }}
+          # A resumed or re-fired run must not fail on a file the first run
+          # already uploaded: an index version is permanent and re-uploading is
+          # not an option. Same reasoning as the old twine --skip-existing.
+          skip-existing: true
+          # attestations default to true; named here so a future edit that
+          # disables them is a visible change rather than a silent default.
+          attestations: true
+          print-hash: true

@@ -75,11 +75,20 @@ def take_rendition(
 ) -> Path | None:
     """Retarget ``record`` at its rendition id, or ``None`` to refuse.
 
-    Rebuilds the note metadata at the new id; the archived original is
-    unchanged and still the file this note came from.
-    """
-    from . import pipeline as facade
+    Only the ``id`` moves. The archived original is unchanged and still the
+    file this note came from, and every other key was already decided for
+    these exact bytes.
 
+    It REBUILT the metadata from ``pipeline._meta`` until 2026-08-25, and that
+    silently undid the ENF-04 tier verdict: ``_meta`` declares ``Internal``
+    for every drop-zone ingest, and the guard's raise, its
+    ``classification_guard*`` stamps and the deliverable lane's declared tier
+    are all written AFTER it returns. A rendition of an MNPI document was
+    therefore signed as ``Internal``, admitted into the guard's own corpus at
+    ``Internal``, and anchored at ``Internal`` — three lanes, one cause. The
+    rebuild could never have been right either way: ``slug`` is ``_meta``'s
+    only changed argument and it reaches exactly one key.
+    """
     slug = rendition_slug(record, note_path, existing_meta)
     if not slug:
         return None
@@ -87,10 +96,7 @@ def take_rendition(
         "file": record.orig_name, "id": slug, "primary": record.slug,
     })
     record.slug = slug
-    record.meta = facade._meta(
-        record.slug, record.drain.today, record.archive_path, record.drain.vault,
-        str(record.meta["sha256"]), record.provenance,
-    )
+    record.meta["id"] = slug
     return record.drain.vault / "raw" / f"{slug}.md"
 
 

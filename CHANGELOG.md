@@ -7,6 +7,72 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.30] — 2026-08-25
+### Changed
+- **PyPI publishing moved off the maintainer's machine and onto CI.** SLSA
+  defines Build L0 as software built and run on the same machine, and PyPI
+  accepts a PEP 740 attestation ONLY from a Trusted Publisher — so a local
+  `twine` upload could never carry provenance at any level of care. The `v*`
+  tag push now runs `.github/workflows/pypi-publish.yml`, which builds and
+  uploads over OIDC with attestations on; the pipeline's own `pypi` phase is
+  gone, and its artifact check (`verify_served_artifacts`, which compares the
+  SERVED archive against our code member by member) is not.
+
+### Security
+- **An unattended update now requires an attestation from this project's own
+  CI publisher** (A-03). The nightly installs as the owner with no human
+  present, so a compromised index account runs install hooks with the vault,
+  the index and the signing key in reach. `brain.attestation.verify_publisher`
+  asks PyPI whether the version came from the same repository and workflow as
+  every other release, fails CLOSED on any uncertainty, and holds the upgrade
+  with an `update:attestation-held` banner. **`brain update` is deliberately
+  not gated** — it runs the whole chain end to end whenever the owner directs
+  it. Until a release publishes through CI, none carries an attestation and
+  every unattended upgrade holds; that is the gate working.
+- **A rendition no longer loses its classification.** Retargeting a format twin
+  at `<slug>-<ext>` rebuilt the note metadata from a helper that declares
+  `Internal`, discarding the ENF-04 tier verdict, its stamps and the
+  deliverable lane's declared tier — so a rendition of an MNPI document was
+  signed, corpus-admitted and anchored at `Internal`.
+- **The mechanical-retry scan no longer follows links out of the quarantine
+  tree.** `Path.is_file()` follows symlinks and that tree is writable from the
+  Cowork VM, so a planted link offered the host any readable file as a retry
+  target — and a retry re-ingests as a signed source. Symlinked reason
+  directories are refused too.
+- **OCR is bounded** (`$BRAIN_OCR_TIMEOUT_SECONDS`, default 120s). It ran
+  unbounded inside the hourly fold, inside the single-writer lock, so one
+  pathological image stalled every index-mutating verb on the host.
+- **`search --explain` no longer names a withheld note.** The fan-out guard's
+  demotion list carried raw pre-egress ids, and `pin.applied` plus
+  `rerank_gate.reason` each disclosed on their own that a hidden note matched a
+  guessed title. A withheld pin now collapses to the shape a query with no pin
+  produces.
+- **`brain write --untrusted-author`**, used by the synthesis sign-drain, so
+  LLM-written notes pass the audited draft path's controls before signing.
+- **The commit-time client-name gate looks inside identifiers.** A word
+  character includes the underscore, so a whole-word pass read
+  `CLIENTCODE_Project_Memo.docx` as one word and no denylisted term inside it
+  could match — a filename, a slug or a generated symbol being exactly the
+  shape a client name arrives in. Both the commit hook and the release scan now
+  also match against a boundary-split copy, sharing ONE definition of a
+  boundary. The hook also mirrors the export's suffix excludes, not just its
+  prefixes, so it no longer fires on files the export cannot ship.
+- The quarantine banner no longer lists filenames — a quarantined drop is an
+  unclassified document whose title alone can carry a client name past the
+  gate. The COS attachment fetch refuses a name collision instead of
+  overwriting.
+
+Accepted risks, with the ruling behind each: `docs/security-acceptances.md`.
+
+### Fixed
+- `brain update` no longer dies at the first workspace whose sync is slow. The
+  re-stage borrowed the shared runner's 120s default — sized for `claude
+  plugin` calls — while its `brain sync --publish` takes 3m41s over 2955 notes
+  on the reference vault, so every update there raised an unhandled
+  `TimeoutExpired` and left the SECOND vault at the old version, silently. The
+  sync now gets `WORKSPACE_SYNC_TIMEOUT_S` (30 min) and a workspace that still
+  exceeds it is reported as failed while the rest are staged.
+
 ## [0.20.29] — 2026-08-25
 ### Changed
 - The drop zone INGESTS a second format of a document it already holds, under

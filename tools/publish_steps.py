@@ -25,9 +25,9 @@ from tools.publish_public import (
     phase_post_verify,
     phase_preflight,
     phase_public_git,
-    phase_pypi,
     phase_release_asset,
     phase_testpypi,
+    wait_for_pypi,
     phase_tests,
     phase_windows_ci,
     phase_worktree,
@@ -67,9 +67,13 @@ def _run_initial_phases(
     verified: list[str],
     scratch: Path,
 ) -> tuple[Path, Path, list[Path]]:
-    if not should_run("pypi"):
+    # PyPI is published by the tag push now, so "has this version already been
+    # published?" is keyed on the phase that PUSHES the tag, not on an upload
+    # phase this script no longer owns. Resuming at or after `public-git` means
+    # the tag may already be out and the version may already be live.
+    if not should_run("public-git"):
         pypi_expectation: bool | None = True
-    elif args.from_phase in ("testpypi", "pypi"):
+    elif args.from_phase in ("testpypi", "public-git"):
         pypi_expectation = None
     else:
         pypi_expectation = False
@@ -139,17 +143,6 @@ def _run_upload_phases(
     else:
         print(f"{_step('testpypi')} testpypi: skipped (--from {args.from_phase})")
 
-    if should_run("pypi"):
-        gate_fn("pypi", "upload to PRODUCTION PyPI",
-                "this instantly becomes what every `pip install brainiac-cli` gets; "
-                "it can be yanked but never unpublished", verified)
-        summary = phase_pypi(artifacts, version, scratch)
-        ev.record("pypi", "OK", summary)
-        verified.append(f"pypi: {summary}")
-        print(f"{_step('pypi')} pypi: {summary}")
-    else:
-        print(f"{_step('pypi')} pypi: skipped (--from {args.from_phase})")
-
     if should_run("public-git"):
         # Prove the npm tarball BEFORE the push that publishes it: the push
         # fires npm-publish.yml, and an npm version is permanent.
@@ -162,7 +155,15 @@ def _run_upload_phases(
         ev.record("public-git", "OK", summary)
         verified.append(summary)
         print(f"{_step('public-git')} public git: {summary} "
-              f"— this push also fires npm-publish.yml")
+              f"— this push also fires pypi-publish.yml and npm-publish.yml")
+
+        # Wait here, not later. `release-asset` immediately below installs
+        # brainiac-cli[mcp] from PyPI for its handshake gate, and PyPI is now
+        # published BY the push above rather than before it.
+        served = wait_for_pypi(version, scratch)
+        ev.record("pypi-wait", "OK", served)
+        verified.append(served)
+        print(f"{_step('public-git')} {served}")
     else:
         print(f"{_step('public-git')} public git: skipped (--from {args.from_phase})")
 
@@ -237,10 +238,12 @@ def main() -> int:
             export_dir, artifacts, denylist
         )
 
-        # npm is published by the tag push, not by this script, so this waits
-        # on the registry; it reports the gap rather than failing when the tag
-        # itself was never pushed.
-        summary = phase_post_verify(version, scratch)
+        # BOTH indexes are published by the tag push, not by this script, so
+        # this waits on them; it reports the gap rather than failing when the
+        # tag itself was never pushed. `artifacts` goes in because proving PyPI
+        # serves OUR code is now part of this phase — the upload it used to be
+        # compared against happened in CI.
+        summary = phase_post_verify(version, scratch, artifacts)
         ev.record("post-verify", "OK", summary)
         print(f"{_step('post-verify')} post-verify:\n{summary}")
 

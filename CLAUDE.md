@@ -29,7 +29,7 @@ default cap = full vault, `--role vm` default = Internal; narrow with
 the published read-only snapshot and never signs — see
 `docs/cowork-windows-install.md`.
 
-**Active plans:** none. The Deliverables Shelf plan closed 2026-08-24.
+**Active plans:** [The Night Porter](_plans/night-porter-2026-08-25/PLAN.html) · 10 sessions · run via `/plan-execute _plans/night-porter-2026-08-25` (built 2026-08-25, hardened 2026-08-25). The Deliverables Shelf plan closed 2026-08-24.
 
 Deliverables Shelf (closed 2026-08-24, merged as `e24d251`), Self-Healing Vault
 (closed 2026-08-22) and Corpus Invariants (closed 2026-08-12) are complete. The

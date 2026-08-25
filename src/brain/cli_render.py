@@ -45,17 +45,18 @@ def _variant_block(fanout: dict, allowed_ids: set[str], *, explain: bool) -> dic
             "inner_rrf_k": fanout["inner_rrf_k"],
             "exact_leg_enabled": fanout["exact_leg_enabled"],
             "per_query_k": fanout["per_query_k"],
-            "guard": fanout["guard"],
+            "guard": {
+                **fanout["guard"],
+                # These are RAW pre-egress ids. The demotion list named notes
+                # the reader was never allowed to see, which is the same
+                # disclosure as returning them as hits.
+                "demoted": [
+                    i for i in fanout["guard"]["demoted"] if i in allowed_ids
+                ],
+            },
             "rerank_fused": fanout["rerank_fused"],
             "rerank_fused_source": fanout["rerank_fused_source"],
-            "rerank_gate": fanout["rerank_gate"],
-            # A pin is only ever the ORIGINAL query's unique identity owner, and it
-            # is named here only when that note also survived egress.
-            "pin": (
-                fanout["pin"]
-                if fanout["pin"]["id"] in allowed_ids
-                else {**fanout["pin"], "id": None}
-            ),
+            **_projected_pin(fanout, allowed_ids),
             "per_variant": [
                 {**entry, "order": [i for i in entry["order"] if i in allowed_ids]}
                 for entry in fanout["per_variant"]
@@ -70,6 +71,38 @@ def _variant_block(fanout: dict, allowed_ids: set[str], *, explain: bool) -> dic
         }
     )
     return block
+
+
+def _projected_pin(fanout: dict, allowed_ids: set) -> dict:
+    """The pin block and the gate decision it drove, projected through egress.
+
+    A pin is only ever the ORIGINAL query's UNIQUE full alias/title owner, so
+    its mere existence answers "is there a note with exactly this title?" —
+    about a note the reader is not allowed to see. Nulling the id was not
+    enough: `applied: true` and `rerank_gate.reason:
+    "pooled_unique_identity_pin"` each disclose the same fact on their own, and
+    a guessed title is a cheap probe to run in bulk.
+
+    So a withheld pin collapses to the shape a query with NO pin produces —
+    byte-identical, nothing to compare. That is ADR-0008's own rule for the
+    public answer ("without exposing owner counts, hidden ids, ranks, titles,
+    or a collision label"); this is the same rule applied to the trace.
+    """
+    pin = fanout["pin"]
+    gate = fanout["rerank_gate"]
+    if pin["id"] is None or pin["id"] in allowed_ids:
+        return {"pin": pin, "rerank_gate": gate}
+    return {
+        "pin": {**pin, "id": None, "applied": False},
+        "rerank_gate": {
+            **gate,
+            "skipped": False,
+            "reason": (
+                "gate_disabled" if not gate["enabled"]
+                else "no_pooled_unique_identity_pin"
+            ),
+        },
+    }
 
 
 def _render_variant_block(block: dict) -> list[str]:

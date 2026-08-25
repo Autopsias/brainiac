@@ -3,7 +3,7 @@
 
     python3 tools/publish_public.py v0.19.18 --denylist ~/brainiac-release-groundtruth.txt
     python3 tools/publish_public.py v0.19.18 --denylist <path> --dry-run       # verify only, no gates
-    python3 tools/publish_public.py v0.19.18 --denylist <path> --from pypi     # resume after a partial run
+    python3 tools/publish_public.py v0.19.18 --denylist <path> --from public-git  # resume after a partial run
 
 Owner decision 2026-07-29 (amending the runbook's earlier "publishing is
 never scripted" rule): the pipeline ORCHESTRATES the release, but every
@@ -23,6 +23,10 @@ every two hours (it broke the v0.20.22 run), and it shipped three releases
 without provenance (0.20.19/0.20.21/0.20.22 read `publisher=autopsias,
 provenance=none`; 0.20.11 reads `GitHub Actions` + slsa.dev/provenance/v1).
 So the push publishes npm now, and `phase_post_verify` waits for it.
+PyPI joined that path on 2026-08-25 for the same reason plus one more:
+SLSA calls a laptop build Build L0, and PyPI only accepts a PEP 740
+attestation from a Trusted Publisher, so a local twine upload could
+never carry provenance at all.
 
 Why this exists (measured, 2026-07-29): the manual chain shipped v0.19.17 to
 PyPI WITHOUT the Windows fixes that were already committed — the tag was cut
@@ -87,7 +91,7 @@ DIST_MATRIX_WORKFLOW = "distribution-matrix.yml"
 
 PHASES = [
     "preflight", "worktree", "tests", "export", "build", "windows-ci",
-    "testpypi", "pypi", "public-git", "release-asset", "post-verify",
+    "testpypi", "public-git", "release-asset", "post-verify",
     "deploy",
 ]
 
@@ -98,6 +102,12 @@ PHASES = [
 # deadline, so a no-op sleep against an inlined 600 busy-spins for ten real
 # minutes.
 NPM_PUBLISH_WAIT_SECONDS = 600
+
+# Same shape for PyPI, which joined the tag-push publish path on 2026-08-25 (the
+# `pypi` phase was removed from PHASES above). Longer than npm's because this
+# workflow BUILDS before it uploads -- two jobs and an artifact handoff, not a
+# 25-second publish -- and PyPI's own read-after-write lag sits on top.
+PYPI_PUBLISH_WAIT_SECONDS = 900
 
 
 class PublishError(Exception):
@@ -218,14 +228,18 @@ def phase_preflight(tag: str, *, expect_published: bool | None = False) -> str:
       The upload may or may not have gone through before the run died; twine
       runs with ``--skip-existing``, so either state is fine and neither is
       evidence of a problem.
-    * ``True`` — a resume PAST the upload (`--from public-git` /
-      `release-asset` / `post-verify`). Here the version being absent is the
-      anomaly: skipping an upload that never happened would ship an npm
-      bootstrap pointing at nothing.
+    * ``True`` — a resume PAST the push (`--from release-asset` /
+      `post-verify`). Here the version being absent is the anomaly: the tag is
+      already out, so both indexes should have been published by it.
 
     A single boolean got this wrong in both directions: it dead-ended every
-    post-upload resume on the already-published guard, and then dead-ended
-    `--from pypi` for the opposite reason.
+    post-upload resume on the already-published guard, and then dead-ended a
+    resume into the uploads for the opposite reason.
+
+    The pivot moved on 2026-08-25. It used to be the `pypi` phase, which this
+    script owned; now the tag push publishes, so the pivot is `public-git` —
+    resuming AT it means the push may or may not have happened already, and
+    either PyPI state is fine.
     """
     if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
         raise PublishError(f"tag must look like vX.Y.Z, got {tag!r}")
@@ -422,10 +436,13 @@ from tools.publish_public_checks import (  # noqa: E402,F401
     phase_windows_ci, pytest_failure_summary, scanner_self_test,
     suite_parallel_args, worktree_sha)
 from tools.publish_public_uploads import (  # noqa: E402,F401
-    _archive_content_diff, _archive_members, _clean_venv_check,
+    _clean_venv_check,
     _non_pypi_index, _poll, _throwaway_venv, build_mcpb, npm_pack_smoke,
-    phase_post_verify, phase_public_git, phase_pypi, phase_release_asset,
+    phase_post_verify, phase_public_git, phase_release_asset,
     phase_testpypi, sync_export_into_clone)
+from tools.publish_public_verify import (  # noqa: E402
+    _archive_content_diff, _archive_members, verify_served_artifacts,
+    wait_for_pypi)
 from tools.publish_steps import main  # noqa: E402
 
 if __name__ == "__main__":

@@ -663,6 +663,32 @@ If a published release turns out to be defective or itself contaminated:
 
 ## 7.10. Guarded one-command publish — `tools/publish_public.py` (owner decision 2026-07-30)
 
+> **PyPI is published by the tag push now (2026-08-25), not by this script.**
+> There is no `pypi` phase any more. `phase_public_git` pushes the export
+> commit and the tag; that tag fires `.github/workflows/pypi-publish.yml`,
+> which builds and uploads over PyPI Trusted Publishing (OIDC) and attaches a
+> PEP 740 attestation. The script then WAITS for the index (`wait_for_pypi`,
+> called right after the push so `release-asset`'s MCP handshake does not race
+> the workflow) and proves the served artifact matches what was built here,
+> member by member.
+>
+> Three consequences worth knowing before a release:
+>
+> - **The `public-git` gate is now the point of no return for Python too.** It
+>   says so. Resuming with `--from public-git` may find the version already
+>   published.
+> - **A failed upload burns nothing.** A broken OIDC exchange publishes no
+>   file, so recovery is re-firing the workflow at the tag, not a version bump:
+>   `gh workflow run pypi-publish.yml --repo Autopsias/brainiac -f target=pypi -f ref=v<X.Y.Z>`
+> - **The trusted publisher is registered against the workflow FILENAME.**
+>   Renaming `pypi-publish.yml` breaks publishing until the form at
+>   pypi.org → brainiac-cli → Manage → Publishing is edited to match.
+>   `tests/test_pypi_publish_workflow.py` fails first if that drifts.
+>
+> Why at all: SLSA defines a laptop build as Build L0, and PyPI accepts an
+> attestation ONLY from a Trusted Publisher — so a local `twine` upload could
+> never carry provenance. npm moved the same way on 2026-08-20.
+
 **This is now the sanctioned way to run §7.6 → §8**, amending the earlier
 "publishing is never scripted" rule. The amendment's shape: automation
 COMPOSES the steps; the human still PERFORMS each irreversible act, because
@@ -681,7 +707,7 @@ per-act `--confirm` consent recorded in evidence.
 ```
 python3 tools/publish_public.py v<X.Y.Z> --denylist ~/brainiac-release-groundtruth.txt
 python3 tools/publish_public.py v<X.Y.Z> --denylist <path> --dry-run     # verify only
-python3 tools/publish_public.py v<X.Y.Z> --denylist <path> --from pypi   # resume a partial run
+python3 tools/publish_public.py v<X.Y.Z> --denylist <path> --from public-git  # resume a partial run
 ```
 
 Why it exists (measured, 2026-07-29): the manual chain shipped v0.19.17 to

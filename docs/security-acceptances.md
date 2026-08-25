@@ -1,0 +1,137 @@
+# Accepted security findings
+
+Findings a reviewer will raise again, with the ruling that says why they stay.
+
+This file exists because an external scan cannot see a decision. Three of the
+fourteen findings in the 2026-08-25 Codex round were already settled — one of
+them on the same day the commit that "introduced" it landed — and without a
+written record each future scan re-raises them, each triage costs the same
+reading, and a real finding sits in the same list as a resolved one.
+
+**What belongs here:** a risk the owner chose to carry, with the reasoning and
+whatever bounds it. **What does not:** anything still being argued, and anything
+where "accepted" means "not looked at yet". An entry with no ruling behind it is
+a defect being laundered into a decision.
+
+Each entry names its mitigation separately from its acceptance, because the two
+decay differently: a mitigation can silently stop working while the ruling still
+reads as current.
+
+---
+
+## A-01 · MCP defaults to the full vault for host clients
+
+**Raised as:** "MCP default now exposes full vault to LLM clients" (high),
+against `9f9284b`, 2026-08-17.
+
+**Ruling:** the owner's, 2026-08-17 — the same day. The host MCP server reads
+the full vault. `HOST_MCP_DEFAULT_MAX_TIER` is deliberate, not a regression.
+
+**The reasoning:** the classification gate exists to bound what leaves the host
+toward an *untrusted* leg. A host MCP client is the owner's own desktop
+application reading the owner's own vault on the owner's own machine; capping it
+at Internal by default made the owner's tools worse at their job without moving
+anything across a trust boundary. `--role vm` still defaults to Internal, which
+is where the boundary actually is.
+
+**What still bounds it:** `--max-tier` and `$BRAIN_DEFAULT_MAX_TIER` narrow any
+individual client, and the VM leg's own default is unchanged.
+
+**What would reopen it:** the host MCP server becoming reachable by anything the
+owner does not control — a remote transport, a shared machine, a client that
+relays to a third party.
+
+---
+
+## A-02 · The COS model legs keep a filesystem read primitive
+
+**Raised as:** "COS model leg can read arbitrary host files" (critical), against
+`4c9354b`, 2026-08-17.
+
+**Ruling:** the owner's — recorded in `tools/cos_nightly.sh` at the
+`MODEL_TOOLS` gate, under "THE THIRD CHANNEL IS STILL OPEN, DELIBERATELY". The
+`Read,Glob` grant stays, so the rest of the grounding design's D12/D12a
+(`--tools ""`, the category leg's prompt on stdin, a scratch cwd outside the
+repo) is not shipped.
+
+**The reasoning is measured, not assumed.** The finding is correct on its
+mechanics and the design's own probe proved it first: with this exact grant, a
+leg whose working directory was an empty temp workspace read an absolute path
+outside it and printed the token. **Working directory scopes nothing.** The
+comment in that file used to claim the leg could not reach "one byte of this
+disk"; that clause was false, and it now says so.
+
+**What still bounds it:** writing is closed, not merely discouraged — a blanket
+`Edit(//**)` deny drops every file-editing tool, tested against a known positive
+that provably writes. Two of the three context channels are closed on the legs
+themselves: `--setting-sources ""` stops the SessionStart hooks injecting vault
+session memory into every leg, and `--no-session-persistence` stops each leg's
+stdin being persisted as a transcript outside every retention clock. Grounding
+runs in front of the open read primitive, and `cos_judge.py --judge` validates
+every verdict against a closed vocabulary, so injection can bend a verdict but
+not smuggle one past the gate.
+
+**What would reopen it:** the legs being fed content from a wider surface than
+the owner's own mailbox, or the judge's closed vocabulary being relaxed.
+
+---
+
+## A-03 · The nightly updates itself without a human present
+
+**Raised as:** "Unattended nightly update enables supply-chain RCE" (high),
+against `8ff852d`, 2026-07-27.
+
+**Status: mitigated 2026-08-25, and the acceptance narrowed to what the
+mitigation does not cover.** It stood as "accepted, and NOT mitigated" until the
+owner ruled on it that day.
+
+**The reasoning:** auto-update is the feature. A second brain that silently runs
+a version from weeks ago is the failure this was built to prevent, and requiring
+a human at 02:00 means no update ever happens. The finding is right that a
+compromised index, account, or plugin marketplace executes code as the local
+user, with the vault, the index and the signing key environment in reach — and
+right that the post-update doctor check cannot help, because install hooks have
+already run by then.
+
+**The owner's ruling, 2026-08-25:** require an attestation match before an
+UNATTENDED upgrade, and leave the attended one alone.
+
+**What bounds it now.** PyPI accepts a PEP 740 attestation only from a Trusted
+Publisher, so "did this build come from the same repository and workflow as
+every other release" is a question the index can answer and an account takeover
+cannot fake. `brain.attestation.verify_publisher` asks it before
+`_maybe_auto_update` installs anything; a version that carries no attestation,
+carries one naming a different publisher, or cannot be checked at all is held
+(`auto_update: "held"`, notify key `update:attestation-held`) and the owner is
+told to run `brain update` himself. Every uncertainty fails CLOSED, including an
+unreachable index — the cost of that is one skipped upgrade.
+
+**The attended path is deliberately NOT gated.** `brain update` calls
+`brain_update.run_update` directly and never touches `_maybe_auto_update`, so
+when the owner directs it the whole chain runs end to end. His direction is the
+authority; the risk this guards is unattended execution, not upgrading. The
+split is asserted, not assumed —
+`tests/test_attestation_gate.py::test_the_attended_path_is_not_gated`.
+
+**What is still accepted.** The gate proves the ORIGIN of the build, never its
+CONTENT: a compromised repository or workflow publishes an attested malicious
+wheel and passes. It also cannot help until a release actually carries an
+attestation — every version up to and including 0.20.29 predates publishing from
+CI, so the first attested release is the first one this can admit, and until then
+every unattended upgrade is held. `requirements.lock` is hash-pinned and audited
+weekly by `supply-chain.yml`, but the update path installs the published wheel,
+not the lock.
+
+**Still worth revisiting, in order of cost:** pinning the update channel to a
+known index; holding unattended updates to a version already seen for N days.
+Neither is implemented.
+
+---
+
+## Not accepted, and deliberately absent
+
+The synthesis sign-drain finding ("Synthesis sign-drain signs untrusted
+LLM-written notes", critical, `c9ba28c`) is **not** here. It was a real gap and
+it is fixed: `brain write --untrusted-author` now applies the audited draft
+path's controls before signing, and `draft_drain.sanitize_untrusted_note` is the
+single implementation both paths call.

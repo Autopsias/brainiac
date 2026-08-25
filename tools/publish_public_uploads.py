@@ -146,74 +146,6 @@ def phase_testpypi(artifacts: list[Path], version: str, scratch: Path) -> str:
         scratch, "testpypi", deps_from=wheels[0])
 
 
-def phase_pypi(artifacts: list[Path], version: str, scratch: Path) -> str:
-    """Upload to production PyPI, then verify the served artifact is
-    byte-identical to what was built (sha256 over pip download)."""
-    proc = _pp._run([sys.executable, "-m", "twine", "upload", "--skip-existing",
-                 *[str(p) for p in artifacts]], interactive=True)
-    _pp._need(proc, "twine upload to pypi")
-    dl = scratch / "pypi-download"
-    dl.mkdir(exist_ok=True)
-    pip = _pp._throwaway_venv(scratch, "pypi-verify") / "pip"
-    _pp._poll(lambda: _pp._run([str(pip), "download", "--no-deps", "-d", str(dl),
-                        f"brainiac-cli=={version}"], timeout=600),
-          what="pip download from pypi")
-    local = {p.name: p for p in artifacts}
-    served_names = []
-    for p in sorted(dl.glob("brainiac_cli-*")):
-        mine = local.get(p.name)
-        if mine is None:
-            continue
-        served_names.append(p.name)
-        if hashlib.sha256(p.read_bytes()).hexdigest() == \
-           hashlib.sha256(mine.read_bytes()).hexdigest():
-            continue
-        # Container bytes differing is EXPECTED across runs: neither wheels nor
-        # sdists are reproducible by default (zip/tar entries carry mtimes and an
-        # ordering), so a resumed run that rebuilt its artifacts always sees a
-        # different archive hash than the one uploaded earlier. Comparing archive
-        # bytes therefore cried tampering on a healthy 0.19.19 release. What
-        # actually matters is whether the CODE differs, so compare member by
-        # member -- which still catches a genuinely altered artifact.
-        diff = _pp._archive_content_diff(mine, p)
-        if diff:
-            raise _pp.PublishError(
-                f"PyPI serves a {p.name} whose CONTENTS differ from what was built "
-                f"-- investigate immediately before publishing anything else.\n"
-                f"differing members: {', '.join(diff[:20])}")
-    checked = ", ".join(served_names) or "(none downloadable yet)"
-    return f"contents verified member-by-member against built artifacts: {checked}"
-
-
-def _archive_members(path: Path) -> dict[str, str]:
-    """{member name: sha256 of its bytes} for a wheel/zip or an sdist tarball.
-    Names are compared without their leading top-level directory so a rebuild's
-    identical payload matches regardless of archive-level packaging noise."""
-    out: dict[str, str] = {}
-    if path.suffix == ".whl" or path.suffix == ".zip":
-        with zipfile.ZipFile(path) as z:
-            for info in z.infolist():
-                if not info.is_dir():
-                    out[info.filename] = hashlib.sha256(z.read(info.filename)).hexdigest()
-        return out
-    with tarfile.open(path) as tar:
-        for member in tar.getmembers():
-            if not member.isfile():
-                continue
-            fh = tar.extractfile(member)
-            if fh is None:
-                continue
-            rel = member.name.split("/", 1)[-1]
-            out[rel] = hashlib.sha256(fh.read()).hexdigest()
-    return out
-
-
-def _archive_content_diff(built: Path, served: Path) -> list[str]:
-    """Member names whose CONTENTS differ (or exist on only one side)."""
-    a, b = _pp._archive_members(built), _pp._archive_members(served)
-    return sorted(set(a) ^ set(b)) + sorted(k for k in set(a) & set(b) if a[k] != b[k])
-
-
 def npm_pack_smoke(export_dir: Path, version: str, scratch: Path) -> str:
     """Pack the npx bootstrap from the EXPORT tree and run it, WITHOUT publishing.
 
@@ -293,13 +225,25 @@ def phase_public_git(export_dir: Path, version: str, scratch: Path,
 
     gate_fn("public-git", f"push v{version} to {url} ({default_branch} + tag)",
             "a public push is visible immediately and can only be superseded, "
-            "not unpublished — and pushing THIS TAG also publishes "
-            f"brainiac-install@{version} to npm, which is permanent per "
-            "version; this is the last gate",
+            "not unpublished — and pushing THIS TAG publishes BOTH "
+            f"brainiac-cli=={version} to PyPI and brainiac-install@{version} "
+            "to npm. Each is permanent per version: yankable, never "
+            "replaceable. This is the last gate, and it is now the point of "
+            "no return for the Python package too (the separate `pypi` phase "
+            "that used to hold that line was removed on 2026-08-25 when the "
+            "upload moved to CI)",
             [f"squashed commit on {default_branch} from the verified export",
              "final-tree contamination scan: 0 hits (self-test passed)",
              f"diffstat tail: {stat_tail}",
-             "PyPI publish verified for this version",
+             # NOT "PyPI publish verified" — it is not, and it cannot be.
+             # That line was true while a `pypi` phase uploaded before this
+             # gate; the upload moved to CI on 2026-08-25 and the phase went
+             # with it, so at THIS moment nothing is on PyPI. Telling the
+             # operator otherwise at the point of no return is the worst place
+             # in the pipeline to carry a stale claim.
+             "PyPI: NOT yet published — this tag push is what publishes it, "
+             "over OIDC with a PEP 740 attestation. TestPyPI rehearsed the "
+             "same artifacts earlier in this run",
              "npm tarball packed from this export and smoke-tested; the tag "
              "push fires npm-publish.yml, which publishes it over OIDC with "
              "a provenance attestation"])
@@ -433,24 +377,34 @@ def phase_release_asset(export_dir: Path, version: str, scratch: Path,
     return f"{action}; brainiac.mcpb served, sha256 verified ({digest[:16]}…)"
 
 
-def phase_post_verify(version: str, scratch: Path) -> str:
+def phase_post_verify(version: str, scratch: Path,
+                      artifacts: list[Path]) -> str:
     """The consumption paths a new user actually takes, from clean environments.
 
-    npm is published by `npm-publish.yml` on the tag push, not by this script,
-    so this phase WAITS for the registry rather than assuming it. The wait is
-    keyed on the public tag: no tag means the workflow was never triggered and
-    npm cannot be expected, so the gap is reported instead of failing a
-    release whose PyPI and git legs both landed.
+    BOTH indexes are published by the tag push now, not by this script, so this
+    phase WAITS for them rather than assuming them. The wait is keyed on the
+    public tag: no tag means neither workflow was ever triggered, so the gap is
+    reported instead of failing a release whose git leg landed.
+
+    Order matters here. The clean-venv check installs FROM PyPI, so it can only
+    run after the PyPI wait below -- running it first, as this did while the
+    pipeline still uploaded from this machine, would now fail every release by
+    reaching for a version the index does not have yet.
     """
-    lines = [_pp._clean_venv_check(version, [], scratch, "pypi-final")]
+    lines: list[str] = []
     tag_visible = _pp._run(
         ["gh", "api", f"repos/{_pp.PUBLIC_REPO}/git/refs/tags/v{version}"]).returncode == 0
     lines.append(f"public tag v{version}: {'visible' if tag_visible else 'NOT VISIBLE YET'}")
     if not tag_visible:
-        lines.append(f"npm brainiac-install@{version}: NOT EXPECTED YET (the tag that "
-                     f"triggers npm-publish.yml is not on the public repo, so that "
-                     f"channel is still on its previous version)")
+        lines.append(f"PyPI brainiac-cli=={version} and npm brainiac-install@{version}: "
+                     f"NOT EXPECTED YET (the tag that triggers pypi-publish.yml and "
+                     f"npm-publish.yml is not on the public repo, so both channels are "
+                     f"still on their previous version)")
         return "\n".join(lines)
+
+    lines.append(_pp.wait_for_pypi(version, scratch))
+    lines.append(_pp._clean_venv_check(version, [], scratch, "pypi-final"))
+    lines.append(_pp.verify_served_artifacts(artifacts, version, scratch))
 
     # ~25s of workflow plus the registry's own read-after-write lag. A poll, not
     # a sleep: a run that publishes fast must not pay the worst case.

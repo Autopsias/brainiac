@@ -86,6 +86,24 @@ def write_one(dest: Path, name: str, content_b64: str) -> dict[str, Any]:
         return {"filename": name, "written": False, "reason": "unsafe-name"}
     raw = base64.b64decode(content_b64, validate=True)
     path = dest / safe
+    # REFUSE, never overwrite (2026-08-25, Codex cloud security round). Manifest
+    # lines are keyed by conversation AND filename, so two different messages in
+    # one run may legitimately both offer `invoice.pdf`. This wrote both to the
+    # same path, and the later sweep then matches candidates BY FILENAME plus a
+    # freshness and approximate-size check — so the second message's bytes were
+    # claimed under the first message's provenance and classification, and the
+    # first attachment was silently lost before its mail was archived.
+    #
+    # Refusing is the fix rather than disambiguating the name: the sweep looks
+    # the file up by the manifest's filename, so a renamed file would go
+    # unclaimed and read as a clean run. A refusal is visible, keeps the bytes
+    # already on disk bound to the message that actually sent them, and the
+    # caller already handles a `written: False` part (see `unsafe-name` above).
+    if path.exists() and path.read_bytes() != raw:
+        return {"filename": safe, "written": False, "reason": "name-collision",
+                "detail": ("another message in this run already staged a "
+                           "different file under this name; provenance would "
+                           "be ambiguous")}
     path.write_bytes(raw)
     got = path.read_bytes()
     return {"filename": safe, "written": True, "bytes": len(got),

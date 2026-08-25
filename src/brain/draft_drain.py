@@ -11,6 +11,61 @@ from .audit import KeyUnavailable
 from .notes import note_from_text, safe_slug
 
 
+
+class UntrustedAuthorRefusal(ValueError):
+    """Note text authored by an untrusted leg failed a host-broker control."""
+
+
+def sanitize_untrusted_note(content: str, *, path: Path, vault: Path) -> str:
+    """Apply the host-broker's untrusted-author controls to note text.
+
+    THE ONE implementation, called from both places that need it: this module's
+    draft drain, and `brain write --untrusted-author` (which the weekly
+    synthesis sign-drain uses). Two copies of this rule would be two rules; the
+    2026-08-16 finding below is exactly what happens when one path has it and
+    another does not.
+
+    What it enforces, and why each one:
+
+    * **A safe id, fail-closed.** `safe_slug` rejects an id that could escape
+      its subtree. An untrusted author picks the id.
+    * **No forged host-only provenance.** A model that read attacker-controlled
+      vault content can be steered into writing `provenance.verified` — or any
+      other key the HOST derives for itself — into frontmatter. Signing those
+      bytes turns a claim into an assertion the host made. `without_host_only_text`
+      strips the lines and raises when the key still resolves.
+    * **The trust marker.** What an untrusted leg wrote is recorded as
+      untrusted, even though the host is what signs it. Signing attests that
+      these are the bytes; it does not attest that they are trustworthy.
+
+    *Why this exists (2026-08-16, Codex cloud security round):* the weekly
+    synthesis sign-drain called `brain write` directly on every brain/ note the
+    confined session had written. That closed a real, measured hole — 24
+    unsigned notes up to MNPI, sitting indexed and retrievable — but it opened
+    another, because the drain skipped every control above. The session denies
+    Bash, runs BRAIN_ROLE=vm and holds no key precisely because it reads
+    untrusted content; signing its output unvalidated hands back the authority
+    that confinement removed.
+
+    Raises `UntrustedAuthorRefusal` rather than returning a flag: a note that
+    fails a control must not reach the signing path at all.
+    """
+    note = note_from_text(content, path, vault)
+    if note is None:
+        raise UntrustedAuthorRefusal("no frontmatter — cannot identify the note")
+    try:
+        safe_slug(note.id)
+    except ValueError as exc:
+        raise UntrustedAuthorRefusal(f"unsafe id (fail-closed): {exc}") from exc
+    if frontmatter.split(content) is None:
+        return content
+    try:
+        content = provenance.without_host_only_text(content)
+    except provenance.HostOnlyKeyResidue as exc:
+        raise UntrustedAuthorRefusal(f"host-only provenance forgery: {exc}") from exc
+    return frontmatter.set_keys(content, {"provenance.trust": "untrusted"})
+
+
 @dataclass
 class DraftCandidate:
     """Validated in-memory draft ready for security transforms and commit."""
@@ -167,15 +222,14 @@ def _sanitize_candidate(run: DraftDrainRun, candidate: DraftCandidate) -> bool:
     content = candidate.content
     if frontmatter.split(content) is not None:
         try:
-            content = provenance.without_host_only_text(content)
-        except provenance.HostOnlyKeyResidue as exc:
-            run.skip(
-                candidate.draft,
-                f"host-only provenance forgery: {exc}",
-                candidate.source_name,
+            # The id was already checked above by `_validate_candidate`; this
+            # re-checks it, which is free and keeps ONE definition of the rule.
+            content = sanitize_untrusted_note(
+                content, path=candidate.draft, vault=run.core.vault
             )
+        except UntrustedAuthorRefusal as exc:
+            run.skip(candidate.draft, str(exc), candidate.source_name)
             return False
-        content = frontmatter.set_keys(content, {"provenance.trust": "untrusted"})
     split = None if candidate.approved else frontmatter.split(content)
     if split is not None:
         frontmatter_block, body = split

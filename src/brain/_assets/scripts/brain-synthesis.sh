@@ -310,6 +310,9 @@ doctor: $DOCTOR_DIAG"
     #
     # Same shape as the VM-draft -> host-commit protocol (AGENTS.md §6): the
     # untrusted leg proposes, the HOST signs, on its own side of the boundary.
+    # That claim was only HALF true until 2026-08-25: the protocol's controls
+    # ran in `draft_drain`, and this drain called `brain write` straight past
+    # them. `--untrusted-author` below is what makes the sentence true.
     # Runs BEFORE `sync --publish` so the reindex sees signed notes.
     SIGN_LIST="$(mktemp -t brain-synthesis-signlist)"
     # -newer beats -mmin: an exact marker, no clock arithmetic. The generated
@@ -324,7 +327,18 @@ doctor: $DOCTOR_DIAG"
     while IFS= read -r NOTE <&3; do
       [ -n "$NOTE" ] || continue
       REL="${NOTE#"$VAULT"/}"
+      # --untrusted-author is load-bearing, not decoration (2026-08-16, Codex
+      # cloud security round). Without it this drain signed whatever the
+      # confined session wrote, skipping every control the audited draft path
+      # applies: a safe id, and — the one that matters — no FORGED host-only
+      # provenance. The session reads untrusted vault content, so injection can
+      # steer it into writing `provenance.verified` into frontmatter, and
+      # signing those bytes turns a claim into an assertion the host made. The
+      # flag runs `draft_drain.sanitize_untrusted_note` first and refuses the
+      # note rather than signing it. A refusal counts as SIGN_FAIL below, which
+      # fails the run — the correct outcome for a note that cannot be signed.
       if BRAIN_VAULT="$VAULT" BRAIN_ROLE=host "$BRAIN_BIN" write "$REL" \
+           --untrusted-author \
            --reason "weekly synthesis sign-drain: signed on the host after the confined session wrote it" \
            >>"$LOG" 2>&1 < "$NOTE"; then
         SIGNED=$((SIGNED + 1))

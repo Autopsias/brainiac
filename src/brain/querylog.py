@@ -210,24 +210,38 @@ def _write_all(fd: int, payload: bytes) -> None:
         view = view[written:]
 
 
-def _try_append_lock(fd: int) -> bool:
-    """Acquire a non-blocking writer lock for one JSONL record.
+#: How long an appender may wait for a busy lock before giving the record up.
+#: Bounded hard: capture is observability, and a search must never wait on it.
+#: Measured 2026-08-25 on the reference vault — 1374 historical
+#: `append_lock_unavailable` failures, 0 consecutive: concurrent searches
+#: losing a race they only had to lose by microseconds.
+APPEND_LOCK_WAIT_S = 0.25
+
+
+def _try_append_lock(fd: int, wait_s: float = APPEND_LOCK_WAIT_S) -> bool:
+    """Acquire the writer lock for one JSONL record, briefly.
 
     O_APPEND protects the file offset, but it cannot turn a partial write of
-    an unusually long raw query into one indivisible JSONL record.  A
-    non-blocking advisory lock keeps concurrent current-version appenders from
-    interleaving records without ever making a search wait for observability.
-    A busy/unavailable lock is an ordinary best-effort capture failure.
+    an unusually long raw query into one indivisible JSONL record.  An
+    advisory lock keeps concurrent current-version appenders from interleaving
+    records; it retries for at most ``wait_s`` so a search never waits on
+    observability. A still-busy lock is an ordinary best-effort failure.
     """
     if os.name != "posix":
         return False
     try:
         import fcntl
-
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        return True
-    except (ImportError, OSError):
+    except ImportError:
         return False
+    deadline = time.monotonic() + max(0.0, wait_s)
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except OSError:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.01)
 
 
 def _release_append_lock(fd: int) -> None:

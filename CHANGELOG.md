@@ -7,6 +7,29 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.29] — 2026-08-25
+### Changed
+- The drop zone INGESTS a second format of a document it already holds, under
+  `<slug>-<ext>`, instead of refusing it as `note_id_collision`. The lane
+  slugifies a filename STEM, so `memo_v15.pdf` and `memo_v15.md` claimed one
+  id and the second was quarantined — reachable by nobody (measured: one such
+  file on the reference vault, and every docx+pdf attachment pair would have
+  joined it). RETIRING the rendition stays an owner decision through the
+  version-link lane's format-twin proposal. A same-format collision still
+  quarantines, and a taken `<slug>-<ext>` falls back to the collision.
+- The query-capture append lock waits up to `APPEND_LOCK_WAIT_S` (0.25 s)
+  instead of failing the moment it is busy: 1374 historical
+  `append_lock_unavailable` failures with 0 consecutive were concurrent
+  searches losing a race by microseconds, each a query missing from the
+  ledger. Still bounded hard — a search never waits on observability.
+
+### Fixed
+- The VER-01 fold retires a rendition under the family's LIVE head, and only
+  after the chain loop has run. `core.supersede` refuses a target that is
+  itself retired, so a rendition of an already-superseded version (`…-v52-
+  preview` when v52 is retired by v53) failed — measured on the first 0.20.28
+  fold: 10 of 11 preview renders errored, 1 retired.
+
 ## [0.20.28] — 2026-08-25
 ### Changed
 - `search` / `hybrid-search` / the MCP `search` verb HIDE versions a supersede

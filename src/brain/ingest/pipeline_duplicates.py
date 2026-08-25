@@ -43,6 +43,79 @@ def prior_extraction_failed(vault: Path, existing_id: str) -> bool:
         return False
 
 
+def rendition_slug(
+    record: "ClaimRecord", note_path: Path, existing_meta: dict
+) -> str:
+    """``"<slug>-<ext>"`` when the incoming file is another FORMAT of the note
+    already at ``<slug>``, else ``""``.
+
+    The drop zone slugifies a filename STEM, so `memo_v15.pdf` and
+    `memo_v15.md` claim one id and the second arrived as a
+    ``note_id_collision`` — refused, reachable by nobody. Measured 2026-08-25
+    on the reference vault: one such file in quarantine, and every future
+    docx+pdf attachment pair would have joined it. A format twin is ingested
+    under its own id instead; the version-link lane's format-twin rule
+    (`versionlink_stages`) then proposes retiring it under the primary, which
+    keeps the RETIREMENT an owner decision rather than an ingest-time guess.
+    A same-format collision is still a collision.
+    """
+    assert record.claimed is not None
+    incoming = record.claimed.suffix.casefold()
+    existing = Path(str(existing_meta.get("origin") or "")).suffix.casefold()
+    if not incoming or not existing or incoming == existing:
+        return ""
+    candidate = f"{record.slug}-{incoming.lstrip('.')}"
+    if (note_path.parent / f"{candidate}.md").exists():
+        return ""   # the rendition id is taken too — a real collision, refuse
+    return candidate
+
+
+def take_rendition(
+    record: "ClaimRecord", note_path: Path, existing_meta: dict
+) -> Path | None:
+    """Retarget ``record`` at its rendition id, or ``None`` to refuse.
+
+    Rebuilds the note metadata at the new id; the archived original is
+    unchanged and still the file this note came from.
+    """
+    from . import pipeline as facade
+
+    slug = rendition_slug(record, note_path, existing_meta)
+    if not slug:
+        return None
+    record.append("renditions", {
+        "file": record.orig_name, "id": slug, "primary": record.slug,
+    })
+    record.slug = slug
+    record.meta = facade._meta(
+        record.slug, record.drain.today, record.archive_path, record.drain.vault,
+        str(record.meta["sha256"]), record.provenance,
+    )
+    return record.drain.vault / "raw" / f"{slug}.md"
+
+
+def record_existing_note(
+    record: "ClaimRecord", existing_meta: dict
+) -> "ClaimRecord":
+    """File the claim as a duplicate of the note ALREADY at ``record.slug``
+    (same id, same bytes) and record its tier, so a capped reader learns the
+    copy exists at a tier it cannot see rather than nothing at all."""
+    from . import pipeline as facade
+
+    assert record.claimed is not None
+    record.drain.manifest[record.original_sha] = record.slug
+    facade._save_manifest(record.drain.vault, record.drain.manifest)
+    record.claimed.unlink(missing_ok=True)
+    tier = existing_meta.get("classification")
+    record.append("duplicates", {
+        "file": record.orig_name,
+        "existing_id": record.slug,
+        "classification": str(tier) if tier else None,
+    })
+    record.terminal = True
+    return record
+
+
 def record_duplicate(record: "ClaimRecord", existing_id: str) -> "ClaimRecord":
     """Move the claimed file aside as a duplicate of an already-ingested note."""
     from . import pipeline as facade

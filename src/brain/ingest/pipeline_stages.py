@@ -393,6 +393,7 @@ def signed_note_write_stage(record: ClaimRecord) -> ClaimRecord:
         return record
     from .. import frontmatter as fm
     from . import pipeline as facade
+    from . import pipeline_duplicates
 
     assert record.claimed is not None
     assert record.archive_path is not None
@@ -403,26 +404,19 @@ def signed_note_write_stage(record: ClaimRecord) -> ClaimRecord:
     if note_path.exists():
         existing_meta, _ = fm.parse_text(note_path.read_text(encoding="utf-8"))
         if str(existing_meta.get("sha256", "")) != str(record.meta["sha256"]):
-            reason = "note_id_collision"
-            facade._quarantine(record.claimed, record.drain.quarantine_dir, reason, [
-                f"raw/{record.slug}.md already exists with different content",
-            ])
-            record.append("quarantined", {"file": record.claimed.name, "reason": reason})
-            record.terminal = True
-            return record
-        record.drain.manifest[record.original_sha] = record.slug
-        facade._save_manifest(record.drain.vault, record.drain.manifest)
-        record.claimed.unlink(missing_ok=True)
-        existing_classification = existing_meta.get("classification")
-        record.append("duplicates", {
-            "file": record.orig_name,
-            "existing_id": record.slug,
-            "classification": (
-                str(existing_classification) if existing_classification else None
-            ),
-        })
-        record.terminal = True
-        return record
+            retarget = pipeline_duplicates.take_rendition(
+                record, note_path, existing_meta)
+            if retarget is None:
+                reason = "note_id_collision"
+                facade._quarantine(record.claimed, record.drain.quarantine_dir, reason, [
+                    f"raw/{record.slug}.md already exists with different content",
+                ])
+                record.append("quarantined", {"file": record.claimed.name, "reason": reason})
+                record.terminal = True
+                return record
+            note_rel, note_path = f"raw/{record.slug}.md", retarget
+        else:  # same id, same bytes: the document is already in the vault
+            return pipeline_duplicates.record_existing_note(record, existing_meta)
     content = facade._build_frontmatter(record.meta, record.linked_markdown)
     record.drain.core.write_note(
         note_rel,

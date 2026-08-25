@@ -22,6 +22,9 @@ def run_ingest(core: Any, *, dry_run: bool = False) -> dict[str, Any]:
         "processed": [],
         "quarantined": [],
         "duplicates": [],
+        # a second FORMAT of a document already ingested under this id: taken
+        # under `<slug>-<ext>` rather than refused (see `_rendition_slug`)
+        "renditions": [],
         "skipped": [],
         "dry_run": dry_run,
     }

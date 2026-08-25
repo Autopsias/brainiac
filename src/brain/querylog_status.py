@@ -130,7 +130,8 @@ def capture_post_egress(
     thread_locked = False
     locked = False
     try:
-        thread_locked = source._APPEND_THREAD_LOCK.acquire(blocking=False)
+        thread_locked = source._APPEND_THREAD_LOCK.acquire(
+            timeout=source.APPEND_LOCK_WAIT_S)
         if not thread_locked:
             source._note_failure(vault_root, "append_lock_unavailable")
             return False

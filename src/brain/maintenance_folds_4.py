@@ -60,27 +60,41 @@ def version_family_key(note_id: str) -> tuple[str, int] | None:
     return None if parsed is None else (parsed[0], parsed[1])
 
 
+def _live_head(note_id: str, successor_of: dict[str, str]) -> str:
+    """Follow ``superseded_by`` from ``note_id`` to the chain's live head.
+    ``core.supersede`` refuses a target that is itself retired ("a second
+    latest"), and a rendition of v52 is retired by whatever retired v52 —
+    measured 2026-08-25: 10 of 11 preview renders failed under their own,
+    already-superseded primaries. Bounded like the ranking-layer walk."""
+    seen = {note_id}
+    for _hop in range(16):
+        nxt = successor_of.get(note_id, "")
+        if not nxt or nxt in seen:
+            return note_id
+        seen.add(nxt)
+        note_id = nxt
+    return note_id
+
+
 def _retire_renditions(
     core: Any,
     renditions: dict[tuple[str, int], list[tuple[str, dict[str, str]]]],
     primaries: dict[tuple[str, int], list[str]],
+    successor_of: dict[str, str],
     report: dict[str, Any],
 ) -> list[tuple[str, dict[str, str]]]:
-    """Retire each rendition under its ONE primary through the audited
-    ``core.supersede``. Returns the renditions that have no primary — those
-    stand in as the version itself and join the chain like any member. A
-    rendition with two primaries, or already retired elsewhere, is left alone
-    and reported."""
-    standalone: list[tuple[str, dict[str, str]]] = []
+    """Retire each rendition under its ONE primary's LIVE HEAD through the
+    audited ``core.supersede``. Runs AFTER the chain loop, so a rendition of
+    v52 lands under v58 when v52 is already retired. A rendition with two
+    primaries, or already retired elsewhere, is left alone and reported."""
     for key, copies in sorted(renditions.items()):
         owners = primaries.get(key, [])
         if not owners:
-            standalone.extend(copies)
-            continue
+            continue  # joined the chain as the version itself, upstream
         if len(owners) > 1:
             report["skipped_ambiguous"].append(f"{key[0]}-v{key[1]}")
             continue
-        primary = owners[0]
+        primary = _live_head(owners[0], successor_of)
         for nid, meta in copies:
             if meta["superseded_by"] == primary:
                 continue  # already retired under it — idempotent re-run
@@ -95,7 +109,44 @@ def _retire_renditions(
             except Exception as exc:  # noqa: BLE001 — one bad copy never aborts the fold
                 report["errors"].append({"family": key[0], "old": nid,
                                          "new": primary, "error": str(exc)})
-    return standalone
+
+
+def _group_versions(core: Any) -> tuple[
+    dict[str, list[tuple[int, str, str, dict[str, str]]]],
+    dict[tuple[str, int], list[tuple[str, dict[str, str]]]],
+    dict[tuple[str, int], list[str]],
+    dict[str, str],
+]:
+    """(families, renditions, primaries, successor_of) over the whole index.
+    A rendition with no primary stands in as the version itself and joins its
+    family; ``successor_of`` is chain-wide so a rendition of a retired version
+    can find the family's LIVE head."""
+    rows = core.index.conn.execute(
+        "SELECT id, is_latest_version, superseded_by, "
+        "COALESCE(NULLIF(effective_date,''), NULLIF(document_date,''), created) "
+        "FROM notes").fetchall()
+    families: dict[str, list[tuple[int, str, str, dict[str, str]]]] = {}
+    renditions: dict[tuple[str, int], list[tuple[str, dict[str, str]]]] = {}
+    primaries: dict[tuple[str, int], list[str]] = {}
+    successor_of = {str(nid): str(sup_by or "") for nid, _ilv, sup_by, _vd in rows}
+    for nid, ilv, sup_by, vdate in rows:
+        parsed = parse_version_id(str(nid))
+        if parsed is None:
+            continue
+        fam, num, rendition = parsed
+        meta = {"is_latest": str(ilv or ""), "superseded_by": str(sup_by or "")}
+        member = (num, str(vdate or ""), str(nid), meta)
+        if rendition:
+            renditions.setdefault((fam, num), []).append((str(nid), meta))
+            continue
+        primaries.setdefault((fam, num), []).append(str(nid))
+        families.setdefault(fam, []).append(member)
+    for (fam, num), copies in renditions.items():
+        if not primaries.get((fam, num)):
+            for nid, meta in copies:
+                vdate = next((r[3] for r in rows if str(r[0]) == nid), "")
+                families.setdefault(fam, []).append((num, str(vdate or ""), nid, meta))
+    return families, renditions, primaries, successor_of
 
 
 def auto_version_chains(core: Any) -> dict[str, Any]:
@@ -127,32 +178,9 @@ def auto_version_chains(core: Any) -> dict[str, Any]:
     — informational, never action-required); ``skipped_conflict`` keeps its
     original meaning: an orderable family whose manual chain disagrees, which
     IS a human call."""
-    rows = core.index.conn.execute(
-        "SELECT id, is_latest_version, superseded_by, "
-        "COALESCE(NULLIF(effective_date,''), NULLIF(document_date,''), created) "
-        "FROM notes").fetchall()
-    families: dict[str, list[tuple[int, str, str, dict[str, str]]]] = {}
-    renditions: dict[tuple[str, int], list[tuple[str, dict[str, str]]]] = {}
-    primaries: dict[tuple[str, int], list[str]] = {}
-    vdates: dict[str, str] = {}
-    for nid, ilv, sup_by, vdate in rows:
-        parsed = parse_version_id(str(nid))
-        if parsed is None:
-            continue
-        fam, num, rendition = parsed
-        meta = {"is_latest": str(ilv or ""), "superseded_by": str(sup_by or "")}
-        vdates[str(nid)] = str(vdate or "")
-        if rendition:
-            renditions.setdefault((fam, num), []).append((str(nid), meta))
-            continue
-        primaries.setdefault((fam, num), []).append(str(nid))
-        families.setdefault(fam, []).append((num, vdates[str(nid)], str(nid), meta))
-
+    families, renditions, primaries, successor_of = _group_versions(core)
     report: dict[str, Any] = {"chained": [], "renditions": [], "skipped_conflict": [],
                               "skipped_ambiguous": [], "errors": []}
-    for nid, meta in _retire_renditions(core, renditions, primaries, report):
-        fam, num, _rendition = parse_version_id(nid)  # type: ignore[misc]
-        families.setdefault(fam, []).append((num, vdates[nid], nid, meta))
     for fam, members in sorted(families.items()):
         if len(members) < 2:
             continue
@@ -188,6 +216,9 @@ def auto_version_chains(core: Any) -> dict[str, Any]:
                 report["errors"].append({"family": fam, "old": old_id,
                                          "new": new_id, "error": str(exc)})
                 break
+    for link in report["chained"]:
+        successor_of[link["old"]] = link["new"]
+    _retire_renditions(core, renditions, primaries, successor_of, report)
     return report
 
 

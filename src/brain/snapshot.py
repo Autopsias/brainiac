@@ -54,6 +54,9 @@ class SnapshotManifest:
     embed_model: str | None
     embed_dim: str | None
     schema_version: str | None
+    # VULN-3387: notes removed from THIS copy because their current bytes
+    # match nothing the audit chain signed and no disposition explains them.
+    withheld_drift: int = 0
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -127,30 +130,54 @@ def read_manifest(dest_dir: Path) -> SnapshotManifest | None:
         return None
 
 
-def publish_snapshot(source_db: Path, dest_dir: Path) -> SnapshotManifest:
-    """Atomically publish ``source_db`` as a read-only snapshot in ``dest_dir``.
+def _withhold_paths(db: Path, paths: set[str]) -> int:
+    """Remove ``paths``' notes from the SNAPSHOT COPY only (VULN-3387). The
+    authoritative index is untouched — verify-audit/doctor keep reporting the
+    drift on the host; this only stops an out-of-band edit reaching the
+    untrusted read-only VM leg ahead of triage. Mirrors the index's own
+    ``_delete_note`` row teardown (chunks, FTS, aliases, notes) plus the
+    vector table when the backend keeps one in-DB."""
+    con = sqlite3.connect(str(db))
+    try:
+        # The withhold set carries the chain's vault-RELATIVE paths;
+        # notes.path is the scanner's resolved absolute form — match by
+        # exact-or-relative-tail so neither spelling convention drops a row.
+        wanted = {
+            rowid for rowid, p in con.execute("SELECT rowid, path FROM notes")
+            if p in paths or any(p.endswith("/" + w) for w in paths)
+        }
+        has_vec = con.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='vec_index'"
+        ).fetchone() is not None
+        for rowid in sorted(wanted):
+            chunk_ids = [
+                int(c[0]) for c in con.execute(
+                    "SELECT rowid FROM chunks WHERE note_rowid=?", (rowid,)
+                ).fetchall()
+            ]
+            if has_vec:
+                for crid in chunk_ids:
+                    con.execute("DELETE FROM vec_index WHERE rowid=?", (crid,))
+            con.execute("DELETE FROM chunks WHERE note_rowid=?", (rowid,))
+            con.execute("DELETE FROM notes_fts WHERE rowid=?", (rowid,))
+            con.execute("DELETE FROM aliases WHERE note_rowid=?", (rowid,))
+            con.execute("DELETE FROM notes WHERE rowid=?", (rowid,))
+        con.commit()
+        return len(wanted)
+    finally:
+        con.close()
 
-    Returns the new manifest. ``generation`` = previous generation + 1 (1 on the
-    first publish).
-    """
-    source_db = Path(source_db)
-    dest_dir = Path(dest_dir)
-    if not source_db.is_file():
-        raise FileNotFoundError(f"source index not found: {source_db}")
-    dest_dir.mkdir(parents=True, exist_ok=True)
 
-    prev = read_manifest(dest_dir)
-    generation = (prev.generation + 1) if prev else 1
-
-    # Checkpoint the WAL into the main DB before snapshotting so the copy is a
-    # self-contained, consistent point-in-time (no dependence on -wal/-shm).
-    # CC-02/[HARDENED:adv-r1-codex]: this used to swallow OperationalError
-    # and copy anyway -- a busy checkpoint (another writer mid-transaction)
-    # would silently publish a snapshot that OMITS uncheckpointed WAL
-    # writes. Now bounded-retried (same helper as every other write path),
-    # and a checkpoint that still can't complete ABORTS the publish rather
-    # than copying a possibly-incomplete DB. Callers hold the CC-02 writer
-    # lock around this call, so real contention here should be rare.
+def _checkpoint_source(source_db: Path) -> None:
+    """Checkpoint the WAL into the main DB before snapshotting so the copy is a
+    self-contained, consistent point-in-time (no dependence on -wal/-shm).
+    CC-02/[HARDENED:adv-r1-codex]: this used to swallow OperationalError
+    and copy anyway -- a busy checkpoint (another writer mid-transaction)
+    would silently publish a snapshot that OMITS uncheckpointed WAL
+    writes. Now bounded-retried (same helper as every other write path),
+    and a checkpoint that still can't complete ABORTS the publish rather
+    than copying a possibly-incomplete DB. Callers hold the CC-02 writer
+    lock around this call, so real contention here should be rare."""
     con = sqlite3.connect(str(source_db))
     con.isolation_level = None
 
@@ -158,11 +185,11 @@ def publish_snapshot(source_db: Path, dest_dir: Path) -> SnapshotManifest:
         # `PRAGMA wal_checkpoint` reports contention by RETURNING busy=1 -- it
         # does NOT raise. Executing it without reading the result row therefore
         # swallows exactly the failure this block exists to catch, and the
-        # shutil.copy2 below then copies the main DB WITHOUT its -wal, losing
-        # every page that still lived only there. Re-raise as a lock-shaped
-        # error so with_write_retry retries it and, past its bound, aborts the
-        # publish. Mirrors the same check on the rebuild swap path in
-        # index.py::_swap_staging.
+        # shutil.copy2 in the caller then copies the main DB WITHOUT its -wal,
+        # losing every page that still lived only there. Re-raise as a
+        # lock-shaped error so with_write_retry retries it and, past its bound,
+        # aborts the publish. Mirrors the same check on the rebuild swap path
+        # in index.py::_swap_staging.
         busy, log_frames, _checkpointed = con.execute(
             "PRAGMA wal_checkpoint(TRUNCATE)"
         ).fetchone()
@@ -183,9 +210,31 @@ def publish_snapshot(source_db: Path, dest_dir: Path) -> SnapshotManifest:
     finally:
         con.close()
 
+
+def publish_snapshot(
+    source_db: Path, dest_dir: Path, *, withhold_paths: set[str] | None = None
+) -> SnapshotManifest:
+    """Atomically publish ``source_db`` as a read-only snapshot in ``dest_dir``.
+
+    Returns the new manifest. ``generation`` = previous generation + 1 (1 on the
+    first publish). ``withhold_paths`` (VULN-3387) removes those notes from the
+    COPY before it becomes the snapshot — see ``_withhold_paths``.
+    """
+    source_db = Path(source_db)
+    dest_dir = Path(dest_dir)
+    if not source_db.is_file():
+        raise FileNotFoundError(f"source index not found: {source_db}")
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    prev = read_manifest(dest_dir)
+    generation = (prev.generation + 1) if prev else 1
+
+    _checkpoint_source(source_db)
+
     final_db = dest_dir / SNAPSHOT_DB
     tmp_db = dest_dir / (SNAPSHOT_DB + f".tmp.{os.getpid()}.{generation}")
     shutil.copy2(source_db, tmp_db)
+    withheld = _withhold_paths(tmp_db, withhold_paths) if withhold_paths else 0
     try:
         os.replace(tmp_db, final_db)  # atomic swap
     finally:
@@ -220,6 +269,7 @@ def publish_snapshot(source_db: Path, dest_dir: Path) -> SnapshotManifest:
         embed_model=cm["embed_model"],
         embed_dim=cm["embed_dim"],
         schema_version=cm["schema_version"],
+        withheld_drift=withheld,
     )
     # Write manifest LAST, atomically — a present manifest always implies a
     # complete DB at the recorded generation.

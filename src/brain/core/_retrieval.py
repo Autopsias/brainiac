@@ -8,6 +8,7 @@ from ._shared import (
     config,
     frontmatter,
 )
+from ..index._retirement import retired_ids
 
 
 class _CoreRetrievalMixin:
@@ -113,8 +114,9 @@ class _CoreRetrievalMixin:
         - ``sources``: the remaining live hits (material under
           consideration).
         - ``retired_excluded``: hits dropped because a supersession chain
-          retired them (``is_latest_version: false``) — version noise the
-          sweep already handled.
+          retired them — either explicitly, or because they are deliverable
+          markers whose payload was retired. Version noise the sweep already
+          handled.
         """
         # A DEEP candidate pool: decision notes are scarce and often rank
         # below big source documents on broad queries — the decision layer
@@ -127,7 +129,11 @@ class _CoreRetrievalMixin:
         # 2026-08-25; this pool keeps its own accounting truthful).
         pool = [h.to_dict() for h in self.hybrid_search(
             query, k=max(k * 2, 60), include_retired=True)]
-        live = [h for h in pool if h.get("is_latest_version") != "false"]
+        # The SAME rule the ranker applies, never a re-reading of the hit's own
+        # flag: a deliverable marker carries no version state, so a local
+        # ``!= "false"`` test admitted every retired one (2026-08-25).
+        _retired = retired_ids(self.index.conn, [h["id"] for h in pool])
+        live = [h for h in pool if h["id"] not in _retired]
         retired_excluded = len(pool) - len(live)
         decisions = [h for h in live if h.get("type") == "decision"]
         # RET-10b: MERGE a targeted BM25 probe over the decision layer — the
@@ -198,5 +204,7 @@ class _CoreRetrievalMixin:
             seeds, depth=depth, k=k, use_ppr=use_ppr, extra_edges=extra_edges)
     def get(self, note_id: str) -> dict[str, Any] | None:
         return self.index.get(note_id)
-    def recent(self, limit: int = 10) -> list[dict[str, Any]]:
-        return self.index.recent(limit)
+    def recent(
+        self, limit: int = 10, *, include_retired: bool = False
+    ) -> list[dict[str, Any]]:
+        return self.index.recent(limit, include_retired=include_retired)

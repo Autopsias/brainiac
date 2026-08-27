@@ -145,6 +145,29 @@ def _run_integrity(args, ctx) -> int:
     ]
     if res.get("audit_issue"):
         action_required.insert(0, res["audit_issue"])
+    injection = _injection_rows(args, ctx) if getattr(args, "injection", False) else None
+    if injection:
+        action_required.extend(
+            maint.action_required_item(
+                f"{row['id']}: {', '.join(row['markers'])}",
+                "text concealed from a human reader but visible to a model is "
+                "the shape of an indirect prompt injection",
+                "read the note by hand; retire it if the hidden text is not yours",
+                row["path"],
+            )
+            for row in injection
+            if row["verdict"] == "conceal"
+        )
+    reads = _read_log_status(ctx)
+    if reads.get("bulk_reads"):
+        action_required.append(maint.action_required_item(
+            f"{reads['bulk_reads']} bulk read(s) in the last {reads['days']} days "
+            f"(>= {reads['threshold']} notes surfaced in one call)",
+            "a single call surfacing hundreds of notes is a sweep, not a question — "
+            "the shape an injected agent leaves when it exfiltrates through the gate",
+            "review the rows; if none was yours, treat it as an incident",
+            reads.get("dir", ""),
+        ))
     outcomes = maint.build_outcomes([], action_required, res["blocked"])
     pair_report = {
         "total_pairs": len(pairs),
@@ -160,14 +183,44 @@ def _run_integrity(args, ctx) -> int:
                 "audit": res["audit"],
                 "near_dup_pairs": gated_pairs,
                 "egress": pair_report,
+                "injection": injection,
+                "read_log": reads,
                 "outcomes": outcomes,
             },
             True,
         )
     else:
         head = f"integrity -- {pair_report['surfaced_pairs']}/{pair_report['total_pairs']} near-dup pairs surfaced"
+        if injection is not None:
+            conceal = sum(1 for r in injection if r["verdict"] == "conceal")
+            head += (f"; injection scan: {conceal} concealed, "
+                     f"{len(injection) - conceal} flagged")
         _emit(None, False, head + "\n" + maint.render_outcomes_markdown(outcomes))
     return 0
+
+
+def _read_log_status(ctx) -> dict:
+    """SEC-06 access summary. Counts only — the log stores no note ids at all."""
+    from .. import read_log as _rl
+
+    try:
+        return _rl.status(getattr(ctx.core, "vault", None))
+    except Exception:
+        return {"available": False, "reason": "read-log unreadable"}
+
+
+def _injection_rows(args, ctx) -> list:
+    """SEC-05 corpus scan, gated at the same chokepoint as the near-dup pairs.
+
+    A finding NAMES a note, so it is egress-gated like any other content
+    surface — reporting "MNPI-note-x hides an instruction" to an Internal-capped
+    reader would leak the very thing the gate exists to withhold.
+    """
+    from .. import injection_scan as _isc
+
+    rows = _isc.scan_corpus(ctx.core.vault)
+    surfaced, _report = _filter_dicts(rows, args.max_tier)
+    return surfaced
 
 
 def _run_promote_scan(args, ctx) -> int:

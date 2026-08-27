@@ -42,6 +42,14 @@ def _add_read(sub) -> None:
 def _add_recent(sub) -> None:
     sp = sub.add_parser("recent", help="list recently updated notes")
     sp.add_argument("-n", type=int, default=10, help="how many (default: 10)")
+    sp.add_argument(
+        "--include-retired",
+        dest="include_retired",
+        action="store_true",
+        help="also list notes a supersede chain has retired. Hidden by "
+             "default: superseding a note updates it, so the retired tail "
+             "of a chain sorts straight to the top of an unfiltered list",
+    )
     add_common(sp)
 
 

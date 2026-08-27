@@ -10,6 +10,7 @@ from pathlib import Path
 
 from tools import publish_public as _source
 from tools.publish_public import (
+    assert_signing_configured,
     Evidence,
     GateDeclined,
     PHASES,
@@ -77,7 +78,11 @@ def _run_initial_phases(
         pypi_expectation = None
     else:
         pypi_expectation = False
-    summary = phase_preflight(tag, expect_published=pypi_expectation)
+    # Signing first: it costs milliseconds and it is the one preflight failure
+    # that the operator must fix OUTSIDE this repo, so surface it before the
+    # 11-minute suite rather than after.
+    signing = assert_signing_configured()
+    summary = f"{phase_preflight(tag, expect_published=pypi_expectation)}; {signing}"
     ev.record("preflight", "OK", summary)
     verified.append(summary)
     print(f"{_step('preflight')} preflight: {summary}")

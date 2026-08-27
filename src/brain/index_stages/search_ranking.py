@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
+
+from ..index._retirement import RETIRED_PREDICATE
 
 
 @dataclass
@@ -45,20 +47,43 @@ class FusedRanking:
 
 
 def _retired_rowids(index: Any, rowids: set[int]) -> set[int]:
-    """The candidates a supersede chain has retired (``is_latest_version:
-    false``) — the SAME predicate ``bases-query --latest-only`` applies, so
-    "retired" means one thing across the CLI."""
+    """The candidates a supersede chain has retired — the SAME predicate
+    ``bases-query --latest-only`` applies, so "retired" means one thing across
+    the CLI. Both read it from ``index._retirement``, which also resolves a
+    deliverable marker to the payload it points at."""
     if not rowids:
         return set()
     placeholders = ",".join("?" * len(rowids))
     return {
         int(rowid)
         for (rowid,) in index.conn.execute(
-            f"SELECT rowid FROM notes WHERE rowid IN ({placeholders}) "  # nosec B608 — placeholders only
-            "AND LOWER(COALESCE(is_latest_version, '')) = 'false'",
+            f"SELECT n.rowid FROM notes AS n WHERE n.rowid IN ({placeholders}) "  # nosec B608 — placeholders + module constant only
+            f"AND {RETIRED_PREDICATE}",
             tuple(rowids),
         )
     }
+
+
+def _drop_retired_partials(exact: Any, retired: set[int]) -> Any:
+    """Rebuild the exact leg without its retired TITLE-PHRASE matches.
+
+    Full identity OWNERS are untouched — they are the deliberate carve-out: the
+    query IS that note's title or alias, so it names the note. A partial
+    title-phrase match owns nothing, and the leg re-admitted it whatever the
+    chain said. Measured 2026-08-25 on the reference vault: one family's
+    plain-language name phrase-matched 41 deliverable markers, so stripping the
+    lexical and dense legs alone changed nothing about which versions reached
+    the top ten.
+    """
+    drop = retired & set(exact.partial_rowids)
+    if not drop:
+        return exact
+    return replace(
+        exact,
+        ranked=[rid for rid in exact.ranked if rid not in drop],
+        partial_rowids=set(exact.partial_rowids) - drop,
+        tiers={rid: tier for rid, tier in exact.tiers.items() if rid not in drop},
+    )
 
 
 def generate_candidates(
@@ -89,7 +114,8 @@ def generate_candidates(
         dense, best_text, best_rowid, best_score = dense_result
     exact = index._exact_leg(query, rrf_k)
     if not include_retired:
-        retired = _retired_rowids(index, set(lexical) | set(dense))
+        retired = _retired_rowids(
+            index, set(lexical) | set(dense) | set(exact.partial_rowids))
         # A retired note that OWNS the query's identity (exact alias/title)
         # stays: the query names it, and collision slot ordering counts every
         # owner, including one beyond the exact-injection cap (ADR-0008).
@@ -97,6 +123,7 @@ def generate_candidates(
         if retired:
             lexical = [rid for rid in lexical if rid not in retired]
             dense = [rid for rid in dense if rid not in retired]
+            exact = _drop_retired_partials(exact, retired)
         if trace is not None:
             trace.retired_hidden = sorted(retired)
     collapse = index._collapse_duplicate_families(lexical, dense, exact)

@@ -291,7 +291,12 @@ def generate(core: Any, today: datetime.date | None = None) -> dict[str, Any]:
     d = today or datetime.date.today()
     data = collect_exceptions_data(core, d)
     keys = exception_keys(data)
-    ceiling = _classification.vm_egress_ceiling()
+    # VULN-3386: report the ceiling the VM leg actually ENFORCES (the signed
+    # one), not the env-derived value — the page would otherwise claim a cap
+    # the clamp no longer honors.
+    from . import vm_ceiling as _vm_ceiling
+
+    ceiling, _why = _vm_ceiling.resolved_ceiling(vault)
 
     mount_html, tokens = render_page(data, full=False, ceiling=ceiling)
     full_html, _empty_map = render_page(data, full=True)

@@ -215,6 +215,30 @@ def gate(version: str, act: str, why: str, verified: list[str], *,
 # phases
 # --------------------------------------------------------------------------
 
+def assert_signing_configured() -> str:
+    """Refuse the run NOW if git cannot sign, instead of at the push.
+
+    The push is ~20 minutes in and is the point of no return; a signing failure
+    there leaves a built, tested, tagged release that cannot be published. This
+    reads the same configuration git itself will use, so it cannot pass while
+    the real signing fails.
+    """
+    key = _run(["git", "config", "--get", "user.signingkey"]).stdout.strip()
+    if not key:
+        raise PublishError(
+            "release commits and tags are signed, and no signing key is "
+            "configured. With a squashed export the tag is the only claim "
+            "about a release's origin.\n"
+            "  git config --global gpg.format ssh\n"
+            "  git config --global user.signingkey ~/.ssh/<your-key>.pub\n"
+            "then register that SAME public key at "
+            "https://github.com/settings/keys as a SIGNING key (not an "
+            "authentication key) — GitHub needs it listed separately, and "
+            "that is the step that makes the tag show as Verified.")
+    fmt = _run(["git", "config", "--get", "gpg.format"]).stdout.strip() or "openpgp"
+    return f"signing configured ({fmt})"
+
+
 def phase_preflight(tag: str, *, expect_published: bool | None = False) -> str:
     """Tag exists; tag name matches the pyproject version AT THE TAG; and the
     PyPI state matches what the run's starting phase implies.

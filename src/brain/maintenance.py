@@ -158,6 +158,7 @@ from .maintenance_retention import (  # noqa: E402,F401  (facade re-export)
     _DUPLICATE_SIDECAR_SUFFIX as _DUPLICATE_SIDECAR_SUFFIX,
     _sha256_file as _sha256_file,
     _verify_duplicate_provenance as _verify_duplicate_provenance,
+    deliverable_declassification_findings as deliverable_declassification_findings,
     ingest_quarantine_findings as ingest_quarantine_findings,
     quarantine_summary_due as quarantine_summary_due,
     quarantine_triage_summary as quarantine_triage_summary,

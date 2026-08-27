@@ -5,6 +5,8 @@ individual read bodies live in :mod:`brain.mcp_verbs`.
 """
 from __future__ import annotations
 
+import time as _time
+
 from typing import Any
 
 from . import classification as cls
@@ -69,7 +71,29 @@ def dispatch(
         raise ValueError(
             f"unknown / non-read tool {tool!r}; MCP adapter exposes only {READ_TOOLS}"
         )
-    return handler(tool, args, core=core, max_tier=max_tier)
+    from . import egress as _egress_reset
+
+    _egress_reset.take_tally()  # never attribute a prior call's counts to this one
+    started = _time.perf_counter()
+    try:
+        return handler(tool, args, core=core, max_tier=max_tier)
+    finally:
+        # SEC-06: the bridged surface logs like the CLI does. This is the leg a
+        # Cowork session reaches through Claude Desktop, so leaving it unlogged
+        # would leave exactly the caller the pentest was about with no record.
+        try:
+            from . import egress as _egress, read_log as _read_log
+
+            _read_log.record_from_tally(
+                vault=getattr(core, "vault", None),
+                role=role or "host",
+                cmd=f"mcp:{tool}",
+                max_tier=max_tier,
+                tally=_egress.take_tally(),
+                latency_ms=(_time.perf_counter() - started) * 1000.0,
+            )
+        except Exception:  # never let logging fail a read
+            pass
 
 
 def serve(vault: str | None = None) -> None:  # pragma: no cover - transport glue
@@ -112,9 +136,20 @@ def serve(vault: str | None = None) -> None:  # pragma: no cover - transport glu
         return dispatch("get", {"id": id, "max_tier": max_tier}, core=core)
 
     @server.tool()
-    def recent(n: int = 10, max_tier: str = cls.HOST_MCP_DEFAULT_MAX_TIER) -> dict:
-        """List recently created or updated notes."""
-        return dispatch("recent", {"n": n, "max_tier": max_tier}, core=core)
+    def recent(
+        n: int = 10,
+        max_tier: str = cls.HOST_MCP_DEFAULT_MAX_TIER,
+        include_retired: bool = False,
+    ) -> dict:
+        """List recently created or updated notes. Versions a supersede chain
+        retired are hidden — superseding a note updates it, so they would
+        otherwise sort straight to the top. Ask for ``include_retired`` only
+        for a 'previous version' question."""
+        return dispatch(
+            "recent",
+            {"n": n, "max_tier": max_tier, "include_retired": include_retired},
+            core=core,
+        )
 
     @server.tool()
     def dossier(

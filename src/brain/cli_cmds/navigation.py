@@ -83,7 +83,10 @@ def _run_get(args, ctx) -> int:
 
 def _run_recent(args, ctx) -> int:
     core = ctx.core
-    items = core.recent(limit=args.n)
+    items = core.recent(
+        limit=args.n,
+        include_retired=getattr(args, "include_retired", False),
+    )
     surfaced, report = _filter_dicts(items, args.max_tier)
     if args.json:
         _emit({"results": surfaced, "egress": report}, True)

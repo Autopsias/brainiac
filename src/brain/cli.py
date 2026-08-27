@@ -43,7 +43,13 @@ FINAL stage before stdout. A harness self-discovers the whole contract from
     brain ingest [--dry-run]                # host-broker: drain <vault>/inbox/ (ING-01/03)
     brain ingest-transcript <path> --origin O [--language L]   # host-broker (ING-04)
     brain write <relpath> [--reason R]     # host-broker, audited, fails closed
-    brain verify-audit [--json]            # verify the Ed25519 chain
+    brain verify-audit [--pubkey F] [--json]  # verify the Ed25519 chain — own
+                                            # key, or an exported PUBLIC key
+                                            # (external verification)   [HOST]
+    brain audit-pubkey [--out FILE]        # export the audit PUBLIC key [HOST]
+    brain vm-egress-tier [TIER]            # set/remove the HOST-SIGNED VM
+                                            # egress ceiling — the only way to
+                                            # raise it (VULN-3386)     [HOST]
     brain connect --client <c> [--remove]  # SUI-02, host-broker: wire/unwire ONE
                                             # client (claude-code|claude-desktop|
                                             # codex|gemini) — diff-first, asks
@@ -67,6 +73,8 @@ reused by the optional MCP adapter (a thin wrapper over this).
 """
 
 from __future__ import annotations
+
+import time as _time
 
 import argparse
 import json
@@ -358,7 +366,13 @@ def _prepare_invocation(args: Any, config: Any) -> str:
     global _SUPPRESS_ELEVATION_HINT
     _SUPPRESS_ELEVATION_HINT = role == config.ROLE_VM
     if role == config.ROLE_VM and hasattr(args, "max_tier"):
-        args.max_tier = cls.clamp_to(str(args.max_tier), cls.vm_egress_ceiling())
+        # VULN-3386: the ceiling comes ONLY from the host-signed file (verified
+        # against the pinned anchor) — $BRAIN_VM_MAX_EGRESS_TIER is settable by
+        # the session's own shell, so it can never raise a VM ceiling.
+        from . import vm_ceiling
+
+        ceiling, _provenance = vm_ceiling.resolved_ceiling()
+        args.max_tier = cls.clamp_to(str(args.max_tier), ceiling)
     config.apply_role_embedder_policy(role)
     return role
 
@@ -413,7 +427,34 @@ def _main(argv: list[str] | None = None) -> int:
     if group is None:  # pragma: no cover - argparse owns the command vocabulary
         return 2
     ctx = CommandContext(role=role, config=config, core=core)
-    return group.run(args, ctx)
+    from . import egress as _egress_reset
+
+    # Discard anything an earlier operation in THIS process left on the tally:
+    # a stale count would be attributed to this command. One-shot in the CLI,
+    # load-bearing in the long-lived MCP server.
+    _egress_reset.take_tally()
+    started = _time.perf_counter()
+    try:
+        return group.run(args, ctx)
+    finally:
+        # SEC-06: one access record per invocation, from the counts the egress
+        # chokepoint accumulated. Hooked HERE rather than in each handler so a
+        # content verb added later is logged the day it routes through the gate
+        # — the same argument that put the gate itself at one chokepoint.
+        # In `finally` because a command that raised still read what it read.
+        try:
+            from . import egress as _egress, read_log as _read_log
+
+            _read_log.record_from_tally(
+                vault=getattr(core, "vault", None),
+                role=role,
+                cmd=args.cmd,
+                max_tier=getattr(args, "max_tier", None),
+                tally=_egress.take_tally(),
+                latency_ms=(_time.perf_counter() - started) * 1000.0,
+            )
+        except Exception:  # never let logging fail a read
+            pass
 
 
 

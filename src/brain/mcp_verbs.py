@@ -209,7 +209,11 @@ def dispatch_recent(
 ) -> dict[str, Any]:
     """Run the MCP recent body."""
     surfaced, report = _filtered(
-        core.recent(limit=int(args.get("n", 10))), max_tier,
+        core.recent(
+            limit=int(args.get("n", 10)),
+            include_retired=bool(args.get("include_retired", False)),
+        ),
+        max_tier,
     )
     return {"results": surfaced, "egress": report}
 

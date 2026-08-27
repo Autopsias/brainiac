@@ -292,11 +292,22 @@ class _LifecycleMixin:
             retry=self._write_retry(),
         )
 
-    def sync(self, vault: Path, *, json_mode: bool = False) -> dict[str, Any]:
-        """Incrementally reconcile the index through one CC-01 transaction."""
+    def sync(
+        self, vault: Path, *, json_mode: bool = False,
+        signed_hashes: dict[str, str] | None = None,
+        dispositions: dict[str, dict] | None = None,
+    ) -> dict[str, Any]:
+        """Incrementally reconcile the index through one CC-01 transaction.
+
+        ``signed_hashes``/``dispositions`` arm the VULN-3387 downgrade guard
+        (the audit chain's last signed hash per path, and the owner's drift
+        dispositions). With neither supplied the guard is inert — the
+        pre-guard behavior — which is what raw callers without a chain want.
+        """
         from ..index_stages.sync import sync_index
 
         return sync_index(
-            self, vault, json_mode=json_mode, retry=self._write_retry()
+            self, vault, json_mode=json_mode, retry=self._write_retry(),
+            signed_hashes=signed_hashes, dispositions=dispositions,
         )
 

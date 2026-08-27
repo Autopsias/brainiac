@@ -4,12 +4,34 @@
 > always requires the host install (Path A) first; see the picker if you
 > haven't done that yet.
 
-**Role:** `vm` (`BRAIN_ROLE=vm`) — **read + draft ONLY.** No writes, no index
-rebuild, no signing key, no OS scheduler. This is the one client whose
-capability set genuinely differs from the other two — read this whole page
-before assuming Cowork can do what the host clients do. Full matrix:
-`AGENTS.md` §6 (Host / VM trust split); the read+draft hard guarantee (code +
-tests): `docs/cowork-windows-install.md`.
+**Role:** `vm` (`BRAIN_ROLE=vm`) — **the `brain` CLI is read + draft only.**
+No writes, no index rebuild, no signing key, no OS scheduler. This is the one
+client whose capability set genuinely differs from the other two — read this
+whole page before assuming Cowork can do what the host clients do. Full matrix:
+`AGENTS.md` §6 (Host / VM trust split); the CLI-level guarantee (code + tests):
+`docs/cowork-windows-install.md`.
+
+> **What that guarantee does and does not cover (VULN-3385, 2026-08).** It binds
+> the `brain` COMMAND, not the SESSION. Cowork attaches the workspace folder to
+> its VM read-write over VirtioFS, so the session can read any vault file with
+> ordinary file tools — every tier, bypassing the classification gate — and can
+> write into `vault/` without going through the draft-approval path. A
+> penetration test demonstrated exactly this: asked for a simple search, the
+> agent skipped the CLI and read a Restricted note straight off disk.
+>
+> This is a documented limit, not a defect to be patched at the CLI: the gate
+> is an **egress decision, not containment** (`brain/egress.py`), and "the model
+> will cooperate" is not a control. Attaching a read-only folder does not close
+> it either — read-only is enforced only on Claude's own file tools, never on
+> shell commands, and it never blocked reads in the first place.
+>
+> Real containment of sensitive tiers is `brain project --dest <dir> --max-tier
+> <tier>`: attach the filtered COPY instead of the vault, and the excluded
+> documents are physically absent from the VM. Two controls reduce the residual
+> risk without narrowing what the sandbox can read: the ceiling is a host-SIGNED
+> owner decision (`brain vm-egress-tier`, VULN-3386), and ingested source
+> material is scanned for concealed instructions before it can be indexed
+> (`brain integrity --injection`, SEC-05).
 
 ## Quickstart — the whole thing in 6 steps (plain language)
 
@@ -129,7 +151,7 @@ of every session (the session prompt contains it):
 
 ```bash
 export BRAIN_VAULT="$PWD/vault"
-export BRAIN_ROLE=vm                                   # read + draft only — hard guarantee
+export BRAIN_ROLE=vm                                   # CLI read + draft only (not a session sandbox — see the note at the top)
 export BRAIN_RUNTIME_DIR="$BRAIN_VAULT/.brain"
 export BRAIN_MODEL_CACHE="$BRAIN_RUNTIME_DIR/model"    # bundled cache, no network fetch
 ln -sf "bin/brain-linux-$(uname -m)" "$BRAIN_RUNTIME_DIR/brain"

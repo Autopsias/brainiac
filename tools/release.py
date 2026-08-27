@@ -103,9 +103,44 @@ def _version_key(v: str):
 def list_semver_tags(*, cwd: Path = REPO_ROOT) -> list[str]:
     """Local ``git tag`` output, unsorted. Split out for test injection so the
     guard's tag-selection logic doesn't require a live git repo fixture per
-    case."""
-    out = subprocess.run(["git", "tag", "-l"], cwd=cwd, check=True, capture_output=True, text=True)
+    case.
+
+    A tree with NO git repository has no local tag namespace, so it has no
+    baseline and returns none — it does not fail. Clean-room exports omit
+    ``.git`` deliberately, and `git tag -l` exits 128 there; with ``check=True``
+    that ``CalledProcessError`` reached `validate_monotonic_version`, failed
+    `tools/package_clients.py`, and stopped `brain update` at its
+    ``dist_rebuild`` step BEFORE the Cowork workspace restage — so an exported
+    install could never finish an update (2026-08-26 Codex round,
+    informational). `monotonic_baseline` already documents the empty case: fall
+    back to the version on disk.
+
+    Any OTHER git failure still raises. "No tags" and "git is broken" must not
+    look the same to a guard whose whole job is refusing a version regression —
+    an empty answer that means "could not ask" is the shape of a check that
+    cannot fail.
+    """
+    out = subprocess.run(["git", "tag", "-l"], cwd=cwd, check=False, capture_output=True, text=True)
+    if out.returncode != 0:
+        if not _has_git_repo(cwd):
+            return []
+        raise subprocess.CalledProcessError(
+            out.returncode, ["git", "tag", "-l"], out.stdout, out.stderr
+        )
     return [line.strip() for line in out.stdout.splitlines() if line.strip()]
+
+
+def _has_git_repo(cwd: Path) -> bool:
+    """Ask git itself, on the failure path only.
+
+    Never a `.git` existence test: a worktree's `.git` is a FILE, a submodule's
+    points elsewhere, and a subdirectory of a repo has none at all — three
+    shapes where the cheap check answers the wrong question."""
+    probe = subprocess.run(
+        ["git", "rev-parse", "--git-dir"], cwd=cwd, check=False,
+        capture_output=True, text=True,
+    )
+    return probe.returncode == 0
 
 
 def monotonic_baseline(current_pyproject_version: str, *, tags: list[str] | None = None, cwd: Path = REPO_ROOT) -> str:

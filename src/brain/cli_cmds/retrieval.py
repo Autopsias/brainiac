@@ -96,6 +96,10 @@ def _search_payload(args, trace, fanout, surfaced: list[dict], report: dict) -> 
                 "rerank_applied": trace.rerank_applied,
                 "rerank_gate": trace.rerank_gate,
                 "family_collapse": trace.family_collapse,
+                # How many candidates the retirement filter removed.
+                # Without it a caller cannot tell "the filter fired and
+                # found nothing to hide" from "the filter never ran".
+                "retired_excluded": len(trace.retired_hidden),
             },
             "results": surfaced,
             "candidate_digest": trace.compact_digest({hit["id"] for hit in surfaced}),

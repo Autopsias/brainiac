@@ -902,10 +902,12 @@ rules, in order:
    `--max-tier Restricted`** (or `MNPI` for the most sensitive) — the
    human-gated elevation — instead of concluding the vault has nothing and
    web-searching to compensate. **On `--role vm` this elevation is NOT
-   self-serve:** the VM leg clamps `--max-tier` to a hard ceiling
-   (`$BRAIN_VM_MAX_EGRESS_TIER`, default `Internal`), so a typed higher tier is
-   silently capped and the elevation hint is suppressed — raising a VM's ceiling
-   is a host-operator action, not something the model does on its own.
+   self-serve:** the VM leg clamps `--max-tier` to a hard ceiling — the
+   HOST-SIGNED `vm-egress-tier.signed` file, default `Internal` — so a typed
+   higher tier is silently capped, the elevation hint is suppressed, and an
+   env-exported `$BRAIN_VM_MAX_EGRESS_TIER` is IGNORED (the session's own
+   shell can set it; VULN-3386). Raising a VM's ceiling is a host-operator
+   action (`brain vm-egress-tier <TIER>`, signed), never the model's own.
 
 3. **Ask it in every language the vault holds — the VARIANT CONTRACT
    (CON-01) — and paraphrase within your own.** The cross-language half is a
@@ -1119,15 +1121,17 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
   to set it is to narrow the gate, so a typo must never return more than was
   asked for. The trifecta break is unchanged and still lives at the `role=vm`
   boundary, never on the owner's own host.
-- **A vault MAY raise its own Cowork ceiling (owner ruling 2026-08-17).** The
-  shipped `role=vm` default stays `Internal`; an owner who wants THIS vault's
-  sandbox to read every tier stages a one-line `<vault>/.brain/vm-egress-tier`
-  file, which `cowork_session_bootstrap.sh` reads into
-  `$BRAIN_VM_MAX_EGRESS_TIER`. **Stated limit, because it is not a guard:**
-  that file sits on the VirtioFS mount, which the VM can write, so it RECORDS
-  an owner decision rather than ENFORCING one. Acceptable only because the
-  decision it carries is "this owner's own sandbox may read this owner's own
-  vault"; a vault whose owner has not made it has no file and keeps the cap.
+- **A vault MAY raise its own Cowork ceiling — but only through a HOST-SIGNED
+  file (VULN-3386, external pentest 2026-08).** The shipped `role=vm` default
+  stays `Internal`. The enforcement chain: `brain vm-egress-tier <TIER>` on
+  the HOST signs tier + vault_id under the audit key into
+  `<vault>/.brain/vm-egress-tier.signed`; the VM leg verifies it against the
+  pinned anchor (`pinned-verify.json`, staged at install) before trusting,
+  and anything missing, malformed, or badly signed fails CLOSED to `Internal`.
+  The previous mechanisms — an env var the session can export itself, and an
+  unsigned mount file the VM can write — no longer raise a VM ceiling (the
+  unsigned `vm-egress-tier` file and `$BRAIN_VM_MAX_EGRESS_TIER` are inert
+  for VM elevation; re-stage any prior opt-in with the signed verb).
 - **Classification gate, role-split defaults (owner decision 2026-07-10).**
   `search/get/recent` filter by `classification`. A note with a missing or
   unrecognised `classification` ranks as the most-restrictive tier (MNPI).

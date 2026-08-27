@@ -135,6 +135,37 @@ class AuditChain:
             "errors": errors,
         }
 
+    def latest_signed_hashes(self) -> dict[str, str]:
+        """Path -> newest ``content_sha256`` the chain signed for it.
+
+        ``write``/``ingest``/``bind`` verbs set it (``bind`` records a content
+        hash for a path an older entry wrote WITHOUT one, on the evidence of
+        the note's own capture-time ``sha256:`` field — the bytes are
+        unchanged, only the chain's knowledge of them is new); a later
+        ``delete``/``write_failed`` drops the path. Entries with no
+        ``content_sha256`` (legacy) are skipped: the chain never bound their
+        bytes, so it cannot speak for them. Shared by ``content_drift`` and
+        the sync-side downgrade guard (VULN-3387)."""
+        latest: dict[str, str] = {}
+        for raw in self._lines():
+            s = raw.strip()
+            if not self._is_entry(s):
+                continue
+            try:
+                obj = json.loads(s)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            csha = obj.get("content_sha256")
+            verb = obj.get("verb")
+            path = obj.get("path")
+            if not isinstance(path, str):
+                continue
+            if verb in ("write", "ingest", "bind") and isinstance(csha, str):
+                latest[path] = csha
+            elif verb in ("delete", "write_failed"):
+                latest.pop(path, None)
+        return latest
+
     def content_drift(self, vault: Path, *, dispositions: dict | None = None) -> list[dict]:
         """Notes whose CURRENT bytes differ from the last `content_sha256` the
         chain signed for them — i.e. edited (or deleted) after commit without a
@@ -153,28 +184,7 @@ class AuditChain:
         vault = Path(vault)
         if dispositions is None:
             dispositions = load_drift_dispositions(vault)
-        latest: dict[str, str] = {}
-        for raw in self._lines():
-            s = raw.strip()
-            if not self._is_entry(s):
-                continue
-            try:
-                obj = json.loads(s)
-            except (json.JSONDecodeError, ValueError):
-                continue
-            csha = obj.get("content_sha256")
-            verb = obj.get("verb")
-            path = obj.get("path")
-            if not isinstance(path, str):
-                continue
-            # `bind` records a content hash for a path an older entry wrote
-            # WITHOUT one, on the evidence of the note's own capture-time
-            # `sha256:` field. It is NOT a write and never claims to be: the
-            # bytes are unchanged, only the chain's knowledge of them is new.
-            if verb in ("write", "ingest", "bind") and isinstance(csha, str):
-                latest[path] = csha
-            elif verb in ("delete", "write_failed"):
-                latest.pop(path, None)
+        latest = self.latest_signed_hashes()
         drift: list[dict] = []
         for path, expected in latest.items():
             fp = vault / path

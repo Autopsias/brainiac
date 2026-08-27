@@ -220,8 +220,20 @@ def phase_public_git(export_dir: Path, version: str, scratch: Path,
     if hits:
         raise _pp.PublishError(f"contamination scan found {hits} hit(s) in the final public tree — hard gate")
 
-    _pp._need(_pp._run(["git", "commit", "-q", "-m", f"release: v{version}"], cwd=clone), "git commit")
-    _pp._need(_pp._run(["git", "tag", "-a", f"v{version}", "-m", f"brainiac v{version}"], cwd=clone), "git tag")
+    # SIGNED, both of them, and unconditionally (2026-08-26). With a squashed
+    # export there is no history for anyone to inspect, so the tag IS the whole
+    # claim about where a release came from — and until now nothing proved it
+    # came from the maintainer rather than from anyone holding push access.
+    #
+    # `-S` / `-s` rather than `commit.gpgsign` config: a signature that depends
+    # on ambient configuration is one that silently stops happening. If the key
+    # is missing, git fails here and the release stops, which is the intended
+    # behaviour — `assert_signing_configured` in the preflight catches it 20
+    # minutes earlier so it never actually gets this far.
+    _pp._need(_pp._run(["git", "commit", "-q", "-S", "-m", f"release: v{version}"],
+                       cwd=clone), "git commit (signed)")
+    _pp._need(_pp._run(["git", "tag", "-s", f"v{version}", "-m", f"brainiac v{version}"],
+                       cwd=clone), "git tag (signed)")
 
     gate_fn("public-git", f"push v{version} to {url} ({default_branch} + tag)",
             "a public push is visible immediately and can only be superseded, "

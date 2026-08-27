@@ -286,7 +286,10 @@ class _CoreCaptureMixin:
                     ingest_res = {"processed": [], "error": f"{type(exc).__name__}: {exc}"}
             else:
                 ingest_res = {"processed": [], "reason": "drain-off"}
-            idx_res = self.index.sync(self.vault, json_mode=json_mode)
+            idx_res = self.index.sync(
+                self.vault, json_mode=json_mode,
+                **self._sync_guard_facts(),
+            )
             idx_res["drain"] = drain_res
             idx_res["ingest"] = ingest_res
             if publish:
@@ -295,13 +298,33 @@ class _CoreCaptureMixin:
     def publish_snapshot(self, dest: str | Path | None = None) -> dict[str, Any]:
         """Publish a read-only, generation-stamped snapshot of the authoritative
         host index (atomic). The VM mounts this read-only; it never writes the
-        authoritative DB. HOST-broker only."""
+        authoritative DB. HOST-broker only.
+
+        VULN-3387: a note whose CURRENT bytes match nothing the chain signed
+        (and no triaged disposition explains) is withheld from this copy —
+        the untrusted VM leg must not receive an out-of-band edit ahead of
+        triage, whatever sync did with it. The host's own reads stay on the
+        authoritative index, untouched."""
         self._require_host("publish a snapshot")
         from ..snapshot import publish_snapshot as _publish
 
+        withhold: set[str] = set()
+        audit = getattr(self, "audit", None)
+        if audit is not None:
+            try:
+                for rec in audit.content_drift(self.vault):
+                    if rec.get("disposition") is None:
+                        withhold.add(rec["path"])
+            except Exception:  # noqa: BLE001 — publish proceeds, no withhold
+                withhold = set()
         dest_dir = Path(dest) if dest else config.snapshot_dir(self.vault)
         with vault_writer_lock(self.vault, verb="snapshot"):
-            return _publish(self.index.db_path, dest_dir).to_dict()
+            res = _publish(
+                self.index.db_path, dest_dir, withhold_paths=withhold
+            ).to_dict()
+        if withhold:
+            res["withheld_drift_paths"] = sorted(withhold)
+        return res
     def restore_index_from_snapshot(
         self, *, force: bool = False, dry_run: bool = False
     ) -> dict[str, Any]:

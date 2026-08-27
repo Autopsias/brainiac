@@ -47,6 +47,12 @@ def _add_integrity(sub) -> None:
     sp.add_argument(
         "-k", type=int, default=5, help="ANN probe depth per note (default: 5)"
     )
+    sp.add_argument(
+        "--injection",
+        action="store_true",
+        help="also scan every indexable note for CONCEALED instructions "
+             "(SEC-05): text hidden from a human reader but visible to a model",
+    )
     add_common(sp)
 
 

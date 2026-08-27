@@ -368,12 +368,28 @@ TestPyPI RC checklist below for the full script):
 
 ```
 uv venv /tmp/brainiac-testpypi-check && cd /tmp/brainiac-testpypi-check
-uv pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ 'brainiac-cli[mcp]'
+# 1. dependencies from PyPI ONLY, via the wheel you just built locally
+uv pip install --index-url https://pypi.org/simple/ /path/to/dist/brainiac_cli-<X.Y.Z>-py3-none-any.whl
+# 2. then re-install OUR package alone, from the index under test
+uv pip install --no-deps --force-reinstall --index-url https://test.pypi.org/simple/ 'brainiac-cli==<X.Y.Z>'
 ./bin/brain --version   # confirm it prints exactly X.Y.Z
 ```
 
-(`--extra-index-url https://pypi.org/simple/` is required — TestPyPI doesn't
-mirror brainiac-cli's dependencies, only its own uploaded packages.)
+**Never collapse this into one `--index-url testpypi --extra-index-url pypi`
+install.** pip and uv pick a candidate by VERSION across every configured
+index, not by preferring PyPI for dependencies — so anyone who registers one
+of this project's unconstrained dependency names on TestPyPI at a higher
+version wins the resolution, and their payload runs here through a build hook
+or a `.pth` the moment `brain --version` starts Python. That is a release host,
+which at this point in the runbook holds PyPI, npm and git credentials.
+(Codex cloud review, 2026-08-07; the runbook still documented the unsafe form
+until the 2026-08-26 round.)
+
+The two-step form loses nothing: step 1 resolves every dependency from PyPI and
+nowhere else, and step 2 makes what `brain --version` runs genuinely the bytes
+TestPyPI served back. `tools/publish_public_uploads.py::_clean_venv_check` does
+exactly this and REFUSES — before it creates a venv or touches the network — to
+resolve dependencies against any non-PyPI index.
 
 **4. Only once step 3 passes, publish to production PyPI:**
 
@@ -420,9 +436,11 @@ plan's human-checkpoint session).
    pipx install 'brainiac-cli[mcp]'
    python3 -m pip install --user 'brainiac-cli[mcp]'
    ```
-   (point each at `--index-url https://test.pypi.org/simple/
-   --extra-index-url https://pypi.org/simple/` for the RC gate only — the
-   real published commands never carry an index-url flag).
+   (for the RC gate only, point each at TestPyPI using the SAME two-step
+   form as §7.6 step 3 — deps from `--index-url https://pypi.org/simple/`
+   first, then `--no-deps --force-reinstall --index-url
+   https://test.pypi.org/simple/`. Never `--extra-index-url`: see the warning
+   in §7.6 step 3. The real published commands carry no index-url flag at all.)
 3. Exercise **upgrade**: bump the RC suffix, re-publish, run the matching
    channel's real upgrade command (`uv tool upgrade brainiac-cli` / `pipx
    upgrade brainiac-cli` / `pip install --user --upgrade brainiac-cli[mcp]`),

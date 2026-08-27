@@ -204,7 +204,19 @@ def main() -> int:
         print(f"client-name gate: FAILED — {dl} has no usable terms after "
               "stripping comments/blanks; an empty pattern passes everything.")
         return 1
-    hits = scan(staged_files(), terms)
+    # PATHS IN ARGV WIN, and a zero-file run ALWAYS says so.
+    #
+    # `main` used to ignore argv entirely and scan `staged_files()`. Running
+    # `check_client_names.py <paths>` with nothing staged therefore scanned an
+    # EMPTY LIST and exited 0 -- a clean exit code over an input that was never
+    # read. Found 2026-08-25 by profile-a-brain-a0, whose three files were
+    # carrying a client name at that exact moment. It is the same shape as the
+    # empty-pattern pass this module's docstring already warns about: an empty
+    # INPUT rather than an empty PATTERN, indistinguishable from the outside.
+    targets = [a for a in sys.argv[1:] if not a.startswith("-")] or staged_files()
+    hits = scan(targets, terms)
+    print(f"client-name gate: scanned {len(targets)} file(s) against "
+          f"{len(terms)} term(s)")
     if _SPLIT_UNAVAILABLE:
         # Never silent: a scan that ran with only half its passes is a weaker
         # gate wearing a clean gate's exit code.
@@ -214,7 +226,8 @@ def main() -> int:
               "not have fired.")
     if not hits:
         return 0
-    print(f"\n=== Client-name gate: {len(hits)} hit(s) in staged files ===")
+    where = "named files" if len(sys.argv) > 1 else "staged files"
+    print(f"\n=== Client-name gate: {len(hits)} hit(s) in {where} ===")
     for f, n in hits:
         print(f"  {f}:{n}")
     print("\nA denylisted term appears in a file you are committing. The term "

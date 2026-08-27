@@ -27,8 +27,11 @@ content) is deliberately the leg with the *least* privilege.
 decision point. Tiers low→high: `Public < Internal < Confidential < Restricted
 < MNPI`. An unlabelled/unrecognised note is treated as **MNPI** (default-deny).
 The trusted-host default is the full vault. The VM default and hard ceiling are
-**Internal**; a VM-supplied `--max-tier` is clamped, and only the host operator
-can raise the ceiling via `BRAIN_VM_MAX_EGRESS_TIER`.
+**Internal**; a VM-supplied `--max-tier` is clamped, and the only way to raise
+the ceiling is the HOST-SIGNED file (`brain vm-egress-tier <TIER>`, verified
+against the pinned anchor — VULN-3386; `$BRAIN_VM_MAX_EGRESS_TIER` is
+host-role config and never raises a VM cap, because a session can export it
+itself).
 
 **Single chokepoint (SEC-01, r2-codex).** EVERY content-returning subcommand —
 `search`/`hybrid-search` (incl. `--rerank`), `grep`, `bases-query`,
@@ -90,8 +93,9 @@ the core in-process bypasses the gate. Resolution:
 ## 3 · Human-in-the-loop (HITL)
 
 - **Surfacing sensitive content on the VM** (`> Internal`) requires the host
-  operator to raise `BRAIN_VM_MAX_EGRESS_TIER`; model-controlled argv cannot do
-  it. The trusted host itself defaults to the full vault.
+  operator to sign a higher ceiling (`brain vm-egress-tier <TIER>`); neither
+  model-controlled argv nor a session-exported env var can do it. The trusted
+  host itself defaults to the full vault.
 - **`write_note`** (the one irreversible/outbound commit) is a **host-broker
   privilege**, not an agent verb; it Ed25519-signs the audit chain and **fails
   closed** without a key. VM-side capture is a *draft* only (host drains + signs).

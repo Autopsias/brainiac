@@ -78,8 +78,13 @@ else
     fi
     BRAIN_MCP_BIN_DIR="$(dirname "$BRAIN_MCP_PATH")"
     SHEBANG_LINE="$(head -1 "$BRAIN_MCP_PATH")"
-    # shellcheck disable=SC2206 -- deliberate word-split: shebang may be a
-    # single interpreter path OR "prog arg" (e.g. "/usr/bin/env python3").
+    # Deliberate word-split: the shebang may be a single interpreter path OR
+    # "prog arg" (e.g. "/usr/bin/env python3").
+    # The directive must be the WHOLE comment. It read
+    # `disable=SC2206 -- deliberate...` until 2026-08-26, which shellcheck
+    # could not parse (SC1072/SC1073) — so the suppression never applied and
+    # this file went unchecked from here down.
+    # shellcheck disable=SC2206
     PY_CMD_ARR=(${SHEBANG_LINE#\#!})
     RESOLVED_FROM="$BRAIN_MCP_PATH's shebang"
 fi

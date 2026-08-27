@@ -100,26 +100,55 @@ def _ingestable(path: Path) -> bool:
     return path.is_file() and not path.is_symlink()
 
 
+def control_file(path: Path, inbox: Path) -> Path | None:
+    """The control file that DECIDES this drop's tier, or ``None`` if none does.
+
+    Own folder first, then ``_deliverables/`` — the FIRST one that exists
+    decides; :func:`classification_for` says why a broken one may not fall
+    through to a permissive one.
+    """
+    for directory in (path.parent, inbox / DELIVERABLES_DIRNAME):
+        control = directory / CLASSIFICATION_FILENAME
+        if control.is_file():
+            return control
+    return None
+
+
 def classification_for(path: Path, inbox: Path) -> str:
     """The tier THIS drop is admitted at — the most specific declaration wins.
 
-    The file's own folder is consulted first, then ``_deliverables/`` itself.
     The FIRST control file that exists decides, even when its contents are
     unreadable or not a known tier: falling through a broken project-level
     declaration to a permissive root-level one would silently downgrade the drop
     it was written to protect (EXC-01 — a bad label is the ABSENCE of one, never
     an assertion of a lower tier).
+
+    STATED LIMIT, and it is why :func:`note_declassification` exists: a
+    well-formed LOWER value IS honoured, from a file in the same drop tree the
+    payload arrives in. Raise-only cannot fix it — ``MNPI`` is the top tier, so
+    this file exists only to declassify. Owner ruling 2026-08-26: honour it and
+    REPORT it. Full reasoning in ``docs/security-acceptances.md`` A-04.
     """
-    for directory in (path.parent, inbox / DELIVERABLES_DIRNAME):
-        control = directory / CLASSIFICATION_FILENAME
-        if not control.is_file():
-            continue
-        try:
-            declared = control.read_text(encoding="utf-8").strip()
-        except OSError:
-            return DEFAULT_CLASSIFICATION
-        return declared if declared in CLS.TIERS else DEFAULT_CLASSIFICATION
-    return DEFAULT_CLASSIFICATION
+    control = control_file(path, inbox)
+    if control is None:
+        return DEFAULT_CLASSIFICATION
+    try:
+        declared = control.read_text(encoding="utf-8").strip()
+    except OSError:
+        return DEFAULT_CLASSIFICATION
+    return declared if declared in CLS.TIERS else DEFAULT_CLASSIFICATION
+
+
+def note_declassification(report: dict[str, Any], tier: str) -> None:
+    """Record a drop admitted BELOW the lane default (A-04).
+
+    The TIER only — never the folder, never the filename; see
+    ``maintenance_retention.deliverable_declassification_findings`` for why the
+    operator-facing text may carry no document identity at all.
+    """
+    if CLS.RANK[tier] >= CLS.RANK[DEFAULT_CLASSIFICATION]:
+        return
+    report.setdefault("declassified", []).append({"tier": tier})
 
 
 # ---------------------------------------------------------------------------

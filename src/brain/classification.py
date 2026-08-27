@@ -65,14 +65,18 @@ HOST_MCP_DEFAULT_MAX_TIER = DEFAULT_MAX_TIER
 # Restricted") turns the intended HUMAN-gated elevation into an instruction the
 # model follows autonomously. This is the CLI analogue of the MCP adapter's
 # BRAIN_MAX_EGRESS_TIER: a VM caller can never exceed this ceiling regardless of
-# what it types. The host operator raises it deliberately via the env var (the
-# real human gate); an unrecognised value falls back to VM_DEFAULT_MAX_TIER.
+# what it types. The ceiling a VM leg actually enforces is the HOST-SIGNED one
+# (vm_ceiling.resolved_ceiling — VULN-3386); this env resolver is HOST-role
+# configuration only, because inside a VM session the environment is
+# attacker-settable (external pentest 2026-08 raised a cap by exporting it).
+# An unrecognised value falls back to VM_DEFAULT_MAX_TIER.
 VM_EGRESS_CEILING_ENV = "BRAIN_VM_MAX_EGRESS_TIER"
 
 
 def vm_egress_ceiling() -> str:
-    """The tier a role=vm caller may never exceed. Operator-settable via
-    $BRAIN_VM_MAX_EGRESS_TIER; defaults to the conservative VM cap."""
+    """HOST-role resolver for $BRAIN_VM_MAX_EGRESS_TIER. Never a VM ceiling:
+    the role=vm clamp goes through vm_ceiling.resolved_ceiling (signed file,
+    pinned anchor), which ignores this variable entirely."""
     val = os.environ.get(VM_EGRESS_CEILING_ENV, "").strip()
     return val if val in RANK else VM_DEFAULT_MAX_TIER
 

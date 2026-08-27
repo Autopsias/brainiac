@@ -18,6 +18,7 @@ the gate. See docs/operations/egress-provider-posture.md.
 from __future__ import annotations
 
 import json
+import threading as _threading
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -61,7 +62,8 @@ CONTENT_RETURNING_SUBCOMMANDS: tuple[str, ...] = (
 # the list above. Listed here for the audit so the split is explicit.
 NON_CONTENT_SUBCOMMANDS: tuple[str, ...] = (
     "draft-capture", "rebuild", "sync", "snapshot", "status", "project",
-    "write", "verify-audit", "anchor", "verify-anchor", "backup", "restore",
+    "write", "verify-audit", "audit-pubkey", "vm-egress-tier", "anchor",
+    "verify-anchor", "backup", "restore",
     "check", "health", "maintain",
     # TMP-02: two note ids + a status/audit summary — no note bodies returned.
     "supersede",
@@ -84,7 +86,76 @@ def apply_gate(
     """
     items = list(items)
     flt = cls.ClassificationFilter(max_tier=max_tier)
-    return flt.filter(items, key=key), flt.redaction_report(items, key=key)
+    surfaced = flt.filter(items, key=key)
+    _mark_content_trust(surfaced)
+    report = flt.redaction_report(items, key=key)
+    _tally(len(surfaced), int(report.get("withheld", 0) or 0))
+    return surfaced, report
+
+
+# --------------------------------------------------------------------------
+# Read-volume tally (SEC-06). The chokepoint is the only place that knows HOW
+# MUCH a command surfaced; the dispatch point is the only place that knows
+# WHICH command and for whom. So the gate counts here and `brain.read_log`
+# flushes once per invocation — which means a content verb written next year
+# is covered the day it routes through apply_gate, exactly like the gate
+# itself. Thread-local because the MCP adapter serves calls concurrently.
+# --------------------------------------------------------------------------
+_TALLY = _threading.local()
+
+
+def _tally(surfaced: int, withheld: int) -> None:
+    cur = getattr(_TALLY, "counts", None)
+    if cur is None:
+        cur = _TALLY.counts = {"gates": 0, "surfaced": 0, "withheld": 0}
+    cur["gates"] += 1
+    cur["surfaced"] += surfaced
+    cur["withheld"] += withheld
+
+
+def take_tally() -> dict[str, int] | None:
+    """Return and RESET the counts accumulated since the last take.
+
+    ``None`` when nothing gated — a status verb that returned no note bodies
+    has nothing to log, and logging a zero would bury the real reads.
+    """
+    cur = getattr(_TALLY, "counts", None)
+    _TALLY.counts = None
+    return cur
+
+
+#: What a hit's ``zone`` means for the READER of that hit. ``vault/raw/`` is a
+#: pile of documents other people wrote; ``vault/brain/`` is the owner's own
+#: reasoning. Both look identical in a JSON result today, so a model reading a
+#: source note has no signal that the text is DATA rather than instruction.
+#: Marking it is the retrieval-time half of SEC-05 (the write-time half is
+#: brain.injection_scan) and follows the MCP hardening consensus: "mark
+#: untrusted tool output as untrusted".
+#:
+#: Deliberately NOT the ``provenance.trust`` frontmatter key: that key is the
+#: capture stamp for DRAFTS, and the maintenance folds read ``untrusted`` there
+#: as "a swept working memo". Overloading it would make every ingested source
+#: look like a draft to the folds. This is a derived, read-only field.
+TRUST_BY_ZONE: dict[str, str] = {
+    "raw": "untrusted-source",
+    "brain": "curated",
+}
+CONTENT_TRUST_KEY = "content_trust"
+
+
+def _mark_content_trust(items: list[dict]) -> None:
+    """Stamp each hit that carries a ``zone`` with what its zone implies.
+
+    In place, and only where ``zone`` is known — the chokepoint also gates rows
+    that are not notes at all (the deliverables census, COS people/companies,
+    graph nodes), and inventing a trust level for those would be a lie.
+    """
+    for item in items:
+        if not isinstance(item, dict) or CONTENT_TRUST_KEY in item:
+            continue
+        trust = TRUST_BY_ZONE.get(str(item.get("zone", "")).strip())
+        if trust:
+            item[CONTENT_TRUST_KEY] = trust
 
 
 def gate_dossier_tensions(decisions: list[dict], surfaced_sources: list[dict]) -> None:

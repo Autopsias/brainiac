@@ -11,6 +11,7 @@ from . import handlers as H
 from . import tierguard as TG
 from .handlers.base import NO_TEXT_MARKER
 from .pipeline_duplicates import prior_extraction_failed, record_duplicate
+from .pipeline_injection import injection_scan_stage
 
 
 @dataclass
@@ -52,6 +53,8 @@ class ClaimRecord:
     autolink_added: Any = None
     meta: dict[str, Any] = field(default_factory=dict)
     verdict: TG.Verdict | None = None
+    #: SEC-05 concealed-instruction scan result for the extracted text
+    injection: dict[str, Any] | None = None
     classification: str = ""
     terminal: bool = False
     stop_drain: bool = False
@@ -458,6 +461,7 @@ def signed_note_write_stage(record: ClaimRecord) -> ClaimRecord:
 _VERIFIED_STAGES: tuple[Callable[[ClaimRecord], ClaimRecord], ...] = (
     operational_set_aside_stage,
     extraction_handler_stage,
+    injection_scan_stage,
     tierguard_stage,
     archive_original_stage,
     signed_note_write_stage,

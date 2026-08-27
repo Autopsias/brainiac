@@ -71,6 +71,11 @@ def run_ingest(core: Any, *, dry_run: bool = False) -> dict[str, Any]:
             record.deliverable = True
             record.project = deliverables[path]
             record.requested_classification = DLV.classification_for(path, inbox)
+            # The lane's default is MNPI and the control file can only lower it,
+            # so a drop admitted below that default was DECLASSIFIED by a file
+            # sitting in the same tree the payload arrived in. Honoured, and
+            # reported — see `DLV.classification_for` for why not refused.
+            DLV.note_declassification(report, record.requested_classification)
         record = stages.claim_stage(record)
         record = stages.nofollow_read_stage(record)
         record = stages.acceptance_anchor_stage(record)

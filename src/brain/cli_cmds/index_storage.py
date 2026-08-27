@@ -138,13 +138,21 @@ def _run_sync(args, ctx) -> int:
         reb_note = (
             f"; vault root changed — rebased {reb} path(s), no re-embed" if reb else ""
         )
+        refused = res.get("refused_downgrades") or []
+        refused_note = (
+            f"\nREFUSED {len(refused)} unexplained classification downgrade(s) "
+            "(index unchanged; triage via `brain verify-audit --check-content` "
+            "or rewrite through `brain write`)"
+            if refused else ""
+        )
         _emit(
             None,
             False,
             f"sync [{res['mode']}]: +{res.get('added', 0)} ~{res.get('updated', 0)} "
             f"-{res.get('deleted', 0)} ={res.get('unchanged', 0)} "
             f"({res['chunks']} chunks); drained {d.get('promoted', 0)} "
-            f"(skipped {d.get('skipped', 0)})" + reb_note + tail + _excluded_note(res),
+            f"(skipped {d.get('skipped', 0)})" + reb_note + tail + _excluded_note(res)
+            + refused_note,
         )
     return 0
 

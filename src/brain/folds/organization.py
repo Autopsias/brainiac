@@ -48,6 +48,15 @@ class OrganizationFoldsMixin:
                 result.get("ingest", {}), Path(self.vault)
             )
         )
+        # A deliverable admitted BELOW the lane's MNPI default was
+        # declassified by a control file in the drop tree — which anything
+        # able to write the vault can plant. Honoured, and reported the run
+        # it happens (owner ruling 2026-08-26: visibility, not prevention).
+        run.action_required.extend(
+            maintenance.deliverable_declassification_findings(
+                result.get("ingest", {}), Path(self.vault)
+            )
+        )
 
     def version_chain_fold(self, run: MaintenanceRun) -> None:
         """Stamp explicit version families without overriding manual links."""

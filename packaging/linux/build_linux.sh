@@ -13,11 +13,21 @@ REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$REPO"
 OUT="$REPO/dist/linux"
 mkdir -p "$OUT"
-ARCHES=("${@:-x86_64 aarch64}")
+# NOT `ARCHES=("${@:-x86_64 aarch64}")`. That builds ONE element holding
+# "x86_64 aarch64" when no args are given, and the loop below then relied on
+# an UNQUOTED expansion to split it back apart — so quoting the loop, which
+# is what shellcheck asks for (SC2068), silently built one bogus arch
+# instead of two. Measured 2026-08-26. Build the array correctly and the
+# quoting question disappears.
+if [ "$#" -gt 0 ]; then
+  ARCHES=("$@")
+else
+  ARCHES=(x86_64 aarch64)
+fi
 
 declare -A PLAT=( [x86_64]=linux/amd64 [aarch64]=linux/arm64 )
 
-for ARCH in ${ARCHES[@]}; do
+for ARCH in "${ARCHES[@]}"; do
   plat="${PLAT[$ARCH]:?unknown arch $ARCH}"
   echo "== building brain one-dir for $ARCH ($plat) =="
   # Build inside the platform container; copy the one-dir out via a scratch stage.

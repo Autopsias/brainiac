@@ -78,6 +78,34 @@ def _add_verify_audit(sub) -> None:
         action="store_true",
         help="also flag notes whose current bytes differ from the last signed content hash (detects post-commit edits)",
     )
+    sp.add_argument(
+        "--pubkey",
+        help="verify against this PUBLIC key PEM file instead of the resolved signing key — external verification that never touches the private key (VULN-3388)",
+    )
+    sp.add_argument("--json", action="store_true")
+
+
+def _add_audit_pubkey(sub) -> None:
+    sp = sub.add_parser(
+        "audit-pubkey",
+        help="host-broker: export the audit PUBLIC key for external log verification (VULN-3388)",
+    )
+    sp.add_argument(
+        "--out",
+        help="write the PEM to FILE instead of stdout (prints the sha256 fingerprint either way)",
+    )
+    sp.add_argument("--json", action="store_true")
+
+
+def _add_vm_egress_tier(sub) -> None:
+    sp = sub.add_parser(
+        "vm-egress-tier",
+        help="host-broker: set the HOST-SIGNED egress ceiling a role=vm session may not exceed (VULN-3386)",
+    )
+    sp.add_argument(
+        "tier", nargs="?", default=None,
+        help="tier to sign (Public|Internal|Confidential|Restricted|MNPI); omit to remove and fall back to Internal",
+    )
     sp.add_argument("--json", action="store_true")
 
 
@@ -126,6 +154,8 @@ def add_parser(sub) -> None:
     _add_ingest_transcript(sub)
     _add_write(sub)
     _add_audit_key(sub)
+    _add_audit_pubkey(sub)
+    _add_vm_egress_tier(sub)
     _add_verify_audit(sub)
     _add_anchor(sub)
     _add_verify_anchor(sub)

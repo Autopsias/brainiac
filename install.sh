@@ -142,7 +142,7 @@ if [ "$DEV_MODE" = "1" ]; then
   say "Installing Brainiac into $VENV_DIR (--dev: editable install from this checkout)"
   "$PY" -m venv "$VENV_DIR"
   "$VENV_DIR/bin/pip" install --quiet --upgrade pip
-  "$VENV_DIR/bin/pip" install --quiet -e "$REPO_DIR[mcp,ocr]"
+  "$VENV_DIR/bin/pip" install --quiet -e "${REPO_DIR}[mcp,ocr]"
   INSTALLED_CHANNEL="editable-checkout"
   BRAIN_BIN="$VENV_DIR/bin/brain"
   mkdir -p "$BIN_DIR"

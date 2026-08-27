@@ -142,3 +142,24 @@ repos:
         language: system
         pass_filenames: false
         files: '\.py$'
+
+      # Shell was UNSCANNED until 2026-08-26, and 36 `.sh` files ship in the
+      # clean-room export. The semgrep hook below runs `p/python`, `p/secrets`
+      # and `p/github-actions` with `--skip-unknown-extensions`, so every shell
+      # file was silently skipped — and semgrep has no shell ruleset to add
+      # (`p/bash` and `p/shell` are both 404 on the registry; checked).
+      # shellcheck is the tool for this.
+      #
+      # ERROR severity, not warning. Error is what changes BEHAVIOUR: a
+      # malformed suppression that silently disables checking, an unquoted array
+      # expansion that word-splits. It found 4 on its first run, one of which
+      # (`packaging/mcpb/build.sh`) was a broken `# shellcheck disable=` line
+      # that had been leaving the rest of that file unchecked. Six warnings
+      # remain and are deliberately not gated: SC2155 style, one SC2209 false
+      # positive, one unused variable. Raise the bar when they are dealt with,
+      # not before — a threshold nobody can meet is a hook people skip.
+      - id: shellcheck
+        name: shell scripts pass shellcheck at error severity
+        entry: shellcheck --severity=error
+        language: system
+        types: [shell]

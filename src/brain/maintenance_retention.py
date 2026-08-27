@@ -259,6 +259,63 @@ def ingest_quarantine_findings(
     return findings
 
 
+def deliverable_declassification_findings(
+    ingest_report: dict[str, Any], vault: Path
+) -> list[dict[str, Any]]:
+    """One ``action_required`` item per tier a deliverable was admitted BELOW.
+
+    The deliverables lane admits a drop at MNPI unless a ``.classification``
+    control file says otherwise, and that file sits in the same drop tree the
+    payload arrives in — so anything able to write the vault can plant one and
+    hold a folder below the default indefinitely, with every later drop SIGNED
+    BY THE HOST at that tier. The owner ruled visibility rather than prevention
+    (2026-08-26, Codex round finding "Untrusted deliverable tier marker can
+    downgrade ingestion"): refusing every lower value would delete the feature,
+    because MNPI is the top tier and the control file exists only to declassify.
+
+    So the tier is honoured and the DECLASSIFICATION is reported on the run it
+    happens — the operator sees a legitimate one and recognises it, and sees an
+    illegitimate one they did not make. Pure: shapes an already-computed report.
+
+    Counts and tiers ONLY. This text is persisted verbatim into
+    ``.brain/notify-sent/current.json``, which a Cowork VM session can read, and
+    a ``_deliverables/<project>/`` folder name is exactly where a client name
+    sits — the same escalation the quarantine banner carried until 2026-08-25.
+    """
+    from .ingest.deliverables import DEFAULT_CLASSIFICATION as default_tier
+    from .maintenance_outcomes import action_required_item
+    declassified = ingest_report.get("declassified") or []
+    if not declassified:
+        return []
+    by_tier: dict[str, int] = {}
+    for entry in declassified:
+        if isinstance(entry, dict):
+            tier = str(entry.get("tier", "unknown"))
+            by_tier[tier] = by_tier.get(tier, 0) + 1
+    findings = []
+    for tier, count in sorted(by_tier.items(), key=lambda kv: -kv[1]):
+        item = action_required_item(
+            f"{count} deliverable drop(s) admitted at `{tier}`, BELOW the "
+            f"lane's `{default_tier}` default (names withheld — "
+            f"a project folder is a document title; open the directory below)",
+            "a `.classification` file in the drop tree lowered the tier, and "
+            "the host SIGNED the note at it — if you did not write that file, "
+            "sensitive content is now readable by every reader capped at "
+            f"`{tier}`, including the Cowork sandbox",
+            "confirm you created the `.classification` file for that folder; "
+            "if not, delete it, then `brain supersede` the affected notes to "
+            "correctly-tiered replacements — editing a signed note in place "
+            "leaves the low copy in the chain",
+            str(vault / "inbox" / "_deliverables"),
+        )
+        # Same channel as the quarantine banner: without a notify_key this stays
+        # in the maintain result and never reaches `brain alerts`. Keyed per
+        # TIER so it dedups once a day, not once per file.
+        item["notify_key"] = f"deliverable-declassified:{tier}"
+        findings.append(item)
+    return findings
+
+
 def quarantine_summary_due(marker: dict[str, Any] | None, today: datetime.date) -> bool:
     """True when the monthly quarantine-triage summary is due: never fired,
     or last fired in an earlier calendar month than ``today`` — "due since

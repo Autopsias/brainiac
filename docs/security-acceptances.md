@@ -128,6 +128,65 @@ Neither is implemented.
 
 ---
 
+## A-04 · A deliverable's tier marker is trusted from the drop tree
+
+**Raised as:** "Untrusted deliverable tier marker can downgrade ingestion"
+(medium), against `0714942`, 2026-08-25.
+
+**Status: mitigated 2026-08-26 with a DETECTION control, and the acceptance is
+the prevention that is deliberately not built.**
+
+**The finding is correct and was reproduced before anything was decided.** With
+no control file the lane admits a drop at `MNPI`; one line of `Internal` in
+`inbox/_deliverables/.classification` takes it to `Internal`, and it stays there
+for every future drop into that folder. A malformed value already fails closed
+(EXC-01) — only a well-formed LOWER value is trusted. That tree is the same one
+the payload arrives in, so anything able to write the vault can plant it.
+
+**Why it is worse than its severity suggests.** The result is that the HOST
+signs a note at the lower tier. That is the host-only signing boundary, the same
+one that made the sign-drain finding a real gap rather than an entry in this
+file.
+
+**Why raise-only is not the fix.** `MNPI` is the top tier, so the control file
+exists ONLY to declassify. A rule admitting only higher values does not repair
+the feature, it removes it — every deliverable would be `MNPI` forever, and the
+lane's whole purpose is letting an owner say "this project's outputs are fine at
+Internal".
+
+**The owner's ruling, 2026-08-26:** honour the tier, and report every
+declassification. Visibility rather than prevention, which is the same posture
+already chosen for the larger sandbox question (VULN-3385): where a control
+cannot prevent, it must at least make the event impossible to miss.
+
+**What bounds it now.** Every drop admitted below the lane default is recorded
+on the ingest report and shaped into an `action_required` finding carrying a
+`notify_key`, so it reaches `brain alerts` at session start rather than dying in
+a launchd log. The operator recognises a declassification they made, and sees
+one they did not. The finding reports COUNTS AND TIERS ONLY — never the project
+folder, never the filename — because that text is persisted verbatim into
+`.brain/notify-sent/current.json`, which a Cowork VM session can read, and a
+`_deliverables/<project>/` folder name is exactly where a client name sits. That
+is the escalation the quarantine banner carried until 2026-08-25.
+
+**What is still accepted: the plant itself is not prevented.** A control file
+written by something other than the owner is honoured, and the note is signed at
+its tier. Detection is same-run, not pre-write, so the window is one ingest.
+
+**The prevention that is available, and was deliberately deferred.** Require the
+control file to be host-signed, reusing `brain.vm_ceiling`'s machinery — the
+pinned-anchor verify already built for VULN-3386, and the public key
+`brain audit-pubkey` already exports. It is roughly fifty lines plus a verb. It
+was not taken now because it is a BREAKING change for every existing
+deployment: unsigned markers stop working and those folders return to `MNPI`
+until re-staged. Worth taking if a reviewer declines the detection control.
+
+**What would reopen it:** the drop tree becoming writable by anything further
+from the owner than a local sandbox, or a declassification arriving that the
+alerts channel did not surface.
+
+---
+
 ## Not accepted, and deliberately absent
 
 The synthesis sign-drain finding ("Synthesis sign-drain signs untrusted

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from ._shared import *  # noqa: F401,F403
+from ._retirement import RETIRED_PREDICATE
 
 
 class _ToolMixin:
@@ -102,16 +103,19 @@ class _ToolMixin:
     ) -> list[dict[str, Any]]:
         """Structured frontmatter query (an Obsidian-Bases-style view) over the
         indexed columns — NO embedding. Filters are exact-match on
-        id/title/type/classification/zone/path; unknown keys are ignored. Returns
-        note-shaped dicts for the CLI egress gate.
+        id/title/type/classification/zone/path. Returns
+        note-shaped dicts for the CLI egress gate. An unknown filter key is
+        REFUSED with ``ValueError``, never silently dropped.
 
         TMP-02 temporal views (ADR-0003 Ruling 2/8 — the Latest Only / As Of
         Bases):
 
-        - ``latest_only``: excludes any note explicitly retired
-          (``is_latest_version: false``). A note that never entered a
-          supersession chain has no opinion here and is included (it IS the
-          current — only — version of itself).
+        - ``latest_only``: excludes any retired note — one explicitly stamped
+          ``is_latest_version: false``, and one deliverable marker whose
+          payload is stamped so (``index._retirement``, the SAME predicate
+          ``search`` applies). A note that never entered a supersession chain
+          has no opinion here and is included (it IS the current — only —
+          version of itself).
         - ``as_of``: an ISO date; returns notes valid AT that date under
           valid-time semantics — ``effective_date`` if present, else
           ``document_date``, else ``created`` (fallback chain, per the ADR) —
@@ -128,15 +132,31 @@ class _ToolMixin:
         # FALSE POSITIVE (scanner: string-built SQL / hardcoded_sql_expressions):
         # `key` / `order_col` are only ever interpolated after an explicit
         # `in cols` allowlist check against the fixed column set above -- an
-        # unrecognised key/order_by is dropped/defaulted, never reaches the SQL
-        # text. Every VALUE (`val`, `k`) is a bound param, never interpolated.
+        # unrecognised key is REFUSED before the loop and an unrecognised
+        # order_by is defaulted, so neither reaches the SQL text. Every VALUE
+        # (`val`, `k`) is a bound param, never interpolated.
         # See docs/SECURITY_NOTES.md.
+        unknown = sorted(k for k in filters if k not in cols)
+        if unknown:
+            # REFUSE rather than drop. A dropped filter returns an UNFILTERED
+            # result set that looks exactly like an answer: asking for
+            # `is_latest_version=false` used to return the whole vault, and it
+            # cost a reviewer an hour of believing the data was inconsistent
+            # (2026-08-25). Same shape as a gate passing an input it never
+            # read — the exit code is clean either way, so the caller cannot
+            # tell. These columns are the indexed ones; anything else belongs
+            # to `search` or `grep`.
+            raise ValueError(
+                f"bases_query: unknown filter key(s) {unknown} — "
+                f"filterable columns are {sorted(cols)}. Nothing was queried; "
+                "an unrecognised key is refused rather than dropped, because a "
+                "dropped filter returns everything and reads as an answer."
+            )
         for key, val in filters.items():
-            if key in cols:
-                where.append(f"{key} = ?")  # nosec B608 - key is allowlisted above
-                params.append(val)
+            where.append(f"{key} = ?")  # nosec B608 - key is allowlisted above
+            params.append(val)
         if latest_only:
-            where.append("is_latest_version IS NOT 'false'")
+            where.append(f"NOT {RETIRED_PREDICATE}")
         if as_of:
             where.append(
                 "COALESCE(NULLIF(effective_date,''), NULLIF(document_date,''), created) <= ?"
@@ -146,7 +166,8 @@ class _ToolMixin:
             params.append(as_of)
         order_col = order_by if order_by in cols else "updated"
         sql = (
-            "SELECT id,title,classification,zone,path,type,updated,is_latest_version FROM notes"
+            "SELECT id,title,classification,zone,path,type,updated,is_latest_version"
+            " FROM notes AS n"
             + (" WHERE " + " AND ".join(where) if where else "")
             + f" ORDER BY {order_col} DESC, id ASC LIMIT ?"  # nosec B608 - order_col is allowlisted above
         )
@@ -182,10 +203,22 @@ class _ToolMixin:
                 "is_latest_version", "superseded_by", "previous_version", "superseded_date"]
         return dict(zip(keys, r))
 
-    def recent(self, limit: int = 10) -> list[dict[str, Any]]:
+    def recent(
+        self, limit: int = 10, *, include_retired: bool = False
+    ) -> list[dict[str, Any]]:
+        """Recently updated notes, retired versions hidden by default.
+
+        Superseding a note UPDATES it, so an unfiltered ``recent`` is worst
+        at exactly the moment a chain is written: the whole retired tail
+        sorts to the top. Measured 2026-08-26 on the reference vault — 5 of
+        the last 30 entries were retired v42-v46 of one deck. Same predicate
+        as ``search`` and ``bases-query --latest-only``, never a second
+        definition."""
+        where = "" if include_retired else f"WHERE NOT {RETIRED_PREDICATE} "
         rows = self.conn.execute(
-            "SELECT id,title,classification,zone,path,updated FROM notes "
-            "ORDER BY updated DESC, id ASC LIMIT ?",
+            "SELECT n.id,n.title,n.classification,n.zone,n.path,n.updated "
+            f"FROM notes AS n {where}"
+            "ORDER BY n.updated DESC, n.id ASC LIMIT ?",
             (limit,),
         ).fetchall()
         keys = ["id", "title", "classification", "zone", "path", "updated"]

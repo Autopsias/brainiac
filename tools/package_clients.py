@@ -61,6 +61,8 @@ from package_shared import (  # noqa: E402,F401
     DIST_DIR, FRONTMATTER_RE, PLUGINS_DIR, PYPROJECT_PATH, REPO_ROOT,
     ValidationError, _log, _mini_yaml_parse, parse_skill_frontmatter,
     validate_json_file, validate_skill_md)
+from package_clients_config import (  # noqa: E402,F401
+    validate_claude_settings, validate_codex_config, validate_marketplace)
 from package_versions import (  # noqa: E402,F401
     NPM_PACKAGE_JSON, PLUGIN_NAMES, VERSION_STAMP_PATH, VERSION_STAMP_RE,
     read_source_version, stamp_skill_version, validate_monotonic_version,
@@ -347,62 +349,10 @@ def validate_cowork_zip(zip_path: Path, version: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def validate_marketplace() -> None:
-    mp_path = REPO_ROOT / ".claude-plugin" / "marketplace.json"
-    if not mp_path.exists():
-        raise ValidationError(f"missing {mp_path}")
-    data = validate_json_file(mp_path)
-    if not data.get("name"):
-        raise ValidationError(f"{mp_path}: missing top-level 'name'")
-    if not data.get("owner", {}).get("name"):
-        raise ValidationError(f"{mp_path}: missing owner.name")
-    plugins = data.get("plugins") or []
-    if not plugins:
-        raise ValidationError(f"{mp_path}: 'plugins' array is empty")
-    seen_names = set()
-    for entry in plugins:
-        pname = entry.get("name")
-        if not pname:
-            raise ValidationError(f"{mp_path}: a plugin entry is missing 'name'")
-        if pname in seen_names:
-            raise ValidationError(f"{mp_path}: duplicate plugin name '{pname}'")
-        seen_names.add(pname)
-        if not entry.get("source"):
-            raise ValidationError(f"{mp_path}: plugin '{pname}' missing 'source'")
-        # Every plugin.json must ALSO carry name + version (source of truth).
-        plugin_json_path = PLUGINS_DIR / pname / ".claude-plugin" / "plugin.json"
-        if not plugin_json_path.exists():
-            raise ValidationError(f"missing {plugin_json_path} for marketplace entry '{pname}'")
-        pdata = validate_json_file(plugin_json_path)
-        if pdata.get("name") != pname:
-            raise ValidationError(
-                f"{plugin_json_path}: name '{pdata.get('name')}' != marketplace entry '{pname}'"
-            )
-        if not pdata.get("version"):
-            raise ValidationError(f"{plugin_json_path}: missing 'version'")
 
 
-def validate_codex_config() -> None:
-    cfg_path = REPO_ROOT / ".codex" / "config.toml"
-    if not cfg_path.exists():
-        raise ValidationError(f"missing {cfg_path}")
-    try:
-        import tomllib
-
-        with cfg_path.open("rb") as fh:
-            tomllib.load(fh)
-    except ModuleNotFoundError:
-        _log(f"  (tomllib unavailable on this interpreter — skipping strict TOML parse of {cfg_path})")
 
 
-def validate_claude_settings() -> None:
-    settings_path = REPO_ROOT / ".claude" / "settings.json"
-    if not settings_path.exists():
-        raise ValidationError(f"missing {settings_path}")
-    data = validate_json_file(settings_path)
-    known = data.get("extraKnownMarketplaces") or {}
-    if not known:
-        raise ValidationError(f"{settings_path}: extraKnownMarketplaces is empty")
 
 
 def validate_all_skill_sources() -> None:

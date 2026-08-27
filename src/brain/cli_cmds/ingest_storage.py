@@ -163,9 +163,69 @@ def _run_audit_key(args, ctx) -> int:
     return 0
 
 
+def _run_audit_pubkey(args, ctx) -> int:
+    core = ctx.core
+    try:
+        res = core.audit_pubkey()
+    except Exception as exc:  # KeyUnavailable / RoleError -> report, no traceback
+        _emit(
+            {"error": type(exc).__name__, "detail": str(exc)}
+            if args.json
+            else f"audit public key: unavailable ({exc})",
+            args.json,
+        )
+        return 1
+    if getattr(args, "out", None):
+        from pathlib import Path as _Path
+
+        out = _Path(args.out)
+        out.write_text(res["public_key_pem"], encoding="utf-8")
+        _emit(
+            res if args.json
+            else f"wrote {out} (sha256 {res['sha256'][:16]}…)",
+            args.json,
+        )
+        return 0
+    _emit(
+        res if args.json else res["public_key_pem"].rstrip("\n"),
+        args.json,
+    )
+    return 0
+
+
+def _run_vm_egress_tier(args, ctx) -> int:
+    core = ctx.core
+    try:
+        res = core.set_vm_egress_tier(getattr(args, "tier", None))
+    except Exception as exc:  # KeyUnavailable / RoleError / bad tier -> closed
+        _emit(
+            {"error": type(exc).__name__, "detail": str(exc)}
+            if args.json
+            else f"vm-egress-tier refused ({type(exc).__name__}): {exc}",
+            args.json,
+        )
+        return 3
+    if res.get("removed"):
+        _emit(res if args.json
+              else f"removed signed VM ceiling — enforced cap is now {res['enforced']}"
+                   f" ({res['provenance']})",
+              args.json)
+        return 0
+    _emit(res if args.json
+          else f"signed VM ceiling {res['tier']} (VM enforces {res['enforced']}, "
+               f"{res['provenance']})",
+          args.json)
+    return 0
+
+
 def _run_verify_audit(args, ctx) -> int:
     core = ctx.core
-    res = core.verify_audit(check_content=args.check_content)
+    pubkey = None
+    if getattr(args, "pubkey", None):
+        from pathlib import Path as _Path
+
+        pubkey = _Path(args.pubkey).read_bytes()
+    res = core.verify_audit(check_content=args.check_content, public_key_pem=pubkey)
     text = (
         f"audit chain: {res['status']} ({res['entries_checked']} entries, "
         f"{len(res['errors'])} errors)"
@@ -263,6 +323,8 @@ _HANDLERS = {
     "ingest-transcript": _run_ingest_transcript,
     "write": _run_write,
     "audit-key": _run_audit_key,
+    "audit-pubkey": _run_audit_pubkey,
+    "vm-egress-tier": _run_vm_egress_tier,
     "verify-audit": _run_verify_audit,
     "anchor": _run_anchor,
     "verify-anchor": _run_verify_anchor,

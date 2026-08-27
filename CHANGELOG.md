@@ -7,6 +7,98 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.31] — 2026-08-27
+### Security
+- **The audit public key is exportable, and the chain verifies against it**
+  (VULN-3388). `brain audit-pubkey [--out FILE]` writes the verifying half of
+  the signing key, and `brain verify-audit --pubkey FILE` checks the chain
+  against a key supplied from outside. Until now the only thing that could
+  verify the audit chain was the machine holding the private key, which makes
+  "the chain is intact" an unauditable claim.
+- **An unexplained classification downgrade no longer reaches the index or the
+  VM snapshot** (VULN-3387). `sync` keeps the signed tier and reports
+  `refused_downgrades`; snapshot publish withholds unexplained-drift notes from
+  the VM copy and records `withheld_drift` on the manifest. The guard normalises
+  chain-relative against index-absolute paths, because a bare rename otherwise
+  makes a signed note read as unsigned. **Stated limit:** a full `brain rebuild`
+  regenerates the index from the files and bypasses the sync refusal.
+- **A VM session can no longer raise its own egress ceiling** (VULN-3386). The
+  ceiling resolved from `$BRAIN_VM_MAX_EGRESS_TIER`, which the sandbox's own
+  shell can export — the pentest's proof of concept did exactly that, and the
+  unsigned mount file had the same hole, admitted in its own bootstrap comment.
+  It now rides a HOST-SIGNED file verified against the pinned public-key anchor;
+  a missing anchor, a missing file, a tampered value or a foreign vault id all
+  fail CLOSED to the shipped `Internal` cap. **Behaviour change:** a vault that
+  opted into a higher Cowork ceiling through the unsigned file must re-stage it
+  once with `brain vm-egress-tier <TIER>`; until then its VM leg reads at
+  `Internal`.
+- **The corpus is scanned for concealed instructions** (SEC-05).
+  `brain integrity --injection` finds instructions hidden where a reader cannot
+  see them — bidirectional overrides, the Unicode TAG block, dense zero-width
+  runs, hidden-styled spans, and instruction text broken up by invisible
+  characters. Two signal classes, not one: converter noise (`U+200B`, `U+200E`
+  sprinkled through ordinary prose by PDF and Word exports) and presenter-note
+  comments are NOT concealment, and both are pinned as test negatives after the
+  first version convicted dozens of entirely legitimate business documents.
+  A document that merely QUOTES an attack stays indexable — a scanner that
+  quarantines the security report is worse than no scanner.
+- **A source hit now says it is untrusted content.** Every hit carrying a
+  `zone` leaves the egress gate stamped `content_trust`: `raw/` is
+  `untrusted-source`, `brain/` is `curated`. A model reading a source note
+  previously had no signal that the text was DATA rather than instruction.
+  Deliberately not the `provenance.trust` frontmatter key, which is the capture
+  stamp for drafts.
+- **Every read now leaves a record** (SEC-06). `verify-audit` covered writes and
+  the query ledger covered only `search` and `dossier`, so a bulk sweep through
+  `get`, `recent`, `grep` or `bases-query` left no trace at all. A host-private
+  read log records the SHAPE of each access — verb, role, tier cap, how many
+  notes crossed the gate, how many were withheld — and deliberately stores no
+  query text, note ids, titles or paths. A log that has to be protected like the
+  vault is a log nobody keeps. Host-only, on by default, `BRAIN_READ_LOG=0` to
+  disable, and a failure to log never fails the read.
+- **A deliverable admitted below the lane default is reported** (A-04). The
+  `.classification` control file sits in the same drop tree the payload arrives
+  in, so anything able to write the vault can plant one and hold a folder below
+  `MNPI` — with every later drop signed by the host at that tier. Raise-only
+  cannot fix it: `MNPI` is the top tier, so the file exists only to declassify,
+  and refusing every lower value would delete the feature. The tier is honoured
+  and every declassification now raises an `action_required` finding that
+  reaches `brain alerts`, carrying counts and tiers only — never the project
+  folder or filename, which are document titles.
+- **The release runbook stopped documenting an install the code refuses.** Two
+  sections told a human to resolve TestPyPI dependencies with
+  `--extra-index-url`, which lets anyone registering one of this project's
+  unconstrained dependency names win the resolution and execute on a machine
+  holding publishing credentials. `_clean_venv_check` has refused that shape
+  since 2026-08-07; the prose kept teaching it.
+- **Release commits and tags are signed**, and the check runs before anything
+  else in the pipeline.
+
+### Fixed
+- **`brain update` can finish from a clean-room export.** `git tag -l` ran in a
+  form that treats a missing repository as a hard error, and an export omits
+  `.git` deliberately — so the update stopped at `dist_rebuild`, before the
+  Cowork workspace restage. The one install shape with no other way to update
+  was the one that could not. A tree with no repository now has no baseline and
+  falls back to the version on disk; any OTHER git failure still raises, because
+  "no tags" and "git is broken" must not look the same to a guard whose job is
+  refusing a version regression.
+- **`bases-query` refuses an unknown filter key** instead of silently dropping
+  it and returning a wider answer than was asked for.
+- **`recent` applies the same retirement filter `search` does**, so a retired
+  version no longer appears current in one surface and not the other.
+- **A deliverable marker is retired by the payload it points at.**
+
+### Changed
+- **The build base image is re-pinned** to the 2026-08-26 `python:3.12-slim`
+  digest. Verified rather than assumed: `perl-base` is still 5.40.1-6 in the new
+  image, so the container scanner's outstanding rows persist and a no-fix filter
+  on them is correct.
+- **Shell scripts are linted** (shellcheck at error severity) — they were
+  entirely unscanned — and the quality ratchet is green again.
+- **`CONTRIBUTING.md` exists**, because a clean-room export model needs a stated
+  way in.
+
 ## [0.20.30] — 2026-08-25
 ### Changed
 - **PyPI publishing moved off the maintainer's machine and onto CI.** SLSA

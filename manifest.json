@@ -89,6 +89,7 @@
     "CHANGELOG.md",
     "CLAUDE.md",
     "CONTEXT.md",
+    "CONTRIBUTING.md",
     "LICENSE",
     "MANIFEST.in",
     "Makefile",
@@ -571,6 +572,7 @@
     "src/brain/index/_models.py",
     "src/brain/index/_planning.py",
     "src/brain/index/_records.py",
+    "src/brain/index/_retirement.py",
     "src/brain/index/_schema.py",
     "src/brain/index/_search.py",
     "src/brain/index/_settings.py",
@@ -606,6 +608,7 @@
     "src/brain/ingest/pipeline.py",
     "src/brain/ingest/pipeline_duplicates.py",
     "src/brain/ingest/pipeline_files.py",
+    "src/brain/ingest/pipeline_injection.py",
     "src/brain/ingest/pipeline_nested.py",
     "src/brain/ingest/pipeline_run.py",
     "src/brain/ingest/pipeline_stages.py",
@@ -617,6 +620,7 @@
     "src/brain/init_samples.py",
     "src/brain/init_seed.py",
     "src/brain/init_steps.py",
+    "src/brain/injection_scan.py",
     "src/brain/invariant_coverage.py",
     "src/brain/invariant_crosstier.py",
     "src/brain/invariant_deliverables.py",
@@ -662,6 +666,7 @@
     "src/brain/querylog_digest.py",
     "src/brain/querylog_replay.py",
     "src/brain/querylog_status.py",
+    "src/brain/read_log.py",
     "src/brain/reexec.py",
     "src/brain/remediation.py",
     "src/brain/remediation_answers.py",
@@ -693,6 +698,7 @@
     "src/brain/vectors.py",
     "src/brain/versionlink.py",
     "src/brain/versionlink_stages.py",
+    "src/brain/vm_ceiling.py",
     "src/brain/vmstaging.py",
     "src/brain/workspaces.py",
     "templates/company.md",
@@ -842,6 +848,7 @@
     "tools/llm_review_scoped.py",
     "tools/migrate_corpus_steps.py",
     "tools/package_clients.py",
+    "tools/package_clients_config.py",
     "tools/package_shared.py",
     "tools/package_versions.py",
     "tools/probe_llm_review_scoped.py",
@@ -878,5 +885,5 @@
     "vault/raw/2026-06-27-arctic-vs-e5-benchmark.md",
     "vault/raw/README.md"
   ],
-  "count": 877
+  "count": 884
 }

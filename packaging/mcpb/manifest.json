@@ -42,20 +42,60 @@
       "description": "Hybrid BM25+dense retrieval over the vault, egress-filtered."
     },
     {
+      "name": "hybrid_search",
+      "description": "Alias of search; fused BM25 + dense + exact-identity ranking, egress-filtered."
+    },
+    {
       "name": "get",
       "description": "Fetch one full note by id, egress-filtered."
+    },
+    {
+      "name": "read",
+      "description": "Alias of get; fetch one full note by id, egress-filtered."
     },
     {
       "name": "recent",
       "description": "List the most recently created/updated notes, egress-filtered."
     },
     {
+      "name": "bases_query",
+      "description": "Structured frontmatter query (latest-only / as-of), egress-filtered."
+    },
+    {
       "name": "dossier",
       "description": "One-call decision-state sweep: decision layer + sources, separated, egress-filtered."
     },
     {
-      "name": "bases_query",
-      "description": "Structured frontmatter query (latest-only / as-of), egress-filtered."
+      "name": "vault_languages",
+      "description": "Derived language census for this vault (no note bodies)."
+    },
+    {
+      "name": "grep",
+      "description": "Lexical exact/regex scan over note bodies; above-ceiling notes dropped pre-match."
+    },
+    {
+      "name": "graph_expand",
+      "description": "Wikilink-BFS + PPR from seed ids, DISCOVERY-ONLY; above-ceiling notes dropped pre-traversal."
+    },
+    {
+      "name": "diagnose",
+      "description": "Trace why a target note did or did not surface for a query (ADR-0008), egress-filtered."
+    },
+    {
+      "name": "alerts",
+      "description": "The degradation digest: what needs the owner, right now. On the VM leg, unreachable host-home sources are named, never skipped."
+    },
+    {
+      "name": "exceptions",
+      "description": "The exceptions banner: a count of open owner questions and where to read them, from a verified signed summary."
+    },
+    {
+      "name": "inbox",
+      "description": "Alias of exceptions — the signed summary, never the raw owner-decision queue file."
+    },
+    {
+      "name": "capture",
+      "description": "Save content as a draft note. Host-side staging: the caller sends content, the broker stages it — signed+indexed immediately on the host, unsigned and untrusted pending host drain on the VM leg."
     }
   ],
   "user_config": {

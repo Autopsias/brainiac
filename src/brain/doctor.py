@@ -345,9 +345,11 @@ def run_doctor(
         engine_version=engine_version, registry_unavailable=registry_unavailable,
         vm_python=_VM_PYTHON)
     ssot, rows = build_doctor_rows(context, checks)
+    from .doctor_mount_leak import check_cowork_mount_leak
     from .vmstaging import check_staged_vm_binaries
 
     rows.extend(check_staged_vm_binaries(registry_entries, ssot))
+    rows.extend(check_cowork_mount_leak(registry_entries))  # criterion 7, s07
     gating_stale = [r for r in rows if r["status"] in _GATING_STATUSES]
     return {
         "ssot_version": ssot,

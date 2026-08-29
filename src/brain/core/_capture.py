@@ -1,6 +1,7 @@
 """Capture lifecycle methods for BrainCore."""
 from __future__ import annotations
 
+from ._capture_staging import stage_draft_unique as _stage_draft_unique
 from ._shared import (
     Any,
     KeyUnavailable,
@@ -50,12 +51,7 @@ class _CoreCaptureMixin:
         staged = _stamp_draft_frontmatter(content, note_id, is_source)
         inbox = self.capture_inbox_dir()
         inbox.mkdir(parents=True, exist_ok=True)
-        target = inbox / f"{note_id}.md"
-        # Belt over the slug check: the resolved target (symlinks followed)
-        # must stay inside the inbox.
-        if not _contained_in(target, inbox):
-            raise ValueError(f"draft target escapes capture inbox: {note_id!r}")
-        target.write_text(staged, encoding="utf-8")
+        target = _stage_draft_unique(inbox, note_id, staged)
         return {
             "draft": str(target),
             "id": note_id,

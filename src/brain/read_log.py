@@ -152,18 +152,55 @@ def record(
     return True
 
 
+#: The four outcomes of a flush, because ``bool`` cannot tell them apart and
+#: the difference decides whether a read may return its data (closed-stacks
+#: S02, acceptance criterion 3).
+#:
+#: ``record_from_tally`` returns ``False`` for THREE unrelated situations, and
+#: a caller that treats them alike either fails every status verb or keeps the
+#: hole open:
+#:   * nothing was gated at all (``not tally`` / ``gates == 0``) — a verb that
+#:     surfaced no note bodies has nothing to log, and logging a zero would
+#:     bury the real reads (see :func:`egress.take_tally`). NOT a failure.
+#:     This is also what a caller sees when a CONCURRENT task consumed the
+#:     shared tally, which is why S02 moved the tally to a ContextVar first.
+#:   * the log is switched off for this caller — ``BRAIN_READ_LOG=0``, or a vm
+#:     role, for which a self-written access log is not evidence anyway. An
+#:     operator decision, NOT a failure.
+#:   * the record could not be written — no securable log dir, an OSError, a
+#:     lock timeout. THAT is the failure a read must not survive.
+RECORD_WRITTEN = "written"
+RECORD_NOTHING_TO_RECORD = "nothing_to_record"
+RECORD_DISABLED = "disabled"
+RECORD_FAILED = "failed"
+
+
+def outcome_from_tally(
+    *, vault: Any, role: str, cmd: str, max_tier: str | None,
+    tally: dict[str, int] | None, latency_ms: float | int | None = None,
+) -> str:
+    """Flush an ``egress.take_tally()`` result, saying WHICH of the four happened."""
+    if not tally or not tally.get("gates"):
+        return RECORD_NOTHING_TO_RECORD
+    if not enabled(role):
+        return RECORD_DISABLED
+    written = record(
+        vault=vault, role=role, cmd=cmd, max_tier=max_tier,
+        surfaced=tally.get("surfaced", 0), withheld=tally.get("withheld", 0),
+        gates=tally.get("gates", 1), latency_ms=latency_ms,
+    )
+    return RECORD_WRITTEN if written else RECORD_FAILED
+
+
 def record_from_tally(
     *, vault: Any, role: str, cmd: str, max_tier: str | None,
     tally: dict[str, int] | None, latency_ms: float | int | None = None,
 ) -> bool:
     """Flush an ``egress.take_tally()`` result. No tally means nothing gated."""
-    if not tally or not tally.get("gates"):
-        return False
-    return record(
-        vault=vault, role=role, cmd=cmd, max_tier=max_tier,
-        surfaced=tally.get("surfaced", 0), withheld=tally.get("withheld", 0),
-        gates=tally.get("gates", 1), latency_ms=latency_ms,
-    )
+    return outcome_from_tally(
+        vault=vault, role=role, cmd=cmd, max_tier=max_tier, tally=tally,
+        latency_ms=latency_ms,
+    ) == RECORD_WRITTEN
 
 
 def status(vault: str | os.PathLike[str] | None, *, days: int = 7) -> dict[str, Any]:

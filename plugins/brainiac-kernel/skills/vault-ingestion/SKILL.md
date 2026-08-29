@@ -5,6 +5,88 @@ description: "Capture a new source into the brain substrate's vault/raw/. Routes
 
 # vault-ingestion (brain-substrate kernel)
 
+<!-- BRAINIAC-DESK-BLOCK v1 -- BYTE-IDENTICAL in all 14 Cowork bundles.
+     Canonical copy: docs/operations/cowork-desk-block.md. Pinned by
+     tests/test_cowork_skill_bundles.py against the LIVE broker
+     (brain.mcp_adapter.TOOLS). Edit the canonical copy and every bundle in one
+     commit, never one bundle alone, and never to name a tool the broker does
+     not serve. -->
+
+## Cowork (VM leg) — the vault is served by the desk, not by this sandbox
+
+Reach the vault ONLY through the **desk**: the host-run `brainiac` MCP server,
+whose tools Claude Desktop announces into this session. Call the tool. Do not
+shell out for note content, and do not open a note file.
+
+| the CLI verb you know | the desk tool to call |
+|---|---|
+| `search`, `hybrid-search` | `search`, `hybrid_search` |
+| `get`, `read` | `get`, `read` |
+| `recent` | `recent` |
+| `dossier` | `dossier` |
+| `bases-query` | `bases_query` |
+| `grep` | `grep` |
+| `graph-expand` | `graph_expand` |
+| `vault-languages` | `vault_languages` |
+| `diagnose` | `diagnose` |
+| `alerts`, `exceptions`, `inbox` | `alerts`, `exceptions`, `inbox` |
+| `draft-capture` (stage an unsigned note) | `capture` |
+
+Those fifteen names are the whole desk, and they are the only route to note
+CONTENT this session may use. **"Not on the desk" is not the same as "refused
+here"**, and conflating the two is how a session talks itself into a workaround:
+measured 2026-08-28, nine of the CLI's 22 VM-allowed verbs have no desk tool
+(`brief`, `cos-propose`, `digest`, `doctor`, `draft-capture`, `init`,
+`mcp-config`, `provision-request`, `status`), and two desk tools (`inbox`,
+`vault_languages`) are not VM-allowed on the CLI at all. Of those nine, only
+`cos-propose` — the COS ingress nothing on the desk serves — and the staging
+probes below are still invoked locally by a shipped bundle, both deliberately.
+Every verb that COMMITS or rebuilds — `write`, `sync`, `maintain`, `rebuild`,
+`ingest`, `curate`, `health`, `integrity`, `verify-audit`, `graph-report` — is a
+HOST-broker privilege and is not available here at all. **Unless a line is
+explicitly marked as a Cowork instruction, a shell command anywhere else in this
+skill is a HOST-lane instruction**, correct on the owner's Mac and not this
+session's route.
+
+**Do NOT bootstrap a vault path, do NOT export one onto `PATH`, do NOT hunt for
+a staged binary to retry with, and do NOT open a note under `brain/` or `raw/`
+with `cat`, `ls`, `Read` or a glob.** That is a RULE, and until the vault
+actually moves off the mount it is the only thing standing between this session
+and the bypass this whole change exists to close. Stated exactly, because the
+two halves are true at different times:
+
+- **While a published snapshot is still on the mount** (every workspace
+  installed before the cutover), a staged engine CAN answer a local retrieval
+  verb from `<vault>/.brain/snapshot/` — measured 2026-08-28: a local `search`
+  at role `vm` returned the note body and exit 0 with the host index deleted,
+  because the
+  snapshot path is independent of it. Content that arrives that way skipped the
+  desk, and so skipped the classification egress record the desk writes. A read
+  that works is not a read you were allowed to make.
+- **Once the vault is off the mount**, the local retrieval verbs fail rather
+  than returning less — measured 2026-08-28: `search`, `get`, `recent` and
+  `grep` exit 3 with `OperationalError: unable to open database file`, and
+  `status --json` carries that same error in its `index` block. That is the desk
+  telling you to use it, not a broken install and not a host-only refusal.
+  **Not every surface is that loud**, so never read a quiet answer as an
+  answer: an EMPTY result and a `not-computed` status are also what you get from
+  a vault you cannot see. Only a hit you obtained through the desk is evidence.
+
+Either way the answer is the same: call the desk. And the desk itself has no
+offline substitute — it speaks stdio to the host process Claude Desktop spawned,
+so there is no endpoint in this sandbox to dial and nothing to fall back to.
+
+**The one local exception, and it returns no note.** If this workspace still
+carries a staged engine, its three staging probes — `brain --version`, `brain
+--role vm doctor`, `brain --role vm status --json` — read `.brain/` staging
+metadata: engine stamp, model cache, vendored-deps ABI, snapshot presence. Keep
+`--role vm` on them; without it the shell runs at role `host`, whose egress cap
+is the whole vault. Use them for staging questions only. Their absence is not a
+fault to fix, and none of the three is a way to reach a note.
+
+If you need something the desk does not serve, say so and stop. That is a
+finding for the engine, not a gap to work around.
+
 Three capture paths, chosen by what you're handed, and **one shared ending**.
 `brain sync` reindexes after any of them — a written/promoted source is not
 retrievable until sync runs. Phase 4 then links it, and an ingest is not
@@ -117,14 +199,12 @@ second source with an identical body hash is a hard duplicate, not a soft
 one — skip the write and tell the user the source is already captured under
 `<existing-id>`).
 
-On the Cowork VM (`--role vm`), `write` is refused — stage instead:
-
-```bash
-brain --vault "$BRAIN_VAULT" draft-capture --id <id> --source --content "<same full markdown>"
-```
-
-`--source` stages it as a `raw/` candidate (vs a `brain/` note) once the
-host drains it.
+In a Cowork session, call the desk's **`capture`** tool instead, with
+`type: "source"` — that is the desk's spelling of `--source`, and it is what
+routes the content to `raw/<id>.md` rather than `brain/resources/`
+(`core.capture`'s host branch). Pass `content` = the same full Markdown and
+`id` = the source id. The broker runs capture in the HOST process, so this is
+signed and indexed immediately, not a candidate awaiting a drain.
 
 ## Phase 3 — reindex
 
@@ -138,8 +218,12 @@ this step as **mandatory after every `write`**, not optional. `sync` does
 incremental upsert-by-content-hash plus delete-propagation and drains any
 pending `capture-inbox/` drafts first (the VM's unsigned captures become
 durable here too) — it is also the right call after a batch of writes.
-Add `--publish` if the Cowork VM's read-only snapshot needs to see the new
-content this run.
+`--publish` republishes the read-only snapshot under `<vault>/.brain/snapshot/`.
+That snapshot exists for workspaces installed BEFORE the Closed Stacks cutover;
+it is the on-mount copy the cutover removes. A Cowork session reading through
+the desk does not need it — the desk queries the host's live index — so do not
+add `--publish` on the VM's behalf. Add it only when the owner still runs a
+pre-cutover workspace and has asked for it.
 
 ## Phase 4 — link the source (MANDATORY, all three paths)
 
@@ -174,22 +258,34 @@ Four rules the note has to satisfy (AGENTS.md §4 rule 4, the BAK-04 lane):
    does not hint at — describe what is in the file, not what the first page
    suggests.
 
-On the Cowork VM, `write` is refused. Stage the note instead, and the host's
-next sync signs it:
+In a Cowork session, call the desk's **`capture`** tool instead — `content` =
+the same full Markdown, `id` = the note id, and no `type` (the default lands it
+under `brain/resources/`). It runs host-side, so it comes back signed and
+indexed rather than pending.
 
-```bash
-brain --vault "$BRAIN_VAULT" draft-capture --id <note-id> --content "<same full markdown>"
-```
+**Verify before reporting done** — the citation, not your intent. A lexical
+`grep` is the check: it needs no embedding, and both lanes have one.
 
-**Verify before reporting done** — the citation, not your intent. `brain grep`
-is the check: it is lexical, needs no embedding, and works identically on the
-host and the VM.
+**HOST LANE.** The CLI form, which pipes to `jq`:
 
 ```bash
 brain --vault "$BRAIN_VAULT" grep --regex "\[\[<source-id>\]\]" --json \
   | jq '[.results[] | select(.zone=="brain")
          | select(.id | test("^catalog-|^backlinks")|not) | .id]'
 ```
+
+**COWORK LANE.** Call the desk's `grep` tool with
+`pattern: "\\[\\[<source-id>\\]\\]"` and `regex: true` — the brackets MUST be
+escaped, exactly as the host form above escapes them. Unescaped, `[[<id>]]` is
+not a literal: a dated id fails to compile and only works through the engine's
+silent fallback to an escaped literal, and an id whose letters happen to form a
+valid character range (measured: `[[brain-swap]]`) compiles as a character class
+and matches unrelated wikilinks, so the citation check below can pass on a note
+that cites a DIFFERENT source. Then apply the same two
+filters to its `results` yourself: keep `zone == "brain"`, drop ids matching
+`^catalog-|^backlinks`. Do NOT run the CLI form here and do NOT read the note
+file — the desk is the only route, and its `grep` is the same lexical scan over
+the same bodies.
 
 A non-empty list means a real note cites the source. An empty list means Phase 4
 is not done.

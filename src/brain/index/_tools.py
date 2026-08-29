@@ -9,7 +9,8 @@ class _ToolMixin:
     """Index tool-query methods."""
 
     def grep(
-        self, pattern: str, *, k: int = 20, ignore_case: bool = True, regex: bool = False
+        self, pattern: str, *, k: int = 20, ignore_case: bool = True,
+        regex: bool = False, max_tier: str | None = None,
     ) -> list[dict[str, Any]]:
         """Lexical-first exact/regex scan over note bodies — NO embedding.
 
@@ -17,6 +18,19 @@ class _ToolMixin:
         is the cheap first probe before escalating to :meth:`hybrid_search`.
         Returns note-shaped dicts (filterable by the CLI egress gate) with the
         first matching line as the snippet and a match count.
+
+        ``max_tier`` drops above-ceiling notes BEFORE matching, which is a
+        different guarantee from the egress gate that runs afterwards. grep is
+        the one read verb where the CALLER chooses the pattern, so a
+        post-match filter turns the result into an oracle: the caller cannot
+        read a withheld body, but it can still binary-search that body's
+        contents from how many rows the gate removed and which survivors moved
+        rank. Dropping the note pre-match means an above-ceiling note is
+        indistinguishable from a note that does not exist. ``None`` keeps the
+        historical post-match-only behaviour (the CLI path, whose
+        ``egress.withheld`` footer is asserted by
+        tests/test_egress_per_subcommand.py::test_grep_gates); the MCP broker
+        passes its resolved ceiling. Added by closed-stacks S02.
 
         Bounded against ReDoS / resource exhaustion (RET-04 hardening):
         ``pattern`` is length-capped (:data:`MAX_GREP_PATTERN_LEN`) before
@@ -70,6 +84,9 @@ class _ToolMixin:
         rows = self.conn.execute(
             "SELECT id,title,classification,zone,path,body FROM notes"
         ).fetchall()
+        if max_tier is not None:
+            allows = cls_mod.ClassificationFilter(max_tier=max_tier).allows
+            rows = [r for r in rows if allows(r[2])]
         out: list[dict[str, Any]] = []
         for r in rows:
             body = r[5] or ""
@@ -180,14 +197,18 @@ class _ToolMixin:
     def graph_expand(
         self, seeds: list[str], *, depth: int = 2, k: int = 10, use_ppr: bool = True,
         extra_edges: list[tuple[str, str]] | None = None,
+        max_tier: str | None = None,
     ) -> dict[str, Any]:
         """On-demand wikilink-BFS + PPR expansion (RET-03). DISCOVERY-ONLY — the
         derived graph is never authoritative; results carry that flag.
-        ``extra_edges`` (GRF-01, optional) folds graphify's INFERRED edges in."""
+        ``extra_edges`` (GRF-01, optional) folds graphify's INFERRED edges in.
+        ``max_tier`` drops above-ceiling notes BEFORE seeds resolve and before
+        traversal — see :func:`brain.graph.graph_expand` for why after is not
+        good enough."""
         from ..graph import graph_expand as _expand
 
         return _expand(self.conn, seeds, depth=depth, k=k, use_ppr=use_ppr,
-                        extra_edges=extra_edges)
+                        extra_edges=extra_edges, max_tier=max_tier)
 
     def get(self, note_id: str) -> dict[str, Any] | None:
         r = self.conn.execute(

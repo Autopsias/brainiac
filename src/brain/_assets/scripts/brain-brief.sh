@@ -105,7 +105,14 @@ fi
   # BRAIN_AUTO_UPDATE=1 (ADR-0005 v2 amendment): opt IN to the unattended
   # engine auto-apply here in the SCHEDULED runner ONLY — a manual `brain
   # maintain` or a test never pip-upgrades the machine (the gate defaults off).
-  BRAIN_AUTO_UPDATE=1 "$BRAIN_BIN" maintain --json
+  # BRAIN_PROGRESS=1 (2026-08-27): stderr under launchd is a log file, never a
+  # TTY, so `progress_enabled()` was False and a 9h45m rebuild on 2026-08-26
+  # emitted NOTHING for its whole run. Three sessions read the silent,
+  # CPU-burning process as a hang. Scoped to THIS command rather than set in
+  # the plist: a plist-wide value is inherited by every subprocess maintain
+  # spawns, and src/brain/progress.py warns that consumers parsing a captured
+  # stderr would then see progress lines.
+  BRAIN_AUTO_UPDATE=1 BRAIN_PROGRESS=1 "$BRAIN_BIN" maintain --json
 } >> "$LOG" 2>&1
 
 # Rotate logs older than 30 days.

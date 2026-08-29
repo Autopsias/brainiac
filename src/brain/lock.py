@@ -31,6 +31,7 @@ import json
 import os
 import random
 import secrets
+import sys
 import time
 from pathlib import Path
 from typing import Any, Iterator
@@ -71,10 +72,22 @@ class WriterLockBusy(RuntimeError):
         self.verb = verb
         pid = holder.get("pid")
         held_verb = holder.get("verb")
+        # Every branch keeps the original best-effort caveat: even a running
+        # pid is not proof THIS pid holds the lock (pid reuse, and the read
+        # races a live writer). `alive` narrows the caveat, it never lifts it.
+        if holder.get("alive") is False:
+            liveness = (
+                f" -- WARNING: pid {pid} is NO LONGER RUNNING, so this metadata is "
+                "STALE: it names a process that has exited. Either another process "
+                "holds the lock, or this is a leaked lockfile"
+            )
+        elif holder.get("alive") is True:
+            liveness = " -- that pid is running, though the mapping to this lock is best-effort"
+        else:
+            liveness = " -- holder read best-effort from lockfile metadata; stale metadata possible"
         super().__init__(
-            f"writer lock busy: reportedly held by pid={pid} (verb={held_verb}) "
-            f"-- could not acquire for {verb!r} within the bound "
-            "(holder read best-effort from lockfile metadata; stale metadata possible)"
+            f"writer lock busy: reportedly held by pid={pid} (verb={held_verb})"
+            f"{liveness} -- could not acquire for {verb!r} within the bound"
         )
 
 
@@ -85,11 +98,61 @@ _DEPTH: dict[str, int] = {}
 _FD: dict[str, int] = {}
 
 
-def _read_holder(lock_path: Path) -> dict[str, Any]:
+def _pid_alive(pid: Any) -> bool | None:
+    """Whether `pid` still names a running process. None when we cannot tell.
+
+    UNIX ONLY, deliberately. `os.kill(pid, 0)` is the standard no-op liveness
+    probe there. On Windows `os.kill` does not carry signal-0's probe
+    semantics, so this returns None and the holder record stays exactly as
+    best-effort as it was before.
+
+    ponytail: pid reuse can make a dead holder read as alive. That is the
+    known ceiling and it is the SAFE direction to be wrong in -- this value
+    only ever downgrades a claim ("held" -> "stale"), so a false "alive" costs
+    a confusing message, while a false "stale" would invite someone to break a
+    lock that is genuinely held.
+    """
+    if sys.platform == "win32":
+        return None
+    if not isinstance(pid, int) or pid <= 0:
+        return None
     try:
-        return json.loads(lock_path.read_text(encoding="utf-8"))
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # it exists; it is just not ours to signal
+    except OSError:
+        return None  # cannot tell -- never claim a live lock is stale
+    return True
+
+
+def _read_holder(lock_path: Path) -> dict[str, Any]:
+    """Read the lockfile metadata, and say whether that holder is still alive.
+
+    The record is written on acquire and NEVER cleared on release: release
+    unlocks and closes the fd without truncating, and a killed process never
+    reaches release at all. So the file routinely names a long-dead pid, and
+    every consumer of it -- `current_holder`, `WriterLockBusy`'s message,
+    `brain doctor` -- reported that dead pid as the holder.
+
+    Field cost (2026-08-26): a maintain run's lockfile named a pid that had
+    exited hours earlier, and three sessions spent the night reasoning about a
+    holder that did not exist. Truncating on release does not fix it (the
+    killed process is exactly the case that skips release), so the liveness
+    check belongs HERE, at read time.
+
+    Adds `alive`: True (running), False (gone -- the record is stale), or None
+    (could not determine, e.g. Windows, or no pid in the record).
+    """
+    try:
+        holder = json.loads(lock_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
+    if not isinstance(holder, dict):
+        return {}
+    holder["alive"] = _pid_alive(holder.get("pid"))
+    return holder
 
 
 def _open_lock_fd(lock_path: Path) -> int:
@@ -243,6 +306,10 @@ def writer_lock(lock_path: Path, *, verb: str,
 
 
 def current_holder(lock_path: Path) -> dict[str, Any]:
-    """Best-effort read of who holds (or last held) the lock -- for status/
-    error messages only, never as a liveness authority."""
+    """Read who holds -- or LAST held -- the lock, plus whether that pid is
+    still running (`alive`: True / False / None-when-unknown).
+
+    Still for status and error messages only. `alive` narrows the old blanket
+    caveat rather than removing it: an `alive: False` record is definitely
+    stale, but `alive: True` can still be a recycled pid (see `_pid_alive`)."""
     return _read_holder(lock_path)

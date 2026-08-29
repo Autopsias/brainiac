@@ -37,18 +37,32 @@ vault B cannot read vault A's index dir, so two vaults resolving to the same
 target would each believe they own it. It lives under
 ``config_hostpaths.host_private_base()`` (the SAME host-private base the
 approved queue / writer lock / supersede journal use — never the mount, never
-``vault/``), claimed under ``lock.writer_lock`` so a concurrent first run
-cannot double-claim.
+``vault/``), claimed under BOTH ``lock.writer_lock`` and the in-process
+``_CLAIM_LOCK`` below, so a concurrent first run cannot double-claim.
+It took both: ``writer_lock`` is process-scoped, and until 2026-08-28 a
+second THREAD was mistaken for a re-entrant caller and entered the claim
+holding nothing.
 """
 from __future__ import annotations
 
 import json
 import os
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from . import config, config_hostpaths as hostpaths, lock as _lock
+
+# ``lock.writer_lock`` is PROCESS-scoped: its re-entrancy depth is a module
+# global, so a SECOND THREAD reads depth > 0, is taken for a re-entrant
+# caller, and walks into the claim section holding nothing. Measured against
+# the code as it stood immediately before this line, 60 trials per width:
+# at 2 threads 0/60 double-bound and 1/60 crashed; at 4, 4/60 and 28/60; at 8,
+# 36/60 and 59/60. A double-bind is SILENT -- each thread believed it had won.
+# This lock supplies the in-process half; writer_lock still supplies the
+# cross-process half. Both are needed, and neither substitutes for the other.
+_CLAIM_LOCK = threading.Lock()
 
 #: The shelf's default name, sibling to the vault. Deliberately NOT
 #: "deliverables" (see module docstring).
@@ -232,7 +246,7 @@ def resolve(vault: str | os.PathLike[str] | None = None) -> ShelfResult:
             f"{vault_path}/.brain writable so a vault id can be minted."))
 
     lock_path = _lock_path(vault_path)
-    with _lock.writer_lock(lock_path, verb="deliverables-shelf-claim"):
+    with _CLAIM_LOCK, _lock.writer_lock(lock_path, verb="deliverables-shelf-claim"):
         bindings = _load_bindings(vault_path)
         key = str(target)
         existing = bindings.get(key)

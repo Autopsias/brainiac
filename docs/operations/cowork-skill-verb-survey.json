@@ -1,0 +1,1432 @@
+{
+  "schema_version": 3,
+  "generated": "2026-08-28T21:28:23Z",
+  "produced_by": "closed-stacks-2026-08-27 / S01 / FND-02 (rework 2, after the second adversarial-review round); derived columns RE-DERIVED by S02 / DESK-02 after the broker grew grep, graph_expand, read, hybrid_search and diagnose; derived columns RE-DERIVED AGAIN by S03 / DESK-03 after the broker grew alerts, exceptions, inbox; derived columns RE-DERIVED AGAIN by S04 / DESK-04 after the broker grew capture; derived columns RE-DERIVED AGAIN by S06B / DESK-07 after the 14 Cowork bundles were migrated onto the broker (consumers changed, seam unchanged)",
+  "consumed_by": [
+    "s02 definition of done",
+    "s07 walk checklist",
+    "s09 acceptance criterion 2 oracle"
+  ],
+  "scan_scope": "EVERY file inside the 14 CANONICAL skill sources (.claude/skills/<name>/, names from tools/package_clients.py ALL_SKILLS) -- no suffix filter, the same rglob('*') sweep package_clients.build_cowork_zips uses. The plugins/ mirrors and dist/cowork-skills are DERIVED from these by the packager.",
+  "definitions": {
+    "on_broker": "the verb is registered as an MCP tool -- a name in mcp_adapter.READ_TOOLS, i.e. one of the tools brain.mcp_tools registers on the server. A CLI verb maps by replacing '-' with '_' (brain bases-query -> bases_query). It is NOT enough to be in VM_READ_ALIASES: that set also holds internal dispatch aliases, and a name reachable only that way is one no MCP client can type. UPDATED BY S02: 'read' and 'hybrid-search' were the worked example of that distinction and are now real registered tools, so the property is probed synthetically in tests/test_cowork_skill_verbs.py::test_presence_is_read_tools_membership_not_the_alias_union rather than demonstrated by whichever verb happens to be unserved.",
+    "disposition": {
+      "already_served": "registered as an MCP tool today",
+      "add_read": "in cli.VM_ALLOWED -- the untrusted VM leg already runs it over the CLI, so growing the broker to serve it is in scope for s03/s04/s05",
+      "undecided": "in cli.VM_ALLOWED but NOT a read -- it produces something rather than returning vault content, so it needs its own decision, not an automatic add. THIS CLASS IS HAND-TYPED (tests/test_cowork_skill_verbs.py VM_ALLOWED_NOT_A_READ): cli.VM_ALLOWED is a flat frozenset and nothing in-source separates a VM_ALLOWED read from a VM_ALLOWED file-drop. The other three classes are derived; this one is judgement.",
+      "host_only_never": "NOT in cli.VM_ALLOWED. cli.py states the decision: 'Commands the read+draft-only VM leg may run. Everything else is host-broker.' THIS IS THE STOP LIST -- these must never be admitted to VM_READ_ALIASES to close a 'gap'."
+    }
+  },
+  "authority": {
+    "note": "Cowork installs skills from the Autopsias/brainiac cloud marketplace, not from this repository. On 2026-08-27 marketplace, repo and staged .skill bundles were byte-identical (14/14 SKILL.md git blob shas). Nothing enforces that afterwards: the committed test covers LOCAL drift only. s07's walk and s09's review must re-enumerate the store and fail on hash drift.",
+    "marketplace_repo": "Autopsias/brainiac",
+    "marketplace_head": "39e0e31c156b208360fa564d8de7cede49055f2e",
+    "marketplace_head_date": "2026-08-27T00:22:02Z",
+    "marketplace_vs_repo_vs_staged": "14/14 SKILL.md git blob shas identical; 0 drift",
+    "staged_bundles_dir": "<workspace>/vault/.brain/skills",
+    "staged_bundle_hashes_omitted_reason": "a .skill zip's sha256 is not a content identity: zip headers carry per-file mtimes and cowork_workspace_install.sh re-runs the packager on every install, so the same content hashes differently (measured: 3a4923e17aa626d4 vs f80581dcfacd36dd). skill_md_git_blob and content_sha256 below are the content anchors; s07's drift check must use those, not a zip sha.",
+    "content_anchor_recipe": "Both per-bundle anchors below are defined by tests/test_cowork_skill_verbs.py::derive_bundles, which is their normative definition; s07 must reproduce these values, not invent its own. content_sha256: take every file under the bundle directory (Path.rglob('*'), is_file(), NO suffix filter -- the packager filters nothing either), sorted by absolute path (equivalently by relative path -- every file shares the bundle prefix); feed one sha256 in that order with, per file, the file's path RELATIVE to the bundle dir as POSIX text, then a single NUL byte (b'\\0'), then the file's raw bytes; the hex digest is the bundle's content_sha256. No zip, no mtime, no subprocess, so it is stable across re-packaging. skill_md_git_blob: the git blob sha1 of SKILL.md's raw bytes, i.e. sha1(b'blob <len>\\0' + data), computed in-process (helper _git_blob_sha1).",
+    "cli_subcommand_count": 74,
+    "cli_subcommand_count_note": "73 when S01 recorded this survey on 2026-08-27; 74 from 2026-08-28, when S05 added the host-only `authorize-original` subcommand. This number is DERIVED from the live parser by tests/test_cowork_skill_verbs.py::derive, so any session adding or removing a CLI subcommand must re-record it here in the same commit or two committed tests go red.",
+    "staged_bundles_dir_note": "the concrete host path is in docs/operations/closed-stacks-s01-transcripts-evidence.md; it is not recorded here because this file IS scanned by tools/check_client_names.py and the host workspace directory carries a denylisted client name."
+  },
+  "bundles_scanned": 14,
+  "files_scanned": 15,
+  "raw_matches": 250,
+  "distinct_tokens": 73,
+  "cli_parser_choices": 74,
+  "mcp_registered_tools": [
+    "alerts",
+    "bases_query",
+    "capture",
+    "diagnose",
+    "dossier",
+    "exceptions",
+    "get",
+    "graph_expand",
+    "grep",
+    "hybrid_search",
+    "inbox",
+    "read",
+    "recent",
+    "search",
+    "vault_languages"
+  ],
+  "present_on_broker": [
+    "bases-query",
+    "capture",
+    "get",
+    "graph-expand",
+    "grep",
+    "inbox",
+    "read",
+    "search"
+  ],
+  "missing_from_broker": [
+    "anchor",
+    "cos-broker",
+    "cos-corpus-append",
+    "cos-corpus-check",
+    "cos-corpus-close",
+    "cos-corpus-reopen",
+    "cos-correct",
+    "cos-evidence",
+    "cos-hold",
+    "cos-priority-map",
+    "cos-propose",
+    "cos-report",
+    "cos-run-begin",
+    "curate",
+    "doctor",
+    "draft-capture",
+    "graph-report",
+    "graphify",
+    "health",
+    "health-report",
+    "ingest",
+    "ingest-transcript",
+    "init",
+    "integrity",
+    "maintain",
+    "rebuild",
+    "snapshot",
+    "status",
+    "sync",
+    "verify-anchor",
+    "verify-audit",
+    "write"
+  ],
+  "disposition_counts": {
+    "add_read": 2,
+    "already_served": 8,
+    "host_only_never": 27,
+    "undecided": 3
+  },
+  "vm_allowed_dispositions": {
+    "alerts": "already_served",
+    "bases-query": "already_served",
+    "brief": "add_read",
+    "capture": "already_served",
+    "cos-propose": "undecided",
+    "diagnose": "already_served",
+    "digest": "add_read",
+    "doctor": "add_read",
+    "dossier": "already_served",
+    "draft-capture": "undecided",
+    "exceptions": "already_served",
+    "get": "already_served",
+    "graph-expand": "already_served",
+    "grep": "already_served",
+    "hybrid-search": "already_served",
+    "init": "undecided",
+    "mcp-config": "add_read",
+    "provision-request": "undecided",
+    "read": "already_served",
+    "recent": "already_served",
+    "search": "already_served",
+    "status": "add_read"
+  },
+  "vm_allowed_verbs_no_bundle_uses": [
+    "alerts",
+    "brief",
+    "diagnose",
+    "digest",
+    "dossier",
+    "exceptions",
+    "hybrid-search",
+    "mcp-config",
+    "provision-request",
+    "recent"
+  ],
+  "candidates": [
+    {
+      "token": "already",
+      "count": 2,
+      "bundles": [
+        "chief-of-staff",
+        "kb-curator"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "anchor",
+      "count": 1,
+      "bundles": [
+        "kb-curator"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "and",
+      "count": 1,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "bases-query",
+      "count": 4,
+      "bundles": [
+        "kb-curator",
+        "vault-eval"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "binary",
+      "count": 1,
+      "bundles": [
+        "vault-eval"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "by",
+      "count": 1,
+      "bundles": [
+        "kb-curator"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "call",
+      "count": 1,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "capture",
+      "count": 2,
+      "bundles": [
+        "kb-curator"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "command",
+      "count": 1,
+      "bundles": [
+        "kb-curator"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "conventions",
+      "count": 1,
+      "bundles": [
+        "kb-curator"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "cos-broker",
+      "count": 2,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "cos-corpus-append",
+      "count": 4,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "cos-corpus-check",
+      "count": 2,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "cos-corpus-close",
+      "count": 1,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "cos-corpus-reopen",
+      "count": 1,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "cos-correct",
+      "count": 2,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "cos-evidence",
+      "count": 1,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "cos-hold",
+      "count": 3,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "cos-priority-map",
+      "count": 3,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "cos-propose",
+      "count": 6,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "cos-report",
+      "count": 7,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "cos-run-begin",
+      "count": 6,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "curate",
+      "count": 6,
+      "bundles": [
+        "curation",
+        "vault-ingestion"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "doctor",
+      "count": 6,
+      "bundles": [
+        "vm-doctor"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "draft-capture",
+      "count": 4,
+      "bundles": [
+        "chief-of-staff",
+        "kb-curator",
+        "vault-ingestion"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "equivalent",
+      "count": 1,
+      "bundles": [
+        "curation"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "for",
+      "count": 1,
+      "bundles": [
+        "kb-curator"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "get",
+      "count": 7,
+      "bundles": [
+        "curation",
+        "promote",
+        "save-conversation",
+        "vault-eval"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "gets",
+      "count": 1,
+      "bundles": [
+        "autoresearch"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "graph-expand",
+      "count": 1,
+      "bundles": [
+        "vault-eval"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "graph-report",
+      "count": 3,
+      "bundles": [
+        "graph-explorer"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "graphify",
+      "count": 2,
+      "bundles": [
+        "graph-explorer"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "grep",
+      "count": 3,
+      "bundles": [
+        "vault-eval",
+        "vault-ingestion"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "grounding",
+      "count": 3,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "health",
+      "count": 4,
+      "bundles": [
+        "kb-curator",
+        "vault-eval"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "health-report",
+      "count": 2,
+      "bundles": [
+        "chief-of-staff",
+        "graph-explorer"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "healthy",
+      "count": 1,
+      "bundles": [
+        "vm-doctor"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "host-broker",
+      "count": 1,
+      "bundles": [
+        "save-conversation"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "inbox",
+      "count": 9,
+      "bundles": [
+        "brain-inbox"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "index",
+      "count": 2,
+      "bundles": [
+        "kb-curator",
+        "promote"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "ingest",
+      "count": 8,
+      "bundles": [
+        "chief-of-staff",
+        "vault-ingestion"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "ingest-transcript",
+      "count": 5,
+      "bundles": [
+        "vault-ingestion"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "init",
+      "count": 3,
+      "bundles": [
+        "chief-of-staff",
+        "voice"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "integrity",
+      "count": 6,
+      "bundles": [
+        "improve",
+        "kb-curator"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "is",
+      "count": 6,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "knowledge",
+      "count": 1,
+      "bundles": [
+        "kb-curator"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "lexical",
+      "count": 2,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "maintain",
+      "count": 7,
+      "bundles": [
+        "chief-of-staff",
+        "curation",
+        "task-registrar",
+        "vm-doctor"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "maintenance",
+      "count": 1,
+      "bundles": [
+        "task-registrar"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "near-dup",
+      "count": 1,
+      "bundles": [
+        "vault-ingestion"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "need",
+      "count": 1,
+      "bundles": [
+        "brain-inbox"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "note",
+      "count": 7,
+      "bundles": [
+        "chief-of-staff",
+        "promote",
+        "save-conversation"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "notes",
+      "count": 2,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "only",
+      "count": 1,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "read",
+      "count": 2,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "reads",
+      "count": 1,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "rebuild",
+      "count": 3,
+      "bundles": [
+        "kb-curator",
+        "promote"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "retriever",
+      "count": 1,
+      "bundles": [
+        "autoresearch"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "scheduled",
+      "count": 1,
+      "bundles": [
+        "task-registrar"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "search",
+      "count": 12,
+      "bundles": [
+        "chief-of-staff",
+        "promote",
+        "save-conversation",
+        "vault-eval",
+        "vault-ingestion"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "side",
+      "count": 1,
+      "bundles": [
+        "vault-eval"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "similar",
+      "count": 1,
+      "bundles": [
+        "vault-ingestion"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "snapshot",
+      "count": 1,
+      "bundles": [
+        "task-registrar"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "status",
+      "count": 30,
+      "bundles": [
+        "autoresearch",
+        "brain-inbox",
+        "chief-of-staff",
+        "curation",
+        "graph-explorer",
+        "improve",
+        "kb-curator",
+        "promote",
+        "save-conversation",
+        "task-registrar",
+        "vault-eval",
+        "vault-ingestion",
+        "vm-doctor",
+        "voice"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "substrate",
+      "count": 2,
+      "bundles": [
+        "kb-curator",
+        "vault-ingestion"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "sync",
+      "count": 14,
+      "bundles": [
+        "chief-of-staff",
+        "kb-curator",
+        "promote",
+        "save-conversation",
+        "vault-ingestion"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "task",
+      "count": 1,
+      "bundles": [
+        "task-registrar"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "there",
+      "count": 1,
+      "bundles": [
+        "kb-curator"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "verb",
+      "count": 1,
+      "bundles": [
+        "kb-curator"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "verify-anchor",
+      "count": 2,
+      "bundles": [
+        "kb-curator"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "verify-audit",
+      "count": 1,
+      "bundles": [
+        "kb-curator"
+      ],
+      "kind": "cli_verb"
+    },
+    {
+      "token": "vm",
+      "count": 5,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "kind": "not_a_verb"
+    },
+    {
+      "token": "write",
+      "count": 9,
+      "bundles": [
+        "kb-curator",
+        "promote",
+        "save-conversation",
+        "vault-ingestion"
+      ],
+      "kind": "cli_verb"
+    }
+  ],
+  "verbs": [
+    {
+      "verb": "anchor",
+      "count": 1,
+      "bundles": [
+        "kb-curator"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    },
+    {
+      "verb": "bases-query",
+      "count": 4,
+      "bundles": [
+        "kb-curator",
+        "vault-eval"
+      ],
+      "on_broker": true,
+      "disposition": "already_served"
+    },
+    {
+      "verb": "capture",
+      "count": 2,
+      "bundles": [
+        "kb-curator"
+      ],
+      "on_broker": true,
+      "disposition": "already_served"
+    },
+    {
+      "verb": "cos-broker",
+      "count": 2,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    },
+    {
+      "verb": "cos-corpus-append",
+      "count": 4,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    },
+    {
+      "verb": "cos-corpus-check",
+      "count": 2,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    },
+    {
+      "verb": "cos-corpus-close",
+      "count": 1,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    },
+    {
+      "verb": "cos-corpus-reopen",
+      "count": 1,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    },
+    {
+      "verb": "cos-correct",
+      "count": 2,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    },
+    {
+      "verb": "cos-evidence",
+      "count": 1,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    },
+    {
+      "verb": "cos-hold",
+      "count": 3,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    },
+    {
+      "verb": "cos-priority-map",
+      "count": 3,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    },
+    {
+      "verb": "cos-propose",
+      "count": 6,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "on_broker": false,
+      "disposition": "undecided"
+    },
+    {
+      "verb": "cos-report",
+      "count": 7,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    },
+    {
+      "verb": "cos-run-begin",
+      "count": 6,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    },
+    {
+      "verb": "curate",
+      "count": 6,
+      "bundles": [
+        "curation",
+        "vault-ingestion"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    },
+    {
+      "verb": "doctor",
+      "count": 6,
+      "bundles": [
+        "vm-doctor"
+      ],
+      "on_broker": false,
+      "disposition": "add_read"
+    },
+    {
+      "verb": "draft-capture",
+      "count": 4,
+      "bundles": [
+        "chief-of-staff",
+        "kb-curator",
+        "vault-ingestion"
+      ],
+      "on_broker": false,
+      "disposition": "undecided"
+    },
+    {
+      "verb": "get",
+      "count": 7,
+      "bundles": [
+        "curation",
+        "promote",
+        "save-conversation",
+        "vault-eval"
+      ],
+      "on_broker": true,
+      "disposition": "already_served"
+    },
+    {
+      "verb": "graph-expand",
+      "count": 1,
+      "bundles": [
+        "vault-eval"
+      ],
+      "on_broker": true,
+      "disposition": "already_served"
+    },
+    {
+      "verb": "graph-report",
+      "count": 3,
+      "bundles": [
+        "graph-explorer"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    },
+    {
+      "verb": "graphify",
+      "count": 2,
+      "bundles": [
+        "graph-explorer"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    },
+    {
+      "verb": "grep",
+      "count": 3,
+      "bundles": [
+        "vault-eval",
+        "vault-ingestion"
+      ],
+      "on_broker": true,
+      "disposition": "already_served"
+    },
+    {
+      "verb": "health",
+      "count": 4,
+      "bundles": [
+        "kb-curator",
+        "vault-eval"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    },
+    {
+      "verb": "health-report",
+      "count": 2,
+      "bundles": [
+        "chief-of-staff",
+        "graph-explorer"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    },
+    {
+      "verb": "inbox",
+      "count": 9,
+      "bundles": [
+        "brain-inbox"
+      ],
+      "on_broker": true,
+      "disposition": "already_served"
+    },
+    {
+      "verb": "ingest",
+      "count": 8,
+      "bundles": [
+        "chief-of-staff",
+        "vault-ingestion"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    },
+    {
+      "verb": "ingest-transcript",
+      "count": 5,
+      "bundles": [
+        "vault-ingestion"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    },
+    {
+      "verb": "init",
+      "count": 3,
+      "bundles": [
+        "chief-of-staff",
+        "voice"
+      ],
+      "on_broker": false,
+      "disposition": "undecided"
+    },
+    {
+      "verb": "integrity",
+      "count": 6,
+      "bundles": [
+        "improve",
+        "kb-curator"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    },
+    {
+      "verb": "maintain",
+      "count": 7,
+      "bundles": [
+        "chief-of-staff",
+        "curation",
+        "task-registrar",
+        "vm-doctor"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    },
+    {
+      "verb": "read",
+      "count": 2,
+      "bundles": [
+        "chief-of-staff"
+      ],
+      "on_broker": true,
+      "disposition": "already_served"
+    },
+    {
+      "verb": "rebuild",
+      "count": 3,
+      "bundles": [
+        "kb-curator",
+        "promote"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    },
+    {
+      "verb": "search",
+      "count": 12,
+      "bundles": [
+        "chief-of-staff",
+        "promote",
+        "save-conversation",
+        "vault-eval",
+        "vault-ingestion"
+      ],
+      "on_broker": true,
+      "disposition": "already_served"
+    },
+    {
+      "verb": "snapshot",
+      "count": 1,
+      "bundles": [
+        "task-registrar"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    },
+    {
+      "verb": "status",
+      "count": 30,
+      "bundles": [
+        "autoresearch",
+        "brain-inbox",
+        "chief-of-staff",
+        "curation",
+        "graph-explorer",
+        "improve",
+        "kb-curator",
+        "promote",
+        "save-conversation",
+        "task-registrar",
+        "vault-eval",
+        "vault-ingestion",
+        "vm-doctor",
+        "voice"
+      ],
+      "on_broker": false,
+      "disposition": "add_read"
+    },
+    {
+      "verb": "sync",
+      "count": 14,
+      "bundles": [
+        "chief-of-staff",
+        "kb-curator",
+        "promote",
+        "save-conversation",
+        "vault-ingestion"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    },
+    {
+      "verb": "verify-anchor",
+      "count": 2,
+      "bundles": [
+        "kb-curator"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    },
+    {
+      "verb": "verify-audit",
+      "count": 1,
+      "bundles": [
+        "kb-curator"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    },
+    {
+      "verb": "write",
+      "count": 9,
+      "bundles": [
+        "kb-curator",
+        "promote",
+        "save-conversation",
+        "vault-ingestion"
+      ],
+      "on_broker": false,
+      "disposition": "host_only_never"
+    }
+  ],
+  "direct_vault_note_reads": [],
+  "bundles": [
+    {
+      "skill": "autoresearch",
+      "canonical_source": ".claude/skills/autoresearch",
+      "files": [
+        "SKILL.md"
+      ],
+      "skill_md_git_blob": "9dacd8cf1f9d0415b8d2b14381c644dcd64257ad",
+      "content_sha256": "96feff245da0717ced271859d2335eb87e4504a6fc50a9dc7a2e4f90c648f795"
+    },
+    {
+      "skill": "brain-inbox",
+      "canonical_source": ".claude/skills/brain-inbox",
+      "files": [
+        "SKILL.md"
+      ],
+      "skill_md_git_blob": "b1a78376c4f9fcf4057d7d7e85695301ed32ccb6",
+      "content_sha256": "479fa147dd07d77c0020a620504e710f51d5fd45d47c4d5249e9ee56cd7cdb52"
+    },
+    {
+      "skill": "chief-of-staff",
+      "canonical_source": ".claude/skills/chief-of-staff",
+      "files": [
+        "DOCTRINE.md",
+        "SKILL.md"
+      ],
+      "skill_md_git_blob": "93d843f9b738fc3fbc09de4de6f7db9d8e463fb1",
+      "content_sha256": "6d51b4986c74b7ed2f993f8374f702199424f8d57dad1418b40f2891a71abba0"
+    },
+    {
+      "skill": "curation",
+      "canonical_source": ".claude/skills/curation",
+      "files": [
+        "SKILL.md"
+      ],
+      "skill_md_git_blob": "83f6c601684d7a043f1c9d1638a775a38062c555",
+      "content_sha256": "428e0952c6eaccbb8e5a65103d77e60eb442eafc338b63d3bab3e1ff62d2654e"
+    },
+    {
+      "skill": "graph-explorer",
+      "canonical_source": ".claude/skills/graph-explorer",
+      "files": [
+        "SKILL.md"
+      ],
+      "skill_md_git_blob": "cafeb1c15ca955322e67a92702d4a72415468464",
+      "content_sha256": "95519ea45b68052c18a9c6f27dad639e0b14406481f223ceb4d8435292a944bb"
+    },
+    {
+      "skill": "improve",
+      "canonical_source": ".claude/skills/improve",
+      "files": [
+        "SKILL.md"
+      ],
+      "skill_md_git_blob": "edaf71094727cf909ad10a6729e52d3e2a28ed2b",
+      "content_sha256": "3c52d6d2a056a5e721323fffeefca019093163d9c19df772ff9c0c3d8baa5ec7"
+    },
+    {
+      "skill": "kb-curator",
+      "canonical_source": ".claude/skills/kb-curator",
+      "files": [
+        "SKILL.md"
+      ],
+      "skill_md_git_blob": "e83d998ed7d41a8ce04f5e6641a991f03e51f729",
+      "content_sha256": "bc2a1511f6b8ae540fa8fceeedf3add9a416a6757287e96568f1528775c65019"
+    },
+    {
+      "skill": "promote",
+      "canonical_source": ".claude/skills/promote",
+      "files": [
+        "SKILL.md"
+      ],
+      "skill_md_git_blob": "02f495786d824cc57323b8526a81f88603fcdae4",
+      "content_sha256": "b4a2f2dd0376a29bab05a2eb15ffb981b86cb036c55e612de4d33ce9eac6650f"
+    },
+    {
+      "skill": "save-conversation",
+      "canonical_source": ".claude/skills/save-conversation",
+      "files": [
+        "SKILL.md"
+      ],
+      "skill_md_git_blob": "b9d3af5758c3d2d787875fc0f760b676c240fe5e",
+      "content_sha256": "f8120ee7f97b93e247169a6086bf15125e45a98c6fcdb6e3975739bbd8275df5"
+    },
+    {
+      "skill": "task-registrar",
+      "canonical_source": ".claude/skills/task-registrar",
+      "files": [
+        "SKILL.md"
+      ],
+      "skill_md_git_blob": "eb7a8ded557cb4abeca7182e96cca42d2ad5212d",
+      "content_sha256": "6dfa1b874f7b6b76d70748372b7907d8426a89edf460c6516c873d4d2da73291"
+    },
+    {
+      "skill": "vault-eval",
+      "canonical_source": ".claude/skills/vault-eval",
+      "files": [
+        "SKILL.md"
+      ],
+      "skill_md_git_blob": "ae31f3cdbadc5f035efcc550e8ffb0fc5f526d73",
+      "content_sha256": "74e08708c107be6b5c7f4ec5aa04b049a74925f066f2e98ecdfdd2d10c7256f8"
+    },
+    {
+      "skill": "vault-ingestion",
+      "canonical_source": ".claude/skills/vault-ingestion",
+      "files": [
+        "SKILL.md"
+      ],
+      "skill_md_git_blob": "0101ed94e21834de0f65f0fe62c115032c00f0e8",
+      "content_sha256": "b9df055f3d90cb0a84e932f15f5ea0ffc30a7b65b68bd6884264dd91eab7c3d7"
+    },
+    {
+      "skill": "vm-doctor",
+      "canonical_source": ".claude/skills/vm-doctor",
+      "files": [
+        "SKILL.md"
+      ],
+      "skill_md_git_blob": "41eb54d3652664a1b0d2c4c049301a829e086560",
+      "content_sha256": "c434bcc8b3b578322f917832b5fde907a3552ac35a3be4cb391cd0e3bc7021ab"
+    },
+    {
+      "skill": "voice",
+      "canonical_source": ".claude/skills/voice",
+      "files": [
+        "SKILL.md"
+      ],
+      "skill_md_git_blob": "fff1e3a704fef3a0650945967ca1f6743f90c8d6",
+      "content_sha256": "58d6ba320352480ed234a7905c9941fa7741ee24464eafb12fdd4d8ee71451b1"
+    }
+  ],
+  "s02_update": {
+    "what_changed": "S02 registered five more MCP tools (grep, graph_expand, read, hybrid_search, diagnose), so every derived column moved: mcp_registered_tools 6 -> 11, present_on_broker 4 -> 7, missing_from_broker 37 -> 34, and disposition_counts add_read 5 -> 2 / already_served 4 -> 7. host_only_never (28) and undecided (4) are UNCHANGED -- the stop list did not move and no undecided verb was admitted.",
+    "add_read_left_open": [
+      "doctor",
+      "status"
+    ],
+    "why_left_open": "Both are HEALTH readouts, not retrieval, and DESK-02's scope is 'the filtered retrieval verbs'. 'status' is named in egress.NON_CONTENT_SUBCOMMANDS -- the in-repo list of verbs that 'return STATUS, never note bodies' and are 'intentionally NOT gated by classification' -- and 'doctor' is a read-only version/health inspection that touches no index. Serving either needs the same decision s03 makes for alerts/exceptions/inbox (what a broker-served, ungated-by-nature verb reports), so it is recorded here for s03 rather than settled by s02 on its behalf.",
+    "not_admitted": "No host_only_never verb was added to READ_TOOLS or VM_READ_ALIASES, and no undecided verb (capture, draft-capture, cos-propose, init, provision-request) was either. mcp_adapter.WRITE_TOOLS was introduced EMPTY so s04's quasi-write capture has somewhere to land that is not the read set.",
+    "adversarial_review_2026_08_28": {
+      "verdict": "NEEDS ATTENTION on first pass; eight changes made over two rounds, five recorded and not made.",
+      "models": "codex gpt-5.6-sol xhigh + claude opus, independent artifacts, synthesised.",
+      "changed": [
+        "graph-expand was an EXISTENCE ORACLE: seeding a guessed above-ceiling id returned resolved_seeds:[that id] while a nonsense id returned unresolved_seeds. Reproduced, then closed by dropping above-ceiling notes BEFORE the graph is built (brain.graph.graph_expand max_tier=, reusing build_graph's exclude_ids so traversal cannot route through a hidden note either). Both reviewers found this independently.",
+        "FastMCP(tools=[...]) was a SECOND registration door reaching ToolManager without add_tool (mcp 1.28.1 server.py:158->214); BrokerServer.__init__ now refuses it. A known-positive test proves a plain FastMCP really does serve such a tool.",
+        "The registering() ContextVar is ambient and forgeable, so build_server now SEALS the broker after load and checks the registered set equals TOOLS.",
+        "'No egress tally' was being read as 'this verb has no note bodies', so a handler that forgot apply_gate would return an unfiltered, unrecorded document. BODYLESS_TOOLS is now DECLARED (measured: exactly vault_languages) and anything else that gates nothing raises UngatedToolError.",
+        "The role gate is BRANCHED instead of keyed on the READ|WRITE union; the write branch raises NotImplementedError so s04's obligation is checked, not commented.",
+        "packaging: the .mcpb manifest declared 5 tools while the server registers 11 (all five DESK-02 verbs undeclared), and smoke_handshake derived its allowlist from READ_TOOLS alone, which would have red-flagged s04's first write verb. Both fixed; a test now pins the manifest to TOOLS.",
+        "resources and prompts were an UNMEDIATED content door: FastMCP binds resources/read and prompts/get as SEPARATE protocol handlers that never reach call_tool, so a @server.resource returning a note body would pass a tools-only seal with no egress tally and no SEC-06 row. BrokerServer now refuses add_resource, add_prompt AND the resource() decorator -- whose TEMPLATED branch calls _resource_manager.add_template directly, past add_resource (mcp 1.28.1 server.py:613), which is the exact shape brain://note/{id} takes. A known-positive test proves a plain FastMCP really does serve both.",
+        "dispatch() computed expects_gate from the RAW tool argument, before _CLI_VERB normalisation, so the DECLARED alias `vault-languages` -- admitted to the untrusted VM leg by name in VM_READ_ALIASES -- hard-failed with UngatedToolError accusing the handler of skipping the egress gate, while `vault_languages` worked. BODYLESS_TOOLS stays MCP-named; the alias is normalised back through the inverted _CLI_VERB map before the lookup."
+      ],
+      "recorded_not_changed": [
+        "egress.withheld is an ENGINE-WIDE, caller-influenced counter carried by EVERY content verb EXCEPT grep and graph-expand, which drop above-ceiling notes PRE-MATCH. So the surviving existence channel is not confined to the ranked legs (search/hybrid_search/diagnose, where it is query-dependent, including inside diagnose's 'withheld' refusal). It is sharpest on the EXACT-TARGET verbs, where the caller names the thing it is probing: get/read and bases-query. Re-measured 2026-08-28 through mcp_adapter.dispatch at max_tier=Internal on a two-note fixture -- read/get id=mnpi-secret -> {result: null, egress: {total: 1, surfaced: 0, withheld: 1}}; id=no-such-note-xyz -> {result: null, egress: {total: 0, surfaced: 0, withheld: 0}}; bases-query where classification=MNPI -> withheld 1, a predicate matching nothing -> withheld 0. A caller can therefore confirm a note's existence by guessing its id, or the presence of any frontmatter predicate, without receiving a document. TRIGGER, and it is narrow: this crosses a boundary only where the OPERATOR has narrowed $BRAIN_MAX_EGRESS_TIER below the vault's top tier. Under the shipped host default (full vault, owner ruling 2026-08-17) a capped max_tier is self-imposed by the caller and nothing is being withheld from anyone. NOT changed, on get/read and bases-query as well as on the ranked legs: the counter is the engine-wide elevation contract (egress.hint, AGENTS.md 'a starved result means elevate, not give up') and it is shared with the CLI twins, where `brain get --json` DELIBERATELY distinguishes {error: not_found} exit 1 from {error: withheld_by_egress_filter} exit 2 -- there the oracle IS the elevation signal, stated out loud (both re-measured 2026-08-28). Pre-dropping inside the MCP verb alone would fork the broker's get from its --json twin, which is the CLI-shape parity DESK-02 exists to keep; pre-dropping at the root would delete that documented CLI distinction for every capped read. Either is an engine-wide egress decision, not one to settle inside one verb. That is the difference from graph-expand, which WAS closed: its fix went in at the root (brain.graph.graph_expand gained max_tier=), so the CLI twin moved with it and parity held. For S06's whole-surface pass, which must sweep every content verb rather than confirm this list.",
+        "cli.py:456 still wraps its read-log flush in 'except Exception: pass', so the CLI leg (the one CLAUDE.md tells Cowork sessions to use today) is still fail-OPEN. Failing it closed changes the exit behaviour of every read verb. For s06b; ReadRecordError's docstring now scopes its guarantee to the broker leg.",
+        "index.grep(max_tier=None) keeps the post-match-only behaviour, and cli_cmds/retrieval._run_grep calls core.grep(pattern, k, regex) without a ceiling, so the SAME existence oracle s02 closed on the broker's grep is still open on the CLI leg -- the leg CLAUDE.md points Cowork sessions at today. Measured 2026-08-28: `brain grep zebrafish --max-tier Internal --json` returns egress.withheld 1 (plus the elevation hint) where a pattern matching nothing returns 0. The core.grep docstrings state the max_tier=None behaviour factually but never name it as a residual oracle; naming it here. Not changed for the same reason as cli.py:456 above -- it is the CLI leg's own decision, and s06b owns that migration.",
+        "role=vm does not clamp the MCP ceiling to Internal; max_tier is caller-supplied and bounded only by the operator's $BRAIN_MAX_EGRESS_TIER. This is the retired desk-05b question (the broker cannot distinguish two Cowork sessions; there is no per-caller identity to bind to), so it is not re-opened here.",
+        "read_log.enabled() returns False for role=vm, so a vm-attributed broker read records nothing even though the record would be HOST-written. build_server now PRINTS which of the four recording regimes it is in, but the policy itself is unchanged."
+      ]
+    }
+  },
+  "s03_update": {
+    "what_changed": "S03 registered three more MCP tools (alerts, exceptions, inbox), so every derived column moved again: mcp_registered_tools 11 -> 14, present_on_broker 7 -> 8 (only `inbox` is a scanned bundle token; `alerts`/`exceptions` are not invoked verbatim in any of the 14 canonical skill bundles, so they never entered the candidate/verb table even though they are now on_broker), missing_from_broker 34 -> 33, and disposition_counts already_served 7 -> 8 / add_read 4 -> 2 (alerts, exceptions moved out of add_read via vm_allowed_dispositions, which is computed over ALL of VM_ALLOWED independent of bundle presence). host_only_never (28 -> 27, only inbox's row changed disposition, not the stop list itself) and undecided (4) are otherwise unchanged -- the stop list did not move and no undecided verb was admitted.",
+    "why_inbox_scored_already_served_but_is_not_in_VM_ALLOWED": "`inbox` is on_broker (registered as an MCP tool, alias of `exceptions`) but is NOT a member of cli.VM_ALLOWED -- there is no `brain inbox` CLI verb the VM leg may run; `inbox` is MCP-only. `_disposition()` checks `_on_broker()` FIRST, so a verb can score already_served without ever being VM_ALLOWED. This is the same shape `vault_languages` already had before s03.",
+    "not_admitted": "No host_only_never verb was added to READ_TOOLS or VM_READ_ALIASES, and no undecided verb (capture, draft-capture, cos-propose, init, provision-request) was either. `doctor` and `status`, left open by s02_update for s03 to decide, were NOT added -- s03's scope was the housekeeping trio named in the plan (DESK-03), not every remaining health readout; left open for whichever session next decides doctor/status belong on the broker.",
+    "verification_property": "The VM-side verify-or-unreachable contract (signature, pinned vault_id, schema, freshness) for the signed exceptions.json summary is unchanged by this re-derivation -- it is enforced inside exceptions_cli.vault_row / alerts.exceptions_alerts, which this session's routing calls unmodified. One real gap WAS found and fixed in that path: exceptions_cli.vault_row's VM branch read the mount JSON file directly, unverified, until this session; see that function's docstring and tests/test_mcp_tools_housekeeping.py."
+  },
+  "s04_update": {
+    "what_changed": "S04 registered one more MCP tool (capture, DESK-04 -- host-side draft staging through the broker), so every derived column moved again: mcp_registered_tools 14 -> 15, present_on_broker 8 -> 9 (capture was already a scanned candidate -- some skill bundle invokes `brain capture` verbatim -- so it moves straight from missing_from_broker into present_on_broker rather than entering the candidate table for the first time), missing_from_broker 33 -> 32, and disposition_counts already_served 8 -> 9 / undecided 4 -> 3 (capture moved out of undecided via vm_allowed_dispositions, because _disposition() checks _on_broker() BEFORE VM_ALLOWED_NOT_A_READ -- capture stays listed in VM_ALLOWED_NOT_A_READ in the test file for documentation, but the short-circuit means it now scores already_served, exactly like inbox did for host_only_never in s03). add_read (2) and host_only_never (27) are unchanged -- no other verb moved.",
+    "capture_is_a_write_not_a_read": "capture is the first WRITE-adjacent tool on the broker (mcp_adapter.WRITE_TOOLS, not READ_TOOLS) -- _mcp_registered_tools() in this test file now reads READ_TOOLS | WRITE_TOOLS (mirroring packaging/mcpb/smoke_handshake.py's expected_tools(), unchanged since s02) precisely so a write-adjacent tool is not invisible to this survey the way it would be if the function stayed READ_TOOLS-only.",
+    "not_admitted": "No host_only_never verb was added to READ_TOOLS, WRITE_TOOLS or VM_READ_ALIASES/VM_WRITE_ALIASES. draft-capture, cos-propose, init and provision-request stay undecided -- capture is the only VM_ALLOWED_NOT_A_READ member this session moved, and it moved via disposition (on_broker short-circuit), never by editing that set.",
+    "verification_property": "Host-side staging is unconditional, not a fallback: the broker process that runs mcp_capture_verbs.dispatch_capture is always the HOST process (a Cowork session reaches it over the channel Claude Desktop sets up, never by importing the module into the sandbox), so core.capture()'s existing role branch already guarantees the sandbox writes no file of its own. Covered end to end in tests/test_mcp_tools_capture.py: round trip (vm-role capture -> host drain -> signed+indexed+retrievable), untrusted-author sanitisation (one malicious field stripped, one benign field survives), a distinct mcp:capture read-log trace (present even when the draft is never drained), durable pending-backlog visibility from a fresh request, drain-twice idempotency (one signed note, not two), and a real concurrent-capture race (two captures landing in the same instant produce two distinct surviving files, never an overwrite)."
+  },
+  "superseded_pattern_reconciliation": {
+    "why_this_moved_here": "S01 pinned this reconciliation as literals INSIDE tests/test_cowork_skill_verbs.py (259/75 and a seven-token delta map). S06B REWROTE the bundle corpus those numbers were measured over, so they are no longer reproducible and re-recording them in the test would have turned a real check into one that confirms whatever the corpus says. The numbers moved into this oracle instead, where re-recording is the visible, reviewable act it is for every other count here. The PROPERTY s01 established is unchanged and still measured: the superseded pattern MISSES the quoted, path-qualified invocation, so the two patterns differ by a NET rather than by a pure loss. Read the `delta` map beside this line for the shape of that net -- it is currently 7 losses and 1 gain (status). s01 recorded SIX losses and one gain; that was true of the pre-DESK-07 corpus and is no longer, because `doctor` joined the losses (20 -> 6) when the shared desk block replaced vm-doctor's bootstrap. The count in this sentence is derived from the map, never carried forward.",
+    "superseded_raw": 269,
+    "superseded_distinct": 74,
+    "current_raw": 250,
+    "current_distinct": 73,
+    "net": -19,
+    "delta": {
+      "conventions": [
+        2,
+        1
+      ],
+      "cos-corpus-reopen": [
+        2,
+        1
+      ],
+      "cos-propose": [
+        7,
+        6
+      ],
+      "data": [
+        1,
+        0
+      ],
+      "doctor": [
+        20,
+        6
+      ],
+      "search": [
+        13,
+        12
+      ],
+      "status": [
+        29,
+        30
+      ],
+      "substrate": [
+        3,
+        2
+      ]
+    },
+    "the_gain_is_the_point": "`status` GAINS one under the current pattern: chief-of-staff still carries the string `\"$BRAIN_VAULT/.brain/brain\" --role vm status --json`, now in prose that FORBIDS it rather than in an instruction that uses it. The superseded pattern required `brain` followed immediately by whitespace and so misses it. That single row is what the whole reconciliation is about.",
+    "historical_s01_no_longer_reproducible": {
+      "superseded_raw": 259,
+      "superseded_distinct": 75,
+      "current_raw": 254,
+      "current_distinct": 74,
+      "corpus": "the 14 canonical bundles as of 2026-08-27, before DESK-07"
+    }
+  },
+  "s06b_update": {
+    "what_changed": "S06B (DESK-07) migrated all 14 canonical Cowork bundles off the local CLI and onto the broker. Every bundle now carries the byte-identical desk block (docs/operations/cowork-desk-block.md), the vm-doctor bootstrap block was DELETED, chief-of-staff's staged-shim retry was DELETED, and every `brain --role vm <verb>` call site for a verb the desk serves was repointed at the tool. Derived columns moved: raw_matches 254 -> 250, distinct_tokens 74 -> 73, and `dossier` left the verb table entirely (chief-of-staff was its only invoker and now calls the desk tool), so present_on_broker 9 -> 8. No verb was ADDED to the broker and no host_only_never verb moved: this session changed consumers, not the seam.",
+    "direct_vault_note_reads_now_empty": "kb-curator's `read vault/brain/backlinks.md` was the ONE recorded direct note read and is gone: audit-orphans is marked HOST LANE ONLY and states that it has no Cowork substitute. An empty list is only evidence because the detector keeps its two planted probes (test_direct_read_detector_fires_on_a_known_positive / _is_silent_on_a_known_negative) and tests/test_cowork_skill_bundles.py re-probes it on the real corpus.",
+    "capability_gaps_found_not_fixed": [
+      "doctor + status (disposition add_read): vm-doctor's whole subject. Both are VM_ALLOWED over the CLI and neither is registered on the broker, so a Cowork session has no remote staging readout. Left open by s02_update and s03_update and STILL open; vm-doctor now says so in \u00a72b instead of implying a route.",
+      "cos-propose (undecided) plus the COS file lanes (`.brain/cos/shared/` reads, `.brain/cos/drop/` appends): chief-of-staff's Cowork leg needs all three. cos_ops_dir() resolves to <vault>/.brain/cos unless $BRAIN_COS_OPS_DIR says otherwise, and s01 JOB 4 marks vault/.brain/cos/ as leaving the mount. Recorded in the skill as a cutover-session finding.",
+      "the overlay (voice/brand/keywords/people): notes.scan_vault SKIPS overlay/, so it is not indexed and no desk tool can return it. `voice` Phase 0 is now HOST LANE with the gap stated.",
+      "whole-corpus backlinks (kb-curator audit-orphans): needs tools/validate.py and vault/brain/backlinks.md, neither reachable from a sandbox. Stronger than first recorded: the desk's `get` does NOT carry backlinks, unlike the CLI, so there is no per-note substitute either."
+    ],
+    "not_admitted": "No verb was added to READ_TOOLS, WRITE_TOOLS, VM_READ_ALIASES or VM_WRITE_ALIASES by this session, and no CLI subcommand was added or removed (cli_parser_choices stays 74). The gaps above are recorded for whichever session owns each verb, exactly as this session's prompt requires.",
+    "adversarial_review_2026_08_28": {
+      "lanes": "Claude (opus, architecture/intent) and Codex (gpt-5.6-sol, read-only, implementation-exploit) reviewed the same diff independently; both refuted the FIRST draft of the desk block.",
+      "refuted_and_fixed": [
+        "The block said 'Nothing falls back' unconditionally. FALSE while a published snapshot sits on the mount: the snapshot path does not depend on $BRAIN_INDEX_DIR, so a role=vm search answers from <vault>/.brain/snapshot/. Re-measured 2026-08-28: exit 0 with the note body after deleting the host index. The block now states the ban as a RULE with both worlds named, and tests/test_desk_fails_closed.py pins the snapshot behaviour as well as the post-cutover one.",
+        "The block called `the cos-*` family a host-broker privilege. FALSE for cos-propose, which is VM_ALLOWED and invoked 7 times by chief-of-staff's Cowork leg. The block now separates 'not on the desk' (9 of 22 VM-allowed verbs) from 'not available here' (the commit/rebuild verbs), and names the two desk tools (inbox, vault_languages) that are NOT VM-allowed on the CLI.",
+        "vault-ingestion told a VM session `brain grep` 'works identically on the host and the VM' and gave the CLI form. Now split into a HOST LANE form and a COWORK LANE form that calls the desk's grep tool.",
+        "vault-ingestion told the operator to add `sync --publish` when 'the Cowork VM snapshot needs the new content' - i.e. to re-create the on-mount snapshot this plan removes. Now says the desk reads the host's live index and not to publish on the VM's behalf.",
+        "vault-eval told the scorer to read `vault/brain/` and `vault/raw/` 'directly if there's any doubt'. Now split HOST/COWORK, with the file read host-only.",
+        "vm-doctor's deleted bootstrap carried `export BRAIN_ROLE=vm`; nothing replaced it, so the staging probes would have run at role host (full-vault egress cap). The probes now carry `--role vm` and say why.",
+        "The bundle scan missed two shapes the review demonstrated: `export BRAIN_ROLE=vm` (the documented equivalent of the flag) and a note-zone sweep (`find vault/brain vault/raw ... -exec sed ...`). Both are rules now, each with a planted positive. Closing the second cost one edit: kb-curator's Phase 0 fingerprint is two `test -d` calls instead of `ls` on the two zones, so the rule needs no host-lane exemption."
+      ],
+      "review_gate_fixes_after_the_session": [
+        "vault-ingestion's COWORK LANE grep now passes `pattern: \"\\\\[\\\\[<source-id>\\\\]\\\\]\"` with the reason recorded. Unescaped, a dated id fails to compile and an id like `brain-swap` compiles as a CHARACTER CLASS - measured matching `[[quarterly-paper]]`, `[[client-roster]]` and `[[the-plan]]`, so the citation check could pass on a note citing a different source.",
+        "vm-doctor \u00a71's two unconditional sentences ('There is no vault on the mount to point at', 'a vault that no longer sits on the mount') are now conditional on the s07 cutover, since a pre-cutover workspace still has both. Same failure species as the 'Nothing falls back' over-claim above.",
+        "vm-doctor no longer reads `command not found` as 'no staged engine in this workspace'. The workspace installer (tools/cowork_workspace_install.sh) stages the engine at <vault>/.brain/brain and .brain/bin/ and writes NO PATH location; the only thing that ever put `brain` on PATH was the per-session bootstrap this session deletes. So on a fully staged workspace, following the new rules, `command -v brain` finds nothing - and the skill was mandating a false verdict on every such workspace. It now reports 'no `brain` on this session's PATH; staging cannot be confirmed from here' and defers to section 2b.",
+        "vm-doctor's Motivating failure paragraph no longer frames bootstrapping as the 2026-07-20 remedy. Four other places in the same file forbid bootstrapping outright, so the sentence read as instruction while being history. It now names that half as superseded and states that the recorded error is the INFERENCE from `command not found`, not the missing bootstrap."
+      ],
+      "findings_for_other_sessions_not_fixed_here": [
+        "connect.py mcp_server_entry() builds the Claude Desktop stanza with env = {BRAIN_VAULT, BRAIN_MAX_EGRESS_TIER} and no BRAIN_ROLE, while serve() takes its role from config.role(). A host that exports BRAIN_ROLE=vm would run the desk itself at vm role. Owned by the session that owns the broker registration (DESK-01/DESK-02), not by this consumer migration.",
+        "setup-cowork/SKILL.md still teaches the per-session Cowork bootstrap (3 occurrences of `BRAIN_ROLE=vm`, a PATH prepend, the on-mount vault). It is a brainiac-manager host lifecycle skill, NOT one of the 14 Cowork bundles and never zipped for Cowork, so it is outside DESK-07's scope - but it is wrong the moment the vault moves off the mount. For the cutover session (s07/CUT-03). Checked and clean by contrast: the only `--role vm` lines outside the 14 are brainiac-cowork-setup and brainiac-install, both provision-request, VM-allowed with no desk tool, correctly local."
+      ],
+      "stated_limits_of_the_bundle_scan": "tests/test_cowork_skill_bundles.py reads MECHANISM, not intent, and its rules are name lists. Two evasions are known, open, and pinned by test_the_stated_limits_of_this_scan_are_true so the docstring cannot rot: a generic `export BRAIN_VAULT=\"${BRAIN_VAULT:-./vault}\"` bootstrap (that exact spelling is CORRECT host-lane text in three bundles, so it is not separable by pattern), and the same instruction in unfenced prose."
+    }
+  }
+}

@@ -37,9 +37,31 @@ def expected_tools() -> set[str]:
     here is itself a gate failure worth seeing, not a reason to guess a
     stale list.
     """
-    from brain.mcp_adapter import READ_TOOLS
-    return set(READ_TOOLS)
+    from brain.mcp_adapter import READ_TOOLS, WRITE_TOOLS
 
+    # READ **and** WRITE. ``list_tools()`` returns ``READ_TOOLS + WRITE_TOOLS``,
+    # so deriving from READ_TOOLS alone would make the FIRST write-adjacent verb
+    # (s04's capture) arrive here as "unexpected tool(s) exposed" and red the
+    # release build — the same class of failure the docstring above memorializes,
+    # one set later (adversarial review 2026-08-28). The read-only invariant is
+    # still asserted, but as its own named check rather than as a side effect of
+    # the allowlist's name.
+    return set(READ_TOOLS) | set(WRITE_TOOLS)
+
+
+#: The HIGHEST-CONSEQUENCE SUBSET of the host-broker privileges that must never
+#: reach an MCP client, whichever set a future session puts a verb in
+#: (AGENTS.md §5/§6). Deliberately not the s01 survey's whole ``host_only_never``
+#: column, which is 28 verbs — this names the write/index/audit ones by hand and
+#: omits ``project``, ``backup``, ``restore``, ``connect``, ``audit-pubkey`` and
+#: the rest. It is the SECOND check, not the gate: the primary is the
+#: ``unexpected`` comparison against :func:`expected_tools`, which refuses any
+#: name the engine does not declare, listed here or not.
+NEVER_EXPOSED = frozenset({
+    "write", "rebuild", "maintain", "ingest", "ingest_transcript", "sync",
+    "snapshot", "anchor", "verify_audit", "supersede", "unsupersede",
+    "graphify", "init",
+})
 
 EXPECTED_TOOLS = expected_tools()
 
@@ -90,12 +112,17 @@ async def main() -> int:
             # supersede/ingest only catches tool names SHAPED like those
             # words — any other write-shaped verb (sync, commit, snapshot,
             # rebuild, connect, graphify, project, ...) would pass silently.
-            # Assert the tool set is an exact SUBSET of the 5 expected read
-            # verbs instead: anything not in that set fails the gate,
+            # Assert the tool set is an exact SUBSET of the verbs the engine
+            # declares instead: anything not in that set fails the gate,
             # regardless of what it's named.
             unexpected = tool_names - EXPECTED_TOOLS
             if missing:
                 print(f"[smoke] FAIL — expected read verbs missing: {sorted(missing)}")
+                return 1
+            forbidden = tool_names & NEVER_EXPOSED
+            if forbidden:
+                print(f"[smoke] FAIL — host-broker privilege(s) exposed over "
+                      f"MCP: {sorted(forbidden)}")
                 return 1
             if unexpected:
                 print(f"[smoke] FAIL — unexpected tool(s) exposed beyond the read "

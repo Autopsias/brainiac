@@ -18,7 +18,7 @@ from .. import classification as cls_mod
 from .. import config, frontmatter
 from ..chunk import chunk_text
 from ..dbretry import with_write_retry
-from ..embed import Embedder, get_embedder
+from ..embed import Embedder, EmbedderUnavailable, get_embedder
 from ..frontmatter import identifier_shaped, normalize_identity, phrase_tokens
 from ..index_stages.search_identity import identity_owner_rowids, identity_records, title_phrase_candidates
 from ..notes import Note, scan_vault

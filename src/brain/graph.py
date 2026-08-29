@@ -264,6 +264,7 @@ def graph_expand(
     k: int = 10,
     use_ppr: bool = True,
     extra_edges: Iterable[tuple[str, str]] | None = None,
+    max_tier: str | None = None,
 ) -> dict[str, Any]:
     """On-demand multi-hop expansion for multi-entity / multi-hop queries.
 
@@ -273,12 +274,35 @@ def graph_expand(
 
     ``extra_edges`` (GRF-01, optional): graphify's INFERRED edges, folded into
     the SAME derived graph when the caller opts in (``brain graph-expand
-    --use-inferred``) — still discovery-only, still gated the same way."""
-    g = build_graph(conn, extra_edges=extra_edges)
+    --use-inferred``) — still discovery-only, still gated the same way.
+
+    ``max_tier`` (closed-stacks S02/DESK-02) drops every note above that tier
+    BEFORE the graph is built, before seeds are resolved, and before traversal
+    — not from the result list afterwards. Filtering the results alone leaves
+    an EXISTENCE ORACLE, and it was open: seeding a guessed MNPI id returned
+    ``resolved_seeds: ['<that id>']`` while a nonsense id returned
+    ``unresolved_seeds: ['<nonsense>']``, so an Internal-capped caller could
+    confirm any note it may not read by guessing its id (measured 2026-08-28).
+    Dropping pre-resolution makes an above-ceiling seed indistinguishable from
+    one that does not exist, and reusing ``build_graph``'s ``exclude_ids`` —
+    which omits the node AND every edge incident on it — also stops a hidden
+    note bridging two visible ones and moving the PPR ordering.
+
+    ``None`` (the default) preserves the historical behaviour the CLI relies
+    on: it gates AFTER the fact and reports a truthful ``withheld`` count."""
+    hidden: set[str] = set()
+    all_rows = conn.execute(
+        "SELECT id, title, path, classification FROM notes").fetchall()
+    if max_tier is not None:
+        from .classification import ClassificationFilter
+
+        allows = ClassificationFilter(max_tier=max_tier).allows
+        hidden = {str(r[0]) for r in all_rows if not allows(r[3])}
+    g = build_graph(conn, extra_edges=extra_edges, exclude_ids=hidden)
     seed_list = list(dict.fromkeys(seeds))
     resolver = _build_resolver(
         [(r[0], r[1] or "", r[2] or "")
-         for r in conn.execute("SELECT id, title, path FROM notes").fetchall()]
+         for r in all_rows if str(r[0]) not in hidden]
     )
     resolved_seeds = [resolve_target(resolver, s) or s for s in seed_list]
     known_seeds = [s for s in resolved_seeds if s in g.nodes]

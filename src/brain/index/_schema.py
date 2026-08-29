@@ -8,6 +8,7 @@ class _SchemaMixin:
     """Index schema methods."""
 
     def _create_schema(self) -> None:
+        self._refuse_accidental_hash_stamp()
         c = self.conn
         c.execute("DROP TABLE IF EXISTS aliases")
         c.execute("DROP TABLE IF EXISTS notes")
@@ -51,6 +52,40 @@ class _SchemaMixin:
         self._set_meta("embed_model", self.embedder.model_id)
         self._set_meta("embed_dim", str(self.embedder.dim))
         self.backend.setup(c, self.embedder.dim)
+
+    def _refuse_accidental_hash_stamp(self) -> None:
+        """Refuse to stamp `hash-v1` when nobody asked for the hash embedder.
+
+        WHY BEFORE THE DROPs: this is the FIRST statement of `_create_schema`,
+        which starts by dropping every table. A guard that ran later would
+        destroy the index it is meant to protect.
+
+        Field cost (2026-08-26): the COS lane ran under a python with no
+        onnxruntime, so auto-selection degraded to HashEmbedder. Opening the
+        index made `model_matches()` False, that forced a rebuild, and the
+        rebuild stamped `hash-v1` over a real bge-m3 index. Semantic search ran
+        on effectively random vectors for 36 minutes, and the next maintain run
+        saw the mismatch and spent 9h45m rebuilding 2,959 notes correctly.
+
+        A misconfigured LANE is what caused it, so the fix cannot live only in
+        that lane's environment — any future lane can be misconfigured the same
+        way. The index refuses the stamp itself.
+
+        The escape hatch is the EXPLICIT one that already exists:
+        `BRAIN_EMBEDDER=hash` (tests, CI, offline work) constructs HashEmbedder
+        through the explicit factory, which leaves `implicit_fallback` False.
+        """
+        if not getattr(self.embedder, "implicit_fallback", False):
+            return
+        raise EmbedderUnavailable(
+            f"refusing to (re)build {self.db_path} with the non-semantic "
+            "HashEmbedder: no real semantic embedder was available and none "
+            "was explicitly requested, so writing 'hash-v1' would poison an "
+            "index other lanes read and force a full rebuild to undo. Fix the "
+            "environment (install onnxruntime + tokenizers, or point this lane "
+            "at the engine venv), or set BRAIN_EMBEDDER=hash if a hash index "
+            "is genuinely what you want."
+        )
 
     def _set_meta(self, k: str, v: str) -> None:
         self.conn.execute("INSERT OR REPLACE INTO meta(k, v) VALUES (?, ?)", (k, v))

@@ -264,20 +264,32 @@ def detect_and_check_update(
 
 def stage_engine_and_skills(
     engine_src: Path,
-    workspace_path: str,
+    vault_path: str,
     *,
+    workspace_path: str | None = None,
     model_source: tuple[Path, str] | None = None,
 ) -> dict:
     """(a)+(b)+(d) legs of cowork_workspace_install.sh for one cowork-vm
-    workspace: re-copy the engine source into ``<vault>/.brain/engine/brain/``
-    and refresh the ``.skill`` bundles into ``<vault>/.brain/skills/`` from
-    whatever ``dist/cowork-skills/*.skill`` currently ships in ``engine_src``
-    (tools/release.py already runs tools/package_clients.py before every cut,
-    so that dir is the SSOT-version build by the time `brain update` runs).
+    workspace: re-copy the engine source into the staging root's
+    ``engine/brain/`` and refresh the ``.skill`` bundles into its ``skills/``
+    from whatever ``dist/cowork-skills/*.skill`` currently ships in
+    ``engine_src`` (tools/release.py already runs tools/package_clients.py
+    before every cut, so that dir is the SSOT-version build by the time
+    `brain update` runs).
+
+    The second positional argument is the VAULT. It was named
+    ``workspace_path`` and called with ``vault_path``; the two are the same
+    shape only while the vault sits inside the workspace. ``workspace_path``
+    is now a separate keyword and
+    :func:`brain.cowork_staging.staging_root` resolves the staging root from
+    both, so the VM keeps executing an engine ON the mount after the notes
+    leave it.
 
     Returns a dict with the SSOT/staged versions and skill count so the
     caller can assert-and-fail rather than silently report ok.
     """
+    from .cowork_staging import staging_root
+
     callbacks = WorkspaceStageCallbacks(
         packaged_script=_packaged_script,
         resolve_model_source=_resolve_shipped_model_source,
@@ -287,11 +299,17 @@ def stage_engine_and_skills(
     )
     staged = stage_engine_and_skills_impl(
         engine_src,
-        workspace_path,
+        vault_path,
+        workspace_path=workspace_path,
         model_source=model_source,
         callbacks=callbacks,
     )
-    bin_status = stage_vm_binaries(Path(workspace_path) / ".brain", engine_src / "dist")
+    # The frozen VM binaries go to the SAME staging root as the engine they
+    # run --- `Path(workspace_path) / ".brain"` split them apart the moment
+    # the two paths differ, staging an engine the ELFs could not find.
+    bin_status = stage_vm_binaries(
+        staging_root(vault_path, workspace_path), engine_src / "dist"
+    )
     binaries_ok, binaries_detail = vm_binaries_verdict(
         bin_status, staged.get("ssot_version")
     )

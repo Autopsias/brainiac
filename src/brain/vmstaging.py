@@ -185,7 +185,7 @@ def check_staged_vm_binaries(registry_entries: list[dict], ssot: str) -> list[di
             continue
         vault_dir = _cowork_vault_dir(entry)
         surface = f"Staged VM binary ({vault_dir})"
-        bin_dir = Path(vault_dir) / ".brain" / "bin"
+        bin_dir = _cowork_staging_root(entry) / "bin"
         elves = [
             p for p in sorted(bin_dir.glob("brain-linux-*"))
             if p.suffix != ".version" and p.name != "SHA256SUMS"
@@ -253,6 +253,26 @@ def _cowork_vault_dir(entry: dict) -> str:
     return entry.get("vault_path") or entry.get("workspace_path", "")
 
 
+def _cowork_staging_root(entry: dict) -> Path:
+    """The ``.brain`` this entry's VM actually executes, relocation included.
+
+    Byte-identical to ``Path(_cowork_vault_dir(entry)) / ".brain"`` for every
+    vault that still sits inside its workspace --- which is every vault today.
+    It differs the moment one moves off the mount (VULN-3385): the notes go to a
+    host-only location, the engine staging STAYS on the attached folder, and
+    these three doctor surfaces were still looking under the vault. All three
+    would have gone STALE --- a GATING status --- on the day the cutover
+    completed, failing ``brain doctor`` and ``brain update`` while verifying the
+    wrong side of the split (peer review, 2026-08-29).
+
+    :func:`brain.cowork_staging.staging_root` is the ONE resolver; this is the
+    registry-entry adapter for it, not a second copy of the rule.
+    """
+    from .cowork_staging import staging_root
+
+    return staging_root(_cowork_vault_dir(entry), entry.get("workspace_path") or None)
+
+
 def check_staged_workspaces(registry_entries: list[dict], ssot: str) -> list[dict]:
     from .doctor import (
         CURRENT, NOT_DETECTABLE, STALE, UNKNOWN, _row,
@@ -264,7 +284,7 @@ def check_staged_workspaces(registry_entries: list[dict], ssot: str) -> list[dic
             continue  # host entries ARE the checkout; surfaces 1-4 already cover it
         vault_dir = _cowork_vault_dir(entry)
         surface = f"Staged workspace ({vault_dir})"
-        stamp_path = Path(vault_dir) / ".brain" / "engine" / "brain" / "_version.py"
+        stamp_path = _cowork_staging_root(entry) / "engine" / "brain" / "_version.py"
         if not stamp_path.exists():
             # "I cannot see it" vs "I looked, and it is not there": merging
             # them hid a real defect (2026-08-17) — the registry
@@ -316,7 +336,7 @@ def check_staged_skill_bundles(registry_entries: list[dict], ssot: str) -> list[
             continue
         vault_dir = _cowork_vault_dir(entry)
         surface = f"Staged skill bundles ({vault_dir})"
-        skills_dir = Path(vault_dir) / ".brain" / "skills"
+        skills_dir = _cowork_staging_root(entry) / "skills"
         if not skills_dir.is_dir():
             # Same distinction as the engine row above.
             exists = Path(vault_dir).is_dir()

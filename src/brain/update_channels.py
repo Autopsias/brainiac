@@ -162,13 +162,34 @@ def refresh_engine_channel(
 
 def stage_engine_and_skills(
     engine_src: Path,
-    workspace_path: str,
+    vault_path: str,
     *,
+    workspace_path: str | None = None,
     model_source: tuple[Path, str] | None = None,
     callbacks: WorkspaceStageCallbacks,
 ) -> dict:
-    """Stage one Cowork workspace from the current checkout."""
-    brain_dir = Path(workspace_path) / ".brain"
+    """Stage one Cowork workspace from the current checkout.
+
+    The second positional argument is the VAULT --- it always was; it was named
+    ``workspace_path`` while ``_restage_cowork_workspace`` passed ``vault_path``
+    into it, which read as a workspace and behaved as a vault. Renamed, and
+    ``workspace_path`` is now a real separate keyword: pass it whenever the two
+    can differ, i.e. once the vault has moved off the mount.
+
+    The staging root comes from :func:`brain.cowork_staging.staging_root`, the
+    one relocation-aware resolver, so this entry point and
+    ``tools/cowork_workspace_install.sh`` cannot drift apart.
+    """
+    from .cowork_staging import assert_relocated_vault_leaves_no_note_bodies, staging_root
+
+    brain_dir = staging_root(vault_path, workspace_path)
+    # THE REFUSAL, at THIS entry point and not only in the shell script.
+    # `/brainiac-update` and provisioning reach this function directly
+    # (`update.py:288` -> here), so a guard that lived only in
+    # `tools/cowork_workspace_install.sh` would be walked straight past.
+    if workspace_path is not None:
+        assert_relocated_vault_leaves_no_note_bodies(
+            workspace_path, vault_path, caller="stage_engine_and_skills")
 
     engine_dir = brain_dir / "engine"
     if engine_dir.exists():
@@ -287,6 +308,8 @@ def _restage_cowork_workspace(
         stage_info = stage_workspace(
             engine_src,
             vault_path,
+            # `or None`: "" would resolve to the CWD --- see `staging_root`.
+            workspace_path=workspace_path or None,  # SEPARATE once the vault moves
             model_source=model_source,
         )
     except (OSError, RuntimeError) as exc:

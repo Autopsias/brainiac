@@ -19,6 +19,7 @@ prints one line per vault with the count and the path.
 
 from __future__ import annotations
 
+import datetime
 import html.parser
 import json
 import os
@@ -103,22 +104,42 @@ def _full_page_path(vault: Path) -> Path:
         _config.index_dir(vault), vault, what="exceptions full page") / _FULL
 
 
-def vault_row(vault: Path, *, role: str) -> dict[str, Any]:
+def vault_row(vault: Path, *, role: str,
+              today: datetime.date | None = None) -> dict[str, Any]:
     """One vault's row: which page to read, how many things need the owner,
     and — when the answer is not knowable — WHY, never a cheerful zero.
 
     A missing summary is the same finding ``alerts`` reports: the engine that
     ran this vault's ``maintain`` predates the page, so the count is UNKNOWN.
-    Reporting 0 there would be a fabricated all-clear."""
+    Reporting 0 there would be a fabricated all-clear.
+
+    **VM role VERIFIES, never reads the mount file raw** (S03, DESK-03 fix).
+    This read ``.brain/exceptions.json`` directly until 2026-08-28 —
+    unsigned, unpinned, exactly the raw-mount read
+    ``exceptions_alerts``/``exceptions_verify`` exist to replace. A forged or
+    stale mount file returned its fabricated count to ``brain exceptions
+    --json`` on the VM leg, and to any broker tool built on this function.
+    Now VM role runs the SAME ``exceptions_verify.verify`` gate — signature,
+    pinned vault_id, schema, freshness — as ``alerts``, so an unverifiable
+    summary reports ``unreachable``, never a fabricated count."""
     name = vault.parent.name or str(vault)
     mount = _config.brain_runtime_dir(vault) / _MOUNT
     page = mount if role == "vm" else _full_page_path(vault)
-    summary = _read_summary(vault)
-    if summary is None:
-        return {"vault": str(vault), "name": name, "page": str(page),
-                "count": None, "exists": page.is_file(),
-                "reason": "this vault's nightly run has not written a "
-                          "summary yet"}
+    if role == "vm":
+        from . import exceptions_verify as _verify
+
+        ok, summary, reason = _verify.verify(vault, today or datetime.date.today())
+        if not ok:
+            return {"vault": str(vault), "name": name, "page": str(page),
+                    "count": None, "exists": page.is_file(),
+                    "reason": f"exceptions summary unreachable — {reason}"}
+    else:
+        summary = _read_summary(vault)
+        if summary is None:
+            return {"vault": str(vault), "name": name, "page": str(page),
+                    "count": None, "exists": page.is_file(),
+                    "reason": "this vault's nightly run has not written a "
+                              "summary yet"}
     count = summary.get("count")
     return {"vault": str(vault), "name": name, "page": str(page),
             "count": int(count) if isinstance(count, int) else None,
@@ -128,7 +149,8 @@ def vault_row(vault: Path, *, role: str) -> dict[str, Any]:
 
 
 def collect(*, role: str = "host", vault: Path | None = None,
-            home: Path | None = None) -> dict[str, Any]:
+            home: Path | None = None,
+            today: datetime.date | None = None) -> dict[str, Any]:
     """Every vault this role can see, with its page. Mirrors
     ``alerts.collect``'s host-sweeps-the-registry / vm-sees-one shape so the
     two surfaces can never disagree about which vaults exist."""
@@ -141,7 +163,8 @@ def collect(*, role: str = "host", vault: Path | None = None,
         if not vaults and vault:
             vaults = [vault]
     return {"role": role,
-            "vaults": [vault_row(Path(v), role=role) for v in vaults]}
+            "vaults": [vault_row(Path(v), role=role, today=today)
+                       for v in vaults]}
 
 
 def open_in_desktop(path: Path) -> str:

@@ -82,9 +82,16 @@ class _CoreRetrievalMixin:
             depth=depth, graph_weight=graph_weight, seed_flat_top=seed_flat_top,
             flat_pool=flat_pool, return_trace=return_trace,
         )
-    def grep(self, pattern: str, *, k: int = 20, regex: bool = False) -> list[dict[str, Any]]:
-        """Lexical-first scan over note bodies — no embedding (RET-04)."""
-        return self.index.grep(pattern, k=k, regex=regex)
+    def grep(
+        self, pattern: str, *, k: int = 20, regex: bool = False,
+        max_tier: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Lexical-first scan over note bodies — no embedding (RET-04).
+
+        ``max_tier`` drops above-ceiling notes BEFORE matching, so hit counts
+        and ranking cannot be used as an oracle over content the caller may not
+        read — see :meth:`brain.index._tools._ToolMixin.grep`."""
+        return self.index.grep(pattern, k=k, regex=regex, max_tier=max_tier)
     def bases_query(
         self, filters: dict[str, str] | None = None, *, k: int = 50,
         latest_only: bool = False, as_of: str | None = None,
@@ -183,7 +190,7 @@ class _CoreRetrievalMixin:
         }
     def graph_expand(
         self, seeds: list[str], *, depth: int = 2, k: int = 10, use_ppr: bool = True,
-        use_inferred: bool = False,
+        use_inferred: bool = False, max_tier: str | None = None,
     ) -> dict[str, Any]:
         """On-demand wikilink-BFS + PPR — DISCOVERY-ONLY (RET-03).
 
@@ -201,7 +208,8 @@ class _CoreRetrievalMixin:
             extra_edges = gmod.read_published_inferred_edges(
                 config.graph_json_path(self.vault))
         return self.index.graph_expand(
-            seeds, depth=depth, k=k, use_ppr=use_ppr, extra_edges=extra_edges)
+            seeds, depth=depth, k=k, use_ppr=use_ppr, extra_edges=extra_edges,
+            max_tier=max_tier)
     def get(self, note_id: str) -> dict[str, Any] | None:
         return self.index.get(note_id)
     def recent(

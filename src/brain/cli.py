@@ -40,6 +40,9 @@ FINAL stage before stdout. A harness self-discovers the whole contract from
     brain snapshot [--dest DIR]            # publish read-only snapshot        [HOST]
     brain rebuild [--vault DIR]            # rebuild the derived index (safe)
     brain project --dest DIR [--max-tier TIER]   # real containment: filtered copy
+    brain authorize-original PATH [--json]  # HOST: resolve one archived original to
+                                            # the MAX tier over its owning notes and
+                                            # record the authorisation before printing
     brain ingest [--dry-run]                # host-broker: drain <vault>/inbox/ (ING-01/03)
     brain ingest-transcript <path> --origin O [--language L]   # host-broker (ING-04)
     brain write <relpath> [--reason R]     # host-broker, audited, fails closed
@@ -267,7 +270,11 @@ def _cmd_connect(args: Any) -> int:
 # depth on top of each BrainCore method's own _require_host()).
 VM_ALLOWED = frozenset(
     {
-        "init",  # filesystem-only overlay validation; safe on either role
+        "init",  # --validate-overlay: filesystem-only overlay shape check.
+                 # --full: first-install orchestration (overlay + task
+                 # registration); safe on either role because --apply is
+                 # IGNORED on role=vm, so the VM leg only ever gets the
+                 # dry-run probe, never the real OS installer invocation.
         "doctor",  # read-only version/health inspection; no index/key touched
         # The degradation digest. VM_ALLOWED on purpose: it is the ONE surface that
         # tells a Cowork session its vault is degraded, and it reads only plain

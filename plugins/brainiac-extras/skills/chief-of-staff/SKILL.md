@@ -1816,6 +1816,103 @@ metadata:
 
 # Chief-of-Staff Nightly — brain-substrate kernel skill
 
+<!-- BRAINIAC-DESK-BLOCK v1 -- BYTE-IDENTICAL in all 14 Cowork bundles.
+     Canonical copy: docs/operations/cowork-desk-block.md. Pinned by
+     tests/test_cowork_skill_bundles.py against the LIVE broker
+     (brain.mcp_adapter.TOOLS). Edit the canonical copy and every bundle in one
+     commit, never one bundle alone, and never to name a tool the broker does
+     not serve. -->
+
+## Cowork (VM leg) — the vault is served by the desk, not by this sandbox
+
+Reach the vault ONLY through the **desk**: the host-run `brainiac` MCP server,
+whose tools Claude Desktop announces into this session. Call the tool. Do not
+shell out for note content, and do not open a note file.
+
+| the CLI verb you know | the desk tool to call |
+|---|---|
+| `search`, `hybrid-search` | `search`, `hybrid_search` |
+| `get`, `read` | `get`, `read` |
+| `recent` | `recent` |
+| `dossier` | `dossier` |
+| `bases-query` | `bases_query` |
+| `grep` | `grep` |
+| `graph-expand` | `graph_expand` |
+| `vault-languages` | `vault_languages` |
+| `diagnose` | `diagnose` |
+| `alerts`, `exceptions`, `inbox` | `alerts`, `exceptions`, `inbox` |
+| `draft-capture` (stage an unsigned note) | `capture` |
+
+Those fifteen names are the whole desk, and they are the only route to note
+CONTENT this session may use. **"Not on the desk" is not the same as "refused
+here"**, and conflating the two is how a session talks itself into a workaround:
+measured 2026-08-28, nine of the CLI's 22 VM-allowed verbs have no desk tool
+(`brief`, `cos-propose`, `digest`, `doctor`, `draft-capture`, `init`,
+`mcp-config`, `provision-request`, `status`), and two desk tools (`inbox`,
+`vault_languages`) are not VM-allowed on the CLI at all. Of those nine, only
+`cos-propose` — the COS ingress nothing on the desk serves — and the staging
+probes below are still invoked locally by a shipped bundle, both deliberately.
+Every verb that COMMITS or rebuilds — `write`, `sync`, `maintain`, `rebuild`,
+`ingest`, `curate`, `health`, `integrity`, `verify-audit`, `graph-report` — is a
+HOST-broker privilege and is not available here at all. **Unless a line is
+explicitly marked as a Cowork instruction, a shell command anywhere else in this
+skill is a HOST-lane instruction**, correct on the owner's Mac and not this
+session's route.
+
+**Do NOT bootstrap a vault path, do NOT export one onto `PATH`, do NOT hunt for
+a staged binary to retry with, and do NOT open a note under `brain/` or `raw/`
+with `cat`, `ls`, `Read` or a glob.** That is a RULE, and until the vault
+actually moves off the mount it is the only thing standing between this session
+and the bypass this whole change exists to close. Stated exactly, because the
+two halves are true at different times:
+
+- **While a published snapshot is still on the mount** (every workspace
+  installed before the cutover), a staged engine CAN answer a local retrieval
+  verb from `<vault>/.brain/snapshot/` — measured 2026-08-28: a local `search`
+  at role `vm` returned the note body and exit 0 with the host index deleted,
+  because the
+  snapshot path is independent of it. Content that arrives that way skipped the
+  desk, and so skipped the classification egress record the desk writes. A read
+  that works is not a read you were allowed to make.
+- **Once the vault is off the mount**, the local retrieval verbs fail rather
+  than returning less — measured 2026-08-28: `search`, `get`, `recent` and
+  `grep` exit 3 with `OperationalError: unable to open database file`, and
+  `status --json` carries that same error in its `index` block. That is the desk
+  telling you to use it, not a broken install and not a host-only refusal.
+  **Not every surface is that loud**, so never read a quiet answer as an
+  answer: an EMPTY result and a `not-computed` status are also what you get from
+  a vault you cannot see. Only a hit you obtained through the desk is evidence.
+
+Either way the answer is the same: call the desk. And the desk itself has no
+offline substitute — it speaks stdio to the host process Claude Desktop spawned,
+so there is no endpoint in this sandbox to dial and nothing to fall back to.
+
+**The one local exception, and it returns no note.** If this workspace still
+carries a staged engine, its three staging probes — `brain --version`, `brain
+--role vm doctor`, `brain --role vm status --json` — read `.brain/` staging
+metadata: engine stamp, model cache, vendored-deps ABI, snapshot presence. Keep
+`--role vm` on them; without it the shell runs at role `host`, whose egress cap
+is the whole vault. Use them for staging questions only. Their absence is not a
+fault to fix, and none of the three is a way to reach a note.
+
+If you need something the desk does not serve, say so and stop. That is a
+finding for the engine, not a gap to work around.
+
+> **COS addendum (DESK-07, 2026-08-28) — three things the desk does not serve,
+> and this skill's Cowork leg uses all three.** `cos-propose` is not a desk
+> tool: s01's survey scores it `undecided` (VM-allowed over the CLI,
+> deliberately never registered as an MCP tool), so it stays a local CLI call.
+> Nor are the two COS FILE lanes: the `shared/` reads (priority map,
+> calibration pin, `current-run.json`, grounding pack) and the
+> `drop/verdict-drop/` + `drop/proposal-drop/` appends. All three resolve under
+> `<vault>/.brain/cos` unless `$BRAIN_COS_OPS_DIR` says otherwise, and s01's
+> residual table (`docs/operations/closed-stacks-s01-foundation-evidence.md`,
+> JOB 4) marks `vault/.brain/cos/` as leaving the mount at the cutover.
+> **Move it without repointing `$BRAIN_COS_OPS_DIR` at a path that stays, and
+> this leg loses its instruction sheet and its drop lane on the same night.**
+> That is a recorded finding for the cutover session, not something to route
+> around here: if the sheet is missing, banner it and route to BLOCKED.
+
 > # ⛔ SUPERSEDED — 2026-08-12
 > **This file is no longer the running doctrine. `DOCTRINE.md` in this same
 > directory (chief-of-staff v7.3) is.** Read that first; read this only for the
@@ -2042,7 +2139,7 @@ existing guard, gate and E-check binds exactly as before.
    - **Either mode exhausted → DEGRADED MODE**: skip Phases 1–2, build the brain-only brief (Phases 3-grounding-side, 4, 5) with a top banner naming exactly what was skipped and why — name the mode (not-paired vs signed-out) and, for mode (a), the attempt count/elapsed time — and route the outage to the 🚧 BLOCKED block (retry: next nightly run / the owner runs the pipeline interactively). **Fire the mail-leg degrade notification (TRN-02, step 3a below) on entry to DEGRADED MODE from either mode.**
 3a. **Mail-leg degrade notification (v5.3, TRN-02 — fail LOUD, never a silent no-op).** On ANY mail-leg degrade from step 3 (mode-(a) budget exhausted, or mode-(b) fail-fast): the durable channel is the companion WARNING + BLOCKED banner above (already mandatory) — this step ADDS a best-effort, actionable macOS GUI ping on top, so a day's outage is never *only* discoverable by opening the brief. Actionable text names the cause and the remedy, e.g. `"COS mail leg degraded — extension not paired after ~6min; bring Chrome (Claude extension) up and it catches the next run, or run interactively."` / `"COS mail leg degraded — Outlook signed out; sign back in to Outlook web and it catches the next run, or run interactively."` Mirrors the host's OBS-02 `fire_notification` contract (`src/brain/maintenance.py`): `osascript -e 'display notification "<text>" with title "COS mail leg"'`, best-effort and non-blocking — never raises, never slows or fails the run over a notification failure — returning `"skipped (non-macOS)"` off Darwin; the unattended Cowork VM leg is Linux, so this step degrades to log-only there by construction, exactly as the companion WARNING already guarantees, while an interactive host (macOS) run also gets the GUI ping. **Dedup per-cause-per-day:** claim a create-exclusive marker at `cos-ops/_notify-markers/<mode-a|mode-b>-<TARGET DAY>` before firing — `exists` ⇒ already surfaced today, skip the ping (the WARNING/banner still land every run) — bounding the owner to at most one ping per cause per day, never a repeat storm across a night's retries.
 4. **Calendar source rule (absolute):** the ONLY calendar source is **Outlook web via Chrome MCP** on the allowlisted hosts. Never read any other calendar connector or import feed. Chrome down = calendar BLOCKED, honestly bannered.
-5. **Brain reachability check:** `brain --role vm status --json`. **PATH resilience (v2.2):** if `brain` is not on PATH, before declaring the leg degraded try the staged shim at the vault's `.brain/brain` (`"$BRAIN_VAULT/.brain/brain" --role vm status --json`; note the per-session PATH re-export from `docs/cowork-windows-install.md`). Only degrade to MCP-only grounding after BOTH fail; the banner names which path worked. Confirm the snapshot exists; note its `generation` + age. Snapshot missing / `brain` unavailable ⇒ brain grounding DEGRADED — build the brief on Outlook/calendar + skill memory only, banner it, route to BLOCKED (retry: next nightly, after the host republishes the snapshot). Never fall back to any other note store. **MCP-only grounding tolerance:** if the in-VM `brain` CLI (or its embedder) is unavailable but a brainiac MCP read surface is connected, ground Phases 3–4 through it (same verbs, same egress gate) — and note that the v2 read-tier still works: the priority map is a plain file READ and the verdict ledger a plain file APPEND, neither needs the embedder.
+5. **Desk reachability check (v5.60, DESK-07 — the order is INVERTED from v2.2):** call the desk's `recent` tool and require ROWS BACK. A status readout is not a reachability check. **The staged-shim retry this step carried until 2026-08-28 is deleted, not demoted** — it read `"$BRAIN_VAULT/.brain/brain" --role vm status --json`, and after the Closed Stacks cutover that path reaches no vault content, so retrying it converts one clear failure into a confusing second one. The desk IS the grounding route; the in-VM CLI is not its fallback and MCP is not a degraded mode. Freshness: the desk reads the host's LIVE index, not a published snapshot, so there is no `generation`/age to quote here — call `alerts` if you need the degradation digest. Desk unreachable ⇒ brain grounding DEGRADED — build the brief on Outlook/calendar + skill memory only, banner it, route to BLOCKED (retry: next nightly). Never fall back to any other note store, and never to a file read. The v2 read-tier caveat still holds and is unrelated to the embedder: the priority map is a plain file READ and the verdict ledger a plain file APPEND (see the COS-staging note in Phase 0.5).
 
 ## Phase 0.5 — Trifecta preflight (capability assertion — fail-closed)
 
@@ -5349,7 +5446,7 @@ exemplar, and the candidate cap's unstated tie-break). *END OF INVARIANT.*
      nights.
    - **(b) Semantic identity (owner + topic + due) vs. tonight's OTHER
      candidates AND existing brain notes.** Probe
-     `brain --role vm search "<topic> <owner/counterparty>" --max-tier MNPI --json`
+     the desk's `search` tool, `query: "<topic> <owner/counterparty>"`, `max_tier: "MNPI"`
      — **always at the MNPI ceiling for the DEDUP CHECK regardless of the
      candidate's own classification**, because a narrowed probe that missed
      a Restricted/MNPI near-duplicate would re-propose the same substance
@@ -5690,13 +5787,15 @@ in the undo window" every morning.
 
 For each battlecard-worthy meeting (cap 8 full cards; overflow → compact rows, priority: overlay-people meetings / priority counterparties / external / decision-bearing):
 
-1. **Brain grounding — the brain CLI is the substrate.** Ground with `brain --role vm`:
-   - **Decision-state sweep first:** `brain --role vm dossier "<meeting topic / counterparty>" --json` — decision layer and sources SEPARATED, each decision carrying `tensions` + a `freshness` block. **React to the decision layer; a newer raw source NEVER silently overturns it** — surface the tension instead.
-   - **Semantic + lexical:** `brain --role vm search "<topic>" --max-tier MNPI --json` (add `--rerank` for the top cards). A thin result is a tier problem — the VM default cap is Internal, so re-run with `--max-tier MNPI` before concluding the vault is silent.
-   - **Structured pulls:** attendees `brain --role vm bases-query --where type=person --json`; counterparties `--where type=company`; workstreams `--where type=project`; **current decisions** `--where type=decision --latest-only --json`.
-   - **Meetings** live in `raw/` as sources — retrieve the last 1–2 related meetings via `brain --role vm search "<counterparty> meeting" --json`, never a `type=meeting` filter.
-   - **Full note on demand:** `brain --role vm get <id> --json`.
-   Synthesise from the brain + Phase-1 typed fields — never from raw email bodies (INJ-03 firewall). If `brain` is unavailable (Phase 0 step 5), build a thinner card from skill memory — never from another note store.
+1. **Brain grounding — the vault is the substrate.** In Cowork, ground through
+   the desk tools named below; on the owner's Mac the same reads are `brain`
+   CLI calls:
+   - **Decision-state sweep first:** the desk's `dossier` tool, `query: "<meeting topic / counterparty>"` — decision layer and sources SEPARATED, each decision carrying `tensions` + a `freshness` block. **React to the decision layer; a newer raw source NEVER silently overturns it** — surface the tension instead.
+   - **Semantic + lexical:** the desk's `search` tool, `query: "<topic>"`, `max_tier: "MNPI"` (set `rerank: true` for the top cards). A thin result is a tier problem — re-run with `max_tier: "MNPI"` (host CLI: `--max-tier MNPI`) before concluding the vault is silent.
+   - **Structured pulls:** the desk's `bases_query` tool — attendees `where: {"type": "person"}`; counterparties `where: {"type": "company"}`; workstreams `where: {"type": "project"}`; **current decisions** `where: {"type": "decision"}` with `latest_only: true` (host CLI: `bases-query --where type=decision --latest-only --json`).
+   - **Meetings** live in `raw/` as sources — retrieve the last 1–2 related meetings via the desk's `search` tool, `query: "<counterparty> meeting"`, never a `type=meeting` filter.
+   - **Full note on demand:** the desk's `get` tool, `id: "<id>"`.
+   Synthesise from the brain + Phase-1 typed fields — never from raw email bodies (INJ-03 firewall). If the brain is unreachable (Phase 0 step 5 — no desk in Cowork, no `brain` on the host), build a thinner card from skill memory — never from another note store.
 2. **External sweep — path-dependent (EXFIL-04).** The unattended run holds the vault's most sensitive tier, so it must NOT reach the open web.
    - **Unattended cron path (no human): NO live web search / web fetch.** Per battlecard, emit a *ready-to-run* supervised prompt (e.g. `Web sweep: <public counterparty name> news, last 7d → card "<meeting>"`). Always queue one sweep per priority counterparty (from `overlay/keywords/`) with a meeting on the day. Cap 6/night. **Prompts name public entities only — never an internal codename from `overlay/keywords/`** (the query string itself is an egress leak). These collect in the brief's SUPERVISED FOLLOW-ONS strip + each card's EXTERNAL SIGNAL line.
    - **Interactive path (a human invoked it): live web search allowed** — recency-biased (7–30 d), same public-terms-only rule, cap 6; only signal in the card.
@@ -5713,7 +5812,7 @@ scan.** The host renders `$BRAIN_COS_OPS_DIR/shared/spine-summary.md` every
 broker fold (a VM-readable, do-not-hand-edit projection of the event-sourced
 `commitments.sqlite` ledger — engine-generic, history-based aging instead of
 a one-off heuristic scan). **Read it first**
-(`brain --role vm get` doesn't apply to a raw file — this is a plain read of
+(the desk's `get` doesn't apply to a raw file — this is a plain read of
 the shared projection path via whatever file-read the harness has) for its
 `LATE` and `AT-RISK` sections before falling back to anything else; if the
 file is absent (engine < the spine build, or the host hasn't folded yet),
@@ -5745,8 +5844,10 @@ artifacts remain ready-to-run prompts, NEVER auto-built decks/memos (Phase
    - **Spine dues:** every OWED row of `shared/spine-summary.md` due 2–30
      days out. Rows due ≤48h belong to Phase 4's FORGETTING RADAR, never
      here — no double-listing.
-   - **Brain decision dates:** `brain --role vm bases-query --where
-     type=decision --latest-only --json` — dated decision deadlines,
+   - **Brain decision dates:** the desk's `bases_query` tool,
+     `where: {"type": "decision"}` with `latest_only: true` (host CLI:
+     `bases-query --where type=decision --latest-only --json`) — dated
+     decision deadlines,
      renewal/expiry dates, and `effective_date`s within 30 days (the same
      probe Phase 4 uses at 7 days, widened to the horizon).
    - **Calendar lookahead:** ONE read-only agenda/month sweep of the
@@ -5877,14 +5978,14 @@ strip always has at least tonight's numbers even with no 7-day history yet.
 
 **Sunday runs add two sections** between 7 and 8: **SELF-REVIEW** + **WEEKLY RETRO** (§ Self-improvement loop).
 
-**Citation model.** Every brain-sourced fact cites the **brain note id** and carries a `brain --role vm get <id>` reference + a `file://<brain-vault>/<path>` link. **Provenance for content that should become a real note:** `brain --role vm draft-capture --content "<proposal>"` — the host signs + indexes it on its next run (the VM cannot sign). **Companion chain-of-record:** `cos-ops/_cos_nightly_<TARGET DAY>.md` — run log, ledger in markdown, disposition blocks, 🧪 block. Operational `cos-ops/` files are plain files (their audit is the ledger + the host-signed drafts they spawn).
+**Citation model.** Every brain-sourced fact cites the **brain note id** and carries a desk `get id: "<id>"` reference + a `file://<brain-vault>/<path>` link. **That `file://` target is HOST-resolvable only** — a Cowork session cannot open it and must not try; it is a pointer for the owner, and the desk `get` is the reference a reader can actually follow. **Provenance for content that should become a real note:** the desk's `capture` tool, `content: "<proposal>"` — the broker runs capture in the HOST process, so it comes back signed and indexed rather than as a draft awaiting a drain. **Companion chain-of-record:** `cos-ops/_cos_nightly_<TARGET DAY>.md` — run log, ledger in markdown, disposition blocks, 🧪 block. Operational `cos-ops/` files are plain files (their audit is the ledger + the host-signed drafts they spawn).
 
 ## Disposition phase (mandatory)
 
 1. **Classify** every finding (four buckets): `cos-ops/` writes, marks, standing-approval archives, verified captures to `inbox/`, in-thread drafts → **AUTO-FIXED** (logged). Decisions the owner must take AND every **AUT-03-held state-changing outbound** → **ACTION REQUIRED** with ready-to-apply payload (draft-captured so the host surfaces it). Chrome/auth/mount/brain-snapshot outages → **BLOCKED** with retry condition (3 consecutive runs blocked on the same dependency → a recommendation draft). A trifecta-preflight HALT → **BLOCKED** ("disconnect `<connector>`"). Non-urgent improvement ideas → **DEFERRED** (append to `cos-ops/_recommendations_open.jsonl`).
 2. **Execute AUTO-FIXED inline** (one fix's failure never stops the rest — catch, downgrade to BLOCKED, continue).
 3. **Three-block report** (✅ / ⚠ / 🚧, `(none)` when empty) at the end of the companion, followed by the MANDATORY **💵 Harness OpEx (this run)** line — `model <id-or-tier> · in <N> tok · out <N> tok · est $<X.XXXX> · latency <ms> ms[ · degraded]`, or `model (none) · not metered — <reason>`.
-4. **Propagation.** Anything the owner must see or decide is propagated by (a) the brief's REQUIRED ACTIONS panel, and (b) a `brain --role vm draft-capture` note (the host signs it on its next run). Write the one-line pointer `Morning brief ready: <date> — N drafts / N actions / N meetings → cos-ops/_briefing_morning_<date>.html` into the companion.
+4. **Propagation.** Anything the owner must see or decide is propagated by (a) the brief's REQUIRED ACTIONS panel, and (b) a desk `capture` note (host-side, signed and indexed on the call). Write the one-line pointer `Morning brief ready: <date> — N drafts / N actions / N meetings → cos-ops/_briefing_morning_<date>.html` into the companion.
 4½. **Harness cost metering — final write-phase act.** Append **exactly one** OpEx record to `cos-ops/_harness_opex.jsonl`: `{date, run_ts, task, model, input_tokens, output_tokens, latency_ms, est_cost_usd, degraded, notes}`. One record per run; a same-state re-run does NOT duplicate it. A run that cannot produce token counts skips the append but MUST render the §3 💵 line as `not metered — <reason>` — silence is a FAIL. This is a LOCAL file write, allowed on the E-removed path.
 4⅝. **OUTCOME CONTRACT — RUN THE CHECKER, RECORD WHAT IT RETURNS (v5.31, OC-01/OC-02/ZS-02).** Before the metrics row: load the PRE-run enumeration record already serialized and preflighted before Phase 1 (the convid set + `enumerated_at` + the pre-run hold snapshot + both PRE count units + bounded Sent proof), THIS RUN's ledgers, and a FRESH post-run re-enumeration of the Inbox with both POST count units and the matching Sent proof, then run `tools/cos_contract.py` and carry the `outcome_contract` block it returns — verdict, reasons, counts, `capability_liveness`, `zero_send_proof`, `verdict_source` — into the metrics row and the brief banner VERBATIM. **The verdict is COMPUTED, never composed:** a hand-written `verdict: "PASS"` is precisely the failure this step exists to close, and the metrics row records what the checker returned and never a hand-composed verdict. Full doctrine — the enumerated set, the two run profiles, the five buckets, both guards, the provenance checks and the CLI contract — is the **§ OUTCOME CONTRACT (v5.31)** section below.
 
@@ -6170,10 +6271,10 @@ is proven able to FAIL before it is trusted (known-positive fixtures:
 - **E3** · Every response-warranted row has a drafts-ledger entry (verified-in-Drafts) or a logged skip reason — **(v5.27)** response-warranted = the ACT bucket **plus** the READ rows carrying `Held · ask` / `Held · deadline` per leg 5's targeting extension; a row skipped for cap, idempotency (a draft already on the convid), or a comms-policy hold is a logged skip, not a silent omission — `script` · repair.
 - **E4** · Every TARGET-DAY calendar event appears as battlecard or compact row, or a logged skip; calendar-BLOCKED runs report N/A — `script` · repair.
 - **E5** · Ledger completeness: marked/archived/captured/drafted counts equal the state-file execution-log counts, **counting only rows whose verification result is `verified-*` as executed** (v2.1); `held` and `verified-failed` rows are reconciled against the REQUIRED ACTIONS panel instead; downloads-mount-absent INGEST rows reconcile against REQUIRED ACTIONS and carry `capture blocked — downloads mount absent` — `script` · repair.
-- **E6** · Every brain-sourced fact in the brief carries a brain **note id** + a resolvable `brain --role vm get <id>` reference (and a `file://` link whose target exists) — `grep` · repair.
+- **E6** · Every brain-sourced fact in the brief carries a brain **note id** + a resolvable desk `get id: "<id>"` reference (and a `file://` link, whose target is checkable on the HOST only — an unopenable `file://` from inside Cowork is expected, never an E6 failure) — `grep` · repair.
 - **E7** · Degraded honesty: any skipped phase ⇒ banner names it AND a 🚧 BLOCKED block exists; no silent omission — `read` · **action_required**.
 - **E8** · Idempotency: same-night re-run no-ops — drafts keyed on Drafts inventory + conversation; archives keyed on state file; brief/companion overwrite-same-content; metrics/opex append keyed on date — `script` · repair.
-- **E9** · Every finding that should become a real note was `brain --role vm draft-capture`'d (a draft exists in the capture-inbox), and every `cos-ops/` write this run is listed in the companion ledger — no orphan writes; **no write targeted `.brain/` or any path outside `cos-ops/` + `inbox/` + the engine's VM-writable drops (`$BRAIN_COS_OPS_DIR/drop/verdict-drop/` (shadow-ledger + behaviour-r<N> observation rows) and `drop/proposal-drop/` via `cos-propose` — the LATTER covers both `cos-propose --kind correction` and every ING-01 ingestion candidate, and NEVER `draft-capture` for an ingestion candidate); basename-only `drop/ingest-manifest/` writes are forbidden; the only `.brain/` reads are the VM-readable `$BRAIN_COS_OPS_DIR/shared/priority-map.md`, (v5.17) `shared/calibration-pin.json`, (v5.58, MAN-01) `shared/current-run.json` — the run's instruction sheet, which every artifact name in this ledger derives from — and (BAK-01, 2026-08-11) `shared/grounding-pack.md`, the host-rendered Internal-safe projection of the documents the 2026-08-10 cross-tier ruling raised out of this leg's reach: WITHOUT this read the raise simply removes 36 documents from grounding, since `.brain/` is excluded from indexing and `brain search` can therefore never return the pack — all four inside the documented host-writes/VM-reads `shared/` zone; `host/` is never touched — **including by the SELF-EVAL itself (v5.14): gathering evidence for an E-check is not an exemption, and a host-only read is NON-REPAIRABLE (it consumes no repair rounds — record once, mark persistent, carry to ACTION REQUIRED). Measured runs 35+36: both burned both repair rounds re-running all 27 checks against a breach no re-run could clear.**` — `grep` · repair (except a host-only read, which is record-only).
+- **E9** · Every finding that should become a real note went through the desk's `capture` tool (the call returned an id; on the desk route it is signed and indexed, so "a draft exists in the capture-inbox" applies only to a local-CLI capture), and every `cos-ops/` write this run is listed in the companion ledger — no orphan writes; **no write targeted `.brain/` or any path outside `cos-ops/` + `inbox/` + the engine's VM-writable drops (`$BRAIN_COS_OPS_DIR/drop/verdict-drop/` (shadow-ledger + behaviour-r<N> observation rows) and `drop/proposal-drop/` via `cos-propose` — the LATTER covers both `cos-propose --kind correction` and every ING-01 ingestion candidate, and NEVER `draft-capture` for an ingestion candidate); basename-only `drop/ingest-manifest/` writes are forbidden; the only `.brain/` reads are the VM-readable `$BRAIN_COS_OPS_DIR/shared/priority-map.md`, (v5.17) `shared/calibration-pin.json`, (v5.58, MAN-01) `shared/current-run.json` — the run's instruction sheet, which every artifact name in this ledger derives from — and (BAK-01, 2026-08-11) `shared/grounding-pack.md`, the host-rendered Internal-safe projection of the documents the 2026-08-10 cross-tier ruling raised out of this leg's reach: WITHOUT this read the raise simply removes 36 documents from grounding, since `.brain/` is excluded from indexing and `brain search` can therefore never return the pack — all four inside the documented host-writes/VM-reads `shared/` zone; `host/` is never touched — **including by the SELF-EVAL itself (v5.14): gathering evidence for an E-check is not an exemption, and a host-only read is NON-REPAIRABLE (it consumes no repair rounds — record once, mark persistent, carry to ACTION REQUIRED). Measured runs 35+36: both burned both repair rounds re-running all 27 checks against a breach no re-run could clear.**` — `grep` · repair (except a host-only read, which is record-only).
 - **E10** · Calibration footer present AND **(v5.27) a metrics row for THIS RUN exists** in `cos-ops/_cos_metrics.jsonl` — per-RUN, not merely per-DATE: the row carries `run` matching this run, and a run that appended none FAILs even when a sibling run wrote a row for TARGET DAY (the pre-v5.27 per-date wording is exactly what let run 34 mutate unreported on 2026-07-25). **(v5.27) LEDGER JOIN — the counters are checked against the ledgers, not merely present:** `drafts_created`/`marked`/`archived` equal THIS RUN's verified ledger rows per Disposition 4¾(a) (a `same-night-draft-verification`/`existing-draft-visible` row counted as a creation is a FAIL), AND the sum across every TARGET-DAY row equals the verified rows across every TARGET-DAY ledger. **A verified draft, mark, or archive ledgered for TARGET DAY that no metrics row accounts for is a FAIL** — repaired by the 4¾(c) `reconciliation: true` backfill, never by lowering the ledger count or by re-reporting a prior run's draft as tonight's. Measured: 2026-07-25 (1 ledgered `draft-saved-verified` + 9 verified marks vs `drafts_created: 0`/`marked: 0` on all three rows) and 2026-07-21 (181 ledgered verified archives + 26 verified marks vs `archived: 0`/`marked: 0`), both while the runs self-reported 27/27. **(v5.12)** that row carries `mutation_lane` (`rest`/`native-ui`/`none` — never absent, never null, on EVERY run including a fully-held one), `mutation_toolset`, and `lane_probe_errors`. **(v5.12.1)** The two-attempt obligation is NARROW: `lane_probe_errors` must hold **two** attempts for a lane ONLY when that lane was PROBED, its probe ERRORED, and NO lane was elected (`mutation_lane: "none"`) — that is the false-hold case the retry exists to prevent, and one attempt there is a FAIL. It does NOT bind on a run that successfully ELECTED a lane, and it does NOT bind on a STRUCTURALLY-UNAVAILABLE lane (no such capability on this browser surface), which is recorded once as `unavailable: <why>` — requiring a retry against a surface that does not exist fails a correct run (measured: run 33, `native-ui` elected on a clean proof, marked FAIL for not re-probing a REST lane this runtime never had). A row that omits the lane fields entirely remains a FAIL on every run, elected or held. **(v5.62, REP-02) AND A RERUN'S TWO ROWS ARE ONE CHAIN, NOT TWO ANSWERS:** `_cos_metrics.jsonl` is append-only and stays that way, so a corrected rerun under the SAME manifest appends its own row carrying `supersedes_run_ts` naming the earlier row's `run_ts` — **the row of record is the LATEST row for the run**, the superseded one stays in place and is reported, and the reconcile join counts it once. **A second row for one `(date, run)` that declares no `supersedes_run_ts`, or names a `run_ts` that key does not carry, is a FAIL** — two silent rows for one run leave every counter with two answers and no rule for choosing (measured run 111: a retracted `mail_triaged: 0` abort row standing as the record while the corrected 304/304 rerun's row could not be appended at all) — `script` · repair.
 - **E11** · Unattended-egress containment (EXFIL-04/06): on the cron path this run made **zero** live web-egress calls while private context was loaded (EXTERNAL SIGNAL / SUPERVISED FOLLOW-ONS are queued prompts, not fetched results); **every** Chrome navigation targeted an allowlisted mail host; no reply draft to an off-thread recipient; no queued prompt contains an `overlay/keywords/` internal term. (`brain --role vm` reads and draft-captures are local, not egress.) Any live web call, off-allowlist nav, off-thread draft, or leaked internal term is a FAIL; a missing ledger is a FAIL. **An owner risk-acceptance (Phase 0.5 step 5) covers capability PRESENCE only — a live web fetch/search call on the unattended path is a FAIL even with a valid acceptance on file.** Interactive path: supervised sweeps allowed, report `N/A (interactive)` — `read` · **action_required**.
 - **E12** · Trifecta preflight & outbound gate (AUT-02/03): the Phase 0.5 preflight ran and the companion carries the `Trifecta legs: …` proof line in either valid form — `preflight=PASS|HALT` or `preflight=PASS-WITH-ACCEPTANCE` (which additionally requires the Banner standing notice and an existing valid `cos-ops/_cos_risk_acceptance.md`) — silence = FAIL; the removed leg (E) made zero capability use; and no state-changing outbound was executed — any such action appears HELD, never done. **The two layers of Phase 0.5 step 5c apply here:** a valid acceptance covering a capability's PRESENCE (e.g. `calendar-connector-present-unattended`, which includes visible calendar-write tools) makes `PASS-WITH-ACCEPTANCE` the CORRECT verdict — presence-under-acceptance is never a FAIL and never forces a HALT; but any EXECUTION of a Layer-2 hard deny (mail send/delete/unread-touch, any calendar write, off-allowlist nav, off-thread-recipient draft) is a FAIL regardless of any acceptance record — `read` · **action_required**.
@@ -6377,7 +6478,7 @@ time and stays suppressed **until occurrences at least DOUBLE**, so the
 - Orchestrated skill: the workspace mail-triage skill (`outlook-second-brain-triage` or equivalent — six modes, safety rules, pairing ritual, draft-replies spec). Optional; when absent, Phase 1's three-tier invocation contract governs (v5.6) — COS runs the full triage standalone on its own doctrine if the ZERO-MUTATION LIVENESS PREFLIGHT is live, else degrades to read+draft-only.
 - Voice: the workspace **`voice` skill** (DRAFT + CHECK modes; the owner's self-contained voice bundle if uploaded, else the kernel voice skill reading `overlay/voice/`; neutral register if neither).
 - Overlay: `overlay/README.md` — the four-category schema (`brand/`, `people/`, `keywords/`, `voice/`), resolution order, starter scaffold; plus the `cos/` category this task reads (`priorities.md`, `auto-archive.md`, `drafts.md`, and — v5.37 — **`ingest.md`**, the ingest/no-ingest category taxonomy: template `overlay/template/cos/ingest.md`, spec `docs/cos-ingest-taxonomy.md`, shape-checked by `brain init --validate-overlay`).
-- Brain substrate: `AGENTS.md` (host/VM trust split §6, four interactions §5, retrieval discipline), `brain --help` (authoritative CLI contract), `brain --role vm dossier/search/bases-query/get/draft-capture`.
+- Brain substrate: `AGENTS.md` (host/VM trust split §6, four interactions §5, retrieval discipline), `brain --help` (authoritative CLI contract, HOST lane); the desk's `dossier`/`search`/`bases_query`/`get`/`capture` tools (Cowork lane — see the desk block at the top of this skill).
 - Ops files (all under `<brain-vault>/cos-ops/`): `_briefing_morning_*.html` · `_cos_nightly_*.md` · `_cos_metrics.jsonl` · `_cos_feedback.md` · `_cos_materials/` · `_harness_opex.jsonl` · `_skill_memory/` · `_recommendations_open.jsonl` · `_session_handoff.md` · `_cos_verdicts_<date>.jsonl` + `_cos_verdict_consumption_<date>.jsonl` (v5.29, § FEEDBACK LOOP) · `_cos_ingestion_ledger_<date>-run<N>.jsonl` (v5.36, Phase 1.6 rule 8 — the run-obligation proof E29 reads).
 - **v3.0 auto-archive promotion:** calibration record + owner risk-acceptance `<brain-vault>/.brain/cos-ops/evidence/s05-calibration.json` (CLASSIFIER-freeze source of truth: `classifier.bundle_version` vs this file's frontmatter `metadata.kernel_version` — guard condition 4. **(v5.17) WHERE guard 4 READS depends on the leg:** the HOST reads that canonical record; a **`--role vm` run reads the VM-readable projection `<brain-vault>/.brain/cos/shared/calibration-pin.json`** (published by `tools/cos_publish_pin.py` into the documented host-writes/VM-reads `shared/` zone, beside `priority-map.md`). Measured 2026-07-25 run 37: the canonical record sits at the LEGACY `cos-ops/evidence/` path, outside the engine's `.brain/cos/` tree and therefore in neither the host-private nor the VM-readable zone, while E9 permits the VM leg exactly one `.brain/` read — so guard 4 was **unsatisfiable without breaching E9**, auto-archive could never fire on the VM leg by construction, and every run reported `archived: 0` against a non-zero `would_archive_count`. Run 37 correctly refused the read and held. The projection is DERIVED, never a second source of truth: a missing, unreadable, or version-mismatched projection FAILS guard 4 and holds auto-archive exactly as an unreadable pin does — a stale projection is a HOLD, never a pass; `measurement.engine_version` is informational and never gates); reply-draft switch `overlay/cos/drafts.md` (`overlay_type: cos` + `setting: drafts`, `enabled: true|false`, ABSENT ⇒ true); kill switch / cap / scope override `overlay/cos/auto-archive.md` (`overlay_type: cos` + `setting: auto-archive`, `enabled: true|false` [+ `cap: <int>`] [+ `scope: p3-only|all-noise`, default `p3-only`] [+ `aged_read_lane: true|false`, ABSENT ⇒ true] [+ `aged_read_min_days: <int>`, ABSENT ⇒ 7] [+ **`any_sender_lane: shadow|live`, ABSENT ⇒ OFF (v5.1) — one of only TWO keys on this file that default absent-to-OFF rather than absent-to-on**] [+ `recurring_digest_supersession: true|false`, ABSENT ⇒ true (v5.4, Phase 1.5e)] [+ **`chip_reeval: shadow|live`, ABSENT ⇒ OFF (v5.5, Phase 1.5f) — the SECOND absent-to-OFF key, same convention as `any_sender_lane`**]); undo-canary record `cos-ops/_cos_undo_canary.json` (Phase 1.5 guard condition 5 — required before ANY auto-archive, either scope). Re-run calibration and edit Phase 1.5 to widen the guard further — never self-widen.
 - **v3.0 ingestion proposal engine (ING-01/02):** Phase 1.6 — extraction (decisions/commitments/positions/numbers, evidence-required, secret-scrubbed, classified most-restrictive-default, two-level deduped) staged via `brain --role vm cos-propose` (never `draft-capture`), reviewed by the owner as ONE batched inbox question via the s0e host broker (`docs/cos-ops.md` §2) — this skill never re-implements the broker and never signs a candidate itself.

@@ -17,8 +17,8 @@ the gate. See docs/operations/egress-provider-posture.md.
 """
 from __future__ import annotations
 
+import contextvars as _contextvars
 import json
-import threading as _threading
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -99,15 +99,45 @@ def apply_gate(
 # WHICH command and for whom. So the gate counts here and `brain.read_log`
 # flushes once per invocation — which means a content verb written next year
 # is covered the day it routes through apply_gate, exactly like the gate
-# itself. Thread-local because the MCP adapter serves calls concurrently.
+# itself.
+#
+# A ContextVar, NOT a threading.local(). The MCP adapter serves calls
+# concurrently, but its concurrency is ASYNCIO TASKS ON ONE THREAD: the
+# low-level server does `tg.start_soon(self._handle_message, ...)` per incoming
+# message (mcp 1.28.1, `mcp/server/lowlevel/server.py`). `threading.local()`
+# gives ZERO isolation between coroutines on the same thread: two overlapping
+# `tools/call` requests would share one tally, call B's reset zeroing call A's
+# counts mid-flight, and whichever finished first consuming the merged counts
+# while the other got `None` — a SEC-06 record reading `surfaced: 0` for a read
+# that surfaced Restricted content.
+#
+# STATE IT IN THE RIGHT TENSE, because the difference decides what a later
+# session may safely add: that corruption is LATENT TODAY, not observed. Every
+# tool the seam registers is a sync `def`, and mcp 1.28.1 runs a sync body
+# inline on the loop (`fastmcp/utilities/func_metadata.py:96`, `return
+# fn(**arguments_parsed_dict)` — the `await` is line 94, the async branch), so
+# there is no yield point anywhere between `mediate.__enter__` and
+# `mediate.__exit__` and two tasks cannot interleave inside it. Measured
+# 2026-08-28: with `threading.local()` restored, two REAL concurrent
+# `call_tool` coroutines still recorded correctly. The first `async def` seam
+# tool — or the first one offloaded to a thread — is what activates the hazard.
+# The storage is fixed NOW rather than then because that later session will not
+# be looking here, and because a ContextVar is per-TASK under asyncio/anyio
+# (each task runs in its own copied Context) AND per-thread (a new thread starts
+# from an empty Context), so it is strictly stronger than what it replaces at no
+# cost. Written prospectively by closed-stacks S02 after adversarial review
+# caught the original wording claiming an incident this surface cannot produce.
 # --------------------------------------------------------------------------
-_TALLY = _threading.local()
+_TALLY: _contextvars.ContextVar[dict[str, int] | None] = _contextvars.ContextVar(
+    "brain_egress_tally", default=None,
+)
 
 
 def _tally(surfaced: int, withheld: int) -> None:
-    cur = getattr(_TALLY, "counts", None)
+    cur = _TALLY.get()
     if cur is None:
-        cur = _TALLY.counts = {"gates": 0, "surfaced": 0, "withheld": 0}
+        cur = {"gates": 0, "surfaced": 0, "withheld": 0}
+        _TALLY.set(cur)
     cur["gates"] += 1
     cur["surfaced"] += surfaced
     cur["withheld"] += withheld
@@ -119,8 +149,8 @@ def take_tally() -> dict[str, int] | None:
     ``None`` when nothing gated — a status verb that returned no note bodies
     has nothing to log, and logging a zero would bury the real reads.
     """
-    cur = getattr(_TALLY, "counts", None)
-    _TALLY.counts = None
+    cur = _TALLY.get()
+    _TALLY.set(None)
     return cur
 
 

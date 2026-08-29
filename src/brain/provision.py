@@ -164,7 +164,7 @@ def _stage_model(vault: Path, src: Path) -> dict[str, Any]:
         return {"status": "copy-failed", "from": str(src), "error": str(exc)}
 
 
-def _stage_cowork_runtime(vault: Path, model_src: Path | None, *,
+def _stage_cowork_runtime(vault: Path, model_src: Path | None, workspace: Path, *,
                           runner: Callable[..., Any]) -> dict[str, Any]:
     """Assemble the VM-readable runtime (engine, per-arch ELFs, model, skills,
     routines, published snapshot) into the workspace.
@@ -177,7 +177,20 @@ def _stage_cowork_runtime(vault: Path, model_src: Path | None, *,
     that has no engine in it is exactly the defect this function exists to
     stop (measured 2026-08-17 on a newly provisioned vault: a Cowork session opened
     the folder and found `brain: command not found`).
+
+    ``workspace`` is the ATTACHED FOLDER and is passed to the installer as its
+    fourth argument. It is separate from ``vault`` because after the s07 cutover
+    they are separate places, and passing only the vault was a real hole, found
+    by peer review 2026-08-29: the installer puts its whole leak refusal behind
+    ``if [ -n "$4" ]``, so a three-argument call skipped the refusal AND took the
+    branch that assumes ``$VAULT/..`` is the attached folder. On a relocated
+    vault that stages the engine to ``<vault>/.brain`` --- off the mount, where
+    no Cowork sandbox can see it --- and then the stamp check below, which used
+    to look at that same wrong-side path, certified it as ``staged`` and let the
+    drain write a ``cowork-vm`` registry entry. That is verbatim the defect the
+    paragraph above says this function exists to stop.
     """
+    brain_dir = _staging_root(vault, workspace)
     if model_src is None:
         return {"status": "skipped", "reason": "no local model snapshot found"}
     from . import update as brain_update
@@ -195,7 +208,8 @@ def _stage_cowork_runtime(vault: Path, model_src: Path | None, *,
                 "reason": f"no Linux ELFs built in {dist} "
                           "(host: tools/build_brain_binary_linux.sh)"}
     try:
-        proc = runner([str(script), str(vault), str(model_src), str(dist)],
+        proc = runner([str(script), str(vault), str(model_src), str(dist),
+                       str(workspace)],
                       capture_output=True, text=True, timeout=_STAGE_TIMEOUT_S,
                       cwd=str(checkout))
     except Exception as exc:
@@ -207,7 +221,10 @@ def _stage_cowork_runtime(vault: Path, model_src: Path | None, *,
     # never by trusting the exit code alone: a `set -e` script can report 0
     # from a wrapper while an inner phase died, and the whole point of this
     # lane is that nothing downstream claims a capability it does not have.
-    stamp = vault / ".brain" / "engine" / "brain" / "_version.py"
+    # Verify the STAGING ROOT the installer actually wrote to, not `vault/.brain`
+    # --- on a relocated vault those are different directories, and checking the
+    # wrong one is a stamp that cannot fail.
+    stamp = brain_dir / "engine" / "brain" / "_version.py"
     if not stamp.is_file():
         return {"status": "failed", "exit": 0,
                 "reason": f"installer reported success but {stamp} is absent"}
@@ -254,6 +271,14 @@ def register_mcp(vault: Path, workspace: Path, *,
         return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
 
 
+def _staging_root(vault: Path, workspace: Path) -> Path:
+    """The relocation-aware ``.brain`` --- ``vault/.brain`` co-located, on the
+    mount once the vault moves. One resolver, shared with the installer."""
+    from .cowork_staging import staging_root
+
+    return staging_root(vault, workspace)
+
+
 def _provision_one(vault: Path, workspace: Path, *, entries: list[dict],
                    registered_vaults: set[Path],
                    registry_path: Path, lock_path: Path,
@@ -275,7 +300,7 @@ def _provision_one(vault: Path, workspace: Path, *, entries: list[dict],
     # publishes the snapshot, so the plain model copy + sync are the FALLBACK
     # for when it cannot run — never both.
     model_src = _find_model_source(vault, entries)
-    cowork = _stage_cowork_runtime(vault, model_src, runner=runner)
+    cowork = _stage_cowork_runtime(vault, model_src, workspace, runner=runner)
     res["cowork"] = cowork
     if cowork["status"] != "staged":
         res["model"] = (_stage_model(vault, model_src) if model_src
@@ -296,7 +321,7 @@ def _provision_one(vault: Path, workspace: Path, *, entries: list[dict],
     if cowork["status"] == "staged":
         workspaces.upsert_entry(
             str(vault), workspace_path=str(workspace), target="cowork-vm",
-            model_dir=str(vault / ".brain" / "model"),
+            model_dir=str(_staging_root(vault, workspace) / "model"),
             registry_path=registry_path, lock_path=lock_path)
         targets = "host + cowork-vm"
     # The MCP registration is what makes the vault reachable from the Desktop

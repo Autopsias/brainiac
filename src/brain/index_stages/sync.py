@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -37,14 +38,49 @@ def _clear_search_caches(index: Any) -> None:
     index._literal_text_cache.clear()
 
 
+def _announce_escalation(index: Any, reason: str, detail: str) -> None:
+    """Say — before it starts — that a `sync` has become a full rebuild.
+
+    This line is NOT gated on `progress_enabled()`, unlike the per-batch
+    heartbeat. A rebuild escalation is rare, is the most expensive thing this
+    engine does, and is a DECISION rather than a progress tick, so it is
+    announced even into a redirected launchd log.
+
+    Field cost (2026-08-26): a `sync` silently became a 9h45m rebuild of 2,959
+    notes. Nothing in any log said it had escalated or why. Three sessions read
+    the CPU-burning, byte-frozen process as a hang, and one recommended killing
+    it minutes before it succeeded.
+    """
+    print(
+        f"brain: sync ESCALATED to a full index rebuild ({reason}) — {detail}. "
+        f"Every note in {index.db_path} is re-embedded; on a large vault this "
+        "takes hours. Set BRAIN_PROGRESS=1 for per-batch progress.",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def _fallback_rebuild(
     index: Any, vault: Path, json_mode: bool
 ) -> dict[str, Any] | None:
     if not index._schema_ready():
+        from ..index._settings import SCHEMA_VERSION  # local: import cycle
+
+        _announce_escalation(
+            index, "no-schema",
+            f"index schema is {index.get_meta('schema_version')!r}, "
+            f"this engine needs {SCHEMA_VERSION!r}",
+        )
         result = index.rebuild(vault, json_mode=json_mode)
         result["mode"] = "rebuild(no-schema)"
         return result
     if not index.model_matches():
+        _announce_escalation(
+            index, "model-change",
+            f"index was built with {index.get_meta('embed_model')!r} "
+            f"(dim {index.get_meta('embed_dim')}), this process has "
+            f"{index.embedder.model_id!r} (dim {index.embedder.dim})",
+        )
         result = index.rebuild(vault, json_mode=json_mode)
         result["mode"] = "rebuild(model-change)"
         return result

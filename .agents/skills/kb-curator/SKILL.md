@@ -5,6 +5,88 @@ description: "Maintain a brain-substrate second-brain (plain Markdown + YAML und
 
 # kb-curator (brain-substrate kernel)
 
+<!-- BRAINIAC-DESK-BLOCK v1 -- BYTE-IDENTICAL in all 14 Cowork bundles.
+     Canonical copy: docs/operations/cowork-desk-block.md. Pinned by
+     tests/test_cowork_skill_bundles.py against the LIVE broker
+     (brain.mcp_adapter.TOOLS). Edit the canonical copy and every bundle in one
+     commit, never one bundle alone, and never to name a tool the broker does
+     not serve. -->
+
+## Cowork (VM leg) — the vault is served by the desk, not by this sandbox
+
+Reach the vault ONLY through the **desk**: the host-run `brainiac` MCP server,
+whose tools Claude Desktop announces into this session. Call the tool. Do not
+shell out for note content, and do not open a note file.
+
+| the CLI verb you know | the desk tool to call |
+|---|---|
+| `search`, `hybrid-search` | `search`, `hybrid_search` |
+| `get`, `read` | `get`, `read` |
+| `recent` | `recent` |
+| `dossier` | `dossier` |
+| `bases-query` | `bases_query` |
+| `grep` | `grep` |
+| `graph-expand` | `graph_expand` |
+| `vault-languages` | `vault_languages` |
+| `diagnose` | `diagnose` |
+| `alerts`, `exceptions`, `inbox` | `alerts`, `exceptions`, `inbox` |
+| `draft-capture` (stage an unsigned note) | `capture` |
+
+Those fifteen names are the whole desk, and they are the only route to note
+CONTENT this session may use. **"Not on the desk" is not the same as "refused
+here"**, and conflating the two is how a session talks itself into a workaround:
+measured 2026-08-28, nine of the CLI's 22 VM-allowed verbs have no desk tool
+(`brief`, `cos-propose`, `digest`, `doctor`, `draft-capture`, `init`,
+`mcp-config`, `provision-request`, `status`), and two desk tools (`inbox`,
+`vault_languages`) are not VM-allowed on the CLI at all. Of those nine, only
+`cos-propose` — the COS ingress nothing on the desk serves — and the staging
+probes below are still invoked locally by a shipped bundle, both deliberately.
+Every verb that COMMITS or rebuilds — `write`, `sync`, `maintain`, `rebuild`,
+`ingest`, `curate`, `health`, `integrity`, `verify-audit`, `graph-report` — is a
+HOST-broker privilege and is not available here at all. **Unless a line is
+explicitly marked as a Cowork instruction, a shell command anywhere else in this
+skill is a HOST-lane instruction**, correct on the owner's Mac and not this
+session's route.
+
+**Do NOT bootstrap a vault path, do NOT export one onto `PATH`, do NOT hunt for
+a staged binary to retry with, and do NOT open a note under `brain/` or `raw/`
+with `cat`, `ls`, `Read` or a glob.** That is a RULE, and until the vault
+actually moves off the mount it is the only thing standing between this session
+and the bypass this whole change exists to close. Stated exactly, because the
+two halves are true at different times:
+
+- **While a published snapshot is still on the mount** (every workspace
+  installed before the cutover), a staged engine CAN answer a local retrieval
+  verb from `<vault>/.brain/snapshot/` — measured 2026-08-28: a local `search`
+  at role `vm` returned the note body and exit 0 with the host index deleted,
+  because the
+  snapshot path is independent of it. Content that arrives that way skipped the
+  desk, and so skipped the classification egress record the desk writes. A read
+  that works is not a read you were allowed to make.
+- **Once the vault is off the mount**, the local retrieval verbs fail rather
+  than returning less — measured 2026-08-28: `search`, `get`, `recent` and
+  `grep` exit 3 with `OperationalError: unable to open database file`, and
+  `status --json` carries that same error in its `index` block. That is the desk
+  telling you to use it, not a broken install and not a host-only refusal.
+  **Not every surface is that loud**, so never read a quiet answer as an
+  answer: an EMPTY result and a `not-computed` status are also what you get from
+  a vault you cannot see. Only a hit you obtained through the desk is evidence.
+
+Either way the answer is the same: call the desk. And the desk itself has no
+offline substitute — it speaks stdio to the host process Claude Desktop spawned,
+so there is no endpoint in this sandbox to dial and nothing to fall back to.
+
+**The one local exception, and it returns no note.** If this workspace still
+carries a staged engine, its three staging probes — `brain --version`, `brain
+--role vm doctor`, `brain --role vm status --json` — read `.brain/` staging
+metadata: engine stamp, model cache, vendored-deps ABI, snapshot presence. Keep
+`--role vm` on them; without it the shell runs at role `host`, whose egress cap
+is the whole vault. Use them for staging questions only. Their absence is not a
+fault to fix, and none of the three is a way to reach a note.
+
+If you need something the desk does not serve, say so and stop. That is a
+finding for the engine, not a gap to work around.
+
 **This is the generic, brain-backed kernel version of kb-curator** — the
 maintenance brain for a `brain`-substrate second-brain (`AGENTS.md` /
 `docs/substrate-spec.md`). It works standalone against any vault that follows
@@ -21,11 +103,19 @@ this skill implements.
 
 ## Phase 0 — locate the vault and confirm it's brain-shaped
 
+**HOST LANE.** The fingerprint below lists two vault directories, so it only
+runs where the vault is on disk:
+
 ```bash
 export BRAIN_VAULT="${BRAIN_VAULT:-./vault}"
-ls "$BRAIN_VAULT/brain" "$BRAIN_VAULT/raw" >/dev/null 2>&1 \
+test -d "$BRAIN_VAULT/brain" && test -d "$BRAIN_VAULT/raw" \
   || { echo "Not a brain-substrate vault: $BRAIN_VAULT (expected brain/ and raw/)"; exit 1; }
 ```
+
+**Cowork lane:** never run that. Confirm the substrate through the desk instead
+— one `recent` call returning notes is the fingerprint, and a desk that answers
+at all is by definition pointed at a brain-substrate vault. If `recent` errors, report the
+desk as unreachable; do not go looking for the directories.
 
 If the fingerprint doesn't match, this skill refuses — it does not guess at a
 different substrate. (A project running FLAT or Obsidian/Smart-Connections
@@ -54,7 +144,7 @@ When a threshold trips, propose the corresponding mode — never auto-execute.
 |---|---|---|
 | `audit` | Cheap, frequent health check — index/snapshot/draft state + audit-chain integrity + a quick retrieval self-test | `brain health --json` (folds `status` + `verify-audit` + a probe search) |
 | `audit-near-dup` | Corpus-wide cosine near-duplicate scan over the real vector backend — **REPOINT of the old `.smart-env`-cosine contradiction lint (G1, already shipped)** | `brain integrity --json` |
-| `audit-orphans` | Notes with zero inbound wikilinks — the brain-substrate equivalent of "no Base type-binding and no link-in" | `python3 tools/validate.py "$BRAIN_VAULT" --backlinks`, then read `vault/brain/backlinks.md` and diff against every note id; any id absent from the backlinks targets is an orphan |
+| `audit-orphans` | Notes with zero inbound wikilinks — the brain-substrate equivalent of "no Base type-binding and no link-in" | HOST ONLY — `python3 tools/validate.py "$BRAIN_VAULT" --backlinks` regenerates `vault/brain/backlinks.md`, then diff its link targets against every note id; any id absent is an orphan. No desk equivalent (see `audit-orphans` below) |
 | `lint-stale` | Frontmatter/classification conformance — every note has the required keys (`id, title, type, classification, created, updated` for `brain/`; `id, type, classification, captured, origin, immutable` for `raw/`) | `brain bases-query --where type=note --json` (enumerate, then validate locally) cross-checked with `python3 tools/validate.py "$BRAIN_VAULT"` |
 | `refresh-index` | After a batch of writes — incremental reindex | `brain sync` (fast path) or `brain rebuild` (full rebuild, always safe) |
 | `propose-cleanup` | Surface candidate moves/merges without executing them | composes `audit-near-dup` + `audit-orphans` + `lint-stale` into one proposal; never writes |
@@ -114,6 +204,12 @@ both note paths so the next operator can inspect and decide.
 
 ## `audit-orphans`
 
+**HOST LANE ONLY, and there is no Cowork substitute.** `tools/validate.py` is a
+repo tool and `backlinks.md` is a vault file; a Cowork session has neither, and
+the desk serves notes one at a time rather than a whole-corpus backlink map. In
+a Cowork session, report that this mode needs the host and stop — do not
+approximate it by pulling notes one by one, and do not go looking for the file.
+
 ```bash
 python3 tools/validate.py "$BRAIN_VAULT" --backlinks
 ```
@@ -133,8 +229,8 @@ instead of a cold search.
 
 Two passes, both read-only:
 
-1. **Frontmatter conformance** — `python3 tools/validate.py "$BRAIN_VAULT"`
-   exits non-zero on any missing required key or an unrecognised
+1. **Frontmatter conformance (HOST ONLY)** — `python3 tools/validate.py
+   "$BRAIN_VAULT"` exits non-zero on any missing required key or an unrecognised
    `classification`. Per AGENTS.md §5, a note with a missing/unrecognised
    `classification` is already treated as MNPI and withheld at the egress
    gate — this check surfaces *why*, so it gets fixed rather than silently

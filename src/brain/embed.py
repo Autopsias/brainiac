@@ -150,9 +150,15 @@ class HashEmbedder:
     """
 
     model_id = "hash-v1"
+    # True ONLY when auto-selection degraded here because no real embedder was
+    # importable. An EXPLICIT `BRAIN_EMBEDDER=hash` leaves it False. The index
+    # reads this to decide whether stamping `hash-v1` is a choice or an
+    # accident (see `_SchemaMixin._create_schema`).
+    implicit_fallback = False
 
-    def __init__(self, dim: int = 384) -> None:
+    def __init__(self, dim: int = 384, *, implicit_fallback: bool = False) -> None:
         self.dim = dim
+        self.implicit_fallback = implicit_fallback
 
     def embed(self, text: str, *, is_query: bool = False) -> list[float]:
         vec = [0.0] * self.dim
@@ -295,7 +301,7 @@ def _implicit_hash_fallback() -> Embedder:
             f"Probe: {embedder_unavailable_reason()}"
         )
     print(_HASH_FALLBACK_MSG, file=sys.stderr, flush=True)
-    return HashEmbedder()
+    return HashEmbedder(implicit_fallback=True)
 
 
 def get_embedder(prefer: str = "auto") -> Embedder:

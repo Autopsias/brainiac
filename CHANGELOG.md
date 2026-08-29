@@ -6,6 +6,62 @@ are tagged `v<semver>` (e.g. `v0.9.0`) per `docs/adr/0001-publish-via-clean-room
 Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
+### Fixed
+- **A lane that loses its embedder can no longer poison the index.** On
+  2026-08-26 the COS nightly ran under `/opt/homebrew/bin/python3`, which has
+  no `onnxruntime`, so embedder auto-selection degraded to the non-semantic
+  `HashEmbedder` and its rebuild stamped `hash-v1` over a `BAAI/bge-m3-int8`
+  index. Semantic search ran on effectively random vectors for 36 minutes, and
+  the next `maintain` correctly spent 9h45m rebuilding 2,959 notes to undo it.
+  Three fixes, at three different depths:
+  - `_SchemaMixin._create_schema` now REFUSES to build an index when the
+    embedder is an implicit fallback, as its first statement — before its own
+    `DROP TABLE`s, so the index it protects survives the refusal.
+    `HashEmbedder` carries `implicit_fallback`, set only on the auto-degrade
+    path; `BRAIN_EMBEDDER=hash` remains an unaffected explicit escape hatch.
+  - The COS launchd job pins `COS_PYTHON` to the engine venv and sets
+    `BRAIN_REQUIRE_REAL_EMBEDDER=1`, which the `maintain` lane already had.
+    One interpreter for every host lane that writes the index.
+  - A `sync` that escalates to a full rebuild now SAYS SO before it starts,
+    naming the stored and live model and dim. The line is deliberately not
+    gated on `progress_enabled()`: an escalation is a decision, not a progress
+    tick, and the lane that needs it writes to a redirected log.
+- **A long rebuild is no longer silent under launchd.** `progress_enabled()`
+  requires a TTY, and launchd stderr is a log file, so the 9h45m run emitted
+  nothing at all and three sessions read it as a hang. `scripts/brain-brief.sh`
+  now sets `BRAIN_PROGRESS=1` on the `maintain` command alone — not in the
+  plist, where every spawned subprocess would inherit it.
+- **The writer lock no longer reports a holder that has exited.** The lockfile
+  record is written on acquire and never cleared: release unlocks the fd
+  without truncating, and a killed process never reaches release at all.
+  `_read_holder` now probes the recorded pid with `os.kill(pid, 0)` (Unix
+  only) and carries `alive`; `WriterLockBusy` says plainly when the named pid
+  is gone. The best-effort caveat is kept on every branch — a running pid is
+  still not proof that this pid holds this lock.
+- **Tests no longer leave lockfiles on the developer's machine.**
+  `host_lock_dir` resolves under `$BRAIN_INDEX_DIR` when set and the shared
+  app-data base otherwise, and a writer lock is released by unlocking the fd,
+  never by unlinking the file — so every test with a throwaway vault left one
+  behind for good. Measured 2026-08-27: 88,062 files, 225 MB, oldest
+  2026-08-01. The suite now REDIRECTS that one resolver to a session
+  directory rather than pinning `$BRAIN_INDEX_DIR` globally; pinning was tried
+  first and reverted, because it moves every test's index too and xdist
+  workers then share host state (`run_doctor` returned `ok: False` off a
+  sibling test's debris). Three details are load-bearing and each cost a gate
+  run to find:
+  - **Both bindings.** `config.py` re-exports `host_lock_dir` into its own
+    namespace. Same object, two module attributes; patching one leaves the
+    other on the real directory.
+  - **The real resolver stays reachable** as `_real_host_lock_dir`, because
+    `tests/test_cos_pathguard_locks.py` exists to verify that function's
+    fallback and its resolution-only contract — a guard that hides what it
+    guards turns those into tests of the stub.
+  - **A monkeypatch does not cross a process boundary.** A spawned child
+    inherits the environment, not a patched attribute, so
+    `test_concurrency.py` and `test_cowork_restage.py` pin their children's
+    `$BRAIN_INDEX_DIR` explicitly. Verified by measurement: 0 files added to
+    the live locks directory across a full parallel suite.
+
 
 ## [0.20.31] — 2026-08-27
 ### Security

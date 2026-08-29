@@ -23,22 +23,74 @@
 # (docs/operations/egress-provider-posture.md Leg 3).
 #
 # Usage:
-#   tools/cowork_workspace_install.sh <vault-dir> <model-cache-dir> [dist-dir]
+#   tools/cowork_workspace_install.sh <vault-dir> <model-cache-dir> [dist-dir] [workspace-dir]
 #
-#   <vault-dir>        the workspace vault/ (holds brain/ raw/)
+#   <vault-dir>        THE VAULT — the directory that holds brain/ and raw/.
+#                      This is what $1 has always meant; what changed (closed
+#                      stacks s07) is that it is no longer assumed to LIVE in
+#                      the attached workspace. Pass the vault wherever it is.
 #   <model-cache-dir>  a staged bge-m3-int8 snapshot (model_int8.onnx + tokenizer/config);
-#                      copied into .brain/model/
+#                      copied into the staging root's model/
 #   [dist-dir]         where the built ELFs live (default: dist/)
+#   [workspace-dir]    the folder a Cowork sandbox ATTACHES. Defaults to
+#                      "$VAULT/.." — which is what this script derived
+#                      unconditionally until s07, and is correct only while the
+#                      vault sits one level inside the workspace. Once the vault
+#                      moves off the mount (VULN-3385) the two are different
+#                      places and BOTH must be passed: the notes live off the
+#                      mount, the engine the VM executes stays on it.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-VAULT="${1:?usage: cowork_workspace_install.sh <vault-dir> <model-cache-dir> [dist-dir]}"
+VAULT="${1:?usage: cowork_workspace_install.sh <vault-dir> <model-cache-dir> [dist-dir] [workspace-dir]}"
 MODEL_SRC="${2:?missing <model-cache-dir>}"
 DIST="${3:-$REPO/dist}"
+WORKSPACE_ARG="${4:-}"
 
 VAULT="$(cd "$VAULT" && pwd)"
-BRAIN_DIR="$VAULT/.brain"
-mkdir -p "$BRAIN_DIR/bin" "$BRAIN_DIR/model" "$BRAIN_DIR/snapshot" \
+
+# The staging root, and the refusal, both come from brain.cowork_staging --- the
+# ONE relocation-aware resolver, shared with src/brain/update_channels.py. A
+# guard that lived only here would be walked straight past by /brainiac-update,
+# which reaches the Python staging path directly.
+#
+# When no <workspace-dir> is given the layout is the historical co-located one
+# and the answer is byte-identical to the "$VAULT/.brain" this script hardcoded,
+# so the common invocation neither changes behaviour nor gains an interpreter
+# dependency at this point in the run (HOST_PY is not resolved until much later).
+if [ -n "$WORKSPACE_ARG" ]; then
+  WORKSPACE_ROOT="$(cd "$WORKSPACE_ARG" && pwd)"
+  _STAGING_PY="${BRAIN_HOST_PY:-python3}"
+  if ! BRAIN_DIR="$(PYTHONPATH="$REPO/src" $_STAGING_PY -m brain.cowork_staging \
+        --vault "$VAULT" --workspace "$WORKSPACE_ROOT")"; then
+    echo "[install] REFUSED: staging into $WORKSPACE_ROOT would leave note bodies" >&2
+    echo "          inside a folder a Cowork sandbox reads with ordinary file tools." >&2
+    exit 2
+  fi
+else
+  WORKSPACE_ROOT="$(cd "$VAULT/.." && pwd)"
+  BRAIN_DIR="$VAULT/.brain"
+fi
+
+# Where the read-only snapshot is published. Co-located: unchanged, inside the
+# staging root. RELOCATED: the snapshot is a full note-body corpus (measured on
+# the live mount 2026-08-29: 3105 notes carry a non-empty body, recoverable with
+# `strings` alone), so publishing it under the attached folder would re-open
+# VULN-3385 on the same day the vault left. $BRAIN_SNAPSHOT_DIR already exists
+# as config.snapshot_dir()'s override; require it rather than inventing a path.
+if [ "$BRAIN_DIR" = "$VAULT/.brain" ]; then
+  SNAPSHOT_DEST="$BRAIN_DIR/snapshot"
+else
+  if [ -z "${BRAIN_SNAPSHOT_DIR:-}" ]; then
+    echo "[install] FATAL: the vault is not inside $WORKSPACE_ROOT, so the published" >&2
+    echo "          snapshot must not go there --- it carries every note body." >&2
+    echo "          Set \$BRAIN_SNAPSHOT_DIR to a host-only directory and re-run." >&2
+    exit 1
+  fi
+  SNAPSHOT_DEST="$BRAIN_SNAPSHOT_DIR"
+fi
+
+mkdir -p "$BRAIN_DIR/bin" "$BRAIN_DIR/model" "$SNAPSHOT_DEST" \
          "$BRAIN_DIR/capture-inbox" "$BRAIN_DIR/skills" "$BRAIN_DIR/routines"
 
 # (a) the engine, ZERO-INSTALL by default: the brain package is pure Python
@@ -230,8 +282,8 @@ if ! PYTHONPATH="$REPO/src" "$HOST_PY" -m brain.cli sync; then
   echo "[install]   sync failed (index missing/corrupt beyond sync's own guard) — falling back to full rebuild" >&2
   PYTHONPATH="$REPO/src" "$HOST_PY" -m brain.cli rebuild
 fi
-PYTHONPATH="$REPO/src" "$HOST_PY" -m brain.cli snapshot --dest "$BRAIN_DIR/snapshot" \
-  --json | tee "$BRAIN_DIR/snapshot/export-snapshot.json"
+PYTHONPATH="$REPO/src" "$HOST_PY" -m brain.cli snapshot --dest "$SNAPSHOT_DEST" \
+  --json | tee "$SNAPSHOT_DEST/export-snapshot.json"
 
 # (c1b) EXC-03: stage the pinned verification identity (public key +
 # vault_id) the Cowork VM's `brain --role vm alerts` checks the signed
@@ -356,7 +408,9 @@ done
 #     message), unchanged from before
 echo "[install] conventions contract -> $BRAIN_DIR/AGENTS.md"
 cp -f "$REPO/AGENTS.md" "$BRAIN_DIR/AGENTS.md"
-WORKSPACE_ROOT="$(cd "$VAULT/.." && pwd)"
+# WORKSPACE_ROOT is resolved once, at the top of this script --- it may be
+# PASSED as $4 rather than derived from the vault's parent. Re-deriving it here
+# is exactly what made this file assume the vault lives inside the mount.
 # The contract must be INLINED (verified 2026-07-20: Cowork auto-loads a
 # workspace-root CLAUDE.md but does NOT expand @-imports). Three cases:
 #   1. CLAUDE.md carries a BRAIN-CONTRACT marker block → re-sync just the

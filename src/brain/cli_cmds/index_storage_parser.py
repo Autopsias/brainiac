@@ -116,7 +116,25 @@ def _add_project(sub) -> None:
     sp.add_argument("--json", action="store_true")
 
 
+def _add_authorize_original(sub) -> None:
+    sp = sub.add_parser(
+        "authorize-original",
+        help=(
+            "HOST-only: resolve one archived original to its REAL tier (the maximum "
+            "over every note citing it) and record the authorisation before printing it "
+            "— one full vault scan per call, measured 6.1-17.0s on a 3,046-note vault, "
+            "so expect silence for that long before any output"
+        ),
+    )
+    sp.add_argument(
+        "path",
+        help="the original, absolute or vault-relative (raw/originals/<date>-<slug>/<file>)",
+    )
+    sp.add_argument("--json", action="store_true")
+
+
 def add_parser(sub) -> None:
+    _add_authorize_original(sub)
     _add_draft_capture(sub)
     _add_rebuild(sub)
     _add_warmup(sub)

@@ -313,7 +313,53 @@ def _run_project(args, ctx) -> int:
     return 0
 
 
+def _run_authorize_original(args, ctx) -> int:
+    """Decide whether ONE archived original may be disclosed, and record it.
+
+    Prints nothing about the file until :func:`brain.originals_resolve.authorize`
+    has confirmed its authorisation record reached disk — the path and the
+    resolved tier ARE the released decision here, so they are what the record
+    gates. A refusal (unresolvable, orphaned, unlabelled owner, owners
+    disagreeing on letter case, unrecorded) exits 1 and names the
+    machine-readable reason — and names the caller's OWN reference in its
+    detail, never the resolved path, because a refusal precedes any record.
+    """
+    from ..originals_resolve import AUTHORIZE_CMD, DisclosureRefused, authorize
+
+    try:
+        auth = authorize(ctx.core.vault, args.path, role=ctx.role)
+    except DisclosureRefused as exc:
+        _emit(
+            {"authorized": False, "reason": exc.reason, "detail": exc.detail}
+            if args.json
+            else f"refused ({exc.reason}): {exc.detail}",
+            args.json,
+        )
+        return 1
+    res = auth.resolution
+    if args.json:
+        _emit(auth.to_dict(), True)
+    else:
+        owners = ", ".join(f"{o.id} [{o.classification}]" for o in res.owners)
+        _emit(
+            None,
+            False,
+            f"authorized: {res.rel}\n"
+            f"  tier:    {res.tier} (maximum over {len(res.owners)} owning note(s): {owners})\n"
+            f"  record:  {auth.outcome} as {AUTHORIZE_CMD} — this AUTHORISES a disclosure, "
+            "it does not perform one\n"
+            f"  ceiling: {auth.ceiling_case}\n"
+            "  disclosure: this decision is NOT a licence to send the file anywhere. "
+            "The resolved tier says what the document IS, never where it may go — "
+            "`docs/harness-allowlist.json` caps a PENDING harness at a "
+            "sensitive-tier-free projection, and `brain project` copies NOTES only, "
+            "never files out of raw/originals/",
+        )
+    return 0
+
+
 _HANDLERS = {
+    "authorize-original": _run_authorize_original,
     "draft-capture": _run_draft_capture,
     "rebuild": _run_rebuild,
     "warmup": _run_warmup,

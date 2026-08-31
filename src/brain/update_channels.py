@@ -8,6 +8,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
+from .cowork_snapshot_guard import snapshot_lands_on_the_mount
 from .doctor import (
     CHANNEL_EDITABLE,
     CHANNEL_PIP_USER,
@@ -250,13 +251,33 @@ def stage_engine_and_skills(
 
 
 def _workspace_sync(
-    run: Runner, brain_bin: Path, vault_path: str
+    run: Runner, brain_bin: Path, vault_path: str, snapshot_dir: str = ""
 ) -> "subprocess.CompletedProcess[str] | None":
-    """The workspace's real sync, or ``None`` when it outran its bound."""
+    """The workspace's real sync, or ``None`` when it outran its bound.
+
+    ``snapshot_dir`` comes from the REGISTRY, not from the ambient environment.
+    This call used to pass ``BRAIN_VAULT`` and nothing else, so
+    ``config.snapshot_dir()`` fell back to ``<vault>/.brain/snapshot`` on every
+    update while ``tools/cowork_workspace_install.sh`` had honoured whatever
+    ``$BRAIN_SNAPSHOT_DIR`` was set in the installing operator's shell. The two
+    lanes then published to two different directories, and the VM went on
+    reading a snapshot frozen at install day with nothing reporting it. Empty
+    means "the engine default", which is what every co-located workspace wants
+    and is byte-identical to the old behaviour.
+    """
+    env = {**os.environ, "BRAIN_VAULT": vault_path}
+    if snapshot_dir:
+        env["BRAIN_SNAPSHOT_DIR"] = snapshot_dir
+    else:
+        # An INHERITED $BRAIN_SNAPSHOT_DIR is not this workspace's snapshot dir.
+        # `brain update` walks every registered workspace in one process; a
+        # value left in the operator's shell would redirect all of them into one
+        # directory, and each would overwrite the last.
+        env.pop("BRAIN_SNAPSHOT_DIR", None)
     try:
         return run(
             [str(brain_bin), "sync", "--publish"],
-            env={**os.environ, "BRAIN_VAULT": vault_path},
+            env=env,
             timeout=WORKSPACE_SYNC_TIMEOUT_S,
         )
     except subprocess.TimeoutExpired:
@@ -276,6 +297,12 @@ def _sync_timeout_result(workspace_path: str, target: Any) -> dict:
             "this workspace with tools/cowork_workspace_install.sh"
         ),
     }
+
+
+def _failed(workspace_path: str, target: Any, reason: str) -> dict:
+    """One shape for every failure row this restage can produce."""
+    return {"workspace_path": workspace_path, "target": target,
+            "status": "failed", "reason": reason}
 
 
 def _restage_cowork_workspace(
@@ -313,19 +340,10 @@ def _restage_cowork_workspace(
             model_source=model_source,
         )
     except (OSError, RuntimeError) as exc:
-        return (
-            {
-                "workspace_path": workspace_path,
-                "target": target,
-                "status": "failed",
-                "reason": (
-                    "engine/model/skill re-stage failed: "
-                    f"{type(exc).__name__}: {exc}"
-                ),
-            },
-            model_source,
-            model_source_error,
-        )
+        return (_failed(workspace_path, target,
+                        "engine/model/skill re-stage failed: "
+                        f"{type(exc).__name__}: {exc}"),
+                model_source, model_source_error)
     failure = None
     if not stage_info["version_ok"]:
         failure = (
@@ -336,31 +354,24 @@ def _restage_cowork_workspace(
     elif not stage_info.get("binaries_ok", True):
         failure = stage_info["binaries_detail"]
     if failure is not None:
-        return (
-            {
-                "workspace_path": workspace_path,
-                "target": target,
-                "status": "failed",
-                "reason": failure,
-            },
-            model_source,
-            model_source_error,
-        )
+        return (_failed(workspace_path, target, failure),
+                model_source, model_source_error)
     if stage_info["skills_shipped"] == 0:
-        return (
-            {
-                "workspace_path": workspace_path,
-                "target": target,
-                "status": "failed",
-                "reason": (
-                    f"no .skill bundles found in {stage_info['skills_src_dir']} "
-                    "to refresh — run tools/package_clients.py in the checkout"
-                ),
-            },
-            model_source,
-            model_source_error,
-        )
-    sync_out = _workspace_sync(run, brain_bin, vault_path)
+        return (_failed(workspace_path, target,
+                        f"no .skill bundles found in {stage_info['skills_src_dir']} "
+                        "to refresh — run tools/package_clients.py in the checkout"),
+                model_source, model_source_error)
+    snap = entry.get("snapshot_dir", "") or ""
+    on_mount = snapshot_lands_on_the_mount(snap, vault_path, workspace_path)
+    if on_mount is not None:
+        return (_failed(workspace_path, target,
+                        f"refusing to publish: the snapshot would land at "
+                        f"{on_mount}, inside the attached Cowork workspace "
+                        f"{workspace_path}. It carries every note body. Point "
+                        "the registry entry's snapshot_dir at a host-only "
+                        "directory and re-run."),
+                model_source, model_source_error)
+    sync_out = _workspace_sync(run, brain_bin, vault_path, snap)
     if sync_out is None:
         timed_out = _sync_timeout_result(workspace_path, target)
         return timed_out, model_source, model_source_error

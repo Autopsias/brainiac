@@ -8,7 +8,7 @@ from .. import classification as cls
 def _add_draft_capture(sub) -> None:
     sp = sub.add_parser(
         "draft-capture",
-        help="VM-side capture: stage a candidate note as a plain DRAFT (no sign, no index, no WAL) for the host to drain later",
+        help="VM-side capture: stage a candidate note as a plain DRAFT (no sign, no index, no WAL) for the host to drain later. To UPDATE an existing note in place (UPD-01), give the draft the SAME id plus two frontmatter keys: `updates: <id>` and `base_sha256: <the sha256 `brain get` returned for the version you read>` — accepted only when the live note is untrusted-lane-authored and under brain/; a host-authored target needs the owner (`brain write`), and a base mismatch refuses as stale-base",
     )
     sp.add_argument(
         "--id", default=None, help="note id (default: from frontmatter or content hash)"

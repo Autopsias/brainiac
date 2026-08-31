@@ -6,7 +6,61 @@ are tagged `v<semver>` (e.g. `v0.9.0`) per `docs/adr/0001-publish-via-clean-room
 Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
+
+## [0.20.33] — 2026-08-31
+### Added
+- **One command wires a whole vault: `brain provision-local <vault> --workspace
+  <dir> [--model-dir <model>]`.** It performs all six wires an operator
+  previously ran by hand --- `brain init --full --apply`, workspace staging, the
+  host registry row, the cowork-vm registry row, the `brain-mcp` Claude Desktop
+  entry, and `<workspace>/deliverables` merged into the nightly job's
+  `BRAIN_WORKSPACE_SWEEP_DIRS`. It is CONVERGENT, not short-circuited: a second
+  run on a fully wired vault changes nothing and prints `already wired` per
+  wire, and a run on a HALF-wired vault completes only what is missing. It
+  exits non-zero naming the wire that failed, and runs every wire before
+  reporting rather than stopping at the first. The drain path keeps its own
+  `already-registered` short-circuit --- the drain is not a repair path.
+- **`brain doctor` carries a non-gating `vault wiring` row per registered
+  vault**, and `brain alerts` surfaces the count, so a half-wired vault is
+  visible without running the provisioner to find out.
+- **`config.nightly_plist_path(vault)`** --- one resolver for the nightly
+  launchd plist, honouring `$BRAIN_LAUNCH_AGENTS_DIR`, used by the provisioner
+  and the doctor alike so tests never touch the owner's real `LaunchAgents`.
+- **A Cowork VM can update its own notes in place (UPD-01)**, through the same
+  audited draft path; a refused draft now says so instead of failing silently.
+
+### Security
+- **The CLI leg's SEC-06 read record fails closed (VULN-3385, A-05).** A host
+  read whose access record could not be written previously returned the notes
+  anyway --- the broker leg dropped that swallow in 0.20.32, the CLI leg kept
+  it, and the CLI is the leg the docs point every session at and the one the
+  nightly job runs. The CLI streams to stdout and cannot un-print, so gated
+  output is now HELD until the record is written, then released --- or
+  discarded, with exit code **5** and a message naming the cause. Only output
+  emitted after the classification gate has fired is held, so `maintain`,
+  `rebuild` and `doctor` stream exactly as before. `BRAIN_READ_LOG=0` remains a
+  deliberate opt-out and still answers normally.
+- **Both broker egress leaks closed, and the full-vault ceiling stays
+  (owner option A).** `get`/`read` return the absent-shaped egress report
+  whenever nothing surfaced, so a clamped caller cannot tell a withheld id from
+  a missing one; `vault_languages` now gates its note list, leaves a read
+  record, and counts only admitted notes.
+- **VULN-3385 is recorded as MITIGATED, not closed**, with the residuals stated
+  plainly in `docs/security-acceptances.md` A-05 and
+  `docs/security/vuln-3385-risk-reduction.md`.
+
 ### Fixed
+- **`brain doctor`'s Cowork rows follow a vault that moved off the mount.**
+  Three separate rows built their paths as `<vault>/.brain/...`, which is wrong
+  once a vault is relocated off the Cowork mount, and each failed differently:
+  the two staging rows reported a false `stale` and exited 1 on a correctly
+  wired vault (the relocation-aware replacements existed in `vmstaging.py` but
+  the facade still re-exported the old pair, so the fixed code was never run);
+  the cp310/cp311 vendor ABI row simply VANISHED, because `is_dir()` was False
+  and a missing row looks exactly like a healthy one. All three now resolve
+  through `cowork_staging.staging_root`, the one relocation-aware resolver.
+- **The Cowork leak scan cannot hang, and the publish guard asks the engine
+  (CUT-03).**
 - **A lane that loses its embedder can no longer poison the index.** On
   2026-08-26 the COS nightly ran under `/opt/homebrew/bin/python3`, which has
   no `onnxruntime`, so embedder auto-selection degraded to the non-semantic

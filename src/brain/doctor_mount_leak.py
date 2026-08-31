@@ -30,6 +30,25 @@ SURFACE = "Cowork workspace note-body leak (VULN-3385)"
 # so an operator running the check deliberately can scan without a clock.
 _SCAN_BUDGET_SECONDS = float(os.environ.get("BRAIN_MOUNT_SCAN_BUDGET", "20"))
 
+
+
+def _effective_budget() -> float | None:
+    """The budget the scan actually gets. ZERO OR LESS MEANS NO BUDGET.
+
+    That is the whole point of the override, and it did not work: the raw value
+    read as `time.monotonic() + 0`, a deadline already in the past, so
+    `BRAIN_MOUNT_SCAN_BUDGET=0` made the scan raise INSTANTLY --- the exact
+    opposite of "scan without a clock", and it was the command the timeout
+    row's own remediation was about to hand the operator. Caught by RUNNING
+    that remediation before shipping it, 2026-08-29.
+
+    Read at CALL time from the one knob, deliberately. A second module-level
+    constant holding the derived value meant `_SCAN_BUDGET_SECONDS` could be
+    set and have no effect --- which is exactly what an override, and a test,
+    reach for.
+    """
+    return _SCAN_BUDGET_SECONDS if _SCAN_BUDGET_SECONDS > 0 else None
+
 # KNOWN LIMIT, stated rather than left to be discovered: the budget is checked
 # between DIRECTORIES of the outer walk. `_has_text`, `_zone_yields_bodies` and
 # `_scan_deliverables_shelf` each run their own sub-walk with no deadline, so a
@@ -37,6 +56,17 @@ _SCAN_BUDGET_SECONDS = float(os.environ.get("BRAIN_MOUNT_SCAN_BUDGET", "20"))
 # makes a SLOW row, not a hang --- the outer walk still stops at the next
 # directory boundary. Raised by llm-review-high 2026-08-29 and NOT measured on a
 # real mount, so it is recorded as an unquantified limit, not a fixed defect.
+#
+# UPDATED 2026-08-30: after the filename suffix stopped being a gate, the
+# DOMINANT unbudgeted cost is no longer any of those three. `_scan_note_dumps`
+# now opens every file in a directory until one matches, and `_sqlite_candidates`
+# stats every file, so a single directory with a very large file count carries
+# its row arbitrarily far past the budget on its own. The same change made a
+# non-regular file able to block the scan outright; that one IS fixed, by the
+# `S_ISREG` check in `_is_note_file`, and pinned by
+# `tests/test_cowork_leak_scan_note_dumps.py::test_a_fifo_in_the_workspace_does_not_hang_the_scan`.
+# The per-directory cost stays an unquantified limit, for the same reason as
+# above: it has not been measured on a real mount.
 
 # Only a scan that RAN OUT of budget is remembered, and only for this long. The
 # reason is narrow: `run_doctor` is called once per `maintain`, so a test (or a
@@ -59,7 +89,7 @@ def _scan_once(ws: str) -> list:
     if hit is not None and (time.monotonic() - hit[0]) < _SCAN_TTL_SECONDS:
         raise hit[1]
     try:
-        return recoverable_artifacts(ws, budget_seconds=_SCAN_BUDGET_SECONDS)
+        return recoverable_artifacts(ws, budget_seconds=_effective_budget())
     except ScanBudgetExceeded as exc:
         _scan_cache[ws] = (time.monotonic(), exc)
         raise
@@ -116,6 +146,49 @@ def _workspaces(registry_entries: list[dict[str, Any]]) -> list[tuple[str, bool]
     return [(ws, relocated[ws] and known[ws]) for ws in order]
 
 
+def _unfinished_scan_row(ws: str, cut_over: bool, surface: str, _row):
+    """The row for a scan that ran out of budget and found NOTHING."""
+    from .doctor import MANUAL_REQUIRED, NOT_DETECTABLE
+
+    # ON A CUT-OVER FOLDER THIS SCAN *IS* THE GATE. The STALE row
+    # below is the whole "keep it off" property, and it can only be
+    # raised by a scan that FINISHES --- so a scan that never
+    # finishes silently disarms the one control this session
+    # exists to install. Measured on the live host 2026-08-29,
+    # before the sniff was parallelised: the freshly cut-over,
+    # genuinely clean workspace reported exactly this row, and a
+    # `not-detectable` grey dash is what an operator scrolls past.
+    #
+    # It still must not GATE: an unfinished scan is not evidence of
+    # a leak, and failing the run on "I could not tell" is the
+    # false-positive that teaches people to bypass the check.
+    # `manual-required` is the honest middle --- visible, carrying
+    # the command that answers it, and non-gating.
+    #
+    # Before the cutover the same timeout stays `not-detectable`:
+    # there the finding is VULN-3385 itself, already reported in
+    # full by the other rows, so a second actionable line would be
+    # noise about something nothing can clear except the cutover.
+    return _row(
+        surface,
+        MANUAL_REQUIRED if cut_over else NOT_DETECTABLE,
+        f"scan did not finish within {_SCAN_BUDGET_SECONDS:.0f}s "
+        "— this is NOT an all-clear"
+        + (", and on a cut-over workspace it means the keep-it-off "
+           "gate could not run" if cut_over else "")
+        + "; re-run `brain doctor` when the disk is quiet, or scan "
+          "this folder directly",
+        remediation=(
+            "scan it directly with no clock: "
+            f"BRAIN_MOUNT_SCAN_BUDGET=0 brain doctor  (or raise "
+            f"BRAIN_MOUNT_SCAN_BUDGET above {_SCAN_BUDGET_SECONDS:.0f}). "
+            "A scan that cannot finish leaves the VULN-3385 "
+            "keep-it-off gate unarmed on this folder."
+        ) if cut_over else None,
+        raw={"workspace_path": ws, "cut_over": cut_over,
+             "scan_complete": False, "artifacts": []})
+
+
 def check_cowork_mount_leak(registry_entries: list[dict[str, Any]]) -> list[dict]:
     """One row per registered Cowork workspace folder.
 
@@ -160,13 +233,7 @@ def check_cowork_mount_leak(registry_entries: list[dict[str, Any]]) -> list[dict
             # an all-clear is the "clean because the input was empty" bug this
             # whole module exists to prevent.
             if not exc.found:
-                rows.append(_row(
-                    surface, NOT_DETECTABLE,
-                    f"scan did not finish within {_SCAN_BUDGET_SECONDS:.0f}s "
-                    "— this is NOT an all-clear; re-run `brain doctor` when the "
-                    "disk is quiet, or scan this folder directly",
-                    raw={"workspace_path": ws, "cut_over": cut_over,
-                         "scan_complete": False, "artifacts": []}))
+                rows.append(_unfinished_scan_row(ws, cut_over, surface, _row))
                 continue
             leaks = exc.found
             partial = True

@@ -182,6 +182,37 @@ def _add_provision_drain(sub) -> None:
     sp.add_argument("--json", action="store_true")
 
 
+def _add_provision_local(sub) -> None:
+    # `help=` reaches `brain --help`, `description=` reaches
+    # `brain provision-local --help`; the macOS sentence has to be on both.
+    blurb = ("HOST-broker: wire ONE vault end to end in a single command — "
+             "init --full --apply, the Cowork workspace staging, the host and "
+             "cowork-vm registry rows, this vault's Claude Desktop MCP entry, "
+             "and <workspace>/deliverables as a nightly sweep source. "
+             "Check-then-act per wire, so re-running repairs a half-wired "
+             "vault and changes nothing on a wired one. `already wired` is a "
+             "macOS property: off macOS there is no launchd job to ask about, "
+             "so wire 1 re-runs the (idempotent) init on every run instead of "
+             "reporting `already`")
+    sp = sub.add_parser("provision-local", help=blurb, description=blurb)
+    sp.add_argument("vault_path", nargs="?", default=None, metavar="VAULT",
+                    help="the vault to wire (default: --vault / $BRAIN_VAULT)")
+    sp.add_argument("--workspace", required=True,
+                    help="the folder Cowork attaches (created if absent); the "
+                         "staging target and the parent of the swept "
+                         "deliverables/ folder")
+    sp.add_argument("--model-dir", default=None,
+                    help="an existing bge-m3-int8 snapshot to stage from. "
+                         "Default: one found in this or a registered vault — "
+                         "on a NEW computer there is none and the Cowork half "
+                         "(wires 2 and 4) fails until you pass this")
+    sp.add_argument("--snapshot-dir", default=None,
+                    help="where the read-only published snapshot goes "
+                         "(default: <vault>/.brain/snapshot). Must be off the "
+                         "attached folder; the installer refuses otherwise")
+    sp.add_argument("--json", action="store_true")
+
+
 def add_parser(sub) -> None:
     _add_init(sub)
     _add_doctor(sub)
@@ -191,3 +222,4 @@ def add_parser(sub) -> None:
     _add_mcp_config(sub)
     _add_provision_request(sub)
     _add_provision_drain(sub)
+    _add_provision_local(sub)

@@ -315,6 +315,23 @@ def nightly_label(vault: str | os.PathLike[str] | None = None) -> str:
     return f"com.brainiac.nightly.{vault_slug8(vault)}"
 
 
+def nightly_plist_path(vault: str | os.PathLike[str] | None = None, *,
+                       launch_agents_dir: str | os.PathLike[str] | None = None) -> Path:
+    """Where this vault's nightly launchd plist is INSTALLED (macOS).
+
+    THE one resolver. ``scripts/install-brief-mac.sh`` writes the file and
+    reads the same ``$BRAIN_LAUNCH_AGENTS_DIR`` override, so a test (or a
+    sandboxed install) that redirects one redirects both --- without it a test
+    that merges a sweep dir would read, back up and rewrite the developer's
+    REAL LaunchAgents plist. ``launch_agents_dir=`` is the injected form for
+    callers that already hold the directory (``brain provision-local``).
+    """
+    base = launch_agents_dir or os.environ.get("BRAIN_LAUNCH_AGENTS_DIR")
+    root = (Path(base).expanduser() if base
+            else Path.home() / "Library" / "LaunchAgents")
+    return root / f"{nightly_label(vault)}.plist"
+
+
 # --------------------------------------------------------------------------
 # workspace runtime locations (S06 — Cowork-Windows workspace-install path)
 # --------------------------------------------------------------------------

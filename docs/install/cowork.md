@@ -11,40 +11,179 @@ whole page before assuming Cowork can do what the host clients do. Full matrix:
 `AGENTS.md` §6 (Host / VM trust split); the CLI-level guarantee (code + tests):
 `docs/cowork-windows-install.md`.
 
-> **What that guarantee does and does not cover (VULN-3385, 2026-08).** It binds
-> the `brain` COMMAND, not the SESSION. Cowork attaches the workspace folder to
-> its VM read-write over VirtioFS, so the session can read any vault file with
-> ordinary file tools — every tier, bypassing the classification gate — and can
-> write into `vault/` without going through the draft-approval path. A
+> **VULN-3385 (2026-08) — MITIGATED 2026-08-30, the finding stays OPEN at
+> reduced severity. This is NOT a closure.** Full record, tests and residual:
+> `docs/security/vuln-3385-risk-reduction.md`; the register entry:
+> `docs/security-acceptances.md` A-05.
+>
+> **What was wrong.** The guarantee above bound the `brain` COMMAND, not the
+> SESSION. Cowork attached the vault folder itself to the VM, read-write, over
+> VirtioFS — so the session could read any vault file with ordinary file
+> tools, every tier, bypassing the classification gate entirely and leaving no
+> record, and could write into `vault/` with no draft-approval path at all. A
 > penetration test demonstrated exactly this: asked for a simple search, the
 > agent skipped the CLI and read a Restricted note straight off disk.
 >
-> This is a documented limit, not a defect to be patched at the CLI: the gate
-> is an **egress decision, not containment** (`brain/egress.py`), and "the model
-> will cooperate" is not a control. Attaching a read-only folder does not close
-> it either — read-only is enforced only on Claude's own file tools, never on
-> shell commands, and it never blocked reads in the first place.
+> **What changed (Closed Stacks, 2026-08-27 → 2026-08-30).** The vault itself
+> no longer sits on anything Cowork attaches. The registered workspace
+> (`~/CoworkWorkspaces/<name>`) carries the staged engine, model cache, skills
+> and routines — no vault tree, no published snapshot, no derived index, no
+> note body recoverable by path, glob or content search (re-measured this
+> session: `tests/test_direct_file_read_relocated.py` +
+> `tests/test_cowork_staging_off_the_mount.py`, 55/55 passed). Every
+> VAULT-NOTE verb (`search`, `hybrid-search`, `get`, `read`, `recent`,
+> `bases-query`, `dossier`, `grep`, `graph-expand`, `diagnose`) now reaches the
+> vault only through the host `brain-mcp` broker, which applies the same
+> classification filter as the CLI and writes an audit record **before** it
+> returns content — and now does so **fail-closed**: a call whose record
+> cannot be written raises instead of handing back the note (re-measured this
+> session: `tests/test_mcp_broker_seam.py` + `tests/test_mcp_tool_surface.py`,
+> 83/83 passed). Before this plan, the adapter's own record-write path read
+> `except Exception: pass  # never let logging fail a read` — a read whose
+> record failed to write still succeeded, silently. That line is gone.
 >
-> Real containment of sensitive tiers is `brain project --dest <dir> --max-tier
-> <tier>`: attach the filtered COPY instead of the vault, and the excluded
-> documents are physically absent from the VM. Two controls reduce the residual
-> risk without narrowing what the sandbox can read: the ceiling is a host-SIGNED
-> owner decision (`brain vm-egress-tier`, VULN-3386), and ingested source
-> material is scanned for concealed instructions before it can be indexed
-> (`brain integrity --injection`, SEC-05).
+> **The 14 shipped Cowork skill bundles were also rewritten** (session s06b,
+> DESK-07) to call the broker's tools instead of shelling `brain --role vm` on
+> a mounted vault — released to the skill marketplace as version 0.20.32. A
+> workspace only gets that text when it next refreshes from the marketplace;
+> this repo cannot see whether any particular already-installed workspace has.
+>
+> **What did NOT change — the residual, stated plainly rather than implied
+> away.** The broker's classification ceiling for the Cowork leg is the SAME
+> full-vault (`MNPI`) default the host itself uses: `$BRAIN_MAX_EGRESS_TIER`
+> is SET to `MNPI` on every registered entry — not unset, which is what this
+> paragraph said until it was corrected on 2026-08-30; the register and the
+> record page had it right and this page did not. Re-measured against the live
+> Desktop config: **4** `brain-mcp` entries (one for this repo's own vault
+> and three client-named ones, not reproduced here — the client-name gate
+> refuses them), all four `MNPI`, none setting `BRAIN_ROLE`. The
+> first probe this session ran reported 2 and inspected 2; the conclusion
+> survived the recount, the completeness claim did not. `connect.py`'s Desktop-config builder still never writes
+> `BRAIN_ROLE` at all — a finding s06b raised and no session in this plan
+> closed — so nothing there could tell a Cowork caller apart from a host one
+> even if a ceiling existed. No per-caller tier clamp is configured. So **a
+> Cowork session can still retrieve the same Restricted-tier note the
+> penetration test read** — through the sanctioned tool, filtered at scope and
+> logged, where before it was an invisible bypass. That is a mitigation, not a
+> fix, which is why this finding stays open rather than closing.
+>
+> **One more asymmetry, narrower but real — CLOSED 2026-08-31.** The
+> fail-closed record write above (`except Exception: pass` removed) fixed the
+> MCP broker's own path (`mcp_mediation.py`) and left the CLI's OWN
+> record-write swallow untouched, so a read run through the CLI directly could
+> still succeed unrecorded if the write failed. That was close to moot for a
+> genuinely new Cowork workspace (no local vault data left to read — a CLI verb
+> against it exits 3, `tests/test_desk_fails_closed.py`, 13/13 passed) but it
+> applied to the host's own shell and to any workspace staged before the
+> cutover. The CLI leg now fails closed too: `brain.cli_read_record` holds
+> gated output until the SEC-06 record is written, and exits `5` with the
+> result withheld when it cannot be. Probed both ways
+> (`tests/test_cli_read_record_fails_closed.py`): a forced record failure
+> withholds the notes and leaves no row, while `BRAIN_READ_LOG=0`, a verb that
+> gates nothing, and an empty result set all still answer normally.
+>
+> **The original-document path was narrowed, not shipped as first designed.**
+> An earlier design (session s05b) would have let a Cowork session request one
+> archived original file, staged into a directory bound to that session alone
+> behind a lease with an enforced reaper. It was retired by owner ruling
+> (2026-08-27): Claude Desktop does not forward a per-session identity the
+> broker can trust, so there was no mechanism to bind a staging directory to
+> one caller — an unguessable name is not access control. What ships instead:
+> `brain authorize-original` is **HOST-ONLY**, refused for `role=vm` before the
+> vault even opens, and only RECORDS a disclosure decision (tier + timestamp;
+> per the read-log's own contract it never learns *which* document). It hands
+> back no bytes. Actual delivery, when it is warranted, is the pre-existing
+> host-operator command `brain project --dest <dir> --max-tier <tier>`, run by
+> a person outside any Cowork session. **No Cowork session obtains an original
+> document through any lease — that path does not exist**, and no page should
+> imply otherwise.
+>
+> **The position this page used to argue, and why it is retired.** Until
+> 2026-08-30 this box did not merely record the finding — it ARGUED a stance,
+> and a reader who finds only the new text would not know the old one was
+> considered. It said the bypass was "a documented limit, not a defect to be
+> patched at the CLI", because the gate is **an egress decision, not
+> containment**, and "the model will cooperate" is not a control. It said a
+> read-only mount is not a mitigation — true then and true now: read-only binds
+> Claude's own file tools, never shell commands, and never blocked reads at all.
+> And it named **`brain project --dest <dir> --max-tier <tier>`** as the real
+> containment for sensitive tiers: attach a filtered COPY, and the excluded
+> documents are physically absent from the VM.
+>
+> That stance is reversed, and the reason is narrow. It was correct while the
+> vault sat on the mount, because then the only lever was WHICH documents to
+> expose — a classification problem, which is why it resolved to a
+> tier-filtered copy. The vault is not on the mount at all now, so containment
+> stopped being a classification problem and became a location one. Nothing is
+> excluded, because nothing is there.
+>
+> **Why `brain project` was not made the default,** which is the whole
+> justification for the shape chosen: the owner declined it on the ground that
+> users cannot classify reliably — a filtered copy is only as good as the
+> labels it filters on — and that the product's value depends on full-corpus
+> reach. A default that silently narrows what the assistant can see fails
+> quietly and in the direction of looking like it works. `brain project`
+> remains available and remains correct for a deliberately scoped workspace;
+> it is a host-operator choice, not the posture.
+>
+> **Two residual controls the old text named, still live and still relevant.**
+> The egress ceiling is a host-SIGNED owner decision, not an ambient env var a
+> process can set for itself (`brain vm-egress-tier`, VULN-3386); and ingested
+> source material is scanned for concealed instructions before it can be
+> indexed (`brain integrity --injection`, SEC-05). Neither closes VULN-3385;
+> both reduce what an attacker does with what they reach.
+>
+> **Two things this plan does not touch, for completeness.** The host Claude
+> Desktop / Claude Code surface is unchanged — this is a Cowork-VM finding
+> only — and what a session legitimately does with a document *after* a
+> correct disclosure (copy it, quote it, forward it) is untouched by any
+> control named here.
 
 ## Quickstart — the whole thing in 6 steps (plain language)
 
 Cowork can't install anything itself — its VM only sees the folder you give
 it. So the engine is staged **from your computer first**, then Cowork just
-opens the folder. In order:
+opens the folder. The one command that does the staging (plus the nightly
+task, the registry rows and the Claude Desktop MCP entry) in a single pass:
+
+```bash quickstart-wire
+# On the HOST (Mac/Windows), from a terminal with `brain` on PATH:
+brain provision-local <vault> --workspace <workspace> --model-dir <model>
+```
+
+`<vault>` is where the notes live, `<workspace>` is the folder Cowork
+attaches, and `<model>` is an existing `bge-m3-int8` snapshot to stage from —
+omit `--model-dir` once a first vault on this machine has already staged one
+(`provision-local` finds it automatically); on a brand-new machine with none
+staged yet, get one with `python3 packaging/stage_model.py --repo
+Xenova/bge-m3 --out /tmp/bge-m3-int8 --patterns "onnx/model_int8.onnx"
+"tokenizer.json" "tokenizer_config.json" "special_tokens_map.json"
+"config.json"` first and pass that path.
+
+The one manual step it cannot take for you, printed in its report when
+needed:
+
+```bash
+# only when provision-local's report carries a `reload` line — run it yourself:
+launchctl bootout gui/$UID/<label> 2>/dev/null; launchctl bootstrap gui/$UID <plist> && launchctl print gui/$UID/<label> | grep -c SWEEP
+```
+
+That reload merges a changed nightly-task plist into a job launchd already
+has loaded — an unattended process cannot reload another job into the login
+domain. `bootstrap` alone can answer `Load failed: 5` on a job that is
+registered but stopped, which is why the line runs `bootout` first.
+
+In order:
 
 1. **On your computer, in Claude Code** (any directory, with the
    `brainiac-manager` plugin installed — see [`ai-install.md`](./ai-install.md)):
-   run **`/brainiac-cowork-setup`**. It asks ONE question — which folder will
-   be your Cowork workspace — then stages everything into it (engine, search
-   model, read-only snapshot, session prompt) and registers the nightly
-   maintenance task. It ends by printing the exact things to do in Cowork.
+   run **`/brainiac-cowork-setup`**. It asks which folder will be your Cowork
+   workspace, then runs the `brain provision-local` command above under the
+   hood — staging everything into it (engine, search model, read-only
+   snapshot, session prompt), registering the nightly maintenance task, and
+   wiring the registry rows and the Claude Desktop MCP entry. It ends by
+   printing the exact things to do in Cowork. Prefer the raw command over the
+   skill? It's the same block, quoted above.
 2. **In Claude Desktop**: open **Cowork** and add that same folder as the
    project folder.
 3. **Install the skills** (one-time): step 1 already staged current-version
@@ -60,10 +199,12 @@ opens the folder. In order:
    project's instructions (or the first message of each session). Cowork does
    not read AGENTS.md on its own; this prompt is how the agent learns the
    brain exists (§1).
-5. **Use it**: in a Cowork session the agent calls `brain --role vm` — search,
-   get, recent, and `draft-capture` for new notes. Drafts land in the shared
-   folder; your computer's nightly task signs and indexes them, and the next
-   snapshot publish makes them searchable in Cowork (see "Remember" below).
+5. **Use it**: in a Cowork session the agent calls the host `brain-mcp`
+   broker's tools — search, get, recent, and draft-capture for new notes. The
+   vault itself is not on the mount (§VULN-3385 above), so every read goes
+   through the broker, filtered and logged; a draft it captures lands in the
+   shared folder, your computer's nightly task signs and indexes it, and the
+   next snapshot publish makes it searchable in Cowork (see "Remember" below).
 6. **Updating later**: on your computer run `/plugin marketplace update` then
    **`/brainiac-update`** — it re-stages every registered workspace, so the
    Cowork folder gets the new engine/prompt/skills automatically.
@@ -90,8 +231,18 @@ Doing it by hand instead:
 cd brainiac
 python3 packaging/stage_model.py --repo Xenova/bge-m3 --out /tmp/bge-m3-int8 \
   --patterns "onnx/model_int8.onnx" "tokenizer.json" "tokenizer_config.json" "special_tokens_map.json" "config.json"
-tools/cowork_workspace_install.sh <workspace>/vault /tmp/bge-m3-int8
+tools/cowork_workspace_install.sh <vault> /tmp/bge-m3-int8 dist <workspace>
 ```
+
+**Pass all four arguments.** `<vault>` is the directory that holds `brain/`
+and `raw/` — wherever it lives. `<workspace>` is the folder Cowork
+ATTACHES. They used to be the same place, one level apart, and this
+document showed the two-argument form that derived the second from the
+first. Closed Stacks s07 moved the vault OFF the mount to close
+VULN-3385, and the installer's refusal — the one that stops a snapshot of
+every note body being published back into the attached folder — can only
+run when it is told both places. Omit the **fourth argument** on a
+relocated vault and the refusal never fires.
 
 (Frozen Linux ELFs via `tools/build_brain_binary.sh` remain an optional
 fallback for locked-down VMs without `python3` — most users never need
@@ -145,19 +296,20 @@ in the Claude Desktop project's custom instructions (once per project) or
 paste it as the first message of each session. Source doc:
 `docs/install/cowork-session-prompt.md`.
 
-The env part, for reference — the VM filesystem persists across a session's
-lifetime, but the shell environment does **not**, so this runs at the start
-of every session (the session prompt contains it):
-
-```bash
-export BRAIN_VAULT="$PWD/vault"
-export BRAIN_ROLE=vm                                   # CLI read + draft only (not a session sandbox — see the note at the top)
-export BRAIN_RUNTIME_DIR="$BRAIN_VAULT/.brain"
-export BRAIN_MODEL_CACHE="$BRAIN_RUNTIME_DIR/model"    # bundled cache, no network fetch
-ln -sf "bin/brain-linux-$(uname -m)" "$BRAIN_RUNTIME_DIR/brain"
-export PATH="$BRAIN_RUNTIME_DIR:$PATH"
-brain status                                           # snapshot generation/age + pending-draft count
-```
+**The broker layout, in one paragraph.** The vault itself is not on the
+Cowork mount — only the staged engine, model cache, skills and routines are
+(§VULN-3385 box above). So there is no local `brain` binary and no local
+snapshot for a Cowork session to read against on a relocated (post-cutover)
+workspace: every vault-note verb (search, get, recent, dossier, grep,
+graph-expand, draft-capture, …) reaches the vault only through the **host
+`brain-mcp` broker**, which applies the same classification filter as the
+CLI and writes an audit record before it returns content. Readiness is: the
+broker's tools answer with real vault content — not a printed snapshot
+generation, which is what the old co-located bootstrap checked and what a
+relocated workspace no longer has to show. The full session prompt (what to
+tell the agent, and how to verify the broker is answering) is
+`docs/install/cowork-session-prompt.md`, staged into every workspace at
+`<workspace>/vault/.brain/routines/cowork-session-prompt.md`.
 
 ## 2 — Get the skills into Cowork: one host command (DEFAULT), Plugins tab (OPTIONAL)
 
@@ -167,9 +319,9 @@ staged current-version `.skill` bundles at `<workspace>/vault/.brain/skills/`
 (ADR-0005 Ruling 4 + the s04 empirical addendum: the Claude Desktop / Cowork
 plugin store has **no supported CLI, config, or import** a host script can
 drive, so a staged filesystem artifact is the only thing a host command can
-promise stays current). Upload them via Cowork's Save-skill flow — use the
-`setup-cowork` skill (`.claude/skills/setup-cowork/SKILL.md`) to walk through
-this, or do it directly. **Order: kernel first, extras optional** (mirrors
+promise stays current). Upload them via Cowork's Save-skill flow directly, or
+have `/brainiac-cowork-setup` walk you through it (its final report prints
+the exact upload order). **Order: kernel first, extras optional** (mirrors
 the Claude Code marketplace split in `docs/operations/cutover-s08-evidence.md`):
 
 ```
@@ -260,6 +412,13 @@ CLI / Codex:
 
 ## Verify
 
+On a **relocated (post-cutover) workspace**, verify from inside the Cowork
+session by asking the agent to run a broker search/get/recent and checking
+the result carries real vault content and an egress/classification block —
+there is no local `brain` on PATH to check directly (see the broker-layout
+paragraph in §1). On the **host**, or on a workspace that has not yet moved
+off the mount, the CLI checks still apply:
+
 ```bash
 brain status                          # snapshot gen/age, pending drafts
 brain search "<something>" --json     # egress-gated read
@@ -282,5 +441,5 @@ staying silently out of date.
 - `AGENTS.md` §6 — full access matrix (all clients)
 - `docs/operations/cowork-task-registrar-prompt.md` — the exact paste-ready prompt
 - `routines/manifest.json` — THE LOCK, `locked_counts` (1 host, 0 VM)
-- `.claude/skills/setup-cowork/SKILL.md` — the guided walkthrough of steps 1–3 above
+- `.claude/skills/brainiac-cowork-setup/SKILL.md` — the guided walkthrough of steps 0–2 above (`setup-cowork` retired 2026-08-30, this page is its replacement)
 - `.claude/skills/task-registrar/SKILL.md` — the registrar that generates the paste-prompt

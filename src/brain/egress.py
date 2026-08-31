@@ -143,6 +143,17 @@ def _tally(surfaced: int, withheld: int) -> None:
     cur["withheld"] += withheld
 
 
+def gated() -> bool:
+    """Has the gate fired in this invocation yet? Does NOT reset the tally.
+
+    ``take_tally`` is destructive by design. The CLI needs a non-destructive
+    read to know whether the output it is about to write is gated content
+    (``brain.cli_read_record``), and consuming the tally there would empty it
+    before the SEC-06 record is flushed.
+    """
+    return bool(_TALLY.get())
+
+
 def take_tally() -> dict[str, int] | None:
     """Return and RESET the counts accumulated since the last take.
 

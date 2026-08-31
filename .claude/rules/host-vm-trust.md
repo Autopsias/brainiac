@@ -44,6 +44,22 @@ The VM is a **read + draft** surface only; the host is the **only writer**.
    atomically republishes the read-only, generation-stamped snapshot into
    `.brain/snapshot/`. Only now is the note retrievable from the VM.
 
+**In-place updates (UPD-01, 2026-08-30).** A duplicate id used to be a dead
+end: the drain skipped it forever, silently — a Cowork session's rule update
+sat refused in `capture-inbox/` for 11 days while the session believed it had
+applied. A draft may now declare an IN-PLACE update of an existing note with
+two transport-only frontmatter keys: `updates: <id>` (must equal the draft's
+own id) and `base_sha256: <sha>` (the `sha256` that `brain get` returned for
+the version the author read). The drain applies it through the same signed
+`write_note` path ONLY when the live note is untrusted-lane-authored
+(`provenance.trust: untrusted`) and under `brain/` — the untrusted leg may
+rewrite what the untrusted lane wrote, never a host-authored note (those skip
+`update-needs-owner`; apply on the host with `brain write`) and never `raw/`
+(append-only). A base-hash mismatch skips as `stale-base` instead of
+clobbering a newer write. The transport keys are dropped before signing, and
+`brain alerts` now reports any draft still in the inbox after 48h
+(`stuck-drafts`) — a refusal is never silent again.
+
 ### VM-request → host-drain vault provisioning (PRV-10, 2026-08-17)
 
 A Cowork session can also create a whole NEW vault, with the same trust

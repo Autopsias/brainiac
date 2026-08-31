@@ -60,16 +60,19 @@ class ReadRecordError(RuntimeError):
     record could not be written succeeded anyway, silently — the read leaving a
     record is the artefact this plan exists to guarantee, so it now fails closed.
 
-    **SCOPE, and it is narrower than "every read leaves a record" sounds: this
-    is the BROKER leg only.** That same swallow is still live, verbatim, at
-    ``cli.py:456``, wrapping ``read_log.record_from_tally`` — and the CLI is the
-    leg CLAUDE.md tells every Cowork session to use TODAY ("call it from your
-    native shell, never via MCP"), until s06b migrates the skills onto this
-    transport. So a CLI read whose record cannot be written still succeeds
-    unrecorded. Left alone deliberately: failing a CLI read closed changes the
-    exit behaviour of every read verb in the product, which is a decision for
-    the session that owns that leg, not a side effect of adding MCP tools
-    (raised by adversarial review 2026-08-28; recorded for s06b).
+    **SCOPE. Both legs fail closed since 2026-08-31; this class covers the
+    BROKER leg.** The CLI leg's identical swallow — ``except Exception: pass``
+    around ``read_log.record_from_tally`` — was closed the same way by
+    :mod:`brain.cli_read_record`, which holds gated output until the record is
+    written and exits ``5`` when it cannot be. This paragraph said the CLI
+    swallow was "still live, verbatim" until then, and that mattered: the CLI
+    is the leg CLAUDE.md tells every session to use ("call it from your native
+    shell, never via MCP") and the one the nightly launchd job runs, so the
+    gap this docstring scoped away was on the busier leg.
+
+    The two legs differ only in HOW they refuse, because the shapes differ: the
+    broker returns a value, so it raises instead; the CLI streams to stdout, so
+    it cannot un-print and holds the output instead.
     """
 
 
@@ -99,6 +102,11 @@ class UngatedToolError(RuntimeError):
 #: pattern that matches nothing) — ``apply_gate`` tallies even when it gates
 #: zero notes. So that set was exactly right, not merely conservative.
 #:
+#: ``vault_languages`` LEFT this set on 2026-08-30. It returns note counts, and
+#: a count over the whole index is vault metadata a clamped caller should not
+#: see unrecorded; it now gates the note list under the caller's ceiling and so
+#: leaves a row like every other read (closed-stacks s09, V-2).
+#:
 #: ``alerts``, ``exceptions`` and ``inbox`` (S03, DESK-03) join it for a
 #: different reason: they never touch a note body at all — each is a pure call
 #: into ``alerts.collect``/``exceptions_cli.collect``, the SAME functions the
@@ -122,7 +130,7 @@ class UngatedToolError(RuntimeError):
 #: gate call just to dodge that would leave a READ record — "surfaced: 0" —
 #: describing an event that is actually a WRITE, which is worse than no
 #: record at all.
-BODYLESS_TOOLS = frozenset({"vault_languages", "alerts", "exceptions", "inbox", "capture"})
+BODYLESS_TOOLS = frozenset({"alerts", "exceptions", "inbox", "capture"})
 
 
 #: True while a call is already inside :func:`mediate`. The nested
@@ -166,8 +174,8 @@ def mediate(
     * ``nothing_to_record`` — the verb never CALLED ``egress.apply_gate``
       (``gates == 0``); gating zero notes still CREATES a tally, so it can
       never land here — the other three bullets govern what happens to it
-      instead. ``vault_languages`` and the housekeeping verbs are like
-      this, and logging a zero for them would bury the real reads. It SUCCEEDS **only for a tool declared in**
+      instead. The housekeeping verbs are like this, and logging a zero
+      for them would bury the real reads. It SUCCEEDS **only for a tool declared in**
       :data:`BODYLESS_TOOLS`; for any other tool it means the handler never
       reached ``egress.apply_gate``, and that raises :class:`UngatedToolError`
       instead of returning an unfiltered, unrecorded result (``expects_gate``).

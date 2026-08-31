@@ -234,12 +234,22 @@ class _ToolMixin:
         sorts to the top. Measured 2026-08-26 on the reference vault — 5 of
         the last 30 entries were retired v42-v46 of one deck. Same predicate
         as ``search`` and ``bases-query --latest-only``, never a second
-        definition."""
+        definition.
+
+        ``updated`` is TEXT, so a plain ``DESC`` sorts any non-date value
+        ABOVE every real date -- ``'unknown' > '2026-08-30'`` in ASCII. On
+        the reference vault (measured 2026-08-30) three raw sources carrying
+        ``captured: unknown`` therefore held slots 1-3 of every ``recent``
+        call, permanently crowding out notes updated that same day. Rank
+        date-shaped values first so an unparseable stamp sinks to the bottom
+        instead of floating to the top; the row is still returned, never
+        dropped."""
         where = "" if include_retired else f"WHERE NOT {RETIRED_PREDICATE} "
+        dated = "(n.updated GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*')"
         rows = self.conn.execute(
             "SELECT n.id,n.title,n.classification,n.zone,n.path,n.updated "
             f"FROM notes AS n {where}"
-            "ORDER BY n.updated DESC, n.id ASC LIMIT ?",
+            f"ORDER BY COALESCE({dated}, 0) DESC, n.updated DESC, n.id ASC LIMIT ?",
             (limit,),
         ).fetchall()
         keys = ["id", "title", "classification", "zone", "path", "updated"]

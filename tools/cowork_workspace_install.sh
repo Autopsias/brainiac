@@ -78,20 +78,117 @@ fi
 # `strings` alone), so publishing it under the attached folder would re-open
 # VULN-3385 on the same day the vault left. $BRAIN_SNAPSHOT_DIR already exists
 # as config.snapshot_dir()'s override; require it rather than inventing a path.
-if [ "$BRAIN_DIR" = "$VAULT/.brain" ]; then
-  SNAPSHOT_DEST="$BRAIN_DIR/snapshot"
-else
-  if [ -z "${BRAIN_SNAPSHOT_DIR:-}" ]; then
-    echo "[install] FATAL: the vault is not inside $WORKSPACE_ROOT, so the published" >&2
-    echo "          snapshot must not go there --- it carries every note body." >&2
-    echo "          Set \$BRAIN_SNAPSHOT_DIR to a host-only directory and re-run." >&2
-    exit 1
-  fi
-  SNAPSHOT_DEST="$BRAIN_SNAPSHOT_DIR"
+SNAPSHOT_DEST="${BRAIN_SNAPSHOT_DIR:-$VAULT/.brain/snapshot}"
+
+# THE GUARD IS ON THE PROPERTY, NOT ON THE CEREMONY. Until 2026-08-29 the
+# relocated branch made an UNSET $BRAIN_SNAPSHOT_DIR fatal and treated any SET
+# value as safe. Both halves were wrong, and in the same direction:
+#
+#   - unset is the SAFE case. config.snapshot_dir() already defaults to
+#     <vault>/.brain/snapshot, and once the vault is off the mount that path is
+#     off the mount too. Demanding the operator name it again bought nothing,
+#     and a required incantation the documented setup route never mentions is a
+#     step that gets skipped -- which is how the vault came back last time.
+#   - set was the UNSAFE case nobody checked. `BRAIN_SNAPSHOT_DIR=$WS/snap`
+#     passed the old test and published 3105 note bodies onto the mount.
+#
+# So: default to the engine's own default, then assert the ONE thing that must
+# be true either way -- the snapshot is not inside the folder a Cowork sandbox
+# attaches. The check is a canonicalised prefix test on the DEEPEST EXISTING
+# ancestor, because the destination usually does not exist yet and `cd` into a
+# missing directory tells you nothing.
+# THE WHOLE DESTINATION, INCLUDING THE PART THAT DOES NOT EXIST YET. Until
+# 2026-08-30 this loop walked up to the deepest existing ancestor and then
+# compared THAT, throwing the unresolved suffix away. So
+# `BRAIN_SNAPSHOT_DIR=<tmp>/missing/../ws/snap` stopped the probe at `<tmp>`,
+# compared clean, and `mkdir -p` then created the snapshot at `<tmp>/ws/snap` --
+# inside the attached workspace, which is the one thing this guard exists to
+# prevent. Reproduced 2026-08-30.
+#
+# So: resolve the existing prefix PHYSICALLY (symlinks and all, which is why
+# `pwd -P` is still here), then replay the missing tail component by component,
+# applying `..` lexically -- which is exactly what `mkdir -p` will do with it.
+_snap_probe="$SNAPSHOT_DEST"
+case "$_snap_probe" in /*) : ;; *) _snap_probe="$PWD/$_snap_probe" ;; esac
+_snap_tail=""
+while [ ! -d "$_snap_probe" ] && [ "$_snap_probe" != "/" ] && [ -n "$_snap_probe" ]; do
+  _snap_tail="$(basename "$_snap_probe")${_snap_tail:+/$_snap_tail}"
+  _snap_probe="$(dirname "$_snap_probe")"
+done
+# `pwd -P` on BOTH sides, deliberately. A logical prefix test is bypassed by
+# any symlink: `--workspace /tmp/x` with `BRAIN_SNAPSHOT_DIR=/private/tmp/x/snap`
+# is the same directory and compares as two different ones. Physical on both
+# sides is the only form of this test that cannot be talked around.
+_snap_real="$(cd "$_snap_probe" && pwd -P)"
+# Replay the tail. IFS field-splitting rather than `tr`+word-splitting, so a
+# path component containing a space does not become two components.
+if [ -n "$_snap_tail" ]; then
+  _oldifs="$IFS"; IFS='/'
+  for _comp in $_snap_tail; do
+    case "$_comp" in
+      ''|.) ;;
+      ..) _snap_real="$(dirname "$_snap_real")" ;;
+      *)  _snap_real="$_snap_real/$_comp" ;;
+    esac
+  done
+  IFS="$_oldifs"
 fi
+_ws_real="$(cd "$WORKSPACE_ROOT" && pwd -P)"
+_vault_real="$(cd "$VAULT" && pwd -P)"
+
+# WHICH LAYOUT IS THIS? The refusal protects a RELOCATED vault: notes off the
+# mount, engine on it. In the CO-LOCATED layout the vault itself lives inside
+# the attached folder, so every note body is already on the mount by
+# construction and refusing the snapshot closes nothing --- it only breaks the
+# historical two-argument install, which is the layout every existing
+# deployment still runs. Until 2026-08-30 the case below ran unconditionally,
+# so `cowork_workspace_install.sh <vault> <model>` exited 1 on the FATAL block
+# for every co-located install; the installer's own comment, the evidence
+# document and all six shipped setup documents said the opposite. Reproduced,
+# then fixed by testing the property that actually distinguishes the two:
+# is the vault inside the workspace?
+_colocated=no
+case "$_vault_real/" in
+  "$_ws_real"/*|"$_ws_real/") _colocated=yes ;;
+esac
+
+case "$_snap_real/" in
+  "$_ws_real"/*|"$_ws_real/")
+    if [ "$_colocated" = yes ]; then
+      : # co-located: the vault is on the mount already; nothing to protect.
+    else
+      echo "[install] FATAL: the published snapshot would land at" >&2
+      echo "            $SNAPSHOT_DEST" >&2
+      echo "          which resolves inside the attached Cowork workspace" >&2
+      echo "            $WORKSPACE_ROOT" >&2
+      echo "          The snapshot carries every note body (measured on the live" >&2
+      echo "          reference mount 2026-08-29: 3105 non-empty bodies, recoverable" >&2
+      echo "          with \`strings\` alone). Point \$BRAIN_SNAPSHOT_DIR at a" >&2
+      echo "          host-only directory and re-run." >&2
+      exit 1
+    fi ;;
+esac
 
 mkdir -p "$BRAIN_DIR/bin" "$BRAIN_DIR/model" "$SNAPSHOT_DEST" \
          "$BRAIN_DIR/capture-inbox" "$BRAIN_DIR/skills" "$BRAIN_DIR/routines"
+
+# AND AGAIN, NOW THAT IT EXISTS. The check above reasons about a path; this one
+# reads the filesystem. They can disagree -- a symlink anywhere in the tail, a
+# component created by `mkdir -p` itself -- and if they do, the directory that
+# now exists is the authority. Nothing has been published into it yet.
+if [ "$_colocated" != yes ]; then
+  _snap_after="$(cd "$SNAPSHOT_DEST" && pwd -P)"
+  case "$_snap_after/" in
+    "$_ws_real"/*|"$_ws_real/")
+      echo "[install] FATAL: the snapshot directory just created at" >&2
+      echo "            $_snap_after" >&2
+      echo "          resolves inside the attached Cowork workspace" >&2
+      echo "            $_ws_real" >&2
+      echo "          Nothing was published into it. Remove it, point" >&2
+      echo "          \$BRAIN_SNAPSHOT_DIR at a host-only directory, re-run." >&2
+      exit 1 ;;
+  esac
+fi
 
 # (a) the engine, ZERO-INSTALL by default: the brain package is pure Python
 # with stdlib-only graceful degradation, so the VM runs it STRAIGHT FROM a
@@ -479,6 +576,14 @@ echo "[install] brain init report -> $BRAIN_DIR/routines/brain-init-report.json"
 echo "[install] cowork task paste-prompt -> $BRAIN_DIR/routines/cowork-registrar-prompt.md"
 
 cat <<EOF
+
+[install] NOTE: this script is wire 2 of 6. \`brain provision-local <vault>
+[install]       --workspace <workspace>\` runs this AND the audit-key/nightly
+[install]       registration (wire 1), the host + cowork-vm registry rows
+[install]       (wires 3/4), the Claude Desktop MCP entry (wire 5), and the
+[install]       deliverables sweep dir (wire 6) in one pass — prefer it over
+[install]       calling this script directly unless you specifically want
+[install]       just the staging step re-run on its own.
 
 [install] done. Full operational layer assembled at:
   $BRAIN_DIR

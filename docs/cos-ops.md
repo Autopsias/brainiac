@@ -1681,7 +1681,8 @@ filesystem, keychain and privileges, so it can pass every probe while proving
 nothing about the physical boundary (run on the host it prints that warning
 itself, and correctly reports BREACHED on the signing key).
 
-Three scoring rules, each written after a measured false result (2026-07-31):
+Four scoring rules, each written after a measured false result
+(2026-07-31, and the fourth 2026-08-30):
 
 - **A non-zero exit is not a refusal.** A probe passes only when the output
   carries the engine's own role-refusal signature; a usage error or a crash is
@@ -1698,6 +1699,18 @@ Three scoring rules, each written after a measured false result (2026-07-31):
 - **An unimportable engine is INCONCLUSIVE.** The frozen-ELF lane ships no
   importable `brain`, so the signing-key probe's `ModuleNotFoundError` must not
   read as "no key".
+- **A capability the VM legitimately MAY use is DEGRADED, never BREACHED**
+  (added 2026-08-30, closed stacks s07). Section D asks the opposite question
+  from sections A-C: not "did the boundary hold" but "does the VM still work".
+  Summing the two is how a real breach eventually gets ignored — a cut-over
+  workspace with no local snapshot printed BREACHED while all 27 containment
+  probes passed. `DEGRADED` is counted separately and the verdict ladder is
+  BREACHED(1) / INCONCLUSIVE(2) / DEGRADED(3) / INTACT(0), in that order,
+  because "this script asked the wrong question" must be answered before
+  "something the VM may do did not work". The snapshot probe carries the same
+  rule one level down: a `brain status` that FAILED, and one that answered
+  without a `snapshot:` line, are both INCONCLUSIVE — only an explicit
+  `absent` is the post-cutover design working.
 
 §B3 adds the **approved-queue** class (INT-01). The queue's safety is a
 LOCATION property — no payload and no anchor may be reachable from the VM — and

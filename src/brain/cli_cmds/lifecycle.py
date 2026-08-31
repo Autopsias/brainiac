@@ -333,6 +333,51 @@ def _run_provision_drain(args, ctx) -> int:
     return 0 if all(h.get("ok") for h in res["handled"]) else 1
 
 
+_WIRE_MARK = {"already": "already wired", "done": "done", "failed": "FAILED",
+              # `skipped` = this wire does not apply on this host (wire 6 off
+              # macOS); `pending` = reported, not repaired (the drain).
+              "skipped": "skipped", "pending": "pending"}
+
+
+def _render_provision_local(res: dict[str, Any]) -> str:
+    from ..provision_wire import WIRE_NAMES
+
+    lines = [f"provision-local {res['vault']} --workspace {res['workspace']}"]
+    for key in sorted(res["wires"]):
+        wire = res["wires"][key]
+        lines.append(f"  wire {key} {WIRE_NAMES[key]}: "
+                     f"{_WIRE_MARK[wire['status']]} — {wire.get('detail', '')}")
+    for key in res["failed_wires"]:
+        lines.append(f"wire {key} FAILED: {res['wires'][key].get('detail', '')}")
+    if res.get("reload"):
+        # The installer reloads launchd itself when IT re-rendered the plist.
+        # This line is for the other case: we merged the FILE under a job that
+        # is already loaded, and launchd froze its environment at bootstrap.
+        lines.append("the plist was merged by FILE — launchd is still running "
+                     "the old environment. Run:\n  " + res["reload"])
+    return "\n".join(lines)
+
+
+def _run_provision_local(args, ctx) -> int:
+    """CMD-01/CMD-02: the ONE command that wires a vault.
+
+    Same six steps the drain performs, minus the drain's `already-registered`
+    short-circuit — that short-circuit is right for a drain (PRV-10) and is
+    exactly what made a half-completed provisioning unrepairable. Runs every
+    wire, prints one line each, exits 1 naming any that failed.
+    """
+    from ..provision_wire import provision_local
+
+    vault = ctx.config.vault_root(args.vault_path or args.vault, allow_missing=True)
+    res = provision_local(vault, args.workspace, model_dir=args.model_dir,
+                          snapshot_dir=args.snapshot_dir)
+    if args.json:
+        _emit(res, True)
+    else:
+        _emit(None, False, _render_provision_local(res))
+    return 0 if res["ok"] else 1
+
+
 _HANDLERS = {
     "init": _run_init,
     "doctor": _run_doctor,
@@ -342,6 +387,7 @@ _HANDLERS = {
     "mcp-config": _run_mcp_config,
     "provision-request": _run_provision_request,
     "provision-drain": _run_provision_drain,
+    "provision-local": _run_provision_local,
 }
 
 COMMANDS = tuple(_HANDLERS)

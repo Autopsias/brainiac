@@ -1,56 +1,162 @@
 # Moving a vault off its Cowork mount — cutover and reversal
 
-**Status: RECORDED, NOT EXECUTED.** Written by closed-stacks s07 on 2026-08-29
-*before* any move, which is the point: a procedure whose reversal is written
-afterwards is not a reversible procedure. s07 closed BLOCKED without moving
-anything (see `_plans/closed-stacks-2026-08-27/_closeouts/s07.json`); this file
-is what the re-run executes.
+**Status: EXECUTED 2026-08-29, by a procedure this file did not originally
+contain.** §A below is what actually ran and how to reverse it. §0–§6 are the
+VAULT-MOVE procedure, written and adversarially reviewed on 2026-08-29 before
+the owner ruled it out; they were NOT executed. They are kept because they are
+still the procedure if a vault itself ever has to move, and because the review
+findings folded into them are real.
 
-**DO NOT EXECUTE THIS YET.** Three independent adversarial reviews on
+---
+
+## A · What was actually executed (owner Ruling 1, 2026-08-29)
+
+The owner ruled that **the mount is emptied by RE-REGISTERING, not by moving
+the vault**. The registry keys a Cowork mount on `workspace_path`, not
+`vault_path` (`~/.brainiac/workspaces.json`), so registering a new, minimal
+workspace and ceasing to attach the old folder removes the vault AND every
+residual in one step — and needs no per-tree retention ruling for the 645 MB of
+non-vault material (76 .docx, 37 .pdf) the vault-move procedure would have left
+behind on the mount.
+
+**The consequence that matters: the cutover is DATA-FREE.** Nothing moves. The
+vault stays exactly where it was, byte for byte. `config.index_dir()` keys on the persistent `vault-id` (`<vault>/.brain/vault-id`,
+here `7f0d4a0d366d8bb3`), falling back to an absolute-path hash only when no id
+exists. The vault path AND the id are both unchanged, so the derived index keeps
+its identity either way and the long-lived `brain-mcp` brokers keep answering
+from the correct place — the frozen-index trap §4 was built to catch cannot
+fire, because nothing a broker resolves has changed.
+`config.snapshot_dir()` still falls back to `<vault>/.brain/snapshot`, which is
+off the new mount by construction.
+
+### A.1 · What ran
+
+    OLDWS=<the folder Cowork attached>       # a workspace holding the vault
+    VAULT=$OLDWS/vault                       # unchanged
+    NEWWS=$HOME/CoworkWorkspaces/<name>      # the minimal replacement
+    REG=$HOME/.brainiac/workspaces.json
+    REGBAK=$REG.pre-s07-cutover              # cp -n, never overwritten
+
+The two folder names are this host's, so they are not written here — the
+shipped tree bakes in no operator path. Print them from the registry:
+
+    python3 -c "import json,pathlib;rows=json.loads((pathlib.Path.home()/'.brainiac/workspaces.json').read_text())['entries'];print(sorted({r['workspace_path'] for r in rows if r['target']=='cowork-vm'}))"
+
+The verbatim originals, with this host's real paths, are in
+`_evidence/s07/reversal-recorded-before-the-change.md` (evidence files are
+excluded from the public export).
+
+1. Writers quiesced for the switch window only (10:12:28Z → 10:24:06Z). The
+   `launchctl` state found BEFORE the change is recorded verbatim in
+   `_evidence/s07/launchd-state-before.txt`; only the two `StartInterval=3600`
+   jobs were touched, and both were restored and then **verified by running
+   them** (`launchctl kickstart -p`, then observing a real bash parent with a
+   real Python child: 64199→64207 and 64297→64316). A job's *status* is not
+   evidence that it runs.
+2. `$NEWWS` created and staged with
+   `tools/cowork_workspace_install.sh "$VAULT" <model-cache> <dist> "$NEWWS"`
+   — the four-argument form. 848 MB, no snapshot database, no note bodies.
+3. `$REG` backed up to `$REGBAK` (`cp -n`), then this vault's entries
+   for THIS host repointed from `$OLDWS` to `$NEWWS`.
+4. `brain doctor`'s VULN-3385 row for `$NEWWS` verified **current**; the row
+   for `$OLDWS` still reports the leak, which is correct — that folder still
+   holds the vault and is simply no longer attached.
+
+### A.2 · THE REVERSAL — recorded BEFORE the change
+
+Written to `_evidence/s07/reversal-recorded-before-the-change.md` at
+2026-08-29T10:1x UTC, before the first mutating command. Reproduced here with
+`$OLDWS`/`$NEWWS`/`$REG`/`$REGBAK` from A.1 in place of this host's literal
+paths; the evidence file holds the verbatim original. Four lines:
+
+```bash
+# 1. restore the registry from the backup taken before the rewrite.
+#    The backup is written BEFORE the rewrite and is never overwritten by a
+#    re-run (`cp -n`), so a second cutover attempt cannot destroy the original.
+cp -f "$REGBAK" "$REG"
+
+# 2. confirm the registry is back: this must print the OLD workspace path for
+#    EVERY row naming this vault (the filter is not host-scoped, so on this
+#    host that is 4 rows — 2 under a former hostname, 2 for this machine — not
+#    2). None may still read $NEWWS.
+VAULT="$VAULT" REG="$REG" python3 -c "import json,os;print([e['workspace_path'] for e in json.load(open(os.environ['REG']))['entries'] if e['vault_path']==os.environ['VAULT']])"
+
+# 3. remove the staged workspace. It is a directory this session CREATED, and
+#    every byte in it is a copy of something in the repo or in <vault>/.brain
+#    — WITH ONE EXCEPTION: vault/.brain/capture-inbox/ is the VM's draft_capture
+#    drop, and an unsigned draft there exists nowhere else until the host drains
+#    it. It is empty as of the cutover, but if the walk (§CUT-03) ran a capture
+#    skill first, drain and confirm empty BEFORE deleting:
+#        ls -A "$NEWWS/vault/.brain/capture-inbox"
+#    (run `brain write` / the host drain on any draft first). Then:
+rm -rf "$NEWWS"
+
+# 4. confirm the old staging is intact and was never touched.
+ls "$OLDWS/vault/.brain/engine/brain/_version.py"
+```
+
+There is no step 5. The vault is not read for content, the index is not
+rebuilt, the audit chain is not written to, and the old `<vault>/.brain`
+staging tree is left in place and working. **One file under the OLD vault WAS
+rewritten by staging** and the reversal does not restore it:
+`<vault>/.brain/pinned-verify.json` (the VM's identity anchor), which
+`exceptions_verify.stage_pin` writes to `brain_runtime_dir(vault)` — i.e. under
+the vault, not into the new workspace. It is an idempotent rewrite of the same
+public key + vault_id the nightly re-stamps anyway, so there is nothing to undo;
+it is named here only because "never touched" would otherwise be false.
+
+**The one thing the reversal does not undo, and does not need to.** Staging
+runs `brain sync` and `brain snapshot --dest <vault>/.brain/snapshot`. Both
+republish IN PLACE at the existing path, and both are what the hourly
+`com.brainiac.nightly.*` job does anyway.
+
+**The step only the owner can take, in BOTH directions.** Cowork's folder
+attachment is a Claude Desktop GUI action. The host cannot attach or detach a
+folder, and cannot see from here which folders a live Cowork session has
+mounted. Detaching `$OLDWS` and attaching `$NEWWS` — and the reverse — are the
+owner's.
+
+---
+
+## The vault-move procedure (§0–§6) — RECORDED, NOT EXECUTED
+
+Superseded by §A. Everything below was written before Ruling 1 and describes
+moving the 3.2 GB vault itself. Three independent adversarial reviews on
 2026-08-29 (a Claude fork, a Codex `xhigh` pass, and the plan's own
-`llm-review-high` gate) raised 33 findings between them (13 + 12 + 8, with overlap). The mechanical ones are
-FIXED in the text below — frozen path literals, a complete destination guard, a
-source preflight, a write-protected backup, the device check widened to every
-destination, an abort on a live broker in the reversal. **Six are NOT fixed,
-and each one is a prerequisite the re-run owns:**
+`llm-review-high` gate) raised 33 findings between them (13 + 12 + 8, with
+overlap); the mechanical ones are fixed in the text below. Six were recorded as
+prerequisites the re-run owned, and Ruling 1 dissolved or the re-run closed all
+six:
 
-1. **No phase journal; the procedure is not resumable.** §3 and §5 are
-   straight-line scripts. `mv` is not atomic across arguments, so an
-   interruption anywhere leaves the corpus split between `$OLD` and `$NEW`
-   with nothing on disk recording which step completed. The guards below turn
-   the *known* partial-move causes into refusals BEFORE the first rename;
-   they do not make an interrupted run recoverable. The re-run writes a phase
-   marker after each step and resumes from it.
-2. **The VM's degradation feed follows the vault off the mount.**
-   `config.brain_runtime_dir(vault)` is `<vault>/.brain`, and that is where
-   `notify-sent/current.json`, `exceptions.json`, `engine-feedback/` and
-   `maintain-state.json` are written (`config.py`, `alerts.py`,
-   `exceptions_verify.py`). §1.2 rules that those STAY on the mount for
-   `brain --role vm alerts` to read — but nothing in this runbook sets
-   `BRAIN_RUNTIME_DIR`, so after the cutover the host writes them to `$NEW`
-   and the VM reads a feed frozen at cutover day, silently, forever. Same
-   root cause: `tools/cowork_workspace_install.sh` stages `pinned-verify.json`
-   — the identity anchor the VM verifies that feed against — through
-   `brain_runtime_dir(vault)` rather than into the staging root.
-3. **`brain update` does not carry `$BRAIN_SNAPSHOT_DIR`.**
-   `update_channels._workspace_sync()` passes `BRAIN_VAULT` and nothing else,
-   so `config.snapshot_dir()` falls back to `<vault>/.brain/snapshot`. The
-   next update republishes off the mount while the VM keeps reading the
-   relocated snapshot. The path has to live in the registry, not in one
-   operator's shell.
-4. **The documented setup route bypasses the refusal.**
-   `.claude/skills/brainiac-cowork-setup/SKILL.md` (and its two mirrors) still
-   tell an operator to run the installer with two arguments. The relocation
-   refusal only fires when the optional fourth `workspace-dir` is passed;
-   without it the installer derives the workspace as `$VAULT/..`, which after
-   the cutover is not the attached folder at all.
-5. **The Cowork skill bundles are not published.** This is what blocked s07:
-   0 of 14 staged bundles match the marketplace HEAD, and 11 of 14 reference
-   `$BRAIN_VAULT` or `$PWD/vault`. Running this cutover before those are
-   published and installed breaks 14 skills with no way to prove which bundle
-   was being exercised.
-6. **This procedure moves the VAULT, and the mount holds more than the
-   vault.** See §6's closing note on what the accurate closure sentence is.
+1. **No phase journal; the procedure is not resumable.** DISSOLVED — §A moves
+   nothing, so there is no partial-move state to resume from.
+2. **The VM's degradation feed follows the vault off the mount.** DISSOLVED —
+   the vault does not move, and DESK-07 already put `alerts`, `exceptions` and
+   `inbox` on the broker's 15-tool surface, so the VM reads the feed through
+   the desk rather than off the mount.
+3. **`brain update` does not carry `$BRAIN_SNAPSHOT_DIR`.** CLOSED — the
+   snapshot directory is now a registry field (`workspaces.py`), and
+   `update_channels._workspace_sync()` carries it into the child environment
+   (and STRIPS an inherited one when the registry has none, so an operator's
+   shell cannot leak a path into a sync).
+4. **The documented setup route bypasses the refusal.** CLOSED — all three
+   copies of `brainiac-cowork-setup`, both copies of `setup-cowork`, and
+   `docs/cowork-windows-install.md` now show the four-argument invocation and
+   say why the fourth is not optional. Pinned by
+   `tests/test_cowork_documented_setup_route.py` (7 tests), which counts the
+   arguments on every runnable invocation in every shipped document. It pinned
+   18 at the time this was written; the One Command per Vault plan (s03,
+   2026-08-31) replaced the hand-paste route in the two `brainiac-cowork-setup`
+   surfaces and retired `setup-cowork`, so five of those documents no longer
+   show a runnable invocation at all and left the enumeration. What the file
+   still guards is unchanged; the replacement coverage for the retired rows is
+   `tests/test_install_docs_name_the_command.py`.
+5. **The Cowork skill bundles are not published.** CLOSED by owner Ruling 2 —
+   refresh by the STAGED path, not a public release. All 14 bundles were
+   rebuilt and staged, and verified 14/14 by extracting each zip and comparing
+   the member `SKILL.md` sha256 against the worktree source.
+6. **This procedure moves the VAULT, and the mount holds more than the vault.**
+   DISSOLVED — §A detaches the whole folder, vault and residuals together.
 
 **What it closes.** VULN-3385: a Cowork sandbox reads the attached workspace
 folder with ordinary file tools, so every note body underneath it bypasses the

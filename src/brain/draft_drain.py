@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import autolink, cos, frontmatter, provenance
+from . import autolink, cos, draft_update, frontmatter, provenance
 from .audit import KeyUnavailable
 from .notes import note_from_text, safe_slug
 
@@ -80,6 +80,7 @@ class DraftCandidate:
     rel_path: str
     subtree: str
     source_name: str
+    is_update: bool = False
 
 
 @dataclass
@@ -88,6 +89,7 @@ class DraftDrainRun:
 
     core: Any
     promoted: list[str] = field(default_factory=list)
+    updated: list[str] = field(default_factory=list)
     skipped: list[dict[str, str]] = field(default_factory=list)
     any_dir: bool = False
 
@@ -164,8 +166,29 @@ def _validate_candidate(
         already_indexed = run.core.index.get(note_id) is not None
     except Exception:
         already_indexed = False
+    declared_update = str(note.meta.get("updates") or "").strip()
     if already_indexed or destination.exists():
+        if declared_update:
+            return _validate_update(
+                run,
+                draft,
+                approved=approved,
+                pubkey=pubkey,
+                source_name=source_name,
+                content=content,
+                approved_sha=approved_sha,
+                note=note,
+                note_id=note_id,
+            )
         run.skip(draft, f"duplicate-id: {note_id!r} already exists", source_name)
+        return None
+    if declared_update:
+        run.skip(
+            draft,
+            f"update-target-missing: {declared_update!r} has no live note — "
+            "drop the `updates` key to create instead",
+            source_name,
+        )
         return None
     return DraftCandidate(
         draft=draft,
@@ -210,6 +233,41 @@ def _owner_gate_allows(
     return True
 
 
+def _validate_update(
+    run: DraftDrainRun,
+    draft: Path,
+    *,
+    approved: bool,
+    pubkey: Any,
+    source_name: str,
+    content: str,
+    approved_sha: str | None,
+    note: Any,
+    note_id: str,
+) -> DraftCandidate | None:
+    """UPD-01 guards live in :mod:`brain.draft_update`; this wires the verdict."""
+    verdict = draft_update.validate_update(
+        run.core, note, note_id, approved=approved,
+        promotion_path=_promotion_path,
+    )
+    if verdict.reason:
+        run.skip(draft, verdict.reason, source_name)
+        return None
+    return DraftCandidate(
+        draft=draft,
+        approved=approved,
+        pubkey=pubkey,
+        approved_sha=approved_sha,
+        content=content,
+        note=note,
+        note_id=note_id,
+        rel_path=verdict.rel_path,
+        subtree="brain",
+        source_name=source_name,
+        is_update=True,
+    )
+
+
 def _promotion_path(note: Any, note_id: str) -> tuple[str, str]:
     """Choose the canonical raw or brain-resources destination."""
     if note.type == "source" or note.zone == "raw":
@@ -230,6 +288,8 @@ def _sanitize_candidate(run: DraftDrainRun, candidate: DraftCandidate) -> bool:
         except UntrustedAuthorRefusal as exc:
             run.skip(candidate.draft, str(exc), candidate.source_name)
             return False
+    if candidate.is_update:
+        content = frontmatter.drop_keys(content, draft_update.UPDATE_TRANSPORT_KEYS)
     split = None if candidate.approved else frontmatter.split(content)
     if split is not None:
         frontmatter_block, body = split
@@ -272,10 +332,11 @@ def _approval_anchor_still_binds(run: DraftDrainRun, candidate: DraftCandidate) 
 def _sign_wal_index_candidate(run: DraftDrainRun, candidate: DraftCandidate) -> bool:
     """Delegate signing, WAL append, and index upsert to BrainCore.write_note."""
     try:
+        verb = "update" if candidate.is_update else "promote"
         run.core.write_note(
             candidate.rel_path,
             candidate.content,
-            reason=f"drain-on-invoke promote {candidate.draft.name}",
+            reason=f"drain-on-invoke {verb} {candidate.draft.name}",
             subtree=candidate.subtree,
         )
     except KeyUnavailable:
@@ -303,7 +364,7 @@ def _remove_committed_draft(run: DraftDrainRun, candidate: DraftCandidate) -> No
             )
     else:
         candidate.draft.unlink()
-    run.promoted.append(candidate.rel_path)
+    (run.updated if candidate.is_update else run.promoted).append(candidate.rel_path)
 
 
 def _drain_candidate(
@@ -371,8 +432,10 @@ class DraftDrainMixin:
                 )
         result: dict[str, Any] = {
             "promoted": len(run.promoted),
+            "updated": len(run.updated),
             "skipped": len(run.skipped),
-            "details": {"promoted": run.promoted, "skipped": run.skipped},
+            "details": {"promoted": run.promoted, "updated": run.updated,
+                        "skipped": run.skipped},
         }
         if not run.any_dir:
             result["reason"] = "no-drafts-dir"

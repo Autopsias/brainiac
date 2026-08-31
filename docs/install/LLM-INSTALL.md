@@ -164,11 +164,18 @@ bundle: Settings → Extensions → add `dist/brainiac.mcpb` (read-only bridge).
   progress on stderr) then `brain sync` (re-embeds the index).
   `brain status` must show `embedder: ready`. **later:** say that the first
   semantic query triggers the same download automatically.
-- **Q3 = yes:** follow `docs/install/cowork.md` (host stages the engine +
-  model into the workspace; NOTHING installs inside the sandbox; the human's
-  only manual steps are adding the folder in Cowork and pasting one prompt
-  block you print for them). In Claude Code, `/brainiac-cowork-setup` does
-  this end-to-end.
+- **Q3 = yes:** run the one command that wires the Cowork half —
+  `brain provision-local <vault> --workspace <workspace>` (add
+  `--model-dir <path>` if this is the first Brainiac vault on this machine;
+  see `docs/install/cowork.md` Quickstart for where to get one). It stages
+  the engine + model into the workspace; NOTHING installs inside the
+  sandbox. Report each wire's status; if wire 6 (the nightly sweep dir)
+  carries a `reload` line, print that `launchctl` line for the human to run
+  themselves — it's the one step an unattended process can't take. Then the
+  human's only manual steps are adding the workspace folder in Cowork and
+  pasting the prompt block from `<workspace>/vault/.brain/routines/cowork-session-prompt.md`.
+  In Claude Code, `/brainiac-cowork-setup` runs this same command and prints
+  everything for you. Full detail: `docs/install/cowork.md`.
 
 ## 8 · Final report (always, exactly this shape)
 

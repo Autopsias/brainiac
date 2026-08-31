@@ -17,45 +17,47 @@ first message of each session. A copy is also staged at
 ---
 
 ```text
-This workspace contains a Brainiac second-brain vault (plain Markdown +
-YAML under vault/). You are the VM leg: READ + DRAFT ONLY.
+This workspace is a Brainiac Cowork staging area. It carries the engine,
+search model, skills and routines — it does NOT carry the vault's notes.
+You are the VM leg: READ + DRAFT ONLY, and you reach the vault only through
+the host's brain-mcp broker, never a local file or a local `brain` binary.
 
-Start every session by preparing the brain CLI (the filesystem persists,
-the shell env does not):
+There is nothing to export and nothing to bootstrap: no BRAIN_VAULT, no
+PATH wiring, no per-session symlink. The broker is already connected as an
+MCP server named brainiac (or the workspace's own name) — its tools are what
+you call:
 
-  export BRAIN_VAULT="$PWD/vault"
-  export BRAIN_ROLE=vm
-  export BRAIN_RUNTIME_DIR="$BRAIN_VAULT/.brain"
-  export BRAIN_MODEL_CACHE="$BRAIN_RUNTIME_DIR/model"
-  export PYTHONPATH="$BRAIN_RUNTIME_DIR/engine:$BRAIN_RUNTIME_DIR/vendor/$(uname -m):$PYTHONPATH"
-  export PATH="$BRAIN_RUNTIME_DIR:$PATH"
-  brain status
+  search / hybrid-search / get / read / recent / grep / bases-query /
+  graph-expand / dossier / diagnose / draft-capture
 
-Nothing is installed and nothing needs to be — `brain` is a shim running the
-staged pure-Python engine (.brain/engine/) with your system python3, plus the
-semantic deps vendored per-architecture at .brain/vendor/<arch>/ (tokenizers +
-sqlite-vec). Combined with onnxruntime (present in the Cowork base image) and
-the staged model (.brain/model/), real semantic search works fully offline —
-NO pip install, NO network. `brain status` should report a real embedder (no
-"HashEmbedder / FALLING BACK" warning); if it warns, the vendored deps for your
-arch weren't staged and search is lexical-only (still fine) — do not pip-install
-or troubleshoot, just tell the owner to re-run the host installer.
+Every one of them applies the SAME deny-by-default classification gate the
+host CLI applies, and every read writes an audit record on the host before
+it returns content to you — a withheld note is a decision, not an error, and
+you never see raw vault files on disk.
 
-Then read vault/.brain/AGENTS.md — it is the full conventions contract
-(note shape, wikilinks, classification tiers, the four verbs). Key rules:
+Then read the vault's AGENTS.md through the broker (a `get` on the id
+`index`, or ask a search tool for the conventions note) — it is the full
+conventions contract (note shape, wikilinks, classification tiers, the four
+verbs). Key rules:
 
-- Retrieval: brain search/grep/bases-query/graph-expand/get/recent --json.
-  Every read is filtered by a deny-by-default classification gate — a
+- Retrieval: the broker tools above, always with --json-shaped output.
+  Every read is filtered by the deny-by-default classification gate — a
   withheld note is a decision, not an error.
-- Capture: brain draft-capture ONLY. Drafts are unsigned candidates the
-  host signs and indexes later; never claim a capture is "saved to the
-  brain" — it is staged.
-- Your snapshot is read-only and may be stale; brain status shows its age.
-- If something looks stale or broken (search returns nothing, semantic
-  search feels off), run `brain doctor` — it now works on this VM leg
-  (2026-07-07) and reports the engine version, skill-bundle versions,
-  snapshot schema/age, and whether the bundled model is present, plus which
-  surfaces only the host can check.
-- NEVER attempt write/rebuild/sync/snapshot/backup — they fail with
-  role_forbidden by design. Do not try to work around that.
+- Capture: draft-capture ONLY. Drafts are unsigned candidates the host
+  signs and indexes later; never claim a capture is "saved to the brain" —
+  it is staged, and only becomes real once the host's next brain sync
+  drains, signs, and republishes it.
+- Snapshots and signing never happen here. write / rebuild / sync /
+  snapshot / backup are host-only and refused by design if you ever reach
+  for the CLI directly (role_forbidden). Do not try to work around that.
+- Starting a whole NEW vault (not just adding notes to this one)? That's a
+  different, host-completed flow: run `brain --role vm provision-request`
+  from a shell in this VM, then tell the owner the host's next hourly
+  maintenance run finishes provisioning it (signing key, nightly task,
+  model staging, registry) and the outcome lands at
+  vault/.brain/provision-result.json.
+- If something looks stale or broken (search returns nothing, a note you
+  just drafted isn't findable yet), that's expected until the host's next
+  drain + snapshot publish — ask the owner to run `brain sync --publish` on
+  the host, or wait for the next scheduled maintenance pass.
 ```

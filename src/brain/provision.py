@@ -40,7 +40,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -49,6 +48,11 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from . import workspaces
+# Wire 5 moved to `provision_mcp` (its own module: the Desktop config is a
+# third-party file with a third party still writing to it). Re-exported here
+# because this module is the one every caller already imports.
+from .pathkey import real_key
+from .provision_mcp import mcp_server_name, register_mcp  # noqa: F401
 
 REQUEST_NAME = "provision-request.json"
 CLAIM_NAME = REQUEST_NAME + ".claimed"
@@ -108,18 +112,35 @@ def _registered(entries: list[dict]) -> tuple[set[Path], set[Path]]:
         ws = e.get("workspace_path") or ""
         vp = e.get("vault_path") or ""
         if ws:
-            roots.add(Path(os.path.realpath(ws)).parent)
+            roots.add(Path(real_key(ws)).parent)
         if vp:
-            vaults.add(Path(os.path.realpath(vp)))
+            # THE key (realpath + NFC): macOS `readdir` hands the drain an NFD
+            # spelling of a path the registry stores in NFC, and a realpath-only
+            # comparison calls those two different vaults.
+            vaults.add(Path(real_key(vp)))
     return roots, vaults
 
 
 def _run_engine(vault: Path, argv: list[str], *, timeout: int,
-                runner: Callable[..., Any]) -> dict[str, Any]:
+                runner: Callable[..., Any],
+                env_extra: Optional[dict[str, str]] = None) -> dict[str, Any]:
     """Run `python -m brain --vault <vault> <argv...>` with BRAIN_VAULT set
-    (the task registrar reads the vault from the ENVIRONMENT, not --vault)."""
+    (the task registrar reads the vault from the ENVIRONMENT, not --vault).
+
+    ``env_extra`` reaches the whole chain: ``init --full --apply`` ->
+    ``scripts/register_tasks.py`` -> ``scripts/install-brief-mac.sh``, each of
+    which passes ``os.environ`` straight down. That is how the merged
+    ``BRAIN_WORKSPACE_SWEEP_DIRS`` gets INTO the rendered plist instead of being
+    overwritten by the next re-render (install-brief-mac.sh:91).
+
+    PYTHONPATH pins the child to THIS ``brain``: ``-m brain`` resolves on the
+    CHILD's path, so a second checkout ran the INSTALLED engine (2026-08-31).
+    """
     cmd = [sys.executable, "-m", "brain", "--vault", str(vault), *argv]
-    env = {**os.environ, "BRAIN_VAULT": str(vault)}
+    here = str(Path(__file__).resolve().parent.parent)
+    env = {**os.environ, "BRAIN_VAULT": str(vault), **(env_extra or {}),
+           "PYTHONPATH": (here + os.pathsep
+                          + os.environ.get("PYTHONPATH", "")).rstrip(os.pathsep)}
     try:
         proc = runner(cmd, capture_output=True, text=True, timeout=timeout, env=env)
     except Exception as exc:  # spawn failure / timeout
@@ -165,7 +186,8 @@ def _stage_model(vault: Path, src: Path) -> dict[str, Any]:
 
 
 def _stage_cowork_runtime(vault: Path, model_src: Path | None, workspace: Path, *,
-                          runner: Callable[..., Any]) -> dict[str, Any]:
+                          runner: Callable[..., Any],
+                          snapshot_dir: Path | None = None) -> dict[str, Any]:
     """Assemble the VM-readable runtime (engine, per-arch ELFs, model, skills,
     routines, published snapshot) into the workspace.
 
@@ -207,11 +229,19 @@ def _stage_cowork_runtime(vault: Path, model_src: Path | None, workspace: Path, 
         return {"status": "skipped",
                 "reason": f"no Linux ELFs built in {dist} "
                           "(host: tools/build_brain_binary_linux.sh)"}
+    # The installer needs to know where the published snapshot goes: it refuses
+    # any destination inside the attached folder, and until 2026-08-30 nothing
+    # in this lane passed a value at all, so the guard ran against the shell's
+    # ambient environment rather than the vault's own default.
+    from . import config as _config
+
+    env = {**os.environ,
+           "BRAIN_SNAPSHOT_DIR": str(snapshot_dir or _config.snapshot_dir(vault))}
     try:
         proc = runner([str(script), str(vault), str(model_src), str(dist),
                        str(workspace)],
                       capture_output=True, text=True, timeout=_STAGE_TIMEOUT_S,
-                      cwd=str(checkout))
+                      cwd=str(checkout), env=env)
     except Exception as exc:
         return {"status": "failed", "reason": f"{type(exc).__name__}: {exc}"}
     if proc.returncode != 0:
@@ -231,46 +261,6 @@ def _stage_cowork_runtime(vault: Path, model_src: Path | None, workspace: Path, 
     return {"status": "staged", "checkout": str(checkout), "elfs": elfs}
 
 
-def mcp_server_name(workspace: Path) -> str:
-    """A per-vault MCP server name derived from the workspace folder.
-
-    NOT the bare default `brainiac`: that name is a single global slot, so a
-    second vault registering under it would silently repoint Claude Desktop
-    away from the first. One vault, one server, one name.
-    """
-    slug = re.sub(r"[^a-z0-9]+", "-", workspace.name.lower()).strip("-")
-    return f"brainiac-{slug}" if slug else "brainiac"
-
-
-def register_mcp(vault: Path, workspace: Path, *,
-                 max_tier: str = "Internal") -> dict[str, Any]:
-    """Register this vault as its own Claude Desktop MCP server.
-
-    Without this a newly provisioned vault is unreachable from the Desktop
-    Chat tab and from Cowork's MCP-on-host retrieval path — the vault
-    installs, stages and indexes correctly and still cannot be queried, which
-    is exactly what a new vault looked like before 2026-08-17.
-
-    Idempotent and additive: `plan_claude_desktop` MERGES into the existing
-    `mcpServers` map and reports `noop` when the entry already matches, so
-    re-running never disturbs another vault's server or any unrelated one.
-    """
-    from . import connect as _connect
-
-    try:
-        cfg = _connect.claude_desktop_config_path()
-        name = mcp_server_name(workspace)
-        plan = _connect.plan_claude_desktop(cfg, str(vault), name, max_tier)
-        if plan.already_connected:
-            return {"status": "already-registered", "name": name, "config": str(cfg)}
-        _connect.apply_json_merge(plan)
-        return {"status": "registered", "name": name, "config": str(cfg),
-                "max_tier": max_tier,
-                "note": "restart Claude Desktop for the new server to appear"}
-    except Exception as exc:  # noqa: BLE001 — never fail a provision over this
-        return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
-
-
 def _staging_root(vault: Path, workspace: Path) -> Path:
     """The relocation-aware ``.brain`` --- ``vault/.brain`` co-located, on the
     mount once the vault moves. One resolver, shared with the installer."""
@@ -279,28 +269,105 @@ def _staging_root(vault: Path, workspace: Path) -> Path:
     return staging_root(vault, workspace)
 
 
+def _wire_summary(wires: dict[str, Any], *, sync_ok: bool) -> dict[str, Any]:
+    """Six wire verdicts -> the report shape the drain's consumers speak.
+
+    Split out of :func:`_provision_one` only to keep it under the function-length
+    ratchet, and it is a coherent unit on its own: everything here is a pure
+    function of the wire statuses, with no vault, workspace or runner in reach.
+
+    Two rules live in it:
+
+    * **A failed wire may NEVER hide inside a `provisioned` summary.** Wires 3
+      and 5 are what make the vault findable at all, and this report is
+      CONSUMED: the claim marker is deleted on it, ``write_request`` reads
+      ``ok: true`` as already-provisioned, and ``maintain`` files an auto-fix.
+      So the wire statuses decide the status, not the sync exit code alone.
+    * **Only claim a Cowork workspace the staging actually built** — wire 4's
+      own condition, read back here. An entry asserting a Cowork-ready
+      workspace with no engine inside it sends a Cowork session to a
+      ``brain: command not found`` dead end.
+    """
+    # The MCP registration is what makes the vault reachable from the Desktop
+    # Chat tab and Cowork's MCP-on-host path — a vault that indexes perfectly
+    # and has no server entry is invisible to both.
+    out: dict[str, Any] = {
+        "mcp": wires["5"].get("mcp", {"status": "failed",
+                                      "error": wires["5"].get("detail", "")})}
+    failed = [k for k in ("3", "5") if wires[k]["status"] == "failed"]
+    if wires["3"]["status"] == "failed":
+        out["registry"] = f"NOT recorded — wire 3 failed: {wires['3'].get('detail', '')}"
+    else:
+        targets = ("host + cowork-vm" if wires["4"]["status"] in ("already", "done")
+                   else "host")
+        out["registry"] = f"recorded ({targets})"
+    out["status"] = "provisioned" if not failed else "wires-failed"
+    out["ok"] = sync_ok and not failed
+    if failed:
+        out["failed_wires"] = failed
+    return out
+
+
 def _provision_one(vault: Path, workspace: Path, *, entries: list[dict],
                    registered_vaults: set[Path],
                    registry_path: Path, lock_path: Path,
                    runner: Callable[..., Any]) -> dict[str, Any]:
+    """The DRAIN's wrapper around the six wires.
+
+    Everything policy lives here and nowhere else: the ``already-registered``
+    short-circuit (PRV-10: a registered vault is never re-provisioned, so the
+    drain is not a repair path — ``brain provision-local`` is), the model-source
+    lookup over the registry, the model-copy + ``sync --publish`` FALLBACK for
+    when the Cowork staging could not run, and the report shape the maintain
+    fold and ``provision-result.json`` already speak.
+    """
+    from .provision_wire import _OK, sweep_status, wire_vault
+
     res: dict[str, Any] = {"vault": str(vault), "workspace": str(workspace)}
-    if Path(os.path.realpath(vault)) in registered_vaults:
-        res.update({"status": "already-registered", "ok": True})
+    if Path(real_key(vault)) in registered_vaults:
+        # The short-circuit returns before any wire runs, so the sweep-gap
+        # report below it could only ever fire on a vault's FIRST provisioning
+        # — i.e. never on the one whose list was wiped later, which is the only
+        # case that exists. `sweep_status` is the READ-ONLY form: it creates no
+        # folder and writes no plist, so PRV-10 ("a registered vault is never
+        # re-provisioned") holds and the finding still reaches `maintain`.
+        res.update({"status": "already-registered", "ok": True,
+                    "sweep": sweep_status(vault, workspace)})
         return res
 
-    init_res = _run_engine(
-        vault, ["init", "--full", "--apply", "--json"],
-        timeout=_INIT_TIMEOUT_S, runner=runner)
-    res["init"] = init_res
-    if not init_res.get("ok"):
+    model_src = _find_model_source(vault, entries)
+    # `sweep_repair=False`: this fold IS the launchd job whose plist the merge
+    # would rewrite, and it could only ever ask a human to reload it. The drain
+    # REPORTS the gap (`pending`); `brain provision-local` is the repair path.
+    # First provisioning still gets the sweep dir for free, because wire 1's
+    # `init --full --apply` renders the plist from the merged list.
+    wires = wire_vault(vault, workspace, model_dir=str(model_src) if model_src else None,
+                       registry_path=registry_path, lock_path=lock_path,
+                       sweep_repair=False, runner=runner)
+    res["init"] = wires["1"].get("init", {})
+    res["wires"] = {k: {"status": v["status"], "detail": v.get("detail", "")}
+                    for k, v in wires.items()}
+    if wires["1"]["status"] == "failed":
         res.update({"status": "init-failed", "ok": False})
         return res
 
     # The full Cowork staging also lands the model, reconciles the index and
     # publishes the snapshot, so the plain model copy + sync are the FALLBACK
     # for when it cannot run — never both.
-    model_src = _find_model_source(vault, entries)
-    cowork = _stage_cowork_runtime(vault, model_src, workspace, runner=runner)
+    cowork = wires["2"].get("cowork") or {"status": "failed",
+                                          "reason": wires["2"].get("detail", "")}
+    # WIRE 2's verdict decides, never the stager's own word inside it. The
+    # stager reports `staged` off the engine stamp alone, and the stamp is
+    # copied hundreds of lines before the model cache and the workspace
+    # contract — so wire 2 re-checks the ARTEFACTS and fails a run that
+    # produced a subset. If the raw word won here, the drain would skip the
+    # model+sync FALLBACK for a runtime that is not there and report a Cowork
+    # workspace it never built: the exact partial-staging hole wire 2 closes,
+    # one level up. Same predicate wire 4 gates its `cowork-vm` row on, so the
+    # two can never disagree about whether this vault staged.
+    if wires["2"]["status"] not in _OK and cowork.get("status") == "staged":
+        cowork = {**cowork, "status": "failed",
+                  "reason": wires["2"].get("detail", "")}
     res["cowork"] = cowork
     if cowork["status"] != "staged":
         res["model"] = (_stage_model(vault, model_src) if model_src
@@ -311,31 +378,14 @@ def _provision_one(vault: Path, workspace: Path, *, entries: list[dict],
     else:
         sync_ok = True
 
-    workspaces.upsert_entry(
-        str(vault), workspace_path=str(workspace), target="host",
-        registry_path=registry_path, lock_path=lock_path)
-    targets = "host"
-    # ONLY claim a Cowork workspace the staging actually built. An entry
-    # asserting a Cowork-ready workspace with no engine inside it sends a
-    # Cowork session to a `brain: command not found` dead end.
-    if cowork["status"] == "staged":
-        workspaces.upsert_entry(
-            str(vault), workspace_path=str(workspace), target="cowork-vm",
-            model_dir=str(_staging_root(vault, workspace) / "model"),
-            registry_path=registry_path, lock_path=lock_path)
-        targets = "host + cowork-vm"
-    # The MCP registration is what makes the vault reachable from the Desktop
-    # Chat tab and Cowork's MCP-on-host path. A vault that indexes perfectly
-    # and has no server entry is invisible to both.
-    res["mcp"] = register_mcp(vault, workspace)
-    res["registry"] = f"recorded ({targets})"
-    res.update({"status": "provisioned", "ok": sync_ok})
+    res.update(_wire_summary(wires, sync_ok=sync_ok))
     if cowork["status"] != "staged":
         res["next_step"] = (
             "Cowork runtime NOT staged "
             f"({cowork.get('reason') or cowork.get('stderr')}) — this vault "
             "works on the host; run /brainiac-cowork-setup on a host with a "
             "checkout to make it usable from Cowork")
+    res["sweep"] = wires["6"]
     return res
 
 
@@ -363,9 +413,20 @@ def maintain_fold(
         elif not h.get("ok"):
             action_required.append(maint.action_required_item(
                 f"vault provisioning failed: {h.get('vault')}",
-                f"status={h.get('status')}",
+                f"status={h.get('status')} "
+                f"failed_wires={h.get('failed_wires') or []}",
                 "run `brain provision-drain` by hand and read its report",
                 h.get("vault", "")))
+        sweep = h.get("sweep") or {}
+        if sweep.get("status") in ("pending", "failed"):
+            # The drain deliberately does NOT edit the launchd plist of the job
+            # running it, and could not reload it if it did. It reports; the
+            # operator command repairs.
+            action_required.append(maint.action_required_item(
+                "the Cowork deliverables folder is not swept into this vault",
+                sweep.get("detail", ""),
+                f"run `brain provision-local {h.get('vault')} --workspace "
+                f"<the attached folder>`", h.get("vault", "")))
     for s in res["stuck_claims"]:
         action_required.append(maint.action_required_item(
             "a provision claim marker is stuck (crashed drain?)", s,

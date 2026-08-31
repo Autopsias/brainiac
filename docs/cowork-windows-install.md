@@ -128,8 +128,16 @@ This is the full PRIMARY-surface loop (proven end-to-end by
 tools/build_brain_binary.sh            # → dist/brain-linux-x86_64, brain-linux-aarch64
 
 # 2. assemble the workspace .brain/ (binaries + model + first snapshot)
-tools/cowork_workspace_install.sh  <workspace>/vault  /path/to/model.onnx
+tools/cowork_workspace_install.sh "<vault>" /path/to/model.onnx "$PWD/dist" "<workspace>"
 ```
+
+**Pass all four arguments.** `<vault>` is where the notes live; `<workspace>`
+is the folder Cowork attaches. They are the same tree only before the VULN-3385
+cutover — and the script's refusal to stage note bodies onto the mount is
+behind the fourth argument, so a two-argument call has no guard on it. For a
+vault that has not moved, `<workspace>` is the vault's own parent and the
+result is byte-identical to the old two-argument form.
+
 
 `cowork_workspace_install.sh` is idempotent: re-running it refreshes the binaries
 and republishes the snapshot. The Markdown in `vault/` remains the single source

@@ -102,14 +102,17 @@ should run" to "this machine/account actually runs it."
 ## The governing constraint — read this before registering anything
 
 `routines/manifest.json`'s `locked_counts` LOCKS the OS-scheduled-task count at
-**exactly 1 host task, 0 VM/Cowork tasks** (MITRE ATT&CK T1053.005
+**exactly 2 host tasks, 0 VM/Cowork tasks** (it read "1 host task" here until
+2026-08-30, seven weeks after the owner amended the lock to 2 on 2026-07-11 —
+and `scripts/register_tasks.py:91` had been refusing anything but 2 the whole
+time, so this paragraph contradicted the code it describes) (MITRE ATT&CK T1053.005
 minimization — every additional scheduler entry is an independent
 persistence/hijack surface for no functional gain; a markdown-truth +
 disposable-index substrate needs exactly one reconciling heartbeat). This
 skill enforces that lock structurally:
 
 - `scripts/register_tasks.py` refuses to run at all if
-  `routines/manifest.json`'s `locked_counts` don't read `{host: 1, vm: 0}` —
+  `routines/manifest.json`'s `locked_counts` don't read `{host: 2, vm: 0}` —
   it will not register against an unratified budget.
 - The HOST leg registers exactly one task: `brain-nightly`
   (`brain maintain --json`), which already does sync+publish+brief AND the
@@ -136,10 +139,36 @@ python3 -c "
 import json
 d = json.load(open('routines/manifest.json'))
 lc = d['locked_counts']
-assert lc['host_os_scheduled'] == 1 and lc['vm_os_scheduled'] == 0, lc
-print('budget OK:', lc)
+host = [r for r in d['tasks'] if r.get('os_scheduled')]
+ratified = {'brain-nightly', 'brain-synthesis-weekly'}
+ids = {r['id'] for r in host}
+assert ids == ratified, ('UNRATIFIED host task set', sorted(ids ^ ratified))
+assert lc['host_os_scheduled'] == len(host), (lc, sorted(ids))
+assert lc['vm_os_scheduled'] == 0, lc
+print('budget OK:', lc, '->', sorted(ids))
 "
 ```
+
+**Do not hardcode the budget number here.** This line asserted
+`host_os_scheduled == 1` until 2026-08-30, seven weeks after the owner amended
+the lock to 2 (brain-nightly + brain-synthesis-weekly, 2026-07-11). So the
+check FAILED on a healthy manifest and passed on nothing — a guard that fires
+only when the state is correct.
+
+Comparing the declared count against the routines actually marked
+`os_scheduled` was still not a guard, and the 2026-08-30 adversarial round said
+so: both numbers come from the SAME file. A manifest that adds a third task and
+bumps `locked_counts` in one edit satisfies `len(host) ==
+lc['host_os_scheduled'] == 3`, and the check meant to stop an unratified
+persistence expansion prints `budget OK`.
+
+So the assertion pins the ratified ID SET instead. `brain-nightly` and
+`brain-synthesis-weekly` are the two the manifest's own lock note ratifies and
+the two `scripts/register_tasks.py:91` hard-refuses to deviate from, so the
+anchor lives OUTSIDE the file being checked — which is the whole difference
+between a lock and a restatement. A third task now fails closed whatever
+`locked_counts` says about itself. Adding one is an owner decision: amend
+`persistence-budget.md`, then the manifest, then this set, in that order.
 
 If this fails, the manifest has drifted from the locked budget — fix the
 manifest (or `persistence-budget.md`, with the reopening-clause ratification

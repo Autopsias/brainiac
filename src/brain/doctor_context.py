@@ -183,6 +183,22 @@ def build_context_and_checks(
     return context, checks
 
 
+def extra_surface_rows(registry_entries: list[dict], ssot: str) -> list[dict]:
+    """Surfaces added onto ``build_doctor_rows``'s set (kept out of
+    ``doctor.run_doctor`` itself to hold that function under the length
+    ratchet): the VM binary staleness check, the Cowork mount-leak check
+    (criterion 7, s07), and DOC-01's non-gating "Vault wiring" row."""
+    from .doctor_mount_leak import check_cowork_mount_leak
+    from .doctor_wiring import check_vault_wiring
+    from .vmstaging import check_staged_vm_binaries
+
+    return [
+        *check_staged_vm_binaries(registry_entries, ssot),
+        *check_cowork_mount_leak(registry_entries),
+        *check_vault_wiring(registry_entries),
+    ]
+
+
 # Parent-namespace bind, deferred past this module's own defs. Safe: this
 # module is only ever first imported (by ``doctor.run_doctor``'s lazy
 # ``import doctor_context``, or by the facade re-export below) after

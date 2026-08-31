@@ -39,10 +39,19 @@ reclaim it. If leases are ever built, the active/abandoned split belongs here.
 from __future__ import annotations
 
 import os
-import sqlite3
+import stat
 import time
 from dataclasses import dataclass
 from pathlib import Path
+
+from .cowork_leak_artifact import Artifact
+from .cowork_leak_notes import _is_note_file, _scan_note_dumps
+from .cowork_leak_databases import (
+    _classify_db,
+    _looks_like_sqlite,
+    _sqlite_body_rows,
+    _sqlite_candidates,
+)
 
 __all__ = ["Artifact", "recoverable_artifacts"]
 
@@ -63,28 +72,6 @@ __all__ = ["Artifact", "recoverable_artifacts"]
 #
 # Half the mount was never being looked at, and looking at all of it was faster
 # than the bookkeeping that avoided it.
-
-# A sqlite database is recognised by its MAGIC BYTES, never by its extension:
-# the same round renamed a notes database to ``payload.bin`` and the old
-# suffix-matching scan reported clean. Every sqlite file begins with this
-# 16-byte string, and the format's minimum page size is 512, so nothing smaller
-# can be one. MEASURED warm on the same mount: sniffing every file costs 4.61s,
-# sniffing only files >= 512 bytes costs 1.31s, and both find the same 4
-# databases.
-_SQLITE_MAGIC = b"SQLite format 3\x00"
-_SQLITE_MIN_BYTES = 512
-@dataclass(frozen=True)
-class Artifact:
-    """One artefact inside a workspace from which a note body is recoverable."""
-
-    # vault_tree | snapshot | derived_index | staged_original | escaping_symlink
-    kind: str
-    path: Path
-    detail: str
-
-    def __str__(self) -> str:  # pragma: no cover - formatting only
-        return f"{self.kind}: {self.path} ({self.detail})"
-
 
 def _walk(root: Path):
     """Yield (dirpath, dirnames, filenames) for EVERY directory under ``root``.
@@ -141,61 +128,6 @@ def _zone_yields_bodies(zone: Path) -> bool:
     if (zone / "__init__.py").exists():
         return False
     return _has_text(zone)
-def _looks_like_sqlite(path: Path) -> bool:
-    """True if ``path`` opens with the sqlite magic string.
-
-    Cheap, extension-blind, and gated on the format's own minimum size so the
-    scan does not open 10,000 one-line text files to read 16 bytes.
-    """
-    try:
-        if path.stat().st_size < _SQLITE_MIN_BYTES:
-            return False
-        with path.open("rb") as fh:
-            return fh.read(len(_SQLITE_MAGIC)) == _SQLITE_MAGIC
-    except OSError:
-        return False
-
-
-def _sqlite_body_rows(db: Path) -> int | None:
-    """Number of rows in ``db`` carrying a non-empty note ``body``.
-
-    ``None`` when ``db`` is not a readable sqlite database with a ``notes``
-    table -- an unrelated sqlite file (a COS commitments ledger, a browser
-    profile) is not a note-body leak and must not be reported as one.
-
-    Opened read-only through a URI so a live index's WAL is never touched.
-    """
-    try:
-        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=1.0)
-    except sqlite3.Error:
-        return None
-    try:
-        cur = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type IN ('table','view') AND name='notes'"
-        )
-        if cur.fetchone() is None:
-            return None
-        cur = conn.execute("SELECT COUNT(*) FROM notes WHERE body IS NOT NULL AND body != ''")
-        row = cur.fetchone()
-        return int(row[0]) if row else 0
-    except sqlite3.Error:
-        return None
-    finally:
-        conn.close()
-
-
-def _classify_db(db: Path) -> str:
-    """``snapshot`` or ``derived_index``, by path.
-
-    Both carry bodies and both are caught; the label is what an operator reads
-    to know which remediation applies -- republish elsewhere, or rebuild the
-    index under ``$BRAIN_INDEX_DIR``.
-    """
-    parts = {p.lower() for p in db.parts}
-    if "snapshot" in parts or "snapshot" in db.name.lower():
-        return "snapshot"
-    return "derived_index"
-
 
 _NOTE_ZONES = ("brain", "raw")
 
@@ -246,6 +178,8 @@ def _scan_note_zones(here: Path, dirnames: list[str]) -> list[Artifact]:
     return out
 
 
+
+
 def _scan_databases(here: Path, filenames: list[str]) -> list[Artifact]:
     """(2)+(3) a snapshot or a derived index.
 
@@ -253,10 +187,7 @@ def _scan_databases(here: Path, filenames: list[str]) -> list[Artifact]:
     -- a COS ledger, a browser profile -- is never reported.
     """
     out = []
-    for name in filenames:
-        db = here / name
-        if not _looks_like_sqlite(db):
-            continue
+    for db in _sqlite_candidates(here, filenames):
         rows = _sqlite_body_rows(db)
         if not rows:
             continue
@@ -321,87 +252,27 @@ def _scan_staged_originals(here: Path, filenames: list[str]) -> list[Artifact]:
 # costs 0.95s, and the scan stops at the first hit in each directory, so a real
 # dump costs one read.
 #
-# A note body is not always called `.md`: the same round renamed one to `.txt`
-# and it became invisible. The frontmatter budget is 4 KiB rather than 600 bytes
-# because 600 was chosen for the sampling cost that no longer applies.
-_NOTE_SUFFIXES = (".md", ".markdown", ".txt")
-_FRONTMATTER_BYTES = 4096
-
-# The ADR-0010 generated shelf. Its own header declares "Highest classification
-# here: MNPI" and its payload is the archived ORIGINAL each note was made from,
-# so it is a leak of the same data by a shorter route --- and it carries no note
-# frontmatter at all, so `_scan_note_dumps` cannot see it. Detected by name
-# because ADR-0010 is what chooses that name and that location.
+# A note body is not always called `.md`: the 2026-08-29 round renamed one to
+# `.txt` and it became invisible. That round was answered by ADDING `.txt` to a
+# suffix list, which is the same gate one rename further out -- and the
+# 2026-08-30 adversarial round walked straight through it with
+# `backup/note.md.bak`, a file an editor or a pre-move backup produces without
+# anyone intending anything. Reproduced: 0 artefacts from the scanner while
+# `grep -r` printed the Restricted body.
+#
+# SO THE SUFFIX IS NO LONGER A GATE. It is only an ORDERING: the suffixes below
+# are tried first because they are where a note usually is, and every other
+# regular file is tried after. The discriminator is the content -- the file must
+# OPEN with `---` and carry note frontmatter -- and content is the one property
+# a rename cannot change.
+#
+# COST. The first read is 4 bytes, not 4 KiB: a file that does not open with
+# `---` is rejected without a second syscall, and the sibling sqlite sniff
+# already opens every file >=512 bytes for a 16-byte read. The full 4 KiB is
+# read only for a file that already looks like frontmatter. Measured warm on the
+# live mount before this change: 4 KiB from all 6,035 suffix-matching candidates
+# cost 0.95s, and the scan still stops at the first hit in each directory.
 _SHELF_DIR = "brain-deliverables"
-
-
-def _is_note_file(path: Path) -> bool:
-    """True if ``path`` opens with VAULT NOTE frontmatter, not merely Markdown.
-
-    The discriminator is ``id:`` plus ``classification:`` or ``type:``. That is
-    what separates a note body from the Markdown a workspace legitimately holds
-    --- ``SKILL.md`` frontmatter carries ``name:``/``description:``, a README
-    carries none.
-
-    STATED LIMIT, and it is a real one: the frontmatter must OPEN the file.
-    A note body with arbitrary bytes prepended before its ``---`` is not
-    recognised. That is a deliberate transform rather than the drift this check
-    exists to catch (a reinstall, a restage, a manual copy), and recognising it
-    would mean scanning whole file bodies on every ``brain doctor``.
-    """
-    if path.suffix.lower() not in _NOTE_SUFFIXES:
-        return False
-    try:
-        with path.open("rb") as fh:
-            head = fh.read(_FRONTMATTER_BYTES).decode("utf-8", "replace")
-    except OSError:
-        return False
-    if not head.startswith("---"):
-        return False
-    end = head.find("\n---", 3)
-    body = head[3:end] if end != -1 else head[3:]
-    keys = {ln.split(":", 1)[0].strip()
-            for ln in body.splitlines() if ":" in ln and not ln[:1].isspace()}
-    return "id" in keys and bool(keys & {"classification", "type"})
-
-
-def _scan_note_dumps(root: Path, here: Path, filenames: list[str]) -> list[Artifact]:
-    """(6) a directory of note-shaped Markdown ANYWHERE under the workspace.
-
-    Proves the leak from the FRONTMATTER, not from a directory name, which is
-    the whole point: ``_scan_note_zones`` can only see a folder someone called
-    ``brain`` or ``raw``, and a copy is rarely so considerate. MEASURED on the
-    live reference mount 2026-08-29, this is what stands between the cutover and
-    a green check over 46 note-shaped files in ``<workspace>/migration/``.
-
-    Directories at or under a note zone are skipped: ``_scan_note_zones``
-    already owns them, and reporting ``vault/brain`` seven more times once per
-    subdirectory is a row an operator learns to ignore. That test walks
-    ancestors only as far as the SCAN ROOT --- it used to walk all the way to
-    ``/``, so a workspace that happened to live under a directory called
-    ``brain`` (or a temp dir named ``raw``) silently exempted its whole tree.
-    The ROOT ITSELF is never exempt for the same reason: when
-    :func:`_yields_note_bodies` hands a symlinked ``brain/`` directory straight
-    to the scanner, that directory is the root, and skipping it would report the
-    link clean.
-    """
-    if here != root and here.name in _NOTE_ZONES:
-        return []
-    for parent in here.parents:
-        if parent == root:
-            break
-        if parent.name in _NOTE_ZONES:
-            return []
-    cands = sorted(f for f in filenames if Path(f).suffix.lower() in _NOTE_SUFFIXES)
-    if not cands:
-        return []
-    hit = next((f for f in cands if _is_note_file(here / f)), None)
-    if hit is None:
-        return []
-    return [Artifact("note_body_dump", here,
-                     f"{len(cands)} candidate file(s); {hit!r} carries vault note "
-                     "frontmatter (id + classification/type), readable by path, "
-                     "by glob and by content search")]
 
 
 def _scan_deliverables_shelf(here: Path, dirnames: list[str]) -> list[Artifact]:
@@ -470,17 +341,23 @@ def _recoverable(workspace: Path, visited: set[Path],
     visited = visited | {root}
     found: list[Artifact] = []
     seen: set[Path] = set()
+    # Note zones already reported, so `_scan_note_dumps` does not report each of
+    # their subdirectories again. `os.walk` is top-down, so a zone is always
+    # recorded here before the walk descends into it.
+    covered: set[Path] = set()
     for here, dirnames, filenames in _walk(root):
         if deadline is not None and time.monotonic() > deadline:
             raise ScanBudgetExceeded(found, time.monotonic() - deadline)
+        zones = _scan_note_zones(here, dirnames)
+        covered.update(zone.path for zone in zones)
         try:
-            here_found = (_scan_note_zones(here, dirnames)
+            here_found = (zones
                           + _scan_databases(here, filenames)
                           + _scan_symlinks(root, here,
                                            list(dirnames) + list(filenames),
                                            visited, deadline)
                           + _scan_staged_originals(here, filenames)
-                          + _scan_note_dumps(root, here, filenames)
+                          + _scan_note_dumps(root, here, filenames, covered)
                           + _scan_deliverables_shelf(here, dirnames))
         except ScanBudgetExceeded as exc:
             # A NESTED scan (a symlink hands its target back here) timed out;

@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from .cowork_staging import staging_root
+
 
 DoctorCheck = Callable[..., Any]
 
@@ -134,7 +136,15 @@ def _workspace_rows(
     for entry in context.registry_entries:
         if entry.get("target") == "host":
             continue
-        vdir = Path(checks.cowork_vault_dir(entry)) / ".brain" / "vendor"
+        # `vendor/` is a STAYS-on-the-mount directory, so on a RELOCATED vault
+        # it is under the workspace, not the vault. Built as
+        # `<vault>/.brain/vendor` this never went stale --- `is_dir()` was
+        # simply False and the row VANISHED, taking the cp310/cp311 ABI check
+        # with it (the mismatch behind the 10-run Cowork outage). A guard whose
+        # all-clear equals no input. Fifth relocation-unaware surface, found
+        # 2026-08-31 after the same class of bug in the two staging rows.
+        vdir = staging_root(checks.cowork_vault_dir(entry),
+                            entry.get("workspace_path") or None) / "vendor"
         if vdir.is_dir():
             rows.append(checks.vendor_abi(vdir, context.vm_python))
     rows.extend(checks.staged_skill_bundles(context.registry_entries, ssot))

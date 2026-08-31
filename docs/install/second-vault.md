@@ -7,6 +7,28 @@ don't cover: **the install is one binary; the vault is not singular.**
 
 Ground truth below is cited to the actual code, not assumed.
 
+## The short version: `brain provision-local`
+
+If this second vault also wants a Cowork workspace (most do), one command
+wires the whole thing — scaffold, audit key, nightly registration, Cowork
+staging, the registry rows, and the Claude Desktop MCP entry:
+
+```bash
+brain provision-local ~/vaults/personal --workspace ~/CoworkWorkspaces/personal
+```
+
+It's check-then-act (re-running it repairs a half-wired vault and changes
+nothing on a fully wired one), and a machine that already staged a model for
+one vault needs no `--model-dir` here — `provision-local` finds it. Sections
+1-5 below are what that command does under the hood, and the doctor row that
+tells you when it's needed: `brain doctor` reports a per-vault "Vault wiring"
+row (`current` / `warn: <first missing wire>`) — a `warn` names the exact
+`brain provision-local` command to repair it.
+
+**Just want a vault with no Cowork workspace at all** (Claude Code / Codex
+only)? Skip straight to §2 below — `brain init --full` alone is enough; you
+don't need `--workspace` or the registry rows `provision-local` also writes.
+
 ## 1. The install is per-machine, the vault is per-`$BRAIN_VAULT`
 
 `brain` is a single binary/pip install on your machine — you do **not**

@@ -118,10 +118,15 @@ def _json_default(o: Any) -> Any:
 
 def _emit(obj: Any, as_json: bool, human: str | None = None) -> None:
     if as_json:
-        json.dump(obj, sys.stdout, ensure_ascii=False, indent=2, default=_json_default)
-        sys.stdout.write("\n")
+        text = json.dumps(obj, ensure_ascii=False, indent=2, default=_json_default) + "\n"
     else:
-        sys.stdout.write((human if human is not None else str(obj)) + "\n")
+        text = (human if human is not None else str(obj)) + "\n"
+    # Gated content is HELD until its SEC-06 record is written; everything else
+    # streams as before. See brain.cli_read_record for why.
+    from . import cli_read_record as _crr
+
+    if not _crr.hold(text):
+        sys.stdout.write(text)
 
 
 def _excluded_note(res: dict[str, Any]) -> str:
@@ -440,29 +445,24 @@ def _main(argv: list[str] | None = None) -> int:
     # a stale count would be attributed to this command. One-shot in the CLI,
     # load-bearing in the long-lived MCP server.
     _egress_reset.take_tally()
+    from . import cli_read_record as _crr
+
+    _crr.begin()
     started = _time.perf_counter()
     try:
-        return group.run(args, ctx)
-    finally:
-        # SEC-06: one access record per invocation, from the counts the egress
-        # chokepoint accumulated. Hooked HERE rather than in each handler so a
-        # content verb added later is logged the day it routes through the gate
-        # — the same argument that put the gate itself at one chokepoint.
-        # In `finally` because a command that raised still read what it read.
-        try:
-            from . import egress as _egress, read_log as _read_log
-
-            _read_log.record_from_tally(
-                vault=getattr(core, "vault", None),
-                role=role,
-                cmd=args.cmd,
-                max_tier=getattr(args, "max_tier", None),
-                tally=_egress.take_tally(),
-                latency_ms=(_time.perf_counter() - started) * 1000.0,
-            )
-        except Exception:  # never let logging fail a read
-            pass
-
+        rc = group.run(args, ctx)
+    except BaseException:
+        # A command that raised still read what it read, so the record is still
+        # owed. Its held output is dropped: the caller above renders the error.
+        _crr.settle_for(core, role, args, started)
+        raise
+    withhold, held = _crr.settle_for(core, role, args, started)
+    if withhold:
+        print(_crr.refusal(args.cmd), file=sys.stderr)
+        return _crr.EXIT_RECORD_FAILED
+    for chunk in held:
+        sys.stdout.write(chunk)
+    return rc
 
 
 # The --help epilog text lives in cli_help.py and the read-surface render

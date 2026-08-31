@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import time
 from typing import Any
 
@@ -223,23 +224,21 @@ def dispatch_search(
 
 
 def dispatch_note(
-    _tool: str,
-    args: dict[str, Any],
-    *,
-    core: Any,
-    max_tier: str,
+    _tool: str, args: dict[str, Any], *, core: Any, max_tier: str,
 ) -> dict[str, Any]:
     """Run the MCP get/read body.
 
-    RECORDED RESIDUAL, not closed here: the ``egress`` counters differ between a
-    real above-ceiling id and one that does not exist, so this is an existence
-    oracle on a caller-chosen target. Deferred with its parity reason in
-    ``docs/operations/cowork-skill-verb-survey.json``
-    (``s02_update.adversarial_review_2026_08_28.recorded_not_changed[0]``);
-    pinned by ``tests/test_mcp_tools_retrieval.py::test_read_withholds_an_above_ceiling_note``.
+    A null result carries the SAME ``egress`` report whether the id is absent or
+    sits above the caller's ceiling (until 2026-08-30 it differed, 1/1 vs 0/0 --
+    the S01 existence oracle). The gate still sees the withheld note and the
+    host read record still counts it; only the caller-visible report is
+    normalised. ``bases_query`` keeps its engine-wide counter (recorded, not
+    changed: survey ``s02_update.adversarial_review_2026_08_28``).
     """
     note = core.get(str(args["id"]))
     surfaced, report = _filtered([note] if note else [], max_tier)
+    if not surfaced:  # not a second gate call -- that would tally twice
+        report = cls.ClassificationFilter(max_tier=max_tier).redaction_report([])
     return {"result": surfaced[0] if surfaced else None, "egress": report}
 
 
@@ -322,14 +321,32 @@ def dispatch_dossier(
 
 
 def dispatch_vault_languages(
-    _tool: str,
-    _args: dict[str, Any],
-    *,
-    core: Any,
-    max_tier: str,
+    _tool: str, _args: dict[str, Any], *, core: Any, max_tier: str,
 ) -> dict[str, Any]:
-    """Run the aggregate language-census body."""  # noqa: ARG001
-    return {"languages": core.index.language_census()}
+    """Run the language-census body under the caller's ceiling.
+
+    Until 2026-08-30 it returned the whole-index census at any ``max_tier`` and
+    never called the gate, so it wrote no read record (S01 V-2). It now gates
+    the note LIST (ids and tiers, no bodies), so the tally and the SEC-06 row
+    are real. A ceiling that withholds nothing gets the cached census; otherwise
+    the admitted bodies are classified on the spot and never cached.
+    """
+    try:
+        rows = core.index.conn.execute("SELECT id, classification FROM notes").fetchall()
+    except sqlite3.OperationalError:  # never synced: no ``notes`` table yet
+        rows = []
+    admitted, report = _filtered(
+        [{"id": r[0], "classification": r[1]} for r in rows], max_tier)
+    if not report.get("withheld"):
+        return {"languages": core.index.language_census(), "egress": report}
+    from . import language as lang_mod
+    ids = {a["id"] for a in admitted}
+    bodies = [(r[0], r[1] or "") for r in
+              core.index.conn.execute("SELECT id, body FROM notes").fetchall()
+              if r[0] in ids]
+    block = lang_mod.census(bodies)
+    block.update(stale=False, scoped_to_max_tier=max_tier)
+    return {"languages": block, "egress": report}
 
 
 def dispatch_bases_query(

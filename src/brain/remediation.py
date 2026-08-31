@@ -219,6 +219,21 @@ _EXACT: dict[str, Remedy] = {
              "remedy this — installing anyway is the thing being refused — and it\n"
              "is not an owner QUESTION either: the owner answers it by running\n"
              "`brain update` himself, which runs the whole chain end to end"),
+    # A registered vault is missing one or more of `brain provision-local`'s
+    # six wires (s02's doctor row produces this key; alerts.wiring_alerts
+    # pushes it). BANNER, deliberately not AUTO: the repair IS
+    # `brain provision-local`, which writes the launchd plist and the Claude
+    # Desktop config, and the plan's standing ruling is that the unattended
+    # drain is NOT a repair path — "a sweep list wiped later is repaired by
+    # `brain provision-local`". No branch may run it unattended, and it is not
+    # an owner QUESTION either: the owner answers it by running the one command
+    # the banner names.
+    "vault-wiring": Remedy(
+        BANNER,
+        note="one or more provision-local wires are missing on a registered "
+             "vault; `brain doctor` names the first missing wire and "
+             "`brain provision-local <vault> --workspace <dir>` completes only "
+             "the wires that are absent"),
     "staging:stale": Remedy(
         AUTO, "update_retry", 3, "process",
         note="a stale Cowork staging is healed by the same `brain update` "
@@ -322,6 +337,12 @@ _EXACT: dict[str, Remedy] = {
         OWNER, note="no cap is enforced on remediation spend; this is a "
                     "trend/floor alert only, never a throttle"),
     # The banner class.
+    "stuck-drafts": Remedy(
+        BANNER, note="UPD-01: capture drafts the drain keeps refusing "
+                     "(>48h in the inbox) — the skip reason names the fix "
+                     "(`brain sync` to read it; `update-needs-owner` applies "
+                     "with `brain write`). No branch may auto-apply refused "
+                     "untrusted bytes, so this may never route to automation"),
     "blocked": Remedy(BANNER),
     "invariants-liveness": Remedy(BANNER, note="WAT-01 dead-man's switch"),
     "synthesis-watchdog": Remedy(BANNER),

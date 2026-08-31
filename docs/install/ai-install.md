@@ -107,7 +107,9 @@ the Cowork question — end to end.
 - **A new project/vault?** Say: *"Set up a new Brainiac vault at
   ~/vaults/<name> following docs/install/second-vault.md"* — each vault
   automatically gets its own index and audit chain (0.3.0+), so there is
-  nothing to configure.
+  nothing to configure. If it also wants a Cowork workspace, the one command
+  is `brain provision-local <vault> --workspace <workspace>` — see
+  `docs/install/second-vault.md`.
 - **Cowork?** `/brainiac-install` already offers it. Say yes, and the
   assistant prepares everything. You then do exactly two things — add the
   folder it names inside Cowork, and paste the one block it prints into

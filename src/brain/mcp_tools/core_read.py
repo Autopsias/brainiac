@@ -17,8 +17,8 @@ def register(server: Any, *, core: Any) -> None:
     """Register the core read verbs on ``server``."""
 
     @server.tool()
-    def vault_languages(max_tier: str = cls.HOST_MCP_DEFAULT_MAX_TIER) -> dict:  # noqa: ARG001
-        """Return the derived language census for this vault."""
+    def vault_languages(max_tier: str = cls.HOST_MCP_DEFAULT_MAX_TIER) -> dict:
+        """Return the derived language census for this vault, counted over the notes max_tier admits."""
         return dispatch(
             "vault_languages", {"max_tier": max_tier}, core=core,
         )

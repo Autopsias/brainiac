@@ -424,21 +424,63 @@ def revisit_sample(
         "SELECT id, title, path, classification, updated FROM notes"
     ).fetchall()
     scored: list[dict[str, Any]] = []
+    unknown: list[dict[str, Any]] = []
     for nid, title, path, classification, updated in rows:
-        age_days = 0
         try:
             age_days = max(
                 (today - datetime.date.fromisoformat(str(updated)[:10])).days, 0
             )
+            unparseable = False
         except (TypeError, ValueError):
-            pass
+            # An unreadable stamp means we do NOT know when this was last
+            # touched -- which is a reason to re-read it, not a reason to
+            # treat it as fresh. Until 2026-08-30 the except body was a bare
+            # `pass`, leaving age_days at 0, so score was 0 * (c+1) = 0: the
+            # LOWEST possible. A note with a broken date could never surface
+            # in the top k however old or central it was, and the notes with
+            # the worst metadata are exactly the ones curation most needs to
+            # see. Measured on the reference vault: three raw sources
+            # carrying `captured: unknown` were permanently invisible here.
+            # Rank them as maximally overdue instead (below), never as new.
+            age_days = 0
+            unparseable = True
         cscore = centrality.get(nid, 0.0)
-        score = age_days * (cscore + 1.0)
-        scored.append({
+        row = {
             "id": nid, "title": title, "path": path, "classification": classification,
             "updated": updated, "age_days": age_days,
-            "centrality": round(cscore, 6), "score": round(score, 3),
-        })
+            "centrality": round(cscore, 6), "score": round(age_days * (cscore + 1.0), 3),
+        }
+        if unparseable:
+            row["updated_unparseable"] = True
+            unknown.append(row)
+        else:
+            scored.append(row)
+    if unknown:
+        # Borrow the oldest REAL age in the corpus rather than invent a
+        # constant: an unknown stamp ranks with the most overdue notes, and
+        # centrality still separates them from each other.
+        oldest = max((d["age_days"] for d in scored), default=0)
+        # ...but never zero. `oldest` is 0 whenever no note is older than today
+        # -- including the case where NOTHING parses at all. At weight 0 every
+        # borrowed score collapses to 0.0 and the sort falls through to the id
+        # tiebreak, so the notes land in alphabetical order and the sentence
+        # above ("centrality still separates them") is not delivered.
+        #
+        # The floor is 1.0, and it is NOT neutral: when every real note is also
+        # age 0, an undated note scores `centrality + 1` and therefore outranks
+        # a dated note scoring 0.0. That is the intended reading -- a note whose
+        # date cannot be read is a note nobody can say is fresh -- but it is a
+        # behaviour, not a no-op, so it is stated here and pinned by
+        # tests/test_revisit_unparseable_date.py.
+        #
+        # `age_days` stays 0 on that path, because 0 is what was measured; the
+        # renderers print age and score side by side, so a fabricated age would
+        # read as a fact. The pair is deliberately allowed to look inconsistent.
+        weight = oldest if oldest > 0 else 1.0
+        for row in unknown:
+            row["age_days"] = oldest
+            row["score"] = round(weight * (row["centrality"] + 1.0), 3)
+        scored.extend(unknown)
     scored.sort(key=lambda d: (-d["score"], d["id"]))
     return scored[:k]
 

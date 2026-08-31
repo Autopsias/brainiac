@@ -1072,11 +1072,23 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
 > `brain-mcp` adapter. Full table: `docs/harness-wiring.md`.
 >
 > **Cowork-Windows VM (PRIMARY surface):** Cowork is Claude Desktop's Linux VM
-> sandbox execution mode (`docs/glossary.md`). Run `brain --role vm` (or
-> `export BRAIN_ROLE=vm`). The VM is **read + draft only** — it reads ONLY the
-> published read-only snapshot in `.brain/snapshot/` (never WAL), captures via
-> `brain draft-capture` into `.brain/capture-inbox/`, and never resolves a signing
-> key; the host drains + signs + indexes + republishes the snapshot. Install +
+> sandbox execution mode (`docs/glossary.md`). **Two shapes exist, and which
+> one a given workspace runs depends on whether it has been through Closed
+> Stacks s07's cutover (2026-08-27 → 2026-08-30, VULN-3385).** Pre-cutover /
+> co-located: run `brain --role vm` (or `export BRAIN_ROLE=vm`) — the VM is
+> **read + draft only**, reading ONLY the published read-only snapshot in
+> `.brain/snapshot/` (never WAL), capturing via `brain draft-capture` into
+> `.brain/capture-inbox/`, never resolving a signing key; the host drains +
+> signs + indexes + republishes the snapshot. **Post-cutover (a relocated
+> workspace):** the vault is not attached to the VM's mount at all — `brain`
+> is not on the session's `PATH`, and there is no local snapshot to read —
+> every read reaches the vault only through the host `brain-mcp` broker,
+> which applies the same classification filter and now writes a fail-closed
+> audit record before returning content. The broker's ceiling for this leg is
+> still the same full-vault default the host itself uses (no per-caller tier
+> narrowing is configured), so a relocated workspace is a MITIGATION of
+> VULN-3385, not a closure — full posture and residual:
+> `docs/install/cowork.md`, `docs/security/vuln-3385-risk-reduction.md`. Install +
 > per-session PATH/model re-export: `docs/cowork-windows-install.md`.
 >
 > **Where the kernel skills live per client:** the ten
@@ -1216,6 +1228,22 @@ The VM is a **read + draft** surface only; the host is the **only writer**.
 4. **Snapshot publish** (`brain sync --publish` / `brain snapshot`): the host
    atomically republishes the read-only, generation-stamped snapshot into
    `.brain/snapshot/`. Only now is the note retrievable from the VM.
+
+**In-place updates (UPD-01, 2026-08-30).** A duplicate id used to be a dead
+end: the drain skipped it forever, silently — a Cowork session's rule update
+sat refused in `capture-inbox/` for 11 days while the session believed it had
+applied. A draft may now declare an IN-PLACE update of an existing note with
+two transport-only frontmatter keys: `updates: <id>` (must equal the draft's
+own id) and `base_sha256: <sha>` (the `sha256` that `brain get` returned for
+the version the author read). The drain applies it through the same signed
+`write_note` path ONLY when the live note is untrusted-lane-authored
+(`provenance.trust: untrusted`) and under `brain/` — the untrusted leg may
+rewrite what the untrusted lane wrote, never a host-authored note (those skip
+`update-needs-owner`; apply on the host with `brain write`) and never `raw/`
+(append-only). A base-hash mismatch skips as `stale-base` instead of
+clobbering a newer write. The transport keys are dropped before signing, and
+`brain alerts` now reports any draft still in the inbox after 48h
+(`stuck-drafts`) — a refusal is never silent again.
 
 ### VM-request → host-drain vault provisioning (PRV-10, 2026-08-17)
 

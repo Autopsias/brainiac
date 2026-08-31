@@ -41,6 +41,10 @@ UNMANAGED = "unmanaged"
 MANUAL_REQUIRED = "manual-required"
 NOT_DETECTABLE = "not-detectable"
 UNKNOWN = "unknown"
+# Incomplete but NEVER gating (2026-08-30 grill, "Vault wiring" row): wires
+# 5/6 live in files OTHER programs rewrite, so this must never hold `brain
+# update`/CI hostage to a Desktop restart. Excluded from `_GATING_STATUSES`.
+WARN = "warn"
 
 # Surfaces whose `stale`/`unknown` verdict gates the process exit code
 # (ADR-0005 Ruling 2: "Only scriptable REQUIRED surfaces may hard-fail").
@@ -345,11 +349,7 @@ def run_doctor(
         engine_version=engine_version, registry_unavailable=registry_unavailable,
         vm_python=_VM_PYTHON)
     ssot, rows = build_doctor_rows(context, checks)
-    from .doctor_mount_leak import check_cowork_mount_leak
-    from .vmstaging import check_staged_vm_binaries
-
-    rows.extend(check_staged_vm_binaries(registry_entries, ssot))
-    rows.extend(check_cowork_mount_leak(registry_entries))  # criterion 7, s07
+    rows.extend(_ctx.extra_surface_rows(registry_entries, ssot))
     gating_stale = [r for r in rows if r["status"] in _GATING_STATUSES]
     return {
         "ssot_version": ssot,
@@ -366,6 +366,7 @@ _STATUS_ICON = {
     UNMANAGED: "ℹ️",  # ℹ️
     MANUAL_REQUIRED: "\U0001f6e0️",  # 🛠️
     NOT_DETECTABLE: "➖",  # ➖
+    WARN: "⚠️",
 }
 
 

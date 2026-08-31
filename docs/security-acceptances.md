@@ -159,6 +159,17 @@ declassification. Visibility rather than prevention, which is the same posture
 already chosen for the larger sandbox question (VULN-3385): where a control
 cannot prevent, it must at least make the event impossible to miss.
 
+**Re-checked 2026-08-30, Closed Stacks close-out.** This citation named
+VULN-3385 as the precedent for "visibility over prevention", on the
+assumption that Closed Stacks might CLOSE 3385 by making prevention
+available there — which would have weakened this entry's precedent. It did
+not: s01's checkpoint measured that no per-caller ceiling exists for the
+Cowork leg (`docs/operations/closed-stacks-s01-foundation-evidence.md` §4),
+so VULN-3385 stayed OPEN as a mitigation, in the exact same
+detection-not-prevention posture this entry cites (see A-05 below and
+`docs/security/vuln-3385-risk-reduction.md`). **The citation is REAFFIRMED on its
+own merits, not weakened** — no change needed to this entry.
+
 **What bounds it now.** Every drop admitted below the lane default is recorded
 on the ingest report and shaped into an `action_required` finding carrying a
 `notify_key`, so it reaches `brain alerts` at session start rather than dying in
@@ -184,6 +195,122 @@ until re-staged. Worth taking if a reviewer declines the detection control.
 **What would reopen it:** the drop tree becoming writable by anything further
 from the owner than a local sandbox, or a declassification arriving that the
 alerts channel did not surface.
+
+---
+
+## A-05 · VULN-3385 — the Cowork mount read/write bypass
+
+**Raised as:** a penetration test asked for a simple search; the Cowork agent
+skipped the `brain` CLI and read a Restricted-tier note straight off disk. The
+sandbox had the vault folder attached read-write over VirtioFS, so any ordinary
+file tool bypassed the classification gate entirely, left no record, and could
+write into `vault/` with no draft-approval path.
+
+**Status: MITIGATED 2026-08-30 (Closed Stacks, sessions s01–s07). The finding
+stays OPEN at reduced severity — this is NOT a closure**, per s01's own
+checkpoint (approved 2026-08-27T22:55:03): no per-caller tier ceiling was found
+reachable for the Cowork leg, and the plan's own acceptance criteria say
+plainly that outcome is a mitigation, not a closure.
+
+**What is fixed, re-measured at register-writing time (2026-08-30):**
+- The vault is off the Cowork mount. The registered workspace is data-free —
+  nothing moved, the old attachment was simply detached and a new, vault-less
+  one registered in its place (owner Ruling 1, 2026-08-29). No note body is
+  recoverable from the new workspace by path, glob, or content search
+  (`tests/test_direct_file_read_relocated.py` + `tests/test_cowork_staging_off_the_mount.py`,
+  55/55 passed).
+- Every vault-note read verb now reaches the vault only through the host
+  `brain-mcp` broker, which applies the same classification filter as the CLI
+  (`tests/test_mcp_broker_seam.py` + `tests/test_mcp_tool_surface.py`, 83/83
+  passed).
+- The broker's audit-record write is fail-CLOSED: a read whose SEC-06 record
+  cannot be written now raises instead of returning content silently. Before
+  this plan the same path read `except Exception: pass  # never let logging
+  fail a read`; that line is gone from the broker leg.
+- The 14 shipped Cowork skill bundles were rewritten to call the broker's
+  tools instead of shelling a CLI verb against a mounted vault (s06b,
+  `tests/test_cowork_skill_bundles.py` + `tests/test_cowork_skill_verbs.py`,
+  50/50 passed), released to the skill marketplace as version 0.20.32.
+- **Both live Cowork workspaces on this host are now cut over** (added
+  2026-08-30, after the plan's acceptance review). The plan cut over one
+  workspace; the host registry named three. The acceptance review found a
+  SECOND live registration whose vault still sat inside the attached folder,
+  and the mount-leak scan reported 5 recoverable artefacts there. It was cut
+  over the same way, its workspace registered, and re-measured: both live
+  workspaces now report `current`, `cut_over=True`, 0 artefacts, so the
+  keep-it-off gate is armed on both. Two STALE `cowork-vm` registry rows over
+  the old folders were deliberately left in place — they are the only signal
+  that would fire if those folders are still attached, and only the owner can
+  detach them in the Cowork application. Record:
+  `_plans/closed-stacks-2026-08-27/_evidence/s09/second-workspace-cutover.txt`.
+
+**What is still accepted, stated plainly:**
+- **No per-caller tier ceiling exists.** The broker's egress ceiling
+  (`mcp_verbs._egress_ceiling_tier`) reads only the process-wide
+  `$BRAIN_MAX_EGRESS_TIER` env var — it cannot tell a Cowork caller from a
+  host one. Re-measured live (2026-08-30, after review): all FOUR `brain-mcp` entries in this machine's Claude Desktop config carry `BRAIN_MAX_EGRESS_TIER=MNPI` (full vault) and none sets `BRAIN_ROLE`.
+  The first probe reported 2 and inspected 2 — two client-named entries
+  were never looked at. They carry the same values, so the conclusion held,
+  but a count is a measurement and this one was short.
+  `connect.py`'s Desktop-config builder never writes `BRAIN_ROLE` at all — a
+  finding s06b raised for a later session, and no session in this plan
+  closed it. **A Cowork session can still retrieve the same Restricted-tier
+  note the penetration test read** — through the sanctioned, filtered,
+  logged tool now, rather than an invisible bypass, which is the entire
+  difference a mitigation buys.
+- **Two broker-side leaks the S01 probes measured as live — CLOSED
+  2026-08-30, same day, owner option A.** The owner kept the full-vault
+  ceiling (the ruling above stands) and had both leaks closed in code rather
+  than accepted. (a) The EXISTENCE ORACLE: `get`/`read` now return the
+  absent-shaped `egress` report whenever nothing surfaced, so a clamped caller
+  reads the same answer for a withheld id and a missing one; the host read
+  record still counts the withheld note. Wiring a per-caller ceiling later no
+  longer arms a metadata leak. (b) `vault_languages` now gates the note list
+  under its `max_tier`, leaves a SEC-06 row, and counts only admitted notes —
+  it left `BODYLESS_TOOLS`, so the "a record of every read" guarantee holds
+  without a qualifier. `tests/test_closed_stacks_s01_egress_probes.py` asserts
+  the FIX now, with a known negative beside each. Still accepted, recorded not
+  changed: the same counter on `bases_query`'s predicate and the ranked verbs
+  (survey `recorded_not_changed[0]`).
+- ~~**The CLI's own record-write path is still fail-open.**~~ **CLOSED
+  2026-08-31**, after this register entry was written. `cli.py` kept the same
+  `except Exception: pass` the broker leg dropped, which was moot for a
+  genuinely new Cowork workspace (no local vault data left to read — a CLI verb
+  against it exits 3, `tests/test_desk_fails_closed.py`, 13/13 passed) but true
+  for the host's own shell, the leg `CLAUDE.md` points every session at.
+  `brain.cli_read_record` now holds a gated verb's output until its SEC-06
+  record is written and exits `5` with the result withheld when it cannot be;
+  a verb that gates nothing streams unchanged.
+  `tests/test_cli_read_record_fails_closed.py` (7 tests) probes both
+  directions. Left as a struck-through line rather than deleted: this register
+  is the record of what was accepted and when, and a silently vanished bullet
+  reads as one that was never raised.
+- **No per-session original-document hand-off exists.** The design that would
+  have staged one archived file per session behind a lease was retired by
+  owner ruling (2026-08-27): Claude Desktop forwards no per-session identity
+  the broker can trust, so there is no way to bind a staging directory to one
+  caller. `brain authorize-original` is host-only and records a disclosure
+  decision only, never bytes; actual delivery is a host operator running
+  `brain project --dest <dir> --max-tier <tier>` by hand.
+
+**What would reopen it further, or close it:** a per-caller tier ceiling
+actually wired to the broker's registration (the `BRAIN_ROLE` gap above is
+the first blocker), or a real per-session hand-off mechanism, which needs
+Claude Desktop to forward an identity the broker can trust — neither of which
+exists today. This list also named "the CLI leg's own audit write made
+fail-closed" until 2026-08-31; that one is now done, and the finding still
+does not close, which is the honest measure of how much it was worth.
+
+**Owner ruling 2026-08-31, on the first item.** The per-caller ceiling was put
+to the owner and DECLINED: the full-vault default stands, as ruled on
+2026-08-10 and again on 2026-08-17. The reasoning is unchanged — the broker
+cannot distinguish a Cowork caller from a host one, so clamping the sandbox
+clamps the owner's own Desktop sessions with it, and the part that mattered
+(an invisible bypass became a filtered, logged door) is already done. Do not
+re-raise this without new information.
+
+Full record for a reader who did not follow the work:
+`docs/security/vuln-3385-risk-reduction.md`.
 
 ---
 

@@ -69,6 +69,14 @@ UPDATE_STATE_MAX_AGE_DAYS = 7
 # A weekly task that has not succeeded in longer than this has missed a run.
 SYNTHESIS_STALE_DAYS = 8
 
+# The hourly nightly drains capture drafts on every firing, so a draft still
+# sitting in the inbox after this many hours has been REFUSED by the drain
+# (duplicate-id, stale-base, update-needs-owner, ...) and will never promote
+# on its own. Until 2026-08-30 nothing reported this: a 19-Aug rule update
+# sat refused for 11 days while the session that staged it believed it had
+# applied (UPD-01).
+STUCK_DRAFT_HOURS = 48
+
 # The feed's `findings[].key` vocabulary is closed (see maintenance_notify.py:
 # "blocked", "synthesis-watchdog", "trend:<metric>", "invariant:<metric>",
 # "branch-escalate:<branch>", "ingest_quarantine*", ...). The dir is on the
@@ -181,6 +189,22 @@ def synthesis_alerts(home: Path, today: datetime.date) -> list[dict[str, str]]:
     return out
 
 
+def wiring_alerts() -> list[dict[str, str]]:
+    """The ONE push channel for ``doctor``'s non-gating "Vault wiring" row
+    (DOC-01): ``brain doctor`` reports it, but nothing was watching it
+    between session starts before this. ``check_vault_wiring`` resolves the
+    registry from ``$BRAINIAC_HOME`` itself and stays at the same file-reads
+    budget (no ``maintain*``/``notify-sent`` file touched), so this needs no
+    vault list handed in and covers every registered vault in one line."""
+    from . import doctor as _doctor
+    from .doctor_wiring import check_vault_wiring
+
+    warn = sum(1 for row in check_vault_wiring() if row["status"] == _doctor.WARN)
+    if not warn:
+        return []
+    return [_alert("vault-wiring", f"vault wiring: {warn} warn — run `brain doctor`")]
+
+
 # ---------------------------------------------------------------------------
 # Per-vault sources — on the shared mount, so BOTH roles read them
 # ---------------------------------------------------------------------------
@@ -201,7 +225,43 @@ def vault_alerts(
 
     out += exceptions_alerts(vault, today, name, role=role)
     out += degradation_alerts(vault, today, name)
+    if role != "vm":
+        # Host-only: the capture inbox lives on the host's filesystem
+        # (closed-stacks), and the fix the alert names (`brain sync`,
+        # `brain write`) is a host action anyway. The VM leg does not read
+        # this, and a VM zero would be a fabricated one.
+        out += stuck_draft_alerts(vault, name)
     return out
+
+
+def stuck_draft_alerts(vault: Path, name: str) -> list[dict[str, str]]:
+    """Capture drafts the drain keeps refusing (UPD-01). Pure mtime reads."""
+    import time
+
+    cutoff = time.time() - STUCK_DRAFT_HOURS * 3600
+    stuck: list[str] = []
+    for d in (_config.capture_inbox_dir(vault), vault / ".brain" / "drafts"):
+        try:
+            entries = sorted(d.glob("*.md"))
+        except OSError:
+            continue
+        for f in entries:
+            try:
+                if f.stat().st_mtime < cutoff:
+                    # Same posture as _FINDING_KEY_RE: a draft filename is
+                    # untrusted-leg-authored and this line is rendered into
+                    # the host SessionStart context — never verbatim.
+                    stuck.append(re.sub(r"[^A-Za-z0-9._-]", "_", f.name)[:64])
+            except OSError:
+                continue
+    if not stuck:
+        return []
+    shown = ", ".join(stuck[:3]) + ("…" if len(stuck) > 3 else "")
+    return [_alert(
+        "stuck-drafts",
+        f"{len(stuck)} capture draft(s) stuck >{STUCK_DRAFT_HOURS}h ({shown}) — "
+        "run `brain sync` and read the skip reasons; an `update-needs-owner` "
+        "refusal applies with `brain write`", name)]
 
 
 def exceptions_alerts(
@@ -384,6 +444,7 @@ def collect(
         alerts += update_alerts(home, today)
         alerts += staging_alerts(home)
         alerts += synthesis_alerts(home, today)
+        alerts += wiring_alerts()
         vaults = host_vaults(home)
         if not vaults and vault:
             vaults = [Path(vault)]

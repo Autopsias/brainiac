@@ -24,6 +24,7 @@ Schema (design note: docs/install/plugin-distribution.md §2):
           "host": "<hostname>",
           "arch": "<platform.machine()>",
           "model_dir": "...",
+          "snapshot_dir": "...",
           "staged_at": "<iso8601>",
           "last_refreshed": "<iso8601>"
         }
@@ -46,6 +47,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Optional
+
+from .pathkey import real_key
 
 REGISTRY_VERSION = 1
 
@@ -129,12 +132,16 @@ def _write_atomic(path: Path, data: dict) -> None:
 
 
 def _key(entry: dict) -> tuple:
+    """THE upsert key. Paths go through ``pathkey.real_key`` (realpath + NFC),
+    not ``realpath`` alone: macOS ``readdir`` returns an NFD spelling of a path
+    this file stores in NFC, so a realpath-only comparison missed the existing
+    row and appended a duplicate for the vault it already held."""
     return (
         entry.get("host"),
         entry.get("arch"),
         entry.get("target"),
-        os.path.realpath(entry.get("vault_path", "")),
-        os.path.realpath(entry.get("workspace_path", "")),
+        real_key(entry.get("vault_path", "")),
+        real_key(entry.get("workspace_path", "")),
     )
 
 
@@ -143,17 +150,53 @@ def upsert_entry(
     workspace_path: Optional[str] = None,
     target: str = "host",
     model_dir: Optional[str] = None,
+    snapshot_dir: Optional[str] = None,
     registry_path: Path = REGISTRY_PATH,
     lock_path: Path = LOCK_PATH,
+    extra: Optional[dict] = None,
 ) -> dict:
     """Insert or update one registry entry. Returns the written entry.
 
     ``workspace_path`` defaults to ``vault_path`` (the host case: workspace
     IS the vault). Realpath-normalizes both paths before matching the upsert
     key, so a relative/symlinked path passed twice still lands on one entry.
+
+    ``snapshot_dir`` is where the install published the read-only snapshot.
+    It exists because the path has to live HERE and not in one operator's
+    shell: ``tools/cowork_workspace_install.sh`` honours ``$BRAIN_SNAPSHOT_DIR``,
+    and ``brain update``'s later ``sync --publish`` did not carry it, so the two
+    lanes could publish to two different directories and the VM would read a
+    snapshot frozen at install day.
+
+    THREE VALUES, NOT TWO (corrected 2026-08-30). The preservation branch below
+    means ``None`` cannot also mean "the engine default" --- it would have no
+    way to say "clear it", and an operator who moved the snapshot back to the
+    default would keep publishing to the old path forever. So:
+
+    * ``None``  -- "I do not know it": keep whatever the entry already holds.
+    * ``""``    -- "the engine default", ``config.snapshot_dir()``: CLEAR it.
+    * a path    -- stored as an ABSOLUTE, symlink-resolved path. A relative
+      value resolves against whatever CWD ``brain update`` happens to run in,
+      which on the attached workspace put the snapshot on the mount.
+
+    An entry that predates the field reads as ``""``, i.e. the default, exactly
+    as it always did.
+
+    ``model_dir`` carries the SAME three values, and for the same reason. The
+    preservation used to live in ``provision_wire`` as a read-then-upsert: the
+    row was read OUTSIDE this lock, so a concurrent writer landing between the
+    read and the upsert was overwritten with the stale value the reader had
+    seen. Preserving here, under the lock that already serialises the write, is
+    the only place where "keep what is there" can actually mean it.
+
+    ``extra`` merges additional keys into the entry (``brain provision-local``
+    records ``mcp_server_name``/``mcp_registered_at`` there). Omitting it never
+    ERASES keys an earlier call wrote --- the update below is a key-wise
+    ``dict.update``, not a replacement --- so a lane that does not know about a
+    field leaves it alone, exactly as ``snapshot_dir=None`` does.
     """
-    vault_real = os.path.realpath(vault_path)
-    workspace_real = os.path.realpath(workspace_path or vault_path)
+    vault_real = real_key(vault_path)
+    workspace_real = real_key(workspace_path or vault_path)
     host = socket.gethostname()
     arch = platform.machine()
     now = _now_iso()
@@ -167,13 +210,32 @@ def upsert_entry(
             "host": host,
             "arch": arch,
             "model_dir": model_dir or "",
+            # Absolute and symlink-resolved at the point of WRITE, so no later
+            # reader has to guess which directory a relative value meant.
+            "snapshot_dir": (real_key(snapshot_dir) if snapshot_dir else ""),
             "staged_at": now,
             "last_refreshed": now,
         }
+        if extra:
+            new_entry.update(extra)
         want_key = _key(new_entry)
         for entry in data["entries"]:
             if _key(entry) == want_key:
                 new_entry["staged_at"] = entry.get("staged_at", now)  # preserve original stage time
+                # A caller that does not KNOW the snapshot dir must not ERASE
+                # it. `entry.update()` is a blind overwrite, so an upsert from
+                # any lane that never learned the path (the host leg, a
+                # provision drain) would blank a value the Cowork install
+                # recorded, and `brain update` would silently fall back to the
+                # engine default at the next refresh.
+                # ...but an EXPLICIT "" is a caller saying "the engine
+                # default", and that must clear. `snapshot_dir is None` is the
+                # only "I do not know it" -- before 2026-08-30 both collapsed to
+                # "" and the documented reset-to-default could not be performed.
+                if snapshot_dir is None and entry.get("snapshot_dir"):
+                    new_entry["snapshot_dir"] = entry["snapshot_dir"]
+                if model_dir is None and entry.get("model_dir"):
+                    new_entry["model_dir"] = entry["model_dir"]
                 entry.update(new_entry)
                 _write_atomic(registry_path, data)
                 return entry
@@ -198,8 +260,8 @@ def touch_refreshed(
     lock_path: Path = LOCK_PATH,
 ) -> Optional[dict]:
     """Stamp ``last_refreshed`` on an existing entry (used by /brainiac-update)."""
-    vault_real = os.path.realpath(vault_path)
-    workspace_real = os.path.realpath(workspace_path or vault_path)
+    vault_real = real_key(vault_path)
+    workspace_real = real_key(workspace_path or vault_path)
     want_key = (socket.gethostname(), platform.machine(), target, vault_real, workspace_real)
     with _locked(lock_path):
         data = _load(registry_path)

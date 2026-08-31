@@ -26,7 +26,7 @@ path, works whenever the host already runs at least one Brainiac vault):**
 1. The vault lives at `<workspace>/vault` — never the workspace root.
 2. If `brain` is not on PATH here, `pip install --user brainiac-cli`
    (the sandbox proxy allows PyPI).
-3. `BRAIN_VAULT="$PWD/vault" brain --role vm provision-request`
+3. `BRAIN_VAULT=<workspace>/vault brain --role vm provision-request`
 4. Tell the user: the HOST completes provisioning on its next hourly
    maintenance run (signing key check, per-vault nightly task, model
    staging, registry). The outcome appears at
@@ -85,12 +85,11 @@ see yet (uv/pipx both manage their own PATH wiring, sometimes needing a new
 shell) — check `install.sh`'s own PATH-hint output from Step 1 and relay it
 to the user rather than guessing.
 
-## Step 3 — normalize the vault layout, register the nightly task, verify search
+## Step 3 — wire the vault: one command (`brain provision-local`)
 
 **Layout rule (must match `/brainiac-cowork-setup` and the Cowork session
-prompt, which hardcodes `BRAIN_VAULT="$PWD/vault"`): the vault always lives
-at `<workspace>/vault`.** Resolve the path the user gave BEFORE running
-anything:
+prompt): the vault always lives at `<workspace>/vault`.** Resolve the path
+the user gave BEFORE running anything:
 
 - Path does not exist, or exists but is not yet a vault (no `brain/`, `raw/`,
   or top-level `overlay/` inside) → it is the **workspace**; the vault is
@@ -101,27 +100,48 @@ anything:
   before proceeding.
 
 Never scaffold a vault directly into the folder the user named — that is
-what causes a second, split-brain vault when Cowork setup later creates
+what causes a second, split-brain vault when a later step creates
 `<path>/vault`.
 
+`provision-local` always takes a `--workspace` (it wires the Cowork half of
+the vault too, harmlessly, whether or not this user ends up opening Cowork —
+see Step 7). Default it rather than asking a second question:
+`~/CoworkWorkspaces/<vault-basename>` (create if absent) unless the user
+already named one.
+
 ```
-BRAIN_VAULT=<workspace>/vault brain init --full --apply
+brain provision-local <workspace>/vault --workspace <workspace>
 ```
 
-This registers the nightly task — a **per-vault** launchd label
-`com.brainiac.nightly.<id>` (`<id>` = the vault's 8-hex slug; Windows:
+This one host-broker command wires the vault end to end: `init --full
+--apply` (scaffold + audit key + nightly registration), the Cowork workspace
+staging, the host and cowork-vm registry rows, this vault's Claude Desktop
+`brain-mcp` entry, and the deliverables sweep dir — replacing the old
+six-step hand-paste sequence (including a hand-typed Python registry-upsert
+snippet) with one command whose report names each wire's
+status. It is check-then-act, not short-circuited: re-running it repairs a
+half-wired vault and changes nothing on a fully wired one.
+
+**First Brainiac vault on this machine (no model staged anywhere yet)?**
+Pass `--model-dir`, or the Cowork-staging wire fails until you do — see
+`/brainiac-cowork-setup` Step 1 for the `stage_model.py` command. A machine
+that already wired at least one Cowork vault needs no `--model-dir`;
+`provision-local` finds the existing staged model automatically.
+
+This registers the nightly task as part of wire 1 — a **per-vault** launchd
+label `com.brainiac.nightly.<id>` (`<id>` = the vault's 8-hex slug; Windows:
 `brain-daily-brief-<id>`), daily 07:00. It is the ONE sanctioned host
 scheduled task PER VAULT (AGENTS.md §6). Each vault owns its own plist, so
-registering a second vault never disturbs the first — the pre-0.9.0
+wiring a second vault never disturbs the first — the pre-0.9.0
 single-shared-label repoint hazard is gone, and the installer retires the
 legacy `com.profile-a-brain.daily-brief` plist on first per-vault run.
-**Idempotent:** "already registered" for the same vault = success, not
+**Idempotent:** `already` for a wire on the same vault = success, not
 failure. Since `vault/brain/` is genuinely empty on a first-time install,
-`brain init --full` also seeds 3 generic sample notes — so this same call
-gives you content to verify search against, right here:
+wire 1 also seeds 3 generic sample notes — so this same call gives you
+content to verify search against, right here:
 
 ```
-brain search "arctic-embed vs e5" --json
+brain search "hybrid search vs pure vector" --json
 ```
 
 Confirm the JSON output has: results with `classification` tiers present, an
@@ -129,17 +149,24 @@ egress/filter block, and **no embedder warning** in stderr/stdout. If the
 vault was NOT empty (an existing vault the user pointed at), search against
 whatever term is likely to hit their own content instead. Report ✅/❌.
 
-Report the exact label + schedule + which vault it points at in the final
-report.
+**Wire 6 may need one manual step.** If its status is `pending` or the report
+carries a `reload` field, the plist changed underneath a nightly job that is
+already loaded — print that `launchctl bootout … bootstrap … print` line
+verbatim for the user to run in their own terminal (an unattended process
+cannot reload another job into the login domain). `bootstrap` alone can fail
+with `Load failed: 5` on a job that's registered but stopped, which is why
+the printed line runs `bootout` first.
+
+Report each wire's status + which vault it points at in the final report.
 
 ## Step 4 — audit signing key (idempotent — PRESERVE, never rotate)
 
-Step 3's `brain init --full --apply` already provisions the key
-automatically (engine-side `provision_signing_key()` — create-if-absent,
+Step 3's `provision-local` (wire 1, `init --full --apply`) already provisions
+the key automatically (engine-side `provision_signing_key()` — create-if-absent,
 **never rotates**; stored in the macOS Keychain / Windows Credential Manager
-under service `profile-a-brain-audit-key`). Read the `audit_key` field of its
-report: `present` / `created` are both ✅. Nothing else to do in the common
-case.
+under service `profile-a-brain-audit-key`). Read wire 1's `init` sub-report
+for the `audit_key` field: `present` / `created` are both ✅. Nothing else to
+do in the common case.
 
 **Do NOT touch the key yourself** — no `security` / keychain commands in any
 form (agent-side credential-store access is blocked by safety policy, and
@@ -157,36 +184,13 @@ Report ✅ "audit key: present (preserved)" / ✅ "created" / ❌ "unavailable �
 
 ## Step 5 — workspace registry write
 
-Record this vault in `~/.brainiac/workspaces.json` through the shared helper
-— never hand-write the file or reinvent the lock.
-
-**Known gap (S07, tracked, not yet closed):** `tools/workspace_registry.py`
-is **not yet wheel-packaged** — unlike `scripts/register_tasks.py` and the
-installer scripts, it isn't in `pyproject.toml`'s engine-asset mirror
-(`src/brain/_assets/`), so a pure PyPI-first install has no local copy of it
-to import. Until that's closed, this step still needs a **read-only**
-checkout purely to reach this one file:
-
-```
-git -C "$HOME/brainiac" pull --ff-only 2>/dev/null || git clone https://github.com/Autopsias/brainiac.git "$HOME/brainiac"
-```
-
-then, from Python (import, don't shell out to a one-off script):
-
-```python
-import sys
-sys.path.insert(0, "$HOME/brainiac/tools")
-from workspace_registry import upsert_entry
-upsert_entry(vault_path="<vault-path>", target="host")
-```
-
-This upserts by `(host, arch, target, realpath(vault_path),
-realpath(workspace_path))` — re-running `/brainiac-install` against the same
-vault updates the existing entry in place rather than duplicating it. This
-clone is **read-only tooling access**, not the install itself (the engine
-the user actually runs is still the PyPI install from Step 1) — don't
-conflate it with the dev/offline `--dev` fallback in your report to the
-user.
+Already done by Step 3's `brain provision-local` (wire 3, the host registry
+row) — it upserts `~/.brainiac/workspaces.json` through the same locked
+helper (`workspace_registry.upsert_entry`, keyed on
+`(host, arch, target, realpath(vault_path), realpath(workspace_path))`)
+directly, with no separate checkout or hand-run snippet needed. Read wire
+3's status (`already`/`done`/`failed`) from Step 3's report; nothing else to
+do here.
 
 ## Step 6 — SessionStart alert hook (Claude Code)
 
@@ -222,16 +226,19 @@ older copy of the hook is repaired there.
 script, but a Codex hook stays inert until the owner trusts it once
 interactively — do not write that file here.
 
-## Step 7 — Cowork offer (optional, one question only)
+## Step 7 — Cowork: already wired, tell the user what to do with it
 
-Ask ONE question: "Do you also use Claude Desktop's Cowork and want this
-brain available there?" If no, skip to the final report. If yes, hand off to
-`/brainiac-cowork-setup` (or, if that skill isn't installed yet, follow
-`docs/install/cowork.md` step-by-step) — do not inline its logic here.
-Cowork setup still needs a full checkout (`stage_model.py` +
-`cowork_workspace_install.sh`) even on a PyPI-first host install — clone
-`~/brainiac` there if it isn't already present; that skill's own prompt
-covers this.
+Step 3's `provision-local` already staged the Cowork half (wires 2/4/5/6) —
+there is nothing left to run. Ask ONE question: "Do you also use Claude
+Desktop's Cowork and want this brain available there?" If no, tell them the
+workspace is staged and idle — it costs nothing sitting unused, and they can
+add the folder in Cowork any time later with no re-run needed. If yes, print
+what `/brainiac-cowork-setup`'s final report prints: the workspace folder to
+add in Cowork, the full contents of the staged
+`<workspace>/vault/.brain/routines/cowork-session-prompt.md`, and the
+skill-upload order (`docs/install/cowork.md` step 2) — or just hand off to
+`/brainiac-cowork-setup` if it's installed and the user wants the fuller
+walkthrough (it re-runs `provision-local` too, which is a no-op here).
 
 ## Final report — mandatory template
 

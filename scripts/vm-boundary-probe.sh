@@ -38,7 +38,13 @@ export PATH="$BRAIN_RUNTIME_DIR:$PATH"
 # refusal, whatever the exit code says.
 REFUSAL_RE='is host-broker only|RoleError|role=vm is read\+draft'
 
-BREACHED=0        # the boundary itself failed
+BREACHED=0        # the boundary itself failed — the VM did something it must not
+DEGRADED=0        # section D only: the VM cannot do something it legitimately may.
+                  # Counted SEPARATELY and never printed as BREACHED. These are
+                  # opposite failures with opposite remediations, and summing them
+                  # is how a real breach eventually gets ignored (2026-08-30: a
+                  # cut-over workspace with no local snapshot printed BREACHED
+                  # while all 27 containment probes passed).
 INVALID=0         # this script asked the wrong question
 OBSERVED=0        # true-but-expected conditions (see section B)
 say(){ echo "$@"; }
@@ -266,16 +272,53 @@ case "$KEY_OUT" in
 esac
 say ""
 
-say "### D. the two things a VM legitimately CAN do must still work"
+say "### D. the things a VM legitimately CAN do must still work"
 say "-- snapshot read"
+# A LOCAL snapshot is no longer the VM's read surface. s06b moved all 14 Cowork
+# skills onto the broker's MCP tools, and s07 ruled `snapshot/` GOES because it
+# carries 3105 non-empty MNPI note bodies — publishing one back onto the mount
+# would re-open the very finding the cutover closed. So its ABSENCE is the fix
+# working, and this probe must not read as a capability loss. Where no snapshot
+# is present the read surface is the broker, which this script cannot exercise.
 # --no-rerank (RK-02 caller policy, 2026-08-04): a liveness check on the
 # snapshot read path — it discards stdout entirely, so paying for BR-03's
 # default-on cross-encoder here buys literally nothing.
-if brain search "${VM_PROBE_TERM:-project}" --no-rerank --json >/dev/null 2>&1; then
+# ASK `brain status` ONCE, AND KEEP ITS EXIT CODE. Until 2026-08-30 this line
+# read `brain status` inside the test itself, so a status that FAILED --- no
+# engine on PATH, a role refusal, a broken index --- produced empty output and
+# was scored identically to a real absence. That is the "clean because the
+# input was empty" shape the rest of this change set exists to remove, sitting
+# inside the script that reports it.
+_status_out="$(brain status 2>/dev/null)" && _status_rc=0 || _status_rc=$?
+_snap_line="$(printf '%s\n' "$_status_out" | sed -n 's/^snapshot:[[:space:]]*//p')"
+# THREE WAYS TO KNOW NOTHING, AND ONLY ONE OF THEM IS THE DESIGN WORKING.
+# A status that FAILED, a status that answered but never mentions a snapshot,
+# and a status that says `absent` all produced the same empty string once. Only
+# the third is the post-cutover N/A. The first two are the probe failing to
+# ask, and reporting them as N/A is the "clean because the input was empty"
+# all-clear this script exists to catch elsewhere. Both earlier shapes were
+# reproduced against stub interpreters before this was written.
+if [ "$_status_rc" -ne 0 ] || [ -z "$_status_out" ]; then
+  say "   INCONCLUSIVE — \`brain status\` did not answer (rc=$_status_rc), so"
+  say "                  whether a snapshot is present was never established."
+  say "                  This is NOT the post-cutover N/A below; it is the"
+  say "                  probe failing to ask."
+  INVALID=$((INVALID+1))
+elif [ -z "$_snap_line" ]; then
+  say "   INCONCLUSIVE — \`brain status\` answered but reported no \`snapshot:\`"
+  say "                  line at all, so this probe learned nothing. An older"
+  say "                  or differently-configured engine reads this way; it is"
+  say "                  not evidence that no snapshot exists."
+  INVALID=$((INVALID+1))
+elif [ -z "$(printf '%s\n' "$_snap_line" | grep -v '^absent')" ]; then
+  say "   N/A — no local snapshot on this mount, which is the post-cutover"
+  say "         design (it carries MNPI bodies). The VM reads through the"
+  say "         broker's MCP tools instead; exercise that from the session."
+elif brain search "${VM_PROBE_TERM:-project}" --no-rerank --json >/dev/null 2>&1; then
   say "   PASS — snapshot search returned"
 else
-  say "   FAIL — the VM cannot read the snapshot (boundary is over-tight)"
-  BREACHED=$((BREACHED+1))
+  say "   DEGRADED — a snapshot is present but the VM cannot read it"
+  DEGRADED=$((DEGRADED+1))
 fi
 say "-- proposal drop (unsigned, into a dir \`sync\` never reads)"
 # This leaves a real file in the drop dir for as long as it takes to delete it.
@@ -288,7 +331,7 @@ DROP_OUT="$(printf -- '---\nid: %s\ntitle: "VM boundary probe — safe to reject
 printf '%s\n' "$DROP_OUT" | sed 's/^/   | /'
 case "$DROP_OUT" in
   *dropped*) say "   PASS — unsigned drop accepted, nothing signed";;
-  *)         say "   FAIL — the VM cannot even drop a proposal"; BREACHED=$((BREACHED+1));;
+  *)         say "   DEGRADED — the VM cannot even drop a proposal"; DEGRADED=$((DEGRADED+1));;
 esac
 # Delete the file the engine actually reported, not one this script guesses at
 # — a guessed path that has drifted cleans up nothing and says it did.
@@ -296,25 +339,33 @@ PROBE_FILE="$(printf '%s' "$DROP_OUT" | sed -n 's/.*"proposal"[[:space:]]*:[[:sp
 [ -n "$PROBE_FILE" ] || PROBE_FILE="$BRAIN_RUNTIME_DIR/cos/drop/proposal-drop/$PROBE_ID.md"
 rm -f "$PROBE_FILE" 2>/dev/null
 if [ -e "$PROBE_FILE" ]; then
-  say "   FAIL — could not clean up $PROBE_FILE; delete it before the next"
-  say "          broker fold or it becomes an owner-batch question"
-  BREACHED=$((BREACHED+1))
+  say "   DEGRADED — could not clean up $PROBE_FILE; delete it before the next"
+  say "              broker fold or it becomes an owner-batch question."
+  say "              (A Cowork shell has deletion blocked by policy, so this"
+  say "              is expected there — remove it from the host instead.)"
+  DEGRADED=$((DEGRADED+1))
 else
   say "   cleanup: probe drop removed ($PROBE_FILE)"
 fi
 say ""
 
 say "=== SUMMARY ==="
-say "  boundary failures : $BREACHED"
+say "  boundary failures : $BREACHED   (the VM did something it must not)"
+say "  degraded          : $DEGRADED   (section D: the VM cannot do something it may)"
 say "  invalid probes    : $INVALID   (this script asked the wrong question)"
 say "  observations      : $OBSERVED   (host-private bytes readable over the mount)"
-if [ $BREACHED -eq 0 ] && [ $INVALID -eq 0 ]; then
-  say "=== VERDICT: BOUNDARY INTACT ==="
-  exit 0
+if [ $BREACHED -gt 0 ]; then
+  say "=== VERDICT: BREACHED — $BREACHED probe(s) failed ==="
+  exit 1
 fi
-if [ $BREACHED -eq 0 ]; then
+if [ $INVALID -gt 0 ]; then
   say "=== VERDICT: INCONCLUSIVE — $INVALID probe(s) never reached the gate ==="
   exit 2
 fi
-say "=== VERDICT: BREACHED — $BREACHED probe(s) failed ==="
-exit 1
+if [ $DEGRADED -gt 0 ]; then
+  say "=== VERDICT: BOUNDARY INTACT, DEGRADED — $DEGRADED capability probe(s) failed ==="
+  say "    The containment held. Something the VM is ALLOWED to do did not work."
+  exit 3
+fi
+say "=== VERDICT: BOUNDARY INTACT ==="
+exit 0

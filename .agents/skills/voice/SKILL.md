@@ -147,7 +147,9 @@ gap.
 These are generic writing-craft rules, not owner identity, so they apply
 regardless of what the overlay contains (same posture as the reference
 organization's `_writing_craft.md` "Layer B — universal, cross-language" — Pyramid
-Principle / BLUF, not any one person's voice):
+Principle / BLUF, not any one person's voice). One exception, stated in item 8:
+a list of BANNED WORDS is not craft, it is vocabulary, and vocabulary belongs to
+the overlay:
 
 1. First sentence states the answer / recommendation / news — no
    throat-clearing, no context-only opener.
@@ -159,10 +161,16 @@ Principle / BLUF, not any one person's voice):
 6. Cut clutter ("utilize" → "use", "in order to" → "to", "due to the fact
    that" → "because").
 7. Every sentence passes the "so what" test.
-8. Common generic AI-writing tells, flagged whether or not the overlay's own
-   `voice/` file names its own list: "delve", "foster", "multifaceted",
-   "plays a crucial role", symmetric N/N bullet pairs, Title Case Headers,
-   5+ em-dashes in one paragraph, "Warm regards," as a default close.
+8. Common generic AI-writing tells: "delve", "multifaceted", "plays a
+   crucial role", symmetric N/N bullet pairs, Title Case Headers, 5+
+   em-dashes in one paragraph, "Warm regards," as a default close.
+   **This one list YIELDS to the overlay.** Every other rule in §1 is a
+   structural craft rule and applies regardless; this is a vocabulary
+   list, and vocabulary is owner identity. If the overlay's `voice/` files
+   use a word, keep it, name it, or list it as their own, that word is
+   theirs — never flag it, never strip it from a draft, never suggest a
+   substitute. §1 may say how a sentence is built. It may not overrule
+   which words the owner writes with.
 9. Named slop patterns — flag and fix these sentence shapes wherever they
    appear (generic craft, not owner identity; adapted from petergyang's
    MIT-licensed no-ai-slop rules):

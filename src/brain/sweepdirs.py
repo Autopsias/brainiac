@@ -128,6 +128,73 @@ def write_sweep_dirs(plist: Path, value: str) -> None:
 DEFAULT_LAUNCH_AGENTS = "Library/LaunchAgents"
 
 
+def installed_nightly_plist(vault: str | os.PathLike[str] | None = None, *,
+                            launch_agents_dir: str | os.PathLike[str] | None = None,
+                            ) -> Path:
+    """The plist that ACTUALLY serves this vault, whatever it is named.
+
+    :func:`nightly_plist_path` is the WRITE target and stays the canonical
+    name. This is the READ side, and they differ because the label is a hash
+    of the vault PATH: move a vault and the label the engine computes changes,
+    while the installed job keeps the name it was registered under. The
+    installer rewrites the file's contents in place --- its ``BRAIN_VAULT``
+    tracks the move --- but launchd jobs are addressed by label, so nothing
+    renames it.
+
+    Measured 2026-08-31 on a live vault: a healthy nightly, loaded and running
+    every branch that day, was registered as ``com.brainiac.nightly.31b49f41``
+    while the engine computed ``bffea0f4`` for its current path (backups on
+    that file go back to 2026-07-09, one of them named ``bak-move-20260712``).
+    `brain doctor` read "plist absent" for a job that works, and a naive
+    ``provision-local`` would have installed a SECOND nightly beside it.
+
+    So: prefer the canonical name when it exists, else adopt the one plist in
+    the same directory whose ``BRAIN_VAULT`` IS this vault --- compared through
+    :func:`brain.pathkey.real_key`, because macOS ``readdir`` returns NFD where
+    a plist stores NFC. Falls back to the canonical (absent) path, so a caller
+    that reports "not installed" still names the file it would write.
+    """
+    from .pathkey import real_key
+
+    from . import config as _config
+
+    canonical = _config.nightly_plist_path(vault, launch_agents_dir=launch_agents_dir)
+    if canonical.exists():
+        return canonical
+    try:
+        want = real_key(_config.vault_root(vault, allow_missing=True))
+    except (OSError, ValueError):
+        return canonical
+    for cand in sorted(canonical.parent.glob("com.brainiac.nightly.*.plist")):
+        try:
+            with cand.open("rb") as fh:
+                data = plistlib.load(fh)
+        except Exception:  # noqa: BLE001 — an unreadable sibling is not ours
+            continue
+        got = (data.get("EnvironmentVariables") or {}).get("BRAIN_VAULT")
+        if not got:
+            continue
+        try:
+            if real_key(Path(got)) == want:
+                return cand
+        except (OSError, ValueError):
+            continue
+    return canonical
+
+
+def _label_of(plist: Path, vault: Path) -> str:
+    """The launchd label of the plist we actually merged.
+
+    A plist's FILENAME is its label by construction, so the stem is exact for
+    both the canonical name and the legacy name a moved vault kept. Falls back
+    to the computed label only for a path that is not a nightly plist at all.
+    """
+    from . import config as _config
+
+    stem = plist.stem
+    return stem if stem.startswith("com.brainiac.nightly.") else _config.nightly_label(vault)
+
+
 def reload_line(vault, plist: Path) -> str:
     """The launchctl incantation for a plist this command merged BY FILE.
 
@@ -142,9 +209,11 @@ def reload_line(vault, plist: Path) -> str:
     test or sandbox path it would bootstrap the relocated file into the owner's
     live launchd, or bout a job whose installed copy still holds the old list.
     """
-    from . import config as _config
-
-    label = _config.nightly_label(vault)
+    # The label of THE FILE, never the one this vault's path hashes to. A
+    # plist's filename IS its label by construction, and the two diverge on a
+    # moved vault -- booting out the computed label would miss the running job
+    # and bootstrap a second one (measured 2026-08-31).
+    label = _label_of(plist, vault)
     line = (f"launchctl bootout gui/$UID/{label} 2>/dev/null; "
             f"launchctl bootstrap gui/$UID {plist} && "
             f"launchctl print gui/$UID/{label} | grep -c SWEEP")
@@ -185,7 +254,7 @@ def wire_sweep(vault: Path, deliverables: Path, plist: Path, *,
 
         return {**res, "status": "failed", "reload_required": False,
                 "detail": f"{res['detail']} — but launchd does NOT hold "
-                          f"{_config.nightly_label(vault)}: the plist is "
+                          f"{_label_of(plist, vault)}: the plist is "
                           f"installed and the job is not loaded, so nothing "
                           f"sweeps. Load it:\n  {reload_line(vault, plist)}"}
     return res

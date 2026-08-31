@@ -49,10 +49,11 @@ from .pathkey import canonical, file_lock, real_key, same_path
 from .provision_mcp import mcp_server_name, register_mcp
 from .provision_stage import STAGE_MANIFEST, _staging_complete, _wire_stage
 from .sweepdirs import (DELIVERABLES_DIRNAME, SWEEP_ENV,
-                        installed_sweep_dirs, merge_sweep_dirs, sweep_entries,
-                        wire_sweep)
+                        installed_nightly_plist, installed_sweep_dirs,
+                        merge_sweep_dirs, sweep_entries, wire_sweep)
 
 __all__ = ["wire_vault", "provision_local", "sweep_status",
+           "installed_nightly_plist",
            "register_mcp", "mcp_server_name", "STAGE_MANIFEST",
            "_staging_complete",
            "WIRE_NAMES", "installed_sweep_dirs", "merge_sweep_dirs",
@@ -310,7 +311,7 @@ def sweep_status(vault: str | os.PathLike[str], workspace: str | os.PathLike[str
 
     vault, workspace = canonical(vault), canonical(workspace)
     return _safe(wire_sweep, vault, workspace / DELIVERABLES_DIRNAME,
-                 _config.nightly_plist_path(vault, launch_agents_dir=plist_dir),
+                 installed_nightly_plist(vault, launch_agents_dir=plist_dir),
                  repair=False, create=False)
 
 
@@ -361,7 +362,9 @@ def wire_vault(vault: str | os.PathLike[str], workspace: str | os.PathLike[str],
     # which is how a test meaning to fake the engine spawned a real one.
     runner, engine = runner or subprocess.run, engine or provision._run_engine
     deliverables = workspace / DELIVERABLES_DIRNAME
-    plist = _config.nightly_plist_path(vault, launch_agents_dir=plist_dir)
+    # The INSTALLED plist, not the computed name --- merging into a fresh
+    # canonical file while launchd runs the old one would sweep nothing.
+    plist = installed_nightly_plist(vault, launch_agents_dir=plist_dir)
     # FIRST, before anything re-renders the plist: install-brief-mac.sh renders
     # the body from the CALLER's env, so the merged list must travel INTO the
     # init call, not only into the file.

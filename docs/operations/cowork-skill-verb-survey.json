@@ -1299,8 +1299,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "fff1e3a704fef3a0650945967ca1f6743f90c8d6",
-      "content_sha256": "58d6ba320352480ed234a7905c9941fa7741ee24464eafb12fdd4d8ee71451b1"
+      "skill_md_git_blob": "f1c4a08ad55b3a56be682f89d082b44228d2fa0b",
+      "content_sha256": "fd735fac1fa0de6049a72e582d572c33f954b16d1b97af3a36ddc262186739ae"
     }
   ],
   "s02_update": {
@@ -1434,6 +1434,14 @@
     "why_a_bundle_hash_moved": "The 14-skill Cowork walk (CUT-03) exercised task-registrar and surfaced a guard that could only fail on a HEALTHY manifest: it asserted a hardcoded host_os_scheduled == 1 while routines/manifest.json had been amended to 2 on 2026-07-11. The guard now derives the count from the manifest itself, in all three copies (.claude/skills, .agents/skills, plugins/brainiac-extras). task-registrar's content_sha256 therefore moved; the other 13 bundles are unchanged. The hashes here were re-derived by derive_bundles(), the normative definition named in authority.content_anchor_recipe.",
     "bundles_changed": [
       "task-registrar"
+    ],
+    "bundles_unchanged": 13
+  },
+  "voice_overlay_yield_update": {
+    "date": "2026-08-31",
+    "why_a_bundle_hash_moved": "The voice skill's SS1 item 8 banned-word list applied 'whether or not the overlay's own voice/ file names its own list', so a fixed list of generic AI-writing tells could strip a word the owner had deliberately chosen. Every other SS1 rule is structural craft (topic sentences, active voice, the 'so what' test) and still applies unconditionally; a banned-WORD list is vocabulary, and vocabulary is owner identity, so item 8 now defers to <vault>/overlay/voice/. Edited in all three copies (.claude/skills, .agents/skills, plugins/brainiac-kernel) by tools/package_clients.py, so voice's content_sha256 moved; the other 13 bundles are unchanged. The hashes here were re-derived by derive_bundles(), the normative definition named in authority.content_anchor_recipe.",
+    "bundles_changed": [
+      "voice"
     ],
     "bundles_unchanged": 13
   }

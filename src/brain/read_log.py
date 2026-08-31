@@ -21,8 +21,11 @@ crossed the gate, how many were withheld. That is enough to see a sweep and
 never enough to become a second copy of the vault sitting outside the gate. A
 log that has to be protected like the vault is a log nobody keeps.
 
-Host-only, on by default, `BRAIN_READ_LOG=0` to disable. Best-effort
-throughout: a failure to log never fails the read.
+Host-only, on by default, `BRAIN_READ_LOG=0` to disable. **Not best-effort any
+more:** since VULN-3385/A-05 a gated read whose record cannot be written is
+WITHHELD (`cli_read_record`). That makes every reason this module can return
+`False` a reason a read fails, which is why the directory gate below is its own
+platform-aware function and not `querylog`'s.
 """
 from __future__ import annotations
 
@@ -58,12 +61,53 @@ def bulk_threshold() -> int:
         return DEFAULT_BULK_THRESHOLD
 
 
+def _posix_permissions() -> bool:
+    """Can this OS express and stat-verify a POSIX owner-only mode at all?"""
+    return os.name == "posix"
+
+
+def _secure_log_dir(path: Path) -> bool:
+    """Create the read-log directory, owner-only where the OS can say so.
+
+    On POSIX this is ``querylog._secure_dir`` unchanged: create, chmod 0700,
+    stat-verify, refuse if that cannot be confirmed.
+
+    On Windows it is NOT. ``_secure_dir`` returns a flat ``False`` off
+    ``os.name``, which is right for the QUERY ledger it belongs to — that one
+    stores raw query text, so an unverifiable mode means the text must not be
+    persisted at all. This log stores no query text, no ids, no titles and no
+    paths, only the SHAPE of an access, and it sits under the per-user app-data
+    base the OS already ACLs to that user.
+
+    Borrowing the query ledger's refusal cost the whole product on Windows.
+    Once VULN-3385 made the record fail-CLOSED, ``False`` here stopped meaning
+    "no log line" and started meaning "withhold the read": measured on
+    distribution-matrix run 33386239277 (v0.20.33, 2026-08-31), `search`, `get`,
+    `recent` and `grep` each exited 5 on Windows with every result withheld,
+    while macOS stayed green. 0.20.32 and every release before it were green
+    because the CLI leg still swallowed the failure.
+
+    Stated limit, because it is weaker and must not read as equal: a Windows
+    read-log directory is protected by the inherited ACL of the app-data base,
+    NOT by a mode this code set and re-read. ``_posix_permissions`` is the one
+    switch that says which of the two you got.
+    """
+    if _posix_permissions():
+        return _q._secure_dir(path)
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return False
+    return path.is_dir()
+
+
 def _log_dir(vault: str | os.PathLike[str] | None) -> tuple[Path, Path] | None:
     """Resolve the host-private sibling of the query-log directory.
 
     Reuses ``querylog._resolve_location`` so the refusals it already enforces —
-    a path resolving inside the vault, an unverifiable permission mode — apply
-    here unchanged rather than being re-implemented slightly differently.
+    a path resolving inside the vault, an unverifiable location — apply here
+    unchanged rather than being re-implemented slightly differently. The
+    directory PERMISSION gate is :func:`_secure_log_dir`, which is not shared.
     """
     try:
         vault_root, _index_root, query_dir, unsafe = _q._resolve_location(vault)
@@ -72,14 +116,35 @@ def _log_dir(vault: str | os.PathLike[str] | None) -> tuple[Path, Path] | None:
     if unsafe:
         return None
     log_dir = query_dir.parent / LOG_DIRNAME
-    # Same stricter treatment the query ledger gives itself: create AND
-    # stat-verify owner-only, and refuse to write if that cannot be verified.
-    if not _q._secure_dir(log_dir):
+    if not _secure_log_dir(log_dir):
         return None
     resolved = log_dir.resolve()
     if _q._inside(resolved, vault_root):
         return None  # never inside the vault: it would become indexable content
     return vault_root, resolved
+
+
+def _secure_and_lock(fd: int) -> tuple[bool, bool]:
+    """Verify and lock the record file, returning ``(usable, locked)``.
+
+    Both gates this wraps answer off ``os.name`` before they do anything, for
+    the same reason and with the same consequence as :func:`_secure_log_dir`:
+    ``_secure_fd`` re-reads a POSIX mode Windows does not have, and
+    ``_try_append_lock`` needs ``fcntl``. Calling them off POSIX returns False,
+    which since VULN-3385 withholds the read.
+
+    So off POSIX the handle is usable and UNLOCKED: the record is serialised by
+    ``_APPEND_THREAD_LOCK`` (the caller holds it) plus ``O_APPEND``, which is
+    one process rather than all of them. Weaker, and bounded by the payload
+    being one short line written in a single ``os.write``.
+    """
+    if not _posix_permissions():
+        return True, False
+    if not _q._secure_fd(fd):
+        return False, False
+    if not _q._try_append_lock(fd):
+        return False, False
+    return True, True
 
 
 def record(
@@ -127,11 +192,9 @@ def record(
         flags |= getattr(os, "O_CLOEXEC", 0)
         flags |= getattr(os, "O_NOFOLLOW", 0)
         fd = os.open(str(_q._month_file(log_dir, stamp)), flags, config.SECURE_FILE_MODE)
-        if not _q._secure_fd(fd):
+        ok, locked = _secure_and_lock(fd)
+        if not ok:
             return False
-        if not _q._try_append_lock(fd):
-            return False
-        locked = True
         _q._write_all(
             fd,
             (json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8"),

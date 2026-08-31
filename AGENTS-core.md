@@ -65,7 +65,9 @@ profile-a-brain/
                             inbox, routines copy (gitignored). The live
                             index.sqlite + audit chain live in the per-user
                             app-data dir (`config.index_dir()`); override
-                            with $BRAIN_INDEX_DIR per vault.
+                            with $BRAIN_INDEX_DIR per vault, or move the
+                            whole app-data base with $BRAIN_APP_DATA_DIR
+                            (which keeps the per-vault nesting).
                             ├── memory/      ← session memory: handoff.md,
                             │                  hot.md, lessons.md, archive/
                             │                  (host-only, never indexed — §9)

@@ -7,6 +7,85 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.34] — 2026-08-31
+### Fixed
+- **`brain search`, `get`, `recent` and `grep` work on Windows again.** 0.20.33
+  made the SEC-06 access record fail-CLOSED on the CLI leg (VULN-3385/A-05): a
+  gated read whose record cannot be written is withheld. `read_log` writes that
+  record through three `querylog` helpers --- `_secure_dir`, `_secure_fd` and
+  `_try_append_lock` --- and all three answer `False` off `os.name` before doing
+  anything, because they need a POSIX mode and `fcntl`. That was harmless while
+  the leg swallowed a failed record; fail-closed, it withheld every gated read
+  on Windows. Measured on distribution-matrix run 33386239277: all four verbs
+  exited 5 with the whole result withheld, while macOS stayed green --- and the
+  same record backs the MCP leg, so Claude Desktop on Windows was down with it.
+  The read log now gates its own directory and descriptor: unchanged on POSIX
+  (create, chmod 0700, stat-verify, refuse if unconfirmable), and off POSIX it
+  creates the directory under the per-user app-data base and accepts the ACL
+  the OS gives it. Windows therefore gets the access record it never had, rather
+  than a refusal. Stated limit: off POSIX the directory is protected by the
+  inherited app-data ACL, not by a mode this code set and re-read, and the
+  record is serialised by the in-process append lock plus `O_APPEND` rather than
+  by `fcntl`. The QUERY ledger, which stores raw query text, keeps its stricter
+  refusal untouched.
+- **A vault carrying untriaged content drift can publish a snapshot again.**
+  The VULN-3387 withhold path deletes the withheld note's rows from the
+  snapshot COPY, vectors included, over a bare `sqlite3` connection --- and
+  `vec_index` is a `vec0` VIRTUAL table, so SQLite raised `no such module:
+  vec0` while PREPARING the DELETE. The branch fires only on a vault that HAS
+  untriaged drift, and the existing test built its index on
+  `BruteForceBackend`, which creates no `vec_index` at all, so it had never
+  executed anywhere. Measured on a live vault: ONE note edited outside the
+  audited write path broke every `brain snapshot` for 15 consecutive hourly
+  runs. The publish now loads the extension, and a load failure ABORTS rather
+  than shipping a snapshot that drops the note's rows but keeps its
+  embeddings.
+- **A failed publish no longer orphans a full-size copy of the index.** The
+  cleanup `finally` guarded only the atomic swap, so every failure inside the
+  withhold left a `.tmp.<pid>.<gen>` copy behind --- 20 leftovers, 123 MB on
+  the vault above, none reported by the run that made it. The `finally` now
+  spans the copy and the withhold, and each publish sweeps temps an earlier
+  run left behind (the CC-02 writer lock serialises publishes, so every
+  `.tmp.*` present is dead).
+- **`brain doctor` reads the nightly plist that actually serves a vault.** The
+  launchd label is a hash of the vault PATH, so a moved vault keeps running
+  under its old label while the engine computes a new one. The wiring row
+  reported `plist absent` for a job already carrying the sweep dir, and its fix
+  line would have installed a SECOND nightly beside the running one. Adds
+  `sweepdirs.installed_nightly_plist`, the READ side: it prefers the canonical
+  name, else adopts the one plist in that directory whose `BRAIN_VAULT` IS this
+  vault, compared through `pathkey.real_key` (macOS readdir returns NFD, a
+  plist stores NFC). The reload line now takes its label from the plist's own
+  filename.
+- **`brain alerts` follows a relocated vault to its real staging root.** It
+  derived that root as `<vault>/.brain`, correct only while the vault sits
+  inside the workspace; both live vaults are relocated, so it read a frozen
+  leftover and reported two permanent false alarms of stale staging that
+  `brain update` could never clear. Now routed through
+  `cowork_staging.staging_root`, the one relocation-aware resolver. Sixth
+  relocation-unaware surface, and the first whose failure was a false alarm
+  rather than silence.
+
+### Changed
+- **`$BRAIN_APP_DATA_DIR` relocates the whole app-data base**, keeping every
+  per-vault path nested below it --- unlike `$BRAIN_INDEX_DIR`, which is
+  returned as-is and makes every caller share one index. The test suite pins
+  it, because every per-vault host directory hangs off `_app_data_base()`
+  keyed on a vault-id each throwaway tmp vault mints fresh, and nothing
+  removed them: measured on the developer's machine, 50,152 leaked directories
+  under `vaults/` (6.9 GB), 41,155 under `query-capture-status/`, 10,894 under
+  `cos-runs/`, 3,390 lock files.
+- **The `voice` skill's banned-word list now yields to the overlay.** Its §1
+  item 8 previously applied "whether or not the overlay's own `voice/` file
+  names its own list", which let a fixed list of AI-writing tells strip words an
+  owner had deliberately chosen. The rest of §1 is structural craft (topic
+  sentences, active voice, the "so what" test) and still applies
+  unconditionally; a list of banned WORDS is vocabulary, and vocabulary is owner
+  identity, so §1 now defers to `<vault>/overlay/voice/` for it. The kernel
+  skill continues to carry zero owner identity; all owner signal comes from
+  `<vault>/overlay/`, which is never indexed, committed, or published (ADR-0003
+  Ruling e).
+
 ## [0.20.33] — 2026-08-31
 ### Added
 - **One command wires a whole vault: `brain provision-local <vault> --workspace

@@ -149,6 +149,26 @@ def _withhold_paths(db: Path, paths: set[str]) -> int:
         has_vec = con.execute(
             "SELECT 1 FROM sqlite_master WHERE name='vec_index'"
         ).fetchone() is not None
+        if has_vec:
+            # `vec_index` is a vec0 VIRTUAL table, so a bare sqlite3 connection
+            # cannot even DELETE one row from it: SQLite raises `no such module:
+            # vec0` while PREPARING the statement. Every other connection reaches
+            # this DB through BrainIndex, which loads the extension; this one is
+            # opened raw. The branch below runs ONLY on a vault that has
+            # untriaged drift, so it had never executed in the suite either --
+            # the withhold test builds its index on BruteForceBackend, which
+            # creates no `vec_index` at all.
+            #
+            # Measured 2026-08-31 on a live vault: ONE untriaged drifted note
+            # made every `brain snapshot` fail with `no such module: vec0` --
+            # 15 consecutive hourly runs, the daily maintain branch recording
+            # that exact error each time -- while a vault with zero drift
+            # published normally off the same build. A load failure ABORTS the publish deliberately -- the
+            # alternative is a snapshot that drops the withheld note's rows but
+            # keeps its embeddings, which is the leak VULN-3387 exists to stop.
+            from .vectors import SqliteVecBackend
+
+            SqliteVecBackend().load_into(con)
         for rowid in sorted(wanted):
             chunk_ids = [
                 int(c[0]) for c in con.execute(
@@ -211,6 +231,25 @@ def _checkpoint_source(source_db: Path) -> None:
         con.close()
 
 
+def _sweep_stale_temps(dest_dir: Path) -> int:
+    """Delete temp copies an EARLIER publish left behind, and report the count.
+
+    Publishing is serialised by the CC-02 writer lock, so no other publish can
+    hold a temp file while this one runs: every `.tmp.*` here is dead. The
+    `finally` below now prevents new ones, but a vault that already accumulated
+    them would carry them forever otherwise -- they are full-size copies of the
+    index, so 20 of them on a 6 MB index is 123 MB of invisible litter.
+    """
+    swept = 0
+    for stale in dest_dir.glob(SNAPSHOT_DB + ".tmp.*"):
+        try:
+            stale.unlink()
+            swept += 1
+        except OSError:  # a permission or race failure is not worth aborting on
+            pass
+    return swept
+
+
 def publish_snapshot(
     source_db: Path, dest_dir: Path, *, withhold_paths: set[str] | None = None
 ) -> SnapshotManifest:
@@ -232,10 +271,17 @@ def publish_snapshot(
     _checkpoint_source(source_db)
 
     final_db = dest_dir / SNAPSHOT_DB
+    _sweep_stale_temps(dest_dir)
     tmp_db = dest_dir / (SNAPSHOT_DB + f".tmp.{os.getpid()}.{generation}")
-    shutil.copy2(source_db, tmp_db)
-    withheld = _withhold_paths(tmp_db, withhold_paths) if withhold_paths else 0
+    # The `finally` covers the COPY and the withhold, not just the swap. It
+    # guarded only `os.replace` until 2026-08-31, so any failure inside
+    # `_withhold_paths` orphaned a full-size copy of the index. Measured that
+    # day on a live vault: 20 leftovers of 6 MB each -- 123 MB, one per hourly
+    # run since the withhold started raising at 22:55 the night before -- and every one of them invisible,
+    # because the run that made it reported only its own exception.
     try:
+        shutil.copy2(source_db, tmp_db)
+        withheld = _withhold_paths(tmp_db, withhold_paths) if withhold_paths else 0
         os.replace(tmp_db, final_db)  # atomic swap
     finally:
         if tmp_db.exists():

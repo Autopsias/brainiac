@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+
+from .cowork_staging import staging_root
 from typing import Any
 
 #: What an undeclared key renders as when the registry cannot be loaded AT
@@ -69,16 +71,44 @@ def _untriaged(key: str) -> bool:
         return True
 
 
-def _staged_versions(vault: Path) -> set[str]:
+def _root_for(entry: dict, raw: str) -> Path:
+    """The `.brain` staging root this registry row actually stages into.
+
+    RELOCATION-AWARE since 2026-08-31. This read derived the root as
+    `<vault>/.brain`, which is right only while the vault sits inside the
+    workspace. On a RELOCATED vault the engine is staged at
+    `<workspace>/vault/.brain`, so the old derivation read the vault-side
+    LEFTOVER --- frozen at whatever version was current when the vault moved
+    --- and reported the workspace permanently stale. `brain update` could
+    never clear it: it writes the workspace side.
+
+    Measured 2026-08-31, minutes after the 0.20.33 restage: the staged engine
+    on disk and `brain doctor` both read 0.20.33 while this digest cried
+    0.20.32 for both live vaults. Sixth relocation-unaware surface, and the
+    first on the digest every session is told to read FIRST. The three doctor
+    rows before it went SILENT, which is the milder failure; a permanent false
+    alarm teaches sessions to ignore the channel.
+
+    Never raises: `alerts` reporting nothing is the one outcome this module may
+    never produce, so an unresolvable path falls back to the co-located root.
+    """
+    try:
+        return staging_root(raw, entry.get("workspace_path") or None)
+    except (OSError, ValueError):
+        return Path(raw) / ".brain"
+
+
+def _staged_versions(root: Path) -> set[str]:
     """Every version stamp a staged Cowork workspace carries, as file reads.
 
+    Takes the `.brain` STAGING ROOT, not the vault --- see :func:`_root_for`.
     Two stamp kinds exist: the staged engine's ``_version.py`` and the
     ``brain-linux-*.version`` sidecars beside the VM ELFs. A missing stamp
     contributes nothing — absence means "never staged", which is not
     staleness."""
     found: set[str] = set()
     try:
-        text = (vault / ".brain" / "engine" / "brain" / "_version.py").read_text(
+        text = (root / "engine" / "brain" / "_version.py").read_text(
             encoding="utf-8")
         m = re.search(r'__version__\s*=\s*"([^"]+)"', text)
         if m:
@@ -86,7 +116,7 @@ def _staged_versions(vault: Path) -> set[str]:
     except OSError:
         pass
     try:
-        for stamp in sorted((vault / ".brain" / "bin").glob("brain-linux-*.version")):
+        for stamp in sorted((root / "bin").glob("brain-linux-*.version")):
             v = stamp.read_text(encoding="utf-8").strip()
             if v:
                 found.add(v)
@@ -128,7 +158,7 @@ def staging_alerts(home: Path) -> list[dict[str, str]]:
         if not raw or raw in seen:
             continue
         seen.add(raw)
-        stale = sorted(_staged_versions(Path(raw)) - {running})
+        stale = sorted(_staged_versions(_root_for(entry, raw)) - {running})
         if stale:
             out.append(_alert(
                 "staging:stale",

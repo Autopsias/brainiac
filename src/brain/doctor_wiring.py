@@ -39,7 +39,8 @@ from typing import Any, Optional
 from . import workspaces
 from .pathkey import real_key, same_path
 from .provision_wire import WIRE_NAMES
-from .sweepdirs import DELIVERABLES_DIRNAME, SWEEP_ENV, entry_path, sweep_entries
+from .sweepdirs import (DELIVERABLES_DIRNAME, SWEEP_ENV, entry_path,
+                        installed_nightly_plist, sweep_entries)
 
 __all__ = ["check_vault_wiring", "SURFACE"]
 
@@ -195,7 +196,12 @@ def _wire_row(vault: str, entries: list[dict], *, desktop_config_path: Path,
     # needs the FOLDER to exist AND be listed in the installed plist file —
     # no launchctl probe, so a genuinely current row still carries the
     # reload-pending caveat below.
-    plist = _config.nightly_plist_path(vpath, launch_agents_dir=plist_dir)
+    # The plist that ACTUALLY serves this vault, not the one its CURRENT path
+    # hashes to: the label is a hash of the path, so a moved vault keeps the
+    # job it was registered under while the engine computes a new name. Reading
+    # the computed name made this row say "plist absent" for a healthy nightly
+    # that ran every branch that day (measured 2026-08-31).
+    plist = installed_nightly_plist(vpath, launch_agents_dir=plist_dir)
     sweep_env, plist_unreadable = _plist_sweep_env(plist)
     if plist_unreadable:
         return _row(surface, NOT_DETECTABLE,

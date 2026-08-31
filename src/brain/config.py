@@ -15,6 +15,8 @@ Per-vault isolation (0.3.0): under the app-data base, each vault gets its own
 subdirectory ``vaults/<name>-<hash8>/`` derived from the resolved vault path —
 N vaults on one machine get N independent indexes + audit chains with no env
 var to remember. ``$BRAIN_INDEX_DIR`` still overrides completely (no nesting).
+``$BRAIN_APP_DATA_DIR`` is the other half of that pair: it moves the BASE and
+keeps the nesting, so N vaults stay independent under a relocated parent.
 """
 from __future__ import annotations
 
@@ -78,7 +80,19 @@ def _app_data_base() -> Path:
     """Per-user app-data base dir (no vault scoping).
 
     Never returns a Controlled-Folder-Access path (Documents/Desktop/Pictures).
+
+    ``$BRAIN_APP_DATA_DIR`` relocates the whole base. Unlike
+    ``$BRAIN_INDEX_DIR`` it keeps every per-vault path BELOW it intact --
+    ``vaults/<vault-id>/``, ``locks/``, ``cos-runs/``, ``query-capture-status/``
+    all still nest exactly as in production, only the parent moves. That is
+    what makes it safe for the test suite, which needs isolation WITHOUT the
+    shared-index blast radius of ``$BRAIN_INDEX_DIR`` (see
+    ``tests/conftest.py::_no_live_cwd_vault_session``), and it crosses a
+    process boundary where a monkeypatch cannot.
     """
+    override = os.environ.get("BRAIN_APP_DATA_DIR", "").strip()
+    if override:
+        return Path(override).expanduser()
     if sys.platform.startswith("win"):
         base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
         return Path(base) / APP_NAME

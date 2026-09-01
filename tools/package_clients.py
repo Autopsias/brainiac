@@ -78,7 +78,7 @@ KERNEL_SKILLS = [
     "vault-ingestion",
     "vault-eval",
     "save-conversation",
-    "voice",
+    "overlay-style",
     "brain-inbox",
     "vm-doctor",
     "graph-explorer",
@@ -161,6 +161,7 @@ ENGINE_ASSET_FILES = [
     # workspace has no `scripts/` dir of its own, so a hand copy is the only
     # alternative and it does not survive the next re-stage.
     "scripts/brainiac-alerts.sh",
+    "scripts/brainiac-egress-guard.sh",
     "scripts/vm-selftest.sh",
     "scripts/vm-boundary-probe.sh",
     # FL-03 COS retro miner. brain-synthesis.sh resolves it SCRIPT-RELATIVE

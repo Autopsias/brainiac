@@ -251,7 +251,8 @@ def _r_stale(v, ctx):
 
 
 @rule("draft.voice_or_declared_neutral", "row",
-      "Phase 1 step 5 — the `voice` skill in DRAFT then CHECK, or a DECLARED fallback")
+      "Phase 1 step 5 — the voice skill (the owner's own bundle if installed, else "
+      "the `overlay-style` kernel skill) in DRAFT then CHECK, or a DECLARED fallback")
 def _r_voice(v, ctx):
     d = _draft(v)
     if not d:

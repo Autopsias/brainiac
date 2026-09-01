@@ -209,9 +209,9 @@ def _terminal_rows(
                  *checks.mcp_vault_paths()])
     rows.append(checks.cos_deployed_skill())
     rows.extend(checks.desktop_plugin_store(context.app_support_dir, ssot))
-    from .session_hook import doctor_row as _session_hook_row
+    from .session_hook import doctor_rows as _session_hook_rows
 
-    rows.append(_session_hook_row(context.claude_home))
+    rows.extend(_session_hook_rows(context.claude_home))
     return rows
 
 

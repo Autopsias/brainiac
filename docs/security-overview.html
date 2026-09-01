@@ -78,6 +78,40 @@
     VirtioFS = the host↔VM shared-folder filesystem · MNPI = material non-public information
     (the most restrictive classification tier).</div>
 
+  <div class="risk">
+    <h3>Superseded in one place — read this before §2.2 or §6.3 (added 2026-09-01)</h3>
+    <p>This document describes the system as of <strong>2026-07</strong>. The
+    <strong>Cowork cutover</strong> (Closed Stacks, 2026-08-27 &rarr; 2026-08-30) changed the
+    VM leg after it was written, and several statements below did not follow.</p>
+    <p><strong>What is still true:</strong> the vault is no longer attached to the Cowork
+    sandbox at all, so the read/write mount bypass a penetration test demonstrated is closed,
+    and every Cowork read now passes the classification gate and leaves a fail-closed audit
+    record. That is a real improvement over what this document describes.</p>
+    <p><strong>What is now WRONG below, wherever it appears:</strong> that the Cowork VM leg
+    reads a snapshot &ldquo;<code>Internal</code>-capped&rdquo; (§2.2's diagram and capability
+    table, §8's configuration table), and that the MCP read surface
+    &ldquo;defaults to Internal&rdquo; (§6.3 corollary (a)). Neither holds. A Cowork session
+    reads through the host <code>brain-mcp</code> broker, whose ceiling comes from
+    <code>$BRAIN_MAX_EGRESS_TIER</code> alone — it never sees a role, because
+    <code>connect.py</code> writes no <code>BRAIN_ROLE</code>. <strong>The untrusted leg
+    therefore reads at the host ceiling: the full vault.</strong> The <code>--role vm</code>
+    <code>Internal</code> cap still binds the CLI, which is no longer the route.</p>
+    <p><strong>What that means for §2.2's trifecta break:</strong> it is the design, and the
+    Cowork leg no longer meets it. What bounds that leg now is DETECTION, not separation — the
+    SEC-05 ingest quarantine, <code>content_trust</code> marking on every <code>raw/</code>
+    hit, the fail-closed SEC-06 read record, and (from 2026-09-01) a weekly concealed-instruction
+    count and bulk-read alarm in the Tuesday integrity fold. A plainly VISIBLE injected
+    instruction still enters the vault as <code>instruction_only</code>, so there the model's
+    own compliance is the only control. §6.1 therefore understates, not overstates, the
+    residual.</p>
+    <p><strong>Accepted, knowingly.</strong> The owner was shown the per-caller clamp and
+    DECLINED it on 2026-08-31: the broker cannot tell a Cowork caller from the owner's own
+    Desktop, so capping one caps both. Authoritative record:
+    <code>docs/security-acceptances.md</code> A-05 and
+    <code>docs/security/vuln-3385-risk-reduction.md</code>. Until this document is rewritten
+    end to end, those two win over anything below.</p>
+  </div>
+
   <div class="chips">
     <span>deny-by-default egress</span><span>host/VM trust split</span>
     <span>Ed25519 audit chain</span><span>fail-closed signing</span>

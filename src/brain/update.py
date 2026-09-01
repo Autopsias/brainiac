@@ -71,6 +71,29 @@ from .update_state import (  # noqa: F401  (facade re-export)
 # is exercised without ever touching a real plugin store or venv.
 # --------------------------------------------------------------------------
 
+CLAUDE_HOME_ENV_VAR = "BRAIN_CLAUDE_HOME"
+
+
+def claude_home_default() -> Path:
+    """The Claude Code config dir these verbs write to when no caller names one.
+
+    Honours ``$BRAIN_CLAUDE_HOME`` so a caller that must NOT touch the real
+    ``~/.claude`` redirects the BASE once and every site follows. Three sites
+    in this module spelled ``Path.home() / ".claude"`` inline, and the
+    update-flow tests drove all of them: they monkeypatch every other
+    side-effecting step, so ``run_update`` placed real hook scripts into the
+    owner's own ``~/.claude`` on every suite run. That looked harmless while
+    the only script was one whose content never changed; the moment a SECOND
+    hook shipped (2026-09-01) the same tests began depositing an UNTRACKED
+    file into a tree ``gearbox deploy`` refuses to deploy over.
+
+    An env var, not a patched function: a fixed call site is one call site,
+    and the next one added would leak again.
+    """
+    override = os.environ.get(CLAUDE_HOME_ENV_VAR, "").strip()
+    return Path(override).expanduser() if override else Path.home() / ".claude"
+
+
 def resolve_claude_bin() -> Optional[str]:
     """Locate the ``claude`` CLI the way the shipped scripts already do.
 
@@ -152,7 +175,7 @@ def resolve_engine_source(
     inferred = Path(__file__).resolve().parent.parent.parent
     if (inferred / "pyproject.toml").exists():
         return inferred
-    claude_home = claude_home or (Path.home() / ".claude")
+    claude_home = claude_home or claude_home_default()
     loc = marketplace_install_location(claude_home)
     if loc and (loc / "pyproject.toml").exists():
         return loc
@@ -230,7 +253,7 @@ def detect_and_check_update(
     channel + installed version + engine source, then answer "is a newer
     version available to this machine". Zero network on a local-checkout
     channel; a 3s PyPI fetch otherwise (via ``check_update_available``)."""
-    claude_home = claude_home or (Path.home() / ".claude")
+    claude_home = claude_home or claude_home_default()
     legacy_bin = _venv_bin(brainiac_home / "venv", "brain")
     which_brain = shutil.which("brain")
     brain_bin: Optional[Path] = legacy_bin if legacy_bin.exists() else (
@@ -376,7 +399,7 @@ def run_update(
     brainiac_home = brainiac_home or Path(
         os.environ.get("BRAINIAC_HOME", Path.home() / ".brainiac")
     )
-    claude_home = claude_home or (Path.home() / ".claude")
+    claude_home = claude_home or claude_home_default()
     resolved_engine_src = resolve_engine_source(
         explicit=engine_src,
         claude_home=claude_home,

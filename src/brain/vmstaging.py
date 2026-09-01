@@ -18,7 +18,7 @@ version. Hence the ``.version`` marker written by
 ``tools/build_brain_binary.sh``: freshness has to be a file the host can read.
 
 It was not cosmetic. ``tools/cowork_session_bootstrap.sh`` does
-``ln -sf bin/brain-linux-$(uname -m) $BRAIN_VAULT/.brain/brain`` and
+``ln -sfn bin/brain-linux-$(uname -m) $BRAIN_VAULT/.brain/brain`` and
 PATH-prepends it, so the ELF OVERWRITES the zero-install shim and is what
 ``brain`` means inside a bootstrapped session. A stale one cannot read a newer
 snapshot schema and falls back to HashEmbedder — a real-model index queried

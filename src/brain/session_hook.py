@@ -35,7 +35,7 @@ import os
 import shutil
 import stat
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 HOOK_SCRIPT = "brainiac-alerts.sh"
 HOOK_EVENT = "SessionStart"
@@ -45,6 +45,52 @@ HOOK_ENTRY = {
     "timeout": 10,
     "statusMessage": "Checking Brainiac health",
 }
+
+GUARD_SCRIPT = "brainiac-egress-guard.sh"
+GUARD_EVENT = "PreToolUse"
+#: Which tool calls the SEC-07 guard inspects. Claude Code matches a tool by
+#: name, and an MCP tool's name is `mcp__<server>__<tool>` — an owner with an
+#: MCP search tool adds it here, in their own settings, rather than us guessing
+#: server names we cannot know.
+GUARD_MATCHER = "WebSearch|WebFetch"
+GUARD_ENTRY = {
+    "type": "command",
+    "command": "",
+    "timeout": 5,
+}
+
+
+class HookSpec(NamedTuple):
+    """One placeable hook. Two ship today; the shape is the point.
+
+    ``brainiac-egress-guard.sh`` was added on 2026-09-01 and reproduced this
+    module's own founding defect for a day: it rode the wheel and NO install
+    path placed it, which is exactly the "a hard wiring nothing installs is a
+    soft one" failure the docstring above describes. A second hook could not be
+    added without generalising, so it was generalised.
+    """
+
+    script: str
+    event: str
+    entry: dict[str, Any]
+    matcher: str | None
+    label: str
+    #: What the OWNER loses when this hook is silently absent. The row exists
+    #: to name that, not to report a missing file: "script not found" is not a
+    #: consequence anyone can weigh.
+    silent_symptom: str
+
+
+HOOKS: tuple[HookSpec, ...] = (
+    HookSpec(HOOK_SCRIPT, HOOK_EVENT, HOOK_ENTRY, None,
+             "SessionStart alert hook",
+             "sessions open with NO degradation banner, which reads exactly "
+             "like a healthy vault"),
+    HookSpec(GUARD_SCRIPT, GUARD_EVENT, GUARD_ENTRY, GUARD_MATCHER,
+             "PreToolUse egress guard (SEC-07)",
+             "a web search carrying a term this vault classifies Confidential "
+             "or above leaves unchecked, and nothing records that it did"),
+)
 
 
 # A `~/.claude` that some harness repo DEPLOYS carries its own tooling. Two
@@ -71,13 +117,13 @@ def harness_managed(claude_home: Path) -> bool:
     return all((claude_home / marker).exists() for marker in HARNESS_MARKERS)
 
 
-def hook_command(claude_home: Path) -> str:
+def hook_command(claude_home: Path, script: str = HOOK_SCRIPT) -> str:
     """The command string to register, `~`-relative when it is under $HOME.
 
     Derived from the ACTUAL destination rather than hardcoded: a test home or
     a `--claude-home` override would otherwise register a path pointing at
     `~/.claude`, where the script was never placed."""
-    path = (claude_home / "hooks" / HOOK_SCRIPT).expanduser()
+    path = (claude_home / "hooks" / script).expanduser()
     try:
         return "~/" + str(path.relative_to(Path.home()))
     except ValueError:
@@ -90,18 +136,37 @@ def _write_json_atomic(path: Path, payload: Any) -> None:
     os.replace(tmp, path)
 
 
-def _already_registered(groups: list[Any]) -> bool:
+def _already_registered(groups: list[Any], script: str = HOOK_SCRIPT) -> bool:
     for group in groups:
         if not isinstance(group, dict):
             continue
         for entry in group.get("hooks") or []:
-            if isinstance(entry, dict) and HOOK_SCRIPT in str(entry.get("command", "")):
+            if isinstance(entry, dict) and script in str(entry.get("command", "")):
                 return True
     return False
 
 
-def _register(settings_path: Path, command: str) -> str:
-    """Add the SessionStart entry unless one is already there.
+def _group_for(groups: list[Any], matcher: str | None) -> dict[str, Any]:
+    """The group this spec's entry belongs in, created if absent.
+
+    A matcher-less spec joins the first matcher-less group rather than adding a
+    second one — that is what SessionStart already uses, and two of them run
+    the same set twice. A MATCHED spec joins the group carrying its own exact
+    matcher, and never a matcher-less one: appending a `PreToolUse` entry to a
+    group with no matcher would run it before EVERY tool call, which is a
+    different and much larger promise than the one this guard makes.
+    """
+    for group in groups:
+        if isinstance(group, dict) and (group.get("matcher") or None) == matcher:
+            return group
+    group: dict[str, Any] = {"hooks": []} if matcher is None else {
+        "matcher": matcher, "hooks": []}
+    groups.append(group)
+    return group
+
+
+def _register(settings_path: Path, command: str, spec: HookSpec) -> str:
+    """Add this spec's entry unless one is already there.
 
     Returns ``"added"``, ``"already-registered"``, or ``"unparseable"``."""
     settings: Any = {}
@@ -113,35 +178,46 @@ def _register(settings_path: Path, command: str) -> str:
     hooks = settings.setdefault("hooks", {})
     if not isinstance(hooks, dict):
         return "unparseable"
-    groups = hooks.setdefault(HOOK_EVENT, [])
+    groups = hooks.setdefault(spec.event, [])
     if not isinstance(groups, list):
         return "unparseable"
-    if _already_registered(groups):
+    if _already_registered(groups, spec.script):
         return "already-registered"
 
-    # Join the first group that applies to every session (no matcher) rather
-    # than adding a second one — a matcher-less group is what SessionStart
-    # already uses, and two of them run the same set twice.
-    for group in groups:
-        if isinstance(group, dict) and not group.get("matcher"):
-            group.setdefault("hooks", []).append({**HOOK_ENTRY, "command": command})
-            break
-    else:
-        groups.append({"hooks": [{**HOOK_ENTRY, "command": command}]})
+    group = _group_for(groups, spec.matcher)
+    group.setdefault("hooks", []).append({**spec.entry, "command": command})
 
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     _write_json_atomic(settings_path, settings)
     return "added"
 
 
-def install(claude_home: Path, script_src: Path | None) -> dict[str, Any]:
-    """Place ``brainiac-alerts.sh`` and register it. Idempotent.
+def install_all(
+    claude_home: Path, resolve: Any, specs: tuple[HookSpec, ...] = HOOKS,
+) -> list[dict[str, Any]]:
+    """Place and register EVERY shipped hook. Idempotent, and independent.
+
+    ``resolve(script_name)`` returns the packaged source path, or ``None``.
+    One spec failing never stops another: a missing egress-guard script must
+    not cost the owner their degradation banner, and the reverse is just as
+    true.
+    """
+    return [install(claude_home, resolve(spec.script), spec) for spec in specs]
+
+
+def install(
+    claude_home: Path, script_src: Path | None, spec: HookSpec = HOOKS[0],
+) -> dict[str, Any]:
+    """Place one hook script and register it. Idempotent.
 
     ``script_src`` is the packaged thin caller; ``None`` (nothing resolved it)
     is reported rather than treated as success — a registered hook pointing at
     a file that is not there fires an error banner every session."""
     result: dict[str, Any] = {
-        "hook_path": str(claude_home / "hooks" / HOOK_SCRIPT),
+        "hook": spec.label,
+        "event": spec.event,
+        "symptom": spec.silent_symptom,
+        "hook_path": str(claude_home / "hooks" / spec.script),
         "settings_path": str(claude_home / "settings.json"),
     }
     if script_src is None or not Path(script_src).is_file():
@@ -150,7 +226,7 @@ def install(claude_home: Path, script_src: Path | None) -> dict[str, Any]:
         result["ok"] = False
         return result
 
-    destination = claude_home / "hooks" / HOOK_SCRIPT
+    destination = claude_home / "hooks" / spec.script
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(script_src, destination)
     destination.chmod(destination.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
@@ -159,20 +235,25 @@ def install(claude_home: Path, script_src: Path | None) -> dict[str, Any]:
     if harness_managed(claude_home):
         # Placed, not wired. `check()` below reports whether the harness has
         # actually registered it, so this is visible rather than assumed.
-        registered = _is_registered(claude_home)
+        registered = _is_registered(claude_home, spec)
         result["settings"] = (
             "harness-managed" if registered else "harness-managed-UNREGISTERED")
         result["ok"] = registered
         return result
 
     result["settings"] = _register(
-        claude_home / "settings.json", hook_command(claude_home))
+        claude_home / "settings.json", hook_command(claude_home, spec.script), spec)
     result["ok"] = result["settings"] != "unparseable"
     return result
 
 
+def render_all(results: list[dict[str, Any]]) -> str:
+    return "\n".join(render_human(r) for r in results)
+
+
 def render_human(result: dict[str, Any]) -> str:
-    lines = [f"session-start hook: {result['script']} -> {result['hook_path']}"]
+    lines = [f"{result.get('hook', 'session-start hook')}: "
+             f"{result['script']} -> {result['hook_path']}"]
     lines.append(f"registration: {result['settings']} ({result['settings_path']})")
     if result["script"] == "missing":
         lines.append("  ! the packaged hook script could not be resolved — nothing "
@@ -182,23 +263,31 @@ def render_human(result: dict[str, Any]) -> str:
                      "settings.json entry — placed the script, wrote nothing else")
     if result["settings"] == "harness-managed-UNREGISTERED":
         lines.append("  ! this ~/.claude is harness-managed, so nothing here writes "
-                     "settings.json — and NO SessionStart entry is registered. "
-                     "Add it in the harness repo, or sessions get no banner")
+                     f"settings.json — and NO {result.get('event', HOOK_EVENT)} entry "
+                     "is registered. Add it in the harness repo, or: "
+                     f"{result.get('symptom', 'the hook never runs')}")
     if result["settings"] == "unparseable":
         lines.append("  ! settings.json could not be parsed and was left UNTOUCHED "
-                     "— add the SessionStart entry by hand, or fix the JSON and "
-                     "re-run")
+                     f"— add the {result.get('event', HOOK_EVENT)} entry by hand, "
+                     "or fix the JSON and re-run")
     return "\n".join(lines)
 
 
-def doctor_row(claude_home: Path) -> dict[str, Any]:
-    """`brain doctor`'s row for this hook. GATING when stale, by design."""
-    status, detail, remediation = check(claude_home)
-    return {"surface": "SessionStart alert hook (~/.claude)", "status": status,
+def doctor_row(claude_home: Path, spec: HookSpec = HOOKS[0]) -> dict[str, Any]:
+    """`brain doctor`'s row for one hook. GATING when stale, by design."""
+    status, detail, remediation = check(claude_home, spec)
+    return {"surface": f"{spec.label} (~/.claude)", "status": status,
             "detail": detail, "remediation": remediation, "raw": {}}
 
 
-def check(claude_home: Path) -> tuple[str, str, str | None]:
+def doctor_rows(claude_home: Path) -> list[dict[str, Any]]:
+    """One row per shipped hook. Both are GATING when stale for the same
+    reason: each fails SILENTLY, and a silent control reads exactly like a
+    working one."""
+    return [doctor_row(claude_home, spec) for spec in HOOKS]
+
+
+def check(claude_home: Path, spec: HookSpec = HOOKS[0]) -> tuple[str, str, str | None]:
     """``(status, detail, remediation)`` for the ``brain doctor`` row.
 
     A hook that is deleted or unregistered is SILENT — the session simply
@@ -213,26 +302,25 @@ def check(claude_home: Path) -> tuple[str, str, str | None]:
     if not claude_home.is_dir():
         return ("unmanaged", f"no {claude_home} on this host — Claude Code is not "
                              "installed here, so there is no hook surface", None)
-    script = claude_home / "hooks" / HOOK_SCRIPT
-    registered = _is_registered(claude_home)
+    script = claude_home / "hooks" / spec.script
+    registered = _is_registered(claude_home, spec)
     if script.is_file() and registered:
-        return ("current", f"{HOOK_SCRIPT} placed and registered in settings.json", None)
+        return ("current", f"{spec.script} placed and registered in settings.json", None)
     missing = []
     if not script.is_file():
         missing.append(f"{script} is MISSING")
     if not registered:
-        missing.append("no SessionStart entry in settings.json")
+        missing.append(f"no {spec.event} entry in settings.json")
     fix = ("brain install-hook places the script; the harness repo that "
            "deploys this ~/.claude owns the settings.json entry"
            if harness_managed(claude_home) else "brain install-hook")
-    return ("stale", "; ".join(missing) + " — sessions open with NO degradation "
-                     "banner, which reads exactly like a healthy vault", fix)
+    return ("stale", "; ".join(missing) + " — " + spec.silent_symptom, fix)
 
 
-def _is_registered(claude_home: Path) -> bool:
+def _is_registered(claude_home: Path, spec: HookSpec = HOOKS[0]) -> bool:
     settings = _read_settings(claude_home / "settings.json")
     return isinstance(settings, dict) and _already_registered(
-        _session_start_groups(settings))
+        _event_groups(settings, spec.event), spec.script)
 
 
 def _read_settings(path: Path) -> Any:
@@ -242,9 +330,9 @@ def _read_settings(path: Path) -> Any:
         return None
 
 
-def _session_start_groups(settings: dict[str, Any]) -> list[Any]:
+def _event_groups(settings: dict[str, Any], event: str = HOOK_EVENT) -> list[Any]:
     hooks = settings.get("hooks")
     if not isinstance(hooks, dict):
         return []
-    groups = hooks.get(HOOK_EVENT)
+    groups = hooks.get(event)
     return groups if isinstance(groups, list) else []

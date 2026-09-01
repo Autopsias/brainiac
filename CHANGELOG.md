@@ -7,6 +7,119 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.35] — 2026-09-01
+### Added
+- **`brain check-egress` — the outbound term guard (SEC-07).** The
+  classification gate decides what a caller may READ; nothing decided what
+  the model then put into a tool call. `AGENTS.md` retrieval rule 4 has always
+  named the consequence — "the model's own web-search tool is an *ungated
+  outbound channel*, and the query string itself is the leak" — and until now
+  that rule was PROSE, enforced by the model's compliance. A hostile document
+  can carry an instruction that puts a codename into a search query; nobody
+  reviews a query string, and the term has left before any result comes back.
+  `brain check-egress "<text>"` judges one outbound string against the vault's
+  `overlay/keywords/` decoder ring and exits `6` when a term is classified at
+  or above the threshold (default `Confidential`; `$BRAIN_EGRESS_TERM_MIN_TIER`
+  changes it and an unrecognised value fails CLOSED, as `mcp_verbs` does).
+  `scripts/brainiac-egress-guard.sh` is the Claude Code `PreToolUse` wiring.
+  **The engine ships NO terms.** They come from the owner's own overlay — the
+  same rows that already drive ingest classification (`provenance.py`) and the
+  COS grounding lane (`cos_ground.py`), so nothing new is curated and no
+  owner's counterparties enter this repository. `VM_ALLOWED`: the Cowork leg
+  reads wild content beside a web tool, so it needs the guard most.
+  **An empty decoder ring is REPORTED, never a quiet pass** — a check whose
+  all-clear means "nothing was looked at" is worse than no check, so
+  `mapped_terms` is always returned, `explain()` says it in words, and
+  `--strict` turns it into a refusal. **Limits, stated deliberately:** it
+  matches DECLARED terms on word boundaries and cannot see a paraphrase, an
+  undeclared codename, or a fact restated in the model's own words. It is a
+  floor under rule 4, not a replacement for it.
+- **The Tuesday integrity fold now runs the two prompt-injection detectors.**
+  The SEC-05 concealed-instruction corpus re-scan and the SEC-06 bulk-read
+  alarm (a single call surfacing >= 200 notes — the shape an injected agent
+  leaves when it exfiltrates through the gate) lived only in the `brain
+  integrity` CLI body, so they fired only when a human typed the command and
+  never in the unattended nightly. Both moved into `core.integrity()`; the CLI
+  now reads those rows instead of computing its own. Each finding carries its
+  own `notify_key`, without which an item stays in the maintain result and
+  never reaches `brain alerts`, and each reports a COUNT rather than note names
+  — finding text is persisted into `.brain/notify-sent/current.json`, which the
+  Cowork VM reads.
+
+- **`brain install-hook` places and registers EVERY shipped Claude Code hook,
+  not just the SessionStart one.** `session_hook.py` was single-hook by
+  construction, so the new egress guard rode the wheel with no install path
+  placing it — this module's own founding defect, reproduced: its docstring
+  already records that "a 'hard' wiring nothing installs is a soft one"
+  (2026-08-20). It now carries a `HookSpec` table, and each hook declares what
+  the owner LOSES when it is silently absent, so `brain doctor`'s row names the
+  consequence rather than a missing file. A matched hook joins the group
+  carrying its own matcher and never a matcher-less one — a `PreToolUse` entry
+  in a matcher-less group would run before EVERY tool call. One hook's missing
+  script never costs the other its install. The harness-managed rule is
+  unchanged: on a `~/.claude` a deploy repo owns, the engine places scripts and
+  writes no `settings.json`.
+
+### Fixed
+- **A `brain doctor` test loaded the real embedding model, so the release gate
+  was load-dependent.** `test_run_doctor_carries_a_warn_row_without_flipping_ok`
+  pinned every host-global surface except the embedder-liveness row, which
+  LOADS the onnx model and runs a live query embed. A transient failure there
+  reads `stale` — a gating status — and reds a test about the wiring row.
+  Measured in this release's own gate: the suite started at 11:00:36 alongside
+  the hourly `brain-nightly` and this one test failed, while the identical
+  command passed on a re-run. The test now uses `_stub_live_embedder`, which
+  `test_doctor.py` already applies for exactly this reason. Proven in both
+  directions: with `$BRAIN_MODEL_CACHE` pointed at a missing directory the old
+  test fails `assert False is True` and the fixed one passes, in 1.1s instead
+  of 28.6s.
+- **The test suite no longer writes Claude Code hooks into the developer's real
+  `~/.claude`.** Four update-flow tests monkeypatch every side-effecting step
+  except the hook install, so `run_update` placed real scripts into the owner's
+  own config directory on every suite run. It hid for months because the one
+  shipped script's bytes never changed — the copy was an invisible no-op. The
+  second hook turned it into an UNTRACKED file in a gearbox deploy target,
+  where it aborts every `gearbox deploy`. Fixed at the base rather than per
+  call site: `update.claude_home_default()` honours `$BRAIN_CLAUDE_HOME`, the
+  three inline `Path.home() / ".claude"` defaults read it, and an autouse
+  `_no_live_claude_home` fixture pins it for every test — beside the existing
+  live-vault, launchd, Desktop-config and shelf pins, and for the same reason.
+- **The VULN-3385 record and the A-05 register entry no longer misstate the
+  live posture.** Three drifts, each re-read against the running system:
+  §5 still listed the CLI's fail-closed record write as outstanding work (it
+  shipped in 0.20.33) and never recorded the owner's 2026-08-31 DECLINE of the
+  per-caller ceiling — so the page read as though a closure were still
+  reachable; A-05 still claimed two stale `cowork-vm` registry rows were being
+  kept as the only detection signal for the old attached folders, which the
+  owner detached on 2026-08-30; and both files stated a Desktop-config tier
+  count that had since drifted and was then corrected back. `AGENTS.md` and
+  `docs/security-overview.html` now say plainly that the `--role vm` `Internal`
+  cap binds the CLI and NOT the live Cowork route, and that the trifecta break
+  is the design the Cowork leg no longer meets.
+
+### Changed
+- **BREAKING (skill name): the kernel `voice` skill is renamed `overlay-style`.**
+  It is the same skill --- same three modes, same overlay-only sourcing, still
+  zero hard-coded owner identity --- under a name that says what it actually
+  does: it applies the vault owner's house style from
+  `<vault>/overlay/{voice,brand,keywords,people}/`. It was never a voice of its
+  own. Anyone invoking `/voice` from the kernel plugin must switch to
+  `/overlay-style`; the bundle ships as `overlay-style.skill` and the
+  marketplace and plugin descriptions name it accordingly.
+  **A rename alone was not enough, and that is the substantive half of this
+  change.** An owner may also install a personal, self-contained voice skill,
+  and the two carried nearly identical trigger phrases --- `"in my voice"`,
+  `"make this sound like me"`, `"voice check"`, `"stakeholder update"` --- so a
+  request for one could auto-route to the other regardless of the directory
+  name. The kernel skill's description now triggers on overlay language
+  (`"apply the vault overlay"`, `"overlay style check"`, `"house style"`) and
+  DEFERS first-person phrasing to a personal voice bundle whenever one is
+  installed, falling back to the overlay only when none is. `chief-of-staff`'s
+  draft-replies leg documents the same precedence.
+  Recorded as an amendment to `docs/adr/0003-parity-architecture.md` rather
+  than by rewriting Ruling 7, which stands as written.
+
+
 ## [0.20.34] — 2026-08-31
 ### Fixed
 - **`brain search`, `get`, `recent` and `grep` work on Windows again.** 0.20.33

@@ -227,7 +227,9 @@ class _CoreHealthMixin:
             },
             "auto_fixed": auto_fixed,
         }
-    def integrity(self, *, min_score: float = 0.95, k: int = 5) -> dict[str, Any]:
+    def integrity(
+        self, *, min_score: float = 0.95, k: int = 5, scan_injection: bool = True,
+    ) -> dict[str, Any]:
         """integrity-scan fold (task-disposition.md row 3): audit-chain verify
         + a corpus-wide near-dup scan directly over the brain vector backend
         (brain-cli-gaps.md G1 — no SC/MCP round-trip). READ-ONLY. UNFILTERED
@@ -299,12 +301,48 @@ class _CoreHealthMixin:
                 f"{type(exc).__name__}: {exc}",
                 "investigate the embedder/vector-backend, then re-run integrity"))
 
+        # SEC-05 corpus re-scan and the SEC-06 bulk-read alarm. Both lived ONLY
+        # in the `brain integrity` CLI body until 2026-09-01, so the Tuesday
+        # fold — the one caller that runs with no human present — fired neither
+        # of the two detectors built for indirect prompt injection. Moving them
+        # here is what arms them; the CLI now reads these keys instead of
+        # computing its own. UNFILTERED like `near_dup_pairs`: a finding NAMES a
+        # note, so every SURFACING caller egress-gates it.
+        injection_rows, reads = self._injection_and_reads(scan_injection, blocked)
+
         return {
             "ritual": "integrity", "min_score": min_score,
             "audit": audit_res, "audit_issue": audit_issue,
             "near_dup_pairs": pairs,  # UNFILTERED
+            "injection_rows": injection_rows,  # UNFILTERED
+            "read_log": reads,
             "blocked": blocked,
         }
+    def _injection_and_reads(
+        self, scan_injection: bool, blocked: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """The two prompt-injection detectors, split out to keep `integrity`
+        inside the function-length ratchet. Appends to ``blocked`` in place:
+        a scan that raises is a reported gap, never a silent clean sweep."""
+        from .. import injection_scan as _isc
+        from .. import maintenance as maint
+        from .. import read_log as _rl
+
+        rows: list[dict[str, Any]] = []
+        if scan_injection:
+            try:
+                rows = _isc.scan_corpus(self.vault)
+            except Exception as exc:
+                blocked.append(maint.blocked_item(
+                    "concealed-instruction scan raised",
+                    f"{type(exc).__name__}: {exc}",
+                    "investigate brain.injection_scan, then re-run integrity"))
+        try:
+            reads = _rl.status(self.vault)
+        except Exception:
+            reads = {"available": False, "reason": "read-log unreadable"}
+        return rows, reads
+
     def promote_scan(self, *, k: int = 50) -> dict[str, Any]:
         """promotion-scan fold (task-disposition.md row 5 — ON-INVOKE triage;
         promotion itself stays a P-10 human gate). Candidates: ``raw/`` zone

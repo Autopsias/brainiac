@@ -121,7 +121,10 @@ def _run_curate(args, ctx) -> int:
 
 def _run_integrity(args, ctx) -> int:
     core = ctx.core
-    res = core.integrity(min_score=args.min_score, k=args.k)
+    scan_injection = bool(getattr(args, "injection", False))
+    res = core.integrity(
+        min_score=args.min_score, k=args.k, scan_injection=scan_injection,
+    )
     pairs = res["near_dup_pairs"]
     nodes = {}
     for p in pairs:
@@ -145,7 +148,12 @@ def _run_integrity(args, ctx) -> int:
     ]
     if res.get("audit_issue"):
         action_required.insert(0, res["audit_issue"])
-    injection = _injection_rows(args, ctx) if getattr(args, "injection", False) else None
+    # Gated for DISPLAY only — a finding names a note, so reporting it to an
+    # Internal-capped reader would leak the very thing the gate withholds.
+    injection = (
+        _filter_dicts(res["injection_rows"], args.max_tier)[0]
+        if scan_injection else None
+    )
     if injection:
         action_required.extend(
             maint.action_required_item(
@@ -158,7 +166,7 @@ def _run_integrity(args, ctx) -> int:
             for row in injection
             if row["verdict"] == "conceal"
         )
-    reads = _read_log_status(ctx)
+    reads = res["read_log"]
     if reads.get("bulk_reads"):
         action_required.append(maint.action_required_item(
             f"{reads['bulk_reads']} bulk read(s) in the last {reads['days']} days "
@@ -197,30 +205,6 @@ def _run_integrity(args, ctx) -> int:
                      f"{len(injection) - conceal} flagged")
         _emit(None, False, head + "\n" + maint.render_outcomes_markdown(outcomes))
     return 0
-
-
-def _read_log_status(ctx) -> dict:
-    """SEC-06 access summary. Counts only — the log stores no note ids at all."""
-    from .. import read_log as _rl
-
-    try:
-        return _rl.status(getattr(ctx.core, "vault", None))
-    except Exception:
-        return {"available": False, "reason": "read-log unreadable"}
-
-
-def _injection_rows(args, ctx) -> list:
-    """SEC-05 corpus scan, gated at the same chokepoint as the near-dup pairs.
-
-    A finding NAMES a note, so it is egress-gated like any other content
-    surface — reporting "MNPI-note-x hides an instruction" to an Internal-capped
-    reader would leak the very thing the gate exists to withhold.
-    """
-    from .. import injection_scan as _isc
-
-    rows = _isc.scan_corpus(ctx.core.vault)
-    surfaced, _report = _filter_dicts(rows, args.max_tier)
-    return surfaced
 
 
 def _run_promote_scan(args, ctx) -> int:

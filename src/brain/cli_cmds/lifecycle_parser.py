@@ -105,6 +105,33 @@ def _add_alerts(sub) -> None:
     )
 
 
+def _add_check_egress(sub) -> None:
+    sp = sub.add_parser(
+        "check-egress",
+        help="SEC-07: judge one OUTBOUND string (a web-search query, a URL, a "
+             "message body) against this vault's overlay keyword tiers, and "
+             "refuse when a term is classified at or above the threshold "
+             "(default Confidential). The classification gate protects the READ "
+             "side; this is the only check on the write side of a tool call. "
+             "Ships NO terms — they come from overlay/keywords/, so a vault "
+             "with no decoder ring maps nothing and SAYS SO. Pure file reads: "
+             "no index, embedder, network or key. Exit 6 = refused.",
+    )
+    sp.add_argument("text", nargs="?", help="the outbound string; omit to read stdin")
+    sp.add_argument("--json", action="store_true")
+    sp.add_argument(
+        "--min-tier",
+        help="refuse at or above this tier (default: $BRAIN_EGRESS_TERM_MIN_TIER, "
+             "else Confidential). An unrecognised value fails CLOSED.",
+    )
+    sp.add_argument(
+        "--strict",
+        action="store_true",
+        help="also refuse when the overlay maps NO terms — for a deployment that "
+             "will not accept an all-clear produced by an empty decoder ring",
+    )
+
+
 def _add_exceptions(sub) -> None:
     sp = sub.add_parser(
         "exceptions",
@@ -217,6 +244,7 @@ def add_parser(sub) -> None:
     _add_init(sub)
     _add_doctor(sub)
     _add_alerts(sub)
+    _add_check_egress(sub)
     _add_exceptions(sub)
     _add_install_hook(sub)
     _add_mcp_config(sub)

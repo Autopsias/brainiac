@@ -363,7 +363,7 @@ def _apply_plugin_actions(
 def _run_session_hook(
     engine_src: Optional[Path], claude_home: Path, *, dry_run: bool,
 ) -> dict[str, Any]:
-    """Re-place and re-register the SessionStart alert hook on every update.
+    """Re-place and re-register EVERY shipped Claude Code hook on each update.
 
     It rides the update rather than only the install for the reason every
     other staging leg here does: the hook is a thin caller whose CONTENT this
@@ -381,8 +381,15 @@ def _run_session_hook(
         from . import session_hook
         from .update import _packaged_script
 
-        return session_hook.install(
-            claude_home, _packaged_script(session_hook.HOOK_SCRIPT, engine_src))
+        results = session_hook.install_all(
+            claude_home, lambda name: _packaged_script(name, engine_src))
+        # Aggregated into ONE step dict: every hook must succeed for the step
+        # to be ok, and the per-hook detail rides along so a failure names
+        # WHICH hook rather than just the step.
+        return {"ok": all(r["ok"] for r in results),
+                "script": "; ".join(f"{r['hook']}={r['script']}" for r in results),
+                "settings": "; ".join(f"{r['hook']}={r['settings']}" for r in results),
+                "hooks": results}
     except Exception as exc:  # noqa: BLE001 — a banner must never fail an update
         return {"ok": False, "script": "error", "settings": "skipped",
                 "detail": f"{type(exc).__name__}: {exc}"}

@@ -210,6 +210,39 @@ def _run_exceptions(args, ctx) -> int:
     return 0
 
 
+def _run_check_egress(args, ctx) -> int:
+    """SEC-07: judge one OUTBOUND string before a tool call carries it away.
+
+    Deliberately does NOT require a resolvable vault. The hook that calls this
+    fires in whatever directory the session happens to sit in, and a guard that
+    exits 3 outside a vault is a guard that is off most of the time. An
+    unresolvable vault means an empty decoder ring, which `explain` reports in
+    its own words rather than as a cheerful pass.
+    """
+    from .. import egress_terms
+
+    text = args.text
+    if text is None:
+        import sys as _sys
+
+        text = "" if _sys.stdin.isatty() else _sys.stdin.read()
+
+    try:
+        vault = ctx.config.vault_root(args.vault)
+    except Exception:
+        vault = None
+
+    result = egress_terms.check(
+        text, vault=vault, threshold=args.min_tier, strict=args.strict,
+    )
+    result["explanation"] = egress_terms.explain(result)
+    if args.json:
+        _emit(result, True)
+    else:
+        _emit(None, False, result["explanation"])
+    return 0 if result["allowed"] else egress_terms.EXIT_REFUSED
+
+
 def _run_alerts(args, ctx) -> int:
     role = ctx.role
     config = ctx.config
@@ -258,16 +291,17 @@ def _run_install_hook(args, ctx) -> int:
               "Code config); refused on role=vm", file=sys.stderr)
         return 3
 
-    claude_home = Path(args.claude_home).expanduser() if args.claude_home else (
-        Path.home() / ".claude")
-    result = session_hook.install(
-        claude_home, _packaged_script(session_hook.HOOK_SCRIPT))
+    from ..update import claude_home_default
+
+    claude_home = (Path(args.claude_home).expanduser() if args.claude_home
+                   else claude_home_default())
+    results = session_hook.install_all(claude_home, _packaged_script)
     _emit(
-        result if args.json else None,
+        {"hooks": results} if args.json else None,
         args.json,
-        None if args.json else session_hook.render_human(result),
+        None if args.json else session_hook.render_all(results),
     )
-    return 0 if result["ok"] else 1
+    return 0 if all(r["ok"] for r in results) else 1
 
 
 def _run_mcp_config(args, ctx) -> int:
@@ -382,6 +416,7 @@ _HANDLERS = {
     "init": _run_init,
     "doctor": _run_doctor,
     "alerts": _run_alerts,
+    "check-egress": _run_check_egress,
     "exceptions": _run_exceptions,
     "install-hook": _run_install_hook,
     "mcp-config": _run_mcp_config,

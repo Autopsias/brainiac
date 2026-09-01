@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -155,7 +156,11 @@ def _store_bindings(vault: Any, bindings: dict[str, Any]) -> None:
     path = _bindings_path(vault)
     path.parent.mkdir(parents=True, exist_ok=True)
     config.secure_file_permissions(path.parent, 0o700)
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    # A pid is not unique inside a process. Every caller today holds `_CLAIM_LOCK`
+    # plus the writer flock, so nothing races here now -- but a pid-named temp
+    # makes the NEXT caller's race silent, and the engine already has a
+    # collision-free convention (`cos/_io.py`, `lock.py`).
+    tmp = path.with_name(f"{path.name}.{secrets.token_hex(8)}.tmp")
     tmp.write_text(json.dumps(bindings, indent=2, sort_keys=True), encoding="utf-8")
     config.secure_file_permissions(tmp, 0o600)
     tmp.replace(path)

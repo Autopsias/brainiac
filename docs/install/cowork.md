@@ -325,7 +325,7 @@ the exact upload order). **Order: kernel first, extras optional** (mirrors
 the Claude Code marketplace split in `docs/operations/cutover-s08-evidence.md`):
 
 ```
-kernel:  kb-curator.skill  promote.skill  vault-ingestion.skill  vault-eval.skill  save-conversation.skill  voice.skill
+kernel:  kb-curator.skill  promote.skill  vault-ingestion.skill  vault-eval.skill  save-conversation.skill  overlay-style.skill
 extras:  curation.skill  improve.skill  task-registrar.skill  autoresearch.skill
 ```
 

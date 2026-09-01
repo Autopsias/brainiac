@@ -46,6 +46,41 @@ class WeeklyFoldsMixin:
                         "near-dup scan",
                     )
                 )
+            # The two prompt-injection detectors. COUNTS ONLY, never note ids:
+            # `record_current_findings` persists this text into
+            # `.brain/notify-sent/current.json`, which the Cowork VM reads, so a
+            # name here would carry a title straight past the egress gate (the
+            # same rule `ingest_quarantine_findings` follows, and for the same
+            # reason). Each carries its own `notify_key` — without one an item
+            # stays in the maintain result and never reaches `brain alerts`.
+            conceal = [r for r in (result.get("injection_rows") or [])
+                       if r.get("verdict") == "conceal"]
+            if conceal:
+                item = maintenance.action_required_item(
+                    f"{len(conceal)} vault note(s) hide instructions from a human "
+                    f"reader (names withheld — run the gated command below)",
+                    "text concealed from a reader but visible to a model is the "
+                    "shape of an indirect prompt injection",
+                    "run `brain integrity --injection --json` for the gated list; "
+                    "read each note by hand and retire what is not yours",
+                    "concealed-instruction scan (SEC-05)",
+                )
+                item["notify_key"] = "injection:conceal"
+                run.action_required.append(item)
+            reads = result.get("read_log") or {}
+            if reads.get("bulk_reads"):
+                item = maintenance.action_required_item(
+                    f"{reads['bulk_reads']} bulk read(s) in the last "
+                    f"{reads['days']} day(s) (>= {reads['threshold']} notes "
+                    f"surfaced in one call)",
+                    "a single call surfacing hundreds of notes is a sweep, not a "
+                    "question — the shape an injected agent leaves when it "
+                    "exfiltrates through the gate",
+                    "review the rows; if none was yours, treat it as an incident",
+                    reads.get("dir", ""),
+                )
+                item["notify_key"] = "read-log:bulk"
+                run.action_required.append(item)
             run.mark("integrity", True)
         except Exception as exc:
             self._record_weekly_failure(run, "integrity", exc)

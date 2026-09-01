@@ -169,7 +169,7 @@ prose, so it is not covered by `brain init --validate-overlay`.
   `keywords/` wherever they need a decoder ring for a name/acronym a query or
   a note references. None of those skills hard-code an owner's identity —
   the overlay is the only place that identity lives.
-- **`voice`** (ADR-0003 Ruling 7, HYG-01) reads all four categories directly
+- **`overlay-style`** (ADR-0003 Ruling 7, HYG-01) reads all four categories directly
   as its entire source of owner signal — DRAFT/REWRITE/CHECK modes degrade to
   a neutral register when a category is empty, never inventing owner content.
 - **`autoresearch`** (ADR-0003 Ruling 7, AUT-04) optionally reads

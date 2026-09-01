@@ -71,7 +71,16 @@ else
 fi
 unset brain_bin_dir brain_sha256sums
 
-ln -sf "bin/brain-linux-$(uname -m)" "$BRAIN_RUNTIME_DIR/brain"
+# `ln -sf` does NOT replace a directory at the target -- it descends and makes the
+# link INSIDE it, silently, so PATH then finds no `brain` at all. `-n` handles the
+# symlinked-directory case; a real directory there is a broken install and has to
+# be said out loud rather than worked around.
+if [ -d "$BRAIN_RUNTIME_DIR/brain" ] && [ ! -L "$BRAIN_RUNTIME_DIR/brain" ]; then
+  echo "[cowork] ERROR: $BRAIN_RUNTIME_DIR/brain is a directory, not the engine" \
+       "symlink -- re-run tools/cowork_workspace_install.sh" >&2
+  return 1 2>/dev/null || exit 1
+fi
+ln -sfn "bin/brain-linux-$(uname -m)" "$BRAIN_RUNTIME_DIR/brain"
 export PATH="$BRAIN_RUNTIME_DIR:$PATH"
 echo "[cowork] role=$BRAIN_ROLE vault=$BRAIN_VAULT arch=$(uname -m)"
 brain status 2>/dev/null || echo "[cowork] no snapshot yet — host must publish one"

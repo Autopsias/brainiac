@@ -1034,6 +1034,26 @@ whole plan to rebuild the already-shipped fusion fix (item 10, `d5b2c58`).
    query string itself is the leak. Web search is for terms that are already
    public. When in doubt, treat the topic as internal and stay in the vault.
 
+   **This rule has a MECHANISM now (SEC-07, 2026-09-01), and it is still your
+   rule to follow.** `brain check-egress "<text>"` judges one outbound string
+   against THIS vault's `overlay/keywords/` decoder ring and exits `6` when a
+   term is classified at or above the threshold (default `Confidential`,
+   `$BRAIN_EGRESS_TERM_MIN_TIER` to change it; an unrecognised value fails
+   CLOSED). It is `VM_ALLOWED` — the Cowork leg is the one reading wild content
+   beside a web tool, so it needs the guard most. `scripts/brainiac-egress-guard.sh`
+   is the Claude Code `PreToolUse` wiring; the script's own header carries the
+   settings entry, and on a harness-managed `~/.claude` that entry belongs to
+   the deploy repo, not to this engine.
+
+   **The engine ships NO terms and never will** — they come from the owner's
+   overlay, the same rows that already drive ingest classification, so there is
+   no second list to curate. **Its limits, stated so nobody over-trusts it:** it
+   matches DECLARED terms on word boundaries. It cannot see a paraphrase, a
+   codename nobody wrote down, or a fact you restate in your own words, and a
+   vault with an empty decoder ring protects nothing — `check-egress` says so
+   rather than reporting a clean pass. It is a floor under this rule, not a
+   replacement for it.
+
 This is the substrate's standing retrieval discipline; it replaces the old
 Obsidian "five-step retrieval cascade" rule for any harness reading this file.
 
@@ -1095,7 +1115,7 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
 >
 > **Where the kernel skills live per client:** the ten
 > kernel/extras skills (`kb-curator`, `promote`, `vault-ingestion`,
-> `vault-eval`, `save-conversation`, `voice`, `curation`, `improve`,
+> `vault-eval`, `save-conversation`, `overlay-style`, `curation`, `improve`,
 > `task-registrar`, `autoresearch`) ship three ways from ONE canonical copy
 > at `.claude/skills/<name>/SKILL.md`
 > (re-synced by `tools/package_clients.py`, never hand-edited in more than one
@@ -1155,6 +1175,18 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
   default: `Internal`** — the untrusted leg keeps the conservative
   deny-by-default cap, and elevation there is the explicit human gate.
   Levels, low→high: `Public < Internal < Confidential < Restricted < MNPI`.
+  **That `--role vm` cap binds the CLI, and since the Cowork cutover the CLI
+  is no longer how a Cowork session reads (2026-09-01).** A Cowork session
+  reaches the vault through the DESK — the host-run `brain-mcp` broker, whose
+  tools Claude Desktop announces into the session — and
+  `mcp_verbs._egress_ceiling_tier()` resolves from `$BRAIN_MAX_EGRESS_TIER`
+  alone. It never sees a role, because `connect.py` writes no `BRAIN_ROLE`
+  into any Desktop stanza. So the untrusted leg reads at the HOST ceiling,
+  which is the full vault. The owner was shown this and DECLINED a per-caller
+  clamp on 2026-08-31 (`docs/security-acceptances.md` A-05): the broker cannot
+  tell a Cowork caller from the owner's own Desktop, so capping one caps both.
+  Do not re-raise it; do not read the `Internal` line above as describing the
+  live Cowork path.
   **Default-deny is a READ rule, never a WRITE target (EXC-01,
   2026-08-22).** `classification.normalize` maps a missing or mis-cased label
   to MNPI, so an unlabelled note is withheld from every capped reader. That is
@@ -1173,6 +1205,19 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
   path; the leg that reads untrusted content must not also hold private data
   + an outbound channel. Surfacing sensitive content and any
   irreversible/outbound action is human-gated.
+  **This is the design, and on the Cowork leg it is no longer met (2026-09-01).**
+  The cutover removed the vault from the mount — a real gain, and it closed an
+  invisible bypass — but it routed the same session through the desk at the
+  host's full-vault ceiling (see the classification bullet above). The Cowork
+  leg therefore holds all three ingredients. What bounds it now is
+  DETECTION, not separation: the SEC-05 ingest quarantine refuses a document
+  carrying a CONCEALED instruction, `egress` marks every `raw/` hit
+  `content_trust: untrusted-source`, the SEC-06 read record is fail-closed,
+  and the Tuesday integrity fold raises a concealed-instruction count and a
+  bulk-read alarm. A plainly VISIBLE injected instruction still enters the
+  vault as `instruction_only` (flagged, not quarantined — presenter notes
+  tripped the stricter rule), so there the model's own compliance is the only
+  control. Accepted, with the reasoning, at A-05.
 - **We hold no model API keys** — the one egress is the desktop app's model call
   under the vendor's enterprise no-train/ZDR terms.
 - **Audit chain.** Every committed write is Ed25519-signed and hash-chained

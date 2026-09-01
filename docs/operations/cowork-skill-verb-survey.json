@@ -26,7 +26,7 @@
     "staged_bundles_dir": "<workspace>/vault/.brain/skills",
     "staged_bundle_hashes_omitted_reason": "a .skill zip's sha256 is not a content identity: zip headers carry per-file mtimes and cowork_workspace_install.sh re-runs the packager on every install, so the same content hashes differently (measured: 3a4923e17aa626d4 vs f80581dcfacd36dd). skill_md_git_blob and content_sha256 below are the content anchors; s07's drift check must use those, not a zip sha.",
     "content_anchor_recipe": "Both per-bundle anchors below are defined by tests/test_cowork_skill_verbs.py::derive_bundles, which is their normative definition; s07 must reproduce these values, not invent its own. content_sha256: take every file under the bundle directory (Path.rglob('*'), is_file(), NO suffix filter -- the packager filters nothing either), sorted by absolute path (equivalently by relative path -- every file shares the bundle prefix); feed one sha256 in that order with, per file, the file's path RELATIVE to the bundle dir as POSIX text, then a single NUL byte (b'\\0'), then the file's raw bytes; the hex digest is the bundle's content_sha256. No zip, no mtime, no subprocess, so it is stable across re-packaging. skill_md_git_blob: the git blob sha1 of SKILL.md's raw bytes, i.e. sha1(b'blob <len>\\0' + data), computed in-process (helper _git_blob_sha1).",
-    "cli_subcommand_count": 75,
+    "cli_subcommand_count": 76,
     "cli_subcommand_count_note": "73 when S01 recorded this survey on 2026-08-27; 74 from 2026-08-28, when S05 added the host-only `authorize-original` subcommand. This number is DERIVED from the live parser by tests/test_cowork_skill_verbs.py::derive, so any session adding or removing a CLI subcommand must re-record it here in the same commit or two committed tests go red. 75 from 2026-08-30, when one-command-per-vault S01 added the host-only `provision-local` subcommand (CMD-01).",
     "staged_bundles_dir_note": "the concrete host path is in docs/operations/closed-stacks-s01-transcripts-evidence.md; it is not recorded here because this file IS scanned by tools/check_client_names.py and the host workspace directory carries a denylisted client name."
   },
@@ -34,7 +34,7 @@
   "files_scanned": 15,
   "raw_matches": 250,
   "distinct_tokens": 73,
-  "cli_parser_choices": 75,
+  "cli_parser_choices": 76,
   "mcp_registered_tools": [
     "alerts",
     "bases_query",
@@ -107,6 +107,7 @@
     "bases-query": "already_served",
     "brief": "add_read",
     "capture": "already_served",
+    "check-egress": "undecided",
     "cos-propose": "undecided",
     "diagnose": "already_served",
     "digest": "add_read",
@@ -129,6 +130,7 @@
   "vm_allowed_verbs_no_bundle_uses": [
     "alerts",
     "brief",
+    "check-egress",
     "diagnose",
     "digest",
     "dossier",
@@ -493,7 +495,7 @@
       "count": 3,
       "bundles": [
         "chief-of-staff",
-        "voice"
+        "overlay-style"
       ],
       "kind": "cli_verb"
     },
@@ -679,13 +681,13 @@
         "graph-explorer",
         "improve",
         "kb-curator",
+        "overlay-style",
         "promote",
         "save-conversation",
         "task-registrar",
         "vault-eval",
         "vault-ingestion",
-        "vm-doctor",
-        "voice"
+        "vm-doctor"
       ],
       "kind": "cli_verb"
     },
@@ -1039,7 +1041,7 @@
       "count": 3,
       "bundles": [
         "chief-of-staff",
-        "voice"
+        "overlay-style"
       ],
       "on_broker": false,
       "disposition": "undecided"
@@ -1118,13 +1120,13 @@
         "graph-explorer",
         "improve",
         "kb-curator",
+        "overlay-style",
         "promote",
         "save-conversation",
         "task-registrar",
         "vault-eval",
         "vault-ingestion",
-        "vm-doctor",
-        "voice"
+        "vm-doctor"
       ],
       "on_broker": false,
       "disposition": "add_read"
@@ -1200,8 +1202,8 @@
         "DOCTRINE.md",
         "SKILL.md"
       ],
-      "skill_md_git_blob": "93d843f9b738fc3fbc09de4de6f7db9d8e463fb1",
-      "content_sha256": "6d51b4986c74b7ed2f993f8374f702199424f8d57dad1418b40f2891a71abba0"
+      "skill_md_git_blob": "a907079071134f1d4e25ff15a1282386b1aab9a3",
+      "content_sha256": "83ccee4cc4f2f9020ef5fd36e017aada1e8c6527ff732ee96a6167dbf8e1f72c"
     },
     {
       "skill": "curation",
@@ -1238,6 +1240,15 @@
       ],
       "skill_md_git_blob": "e83d998ed7d41a8ce04f5e6641a991f03e51f729",
       "content_sha256": "bc2a1511f6b8ae540fa8fceeedf3add9a416a6757287e96568f1528775c65019"
+    },
+    {
+      "skill": "overlay-style",
+      "canonical_source": ".claude/skills/overlay-style",
+      "files": [
+        "SKILL.md"
+      ],
+      "skill_md_git_blob": "eb1b7d879eae1d0bbc08834c2b34fdeb7b025790",
+      "content_sha256": "772f25db21865430555d295bec6f8a60cc0c0afdbeee625bf8a436e1706396bb"
     },
     {
       "skill": "promote",
@@ -1292,15 +1303,6 @@
       ],
       "skill_md_git_blob": "41eb54d3652664a1b0d2c4c049301a829e086560",
       "content_sha256": "c434bcc8b3b578322f917832b5fde907a3552ac35a3be4cb391cd0e3bc7021ab"
-    },
-    {
-      "skill": "voice",
-      "canonical_source": ".claude/skills/voice",
-      "files": [
-        "SKILL.md"
-      ],
-      "skill_md_git_blob": "f1c4a08ad55b3a56be682f89d082b44228d2fa0b",
-      "content_sha256": "fd735fac1fa0de6049a72e582d572c33f954b16d1b97af3a36ddc262186739ae"
     }
   ],
   "s02_update": {
@@ -1444,5 +1446,21 @@
       "voice"
     ],
     "bundles_unchanged": 13
-  }
+  },
+  "voice_rename_update": {
+    "date": "2026-08-31",
+    "why_a_bundle_hash_moved": "Owner ruling: the KERNEL `voice` skill is renamed `overlay-style`, because the owner also runs a personal self-contained voice skill and both were called `voice` -- in this repo `/voice` resolved to the PERSONAL one, shadowing the kernel skill exactly where the kernel skill is meant to run. The bundle NAME and its canonical_source both move; the description was also rewritten to trigger on overlay language and to DEFER first-person phrases ('in my voice', 'voice check') to a personal bundle when one is installed, because a rename alone left the two skills sharing trigger phrases. bundles_scanned stays 14. Hashes re-derived by derive_bundles(), the normative definition named in authority.content_anchor_recipe.",
+    "bundles_changed": [
+      "voice -> overlay-style (renamed)",
+      "chief-of-staff (5 references to the skill name, plus the telemetry-pinned Phase-1-step-5 string)"
+    ],
+    "bundles_unchanged": 12,
+    "also_re_derived": [
+      "candidates",
+      "verbs",
+      "-- both carry the bundle NAME per token, so the rename moved them too"
+    ],
+    "note_on_chief_of_staff": "chief-of-staff's content_sha256 moved because it names the kernel skill in 5 places, including one string pinned by tests/skills/test_chief_of_staff_telemetry.py. Doc and test were moved in the same edit. NOTE chief-of-staff/SKILL.md is SUPERSEDED (DOCTRINE.md is the running doctrine) but is still the file that test reads, and DOCTRINE.md names no skill, so nothing there needed changing."
+  },
+  "sec07_update": "2026-09-01 (SEC-07): the host CLI grew `check-egress`, the outbound term guard, and it IS in cli.VM_ALLOWED — the Cowork leg is the one reading wild content beside a web tool, so it needs the guard most. cli_parser_choices 75 -> 76. It is classified `undecided` (VM_ALLOWED_NOT_A_READ): it returns a VERDICT on an outbound string, never note content, so there is nothing for the broker to serve and `add_read` would misdescribe it. It appears in no skill bundle — the caller is a PreToolUse hook, not a skill — so it joins vm_allowed_verbs_no_bundle_uses. No other derived column moved. disposition_counts is deliberately UNCHANGED: it counts the verb table (tokens found in bundles), and this verb is in none — incrementing it was the first attempt and the oracle caught it."
 }

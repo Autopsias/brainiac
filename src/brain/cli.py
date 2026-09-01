@@ -292,6 +292,12 @@ VM_ALLOWED = frozenset(
         # copy `maintain` already wrote there. It never writes, and
         # never reaches the host-only full page.
         "exceptions",
+        # SEC-07's outbound term guard. VM_ALLOWED on purpose, and it is the
+        # leg that needs it MOST: the Cowork session is the one reading wild
+        # content beside a web tool. Pure overlay file reads — no index, key,
+        # or network — and it only ever REFUSES, so admitting it to the VM
+        # widens nothing.
+        "check-egress",
         "mcp-config",  # prints a config string; no index/key/vault read
         "search",
         "hybrid-search",

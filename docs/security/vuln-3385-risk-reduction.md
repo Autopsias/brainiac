@@ -143,7 +143,7 @@ comes from one process-wide environment variable
 (`$BRAIN_MAX_EGRESS_TIER`) that cannot distinguish a Cowork caller from the
 owner's own Desktop app calling the same broker. Checked live against this
 machine's actual Claude Desktop configuration on 2026-08-30, and re-counted
-after review the same day: all FOUR `brain-mcp` entries in this machine's Claude Desktop config carry `BRAIN_MAX_EGRESS_TIER=MNPI` (full vault) and none sets `BRAIN_ROLE` — the top tier, i.e. the full
+after review the same day: all FOUR `brain-mcp` entries in this machine's Claude Desktop config carried `BRAIN_MAX_EGRESS_TIER=MNPI` (full vault) and none set `BRAIN_ROLE`. **Re-measured 2026-09-01, and it had drifted:** ONE stanza read `Internal` while a SECOND stanza over the very same vault read `MNPI` — one vault answering two ways depending on which entry asked, which is the "answers from scraps" failure `connect.py`'s own comment names. The owner re-ran `brain connect --max-tier MNPI` the same day and all four read `MNPI` again. **No entry has ever set `BRAIN_ROLE`, so the finding itself never moved** — only the count did, twice, which is why it is re-read rather than quoted. (Stanza names are deliberately not written here: they carry a client identifier, and this file ships) — the top tier, i.e. the full
 vault — and **none sets a role at all**. The first count said two, and had
 inspected two; the two it missed carry identical values, so the finding stands
 either way. It is recorded here because a security record that quietly corrects
@@ -219,11 +219,28 @@ checkpoint changed the answer to the ceiling question — re-verified fresh for
 this page, both in the current source and against the live host
 configuration.
 
-**What would actually close this finding:** wiring `connect.py` to write a
-distinct, lower `BRAIN_MAX_EGRESS_TIER` (and a `BRAIN_ROLE`) into whichever
-Desktop config stanza Cowork uses, so the broker's existing ceiling
-mechanism has something per-caller to clamp against; making the CLI's own
-record-write fail-closed to match the broker; and, if a real per-session
-original-document hand-off is still wanted, a Claude Desktop mechanism that
-forwards a per-session identity the broker can trust — which does not exist
-today and is outside this plan's control.
+**What would actually close this finding — and where each item now
+stands, re-read 2026-09-01.** This list named three things when it was
+written. Two of them have since been answered, and the answers point in
+opposite directions, so the list is kept and annotated rather than rewritten:
+
+1. **Wire `connect.py` to write a distinct, lower `BRAIN_MAX_EGRESS_TIER`
+   (and a `BRAIN_ROLE`) into whichever Desktop config stanza Cowork uses**,
+   so the broker's existing ceiling has something per-caller to clamp
+   against. **DECLINED by the owner on 2026-08-31** (recorded at A-05 in
+   `docs/security-acceptances.md`): the full-vault default stands, as ruled
+   on 2026-08-10 and again on 2026-08-17, because the broker cannot
+   distinguish a Cowork caller from a host one, so clamping the sandbox
+   clamps the owner's own Desktop sessions with it. Do not re-raise without
+   new information. This is the item that decides the finding's fate: with
+   it declined, **no path to a closure remains, and A-05 is the terminal
+   state of VULN-3385, not a way-station.**
+2. **Make the CLI's own record-write fail-closed to match the broker.**
+   **DONE 2026-08-31** (§4, `brain.cli_read_record`), and shipped in
+   0.20.33. It did not close the finding, which is the honest measure of
+   what it was worth. It also cost a regression: fail-closed inherited
+   `querylog`'s POSIX-only gates and withheld every gated read on Windows
+   until 0.20.34 repaired it.
+3. **A Claude Desktop mechanism that forwards a per-session identity the
+   broker can trust**, if a real per-session original-document hand-off is
+   still wanted. Still absent, still outside this repository's control.

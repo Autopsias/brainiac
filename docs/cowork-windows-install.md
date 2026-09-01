@@ -71,10 +71,18 @@ export BRAIN_VAULT="$PWD/vault"
 export BRAIN_ROLE=vm                                   # read + draft only
 export BRAIN_RUNTIME_DIR="$BRAIN_VAULT/.brain"
 export BRAIN_MODEL_CACHE="$BRAIN_RUNTIME_DIR/model"    # bundled fastembed cache (no HF fetch)
-ln -sf "bin/brain-linux-$(uname -m)" "$BRAIN_RUNTIME_DIR/brain"
+ln -sfn "bin/brain-linux-$(uname -m)" "$BRAIN_RUNTIME_DIR/brain"   # -n: see note
 export PATH="$BRAIN_RUNTIME_DIR:$PATH"
 brain status                                           # snapshot gen/age + pending drafts
 ```
+
+**Why `-sfn` and not `-sf`.** `-f` replaces an existing symlink or file without
+asking, which is what you want here. It does NOT replace a *directory*: given a
+directory at `$BRAIN_RUNTIME_DIR/brain`, plain `ln -sf` descends and makes the
+link inside it, silently, and `PATH` then finds no `brain`. `-n` fixes the
+symlinked-directory case. If a REAL directory is there the install is broken —
+re-run `tools/cowork_workspace_install.sh` rather than deleting it by hand.
+`tools/cowork_session_bootstrap.sh` checks for exactly that and stops.
 
 ## The VM is read + DRAFT only (hard guarantee)
 

@@ -239,16 +239,23 @@ plainly that outcome is a mitigation, not a closure.
   over the same way, its workspace registered, and re-measured: both live
   workspaces now report `current`, `cut_over=True`, 0 artefacts, so the
   keep-it-off gate is armed on both. Two STALE `cowork-vm` registry rows over
-  the old folders were deliberately left in place — they are the only signal
-  that would fire if those folders are still attached, and only the owner can
-  detach them in the Cowork application. Record:
-  `_plans/closed-stacks-2026-08-27/_evidence/s09/second-workspace-cutover.txt`.
+  the old folders were deliberately left in place — they were the only signal
+  that would fire if those folders were still attached, and only the owner can
+  detach them in the Cowork application. **Superseded the same day, and this
+  sentence outlived it:** the owner attached both new workspace folders in the
+  Cowork app and DETACHED the old ones, so the four rows naming them (2
+  `cowork-vm`, 2 `host`) were removed. Re-read 2026-09-01,
+  `~/.brainiac/workspaces.json` holds four entries and none names an old
+  folder; the signal is absent because the condition it watched for is gone,
+  not because it was lost. Record:
+  `_plans/closed-stacks-2026-08-27/_evidence/s09/second-workspace-cutover.txt`
+  (its own UPDATE paragraph carries the detach).
 
 **What is still accepted, stated plainly:**
 - **No per-caller tier ceiling exists.** The broker's egress ceiling
   (`mcp_verbs._egress_ceiling_tier`) reads only the process-wide
   `$BRAIN_MAX_EGRESS_TIER` env var — it cannot tell a Cowork caller from a
-  host one. Re-measured live (2026-08-30, after review): all FOUR `brain-mcp` entries in this machine's Claude Desktop config carry `BRAIN_MAX_EGRESS_TIER=MNPI` (full vault) and none sets `BRAIN_ROLE`.
+  host one. Re-measured live (2026-08-30, after review): all FOUR `brain-mcp` entries in this machine's Claude Desktop config carried `BRAIN_MAX_EGRESS_TIER=MNPI` (full vault) and none set `BRAIN_ROLE`. **Re-measured 2026-09-01, and it had drifted:** ONE stanza read `Internal` while a SECOND stanza over the very same vault read `MNPI` — one vault answering two ways depending on which entry asked, which is the "answers from scraps" failure `connect.py`'s own comment names. The owner re-ran `brain connect --max-tier MNPI` the same day and all four read `MNPI` again. **No entry has ever set `BRAIN_ROLE`, so the finding itself never moved** — only the count did, twice, which is why it is re-read rather than quoted. (Stanza names are deliberately not written here: they carry a client identifier, and this file ships).
   The first probe reported 2 and inspected 2 — two client-named entries
   were never looked at. They carry the same values, so the conclusion held,
   but a count is a measurement and this one was short.

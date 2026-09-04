@@ -9,6 +9,56 @@ from ._shared import (
 )
 
 
+def _empty_chain_item(core: Any, maint: Any) -> "dict[str, Any] | None":
+    """The action-required item for an EMPTY audit chain, or ``None`` when this
+    vault has genuinely never signed anything.
+
+    M-7 (2026-09-02). An empty chain is two very different vaults wearing the
+    same face: one that has never signed a note, and one whose log was wiped.
+    ``verify()`` cannot tell them apart — zero entries, zero errors, both — so
+    ``health()`` and ``integrity()`` listed ``"empty"`` beside ``"ok"`` and
+    called the wipe green. Those two are the surfaces that matter: they back
+    ``brain health`` / ``brain integrity``, which is what ``brain maintain``
+    and the nightly fold actually run, so a wiped log produced a fully green
+    unattended night while only an interactive exit code said otherwise.
+
+    The distinguisher is a TRACE of past signing, never a guess: the log FILE
+    exists. ``audit_chain._append_record`` is the only thing that creates it
+    (``O_CREAT``), and every read path returns ``[]`` for an absent one, so its
+    presence means at least one signed append landed here — and a log truncated
+    to zero bytes still has it.
+
+    Known negative: a brand-new vault has no log file and stays silent. That
+    includes the freshly SEEDED one — ``init_samples`` writes its four sample
+    notes with ``write_text``, never through the signing path.
+
+    RESIDUAL, stated rather than hidden: a wipe that DELETES the log on a vault
+    with no off-host anchor leaves no trace for this check to find. That is
+    exactly the gap ``integrity()``'s "no off-host anchor configured" item
+    already tells the operator to close.
+    """
+    log = getattr(core.audit, "log_path", None) if core.audit else None
+    if not (log and log.exists()):
+        return None
+    item = maint.action_required_item(
+        "audit chain is EMPTY — no signed notes, but this vault has signed before",
+        "the log file is present and holds no entries; a wiped log and a "
+        "never-signed vault verify identically, so this cannot be read as a pass",
+        "treat the chain as compromised: re-establish it from the last "
+        "known-good copy and check the off-host anchor. "
+        "`brain verify-audit --allow-empty` is for a vault that has genuinely "
+        "never signed a note, not for this one",
+        str(log))
+    # Carried forward from s04/s10b: without a notify_key this item reaches
+    # `run.action_required` (folds/weekly.py) but never `degradation_findings`
+    # (maintenance_notify.py), so it never lands in `notify-sent/current.json`
+    # and `brain alerts` never sees it — a finding without a channel dies in
+    # the log, the same class the quarantine and declassification banners
+    # were fixed for.
+    item["notify_key"] = "audit-chain-empty"
+    return item
+
+
 class _CoreHealthMixin:
     """Health assessment methods for BrainCore."""
 
@@ -99,7 +149,12 @@ class _CoreHealthMixin:
         audit_res: dict[str, Any] | None = None
         try:
             audit_res = self.verify_audit()
-            if audit_res.get("status") not in ("ok", "empty"):
+            status = audit_res.get("status")
+            if status == "empty":
+                empty_item = _empty_chain_item(self, maint)
+                if empty_item is not None:
+                    action_required.append(empty_item)
+            elif status != "ok":
                 action_required.append(maint.action_required_item(
                     _audit_status_summary(audit_res),
                     "chain tamper/break needs human judgment, never auto-repaired",
@@ -250,7 +305,10 @@ class _CoreHealthMixin:
                 "signing key configured (Keychain/env), then re-run integrity"))
 
         audit_issue: dict[str, Any] | None = None
-        if audit_res and audit_res.get("status") not in ("ok", "empty"):
+        _status = audit_res.get("status") if audit_res else None
+        if _status == "empty":
+            audit_issue = _empty_chain_item(self, maint)
+        elif audit_res and _status != "ok":
             audit_issue = maint.action_required_item(
                 _audit_status_summary(audit_res),
                 "chain tamper/break needs human judgment, never auto-repaired",
@@ -262,17 +320,21 @@ class _CoreHealthMixin:
         # entries PRESENT in the log — deleting the tail (never re-signing)
         # still verifies "ok". Folding the off-host anchor check in here is
         # what actually detects a truncated tail (chain_shorter_than_anchor).
+        # M-7: its OWN slot, not `audit_issue`. It used to be written only
+        # `if audit_issue is None`, so the moment the chain had any other
+        # finding — the case where a truncated tail matters MOST — the one
+        # warning saying nothing could detect a truncated tail disappeared.
+        anchor_issue: dict[str, Any] | None = None
         adir = config.anchor_dir()
         if adir is None:
-            if audit_issue is None:
-                audit_issue = maint.action_required_item(
-                    "no off-host anchor configured (BRAIN_ANCHOR_DIR unset)",
-                    "verify() alone gives NO tail-truncation guarantee — "
-                    "deleting recent audit-log lines still verifies ok",
-                    "run `brain anchor --anchor-dir <off-host-dir>` on a "
-                    "schedule, then set BRAIN_ANCHOR_DIR so integrity/maintain "
-                    "can check it",
-                    str(self.audit.log_path) if self.audit else "audit chain")
+            anchor_issue = maint.action_required_item(
+                "no off-host anchor configured (BRAIN_ANCHOR_DIR unset)",
+                "verify() alone gives NO tail-truncation guarantee — "
+                "deleting recent audit-log lines still verifies ok",
+                "run `brain anchor --anchor-dir <off-host-dir>` on a "
+                "schedule, then set BRAIN_ANCHOR_DIR so integrity/maintain "
+                "can check it",
+                str(self.audit.log_path) if self.audit else "audit chain")
         else:
             try:
                 anchor_res = self.verify_anchor(adir)
@@ -283,7 +345,7 @@ class _CoreHealthMixin:
                     "check BRAIN_ANCHOR_DIR is reachable, then re-run integrity"))
             else:
                 if anchor_res.get("status") == "divergence":
-                    audit_issue = maint.action_required_item(
+                    anchor_issue = maint.action_required_item(
                         f"audit chain diverges from off-host anchor "
                         f"({len(anchor_res.get('divergences', []))} divergence(s))",
                         "tail truncation or a silent rewrite is possible — "
@@ -305,33 +367,43 @@ class _CoreHealthMixin:
         # in the `brain integrity` CLI body until 2026-09-01, so the Tuesday
         # fold — the one caller that runs with no human present — fired neither
         # of the two detectors built for indirect prompt injection. Moving them
-        # here is what arms them; the CLI now reads these keys instead of
-        # computing its own. UNFILTERED like `near_dup_pairs`: a finding NAMES a
-        # note, so every SURFACING caller egress-gates it.
-        injection_rows, reads = self._injection_and_reads(scan_injection, blocked)
+        # here is what arms them. UNFILTERED like `near_dup_pairs`: a finding
+        # NAMES a note, so every SURFACING caller egress-gates it. `cover` is
+        # the V11 coverage census — counts only, so IT is not gated.
+        rows, reads, cover = self._injection_and_reads(scan_injection, blocked)
 
         return {
             "ritual": "integrity", "min_score": min_score,
             "audit": audit_res, "audit_issue": audit_issue,
+            "anchor_issue": anchor_issue,
             "near_dup_pairs": pairs,  # UNFILTERED
-            "injection_rows": injection_rows,  # UNFILTERED
+            "injection_rows": rows,  # UNFILTERED
+            "injection_coverage": cover,  # counts only — NOT gated (V11)
             "read_log": reads,
             "blocked": blocked,
         }
     def _injection_and_reads(
         self, scan_injection: bool, blocked: list[dict[str, Any]],
-    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, int] | None]:
         """The two prompt-injection detectors, split out to keep `integrity`
         inside the function-length ratchet. Appends to ``blocked`` in place:
-        a scan that raises is a reported gap, never a silent clean sweep."""
+        a scan that raises is a reported gap, never a silent clean sweep.
+
+        The third return is the CONCEALMENT-SCAN COVERAGE census — how many
+        notes read `full`/`off`/`incomplete`/`unknown`/`absent`. Rows alone
+        could never report a note stamped `off` or `unknown` (its hidden
+        count is 0 by construction, so the `clean` skip drops it), which is
+        what made the key write-only (V11, 2026-09-02)."""
         from .. import injection_scan as _isc
         from .. import maintenance as maint
         from .. import read_log as _rl
 
         rows: list[dict[str, Any]] = []
+        coverage: dict[str, int] | None = None
         if scan_injection:
             try:
                 rows = _isc.scan_corpus(self.vault)
+                coverage = _isc.scan_coverage(self.vault)
             except Exception as exc:
                 blocked.append(maint.blocked_item(
                     "concealed-instruction scan raised",
@@ -341,7 +413,7 @@ class _CoreHealthMixin:
             reads = _rl.status(self.vault)
         except Exception:
             reads = {"available": False, "reason": "read-log unreadable"}
-        return rows, reads
+        return rows, reads, coverage
 
     def promote_scan(self, *, k: int = 50) -> dict[str, Any]:
         """promotion-scan fold (task-disposition.md row 5 — ON-INVOKE triage;

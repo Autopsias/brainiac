@@ -14,6 +14,7 @@ _excluded_note = shared._excluded_note
 _filter_dicts = shared._filter_dicts
 _freshness_block = shared._freshness_block
 _egress_footer = shared._egress_footer
+_concealment_notice = shared._concealment_notice
 _variant_block = shared._variant_block
 _render_variant_block = shared._render_variant_block
 _render_explain_hit = shared._render_explain_hit
@@ -175,6 +176,7 @@ def _render_search(
             f"  {hit.get('date') or 'undated'}  "
             f"{hit['score'] if hit.get('score') is not None else 'redacted'}"
             f"\n    {hit['snippet']}"
+            + (f"\n{_concealment_notice(hit)}" if _concealment_notice(hit) else "")
             for hit in surfaced
         ]
     footer = _egress_footer(report)
@@ -285,6 +287,51 @@ def _run_diagnose(args, ctx) -> int:
     return 0
 
 
+def _render_dossier(decisions, sources, res, report, freshness) -> str:
+    """The human dossier: decision layer, its tensions, then the sources.
+
+    Split out of ``_run_dossier`` for the function-length ratchet when the
+    concealment notice landed here (B4, 2026-09-04): ``dossier`` is the
+    command AGENTS.md sends a reader to for decision-state questions and it
+    printed nothing about hidden text. The notice is the ONE shared renderer,
+    so every human surface says the same words.
+    """
+    lines = [f"== decision layer ({len(decisions)}) =="]
+    for h in decisions:
+        lines.append(
+            f"  {h['id']}  ({h['classification']})  {h.get('date') or 'undated'}"
+        )
+        if _concealment_notice(h):
+            lines.append(_concealment_notice(h))
+        for x in h.get("tensions", []):
+            ident = x.get("identity", "")
+            caveat = (
+                " [identity: %s — title/calendar-derived, weigh accordingly]" % ident
+                if ident and ident not in ("content-verified", "filename")
+                else ""
+            )
+            lines.append(
+                f"    !! newer source post-dates this decision: "
+                f"{x['id']} ({x['date']}){caveat} — report the tension, "
+                f"never promote the proposal"
+            )
+            if _concealment_notice(x):
+                lines.append(_concealment_notice(x))
+    lines.append(f"== sources under consideration ({len(sources)}) ==")
+    for h in sources:
+        lines.append(
+            f"  {h['id']}  <{h.get('type') or '?'}>  {h.get('date') or 'undated'}"
+        )
+        if _concealment_notice(h):
+            lines.append(_concealment_notice(h))
+    if res["retired_excluded"]:
+        lines.append(f"-- {res['retired_excluded']} retired version(s) excluded")
+    footer = _egress_footer(report)
+    if freshness and freshness.get("hint"):
+        footer += f"\n-- {freshness['hint']}"
+    return "\n".join(lines + [footer])
+
+
 def _run_dossier(args, ctx) -> int:
     core = ctx.core
     role = ctx.role
@@ -355,41 +402,15 @@ def _run_dossier(args, ctx) -> int:
     if args.json:
         _emit(payload, True)
     else:
-        lines = [f"== decision layer ({len(decisions)}) =="]
-        for h in decisions:
-            lines.append(
-                f"  {h['id']}  ({h['classification']})  {h.get('date') or 'undated'}"
-            )
-            for x in h.get("tensions", []):
-                ident = x.get("identity", "")
-                caveat = (
-                    " [identity: %s — title/calendar-derived, weigh accordingly]"
-                    % ident
-                    if ident and ident not in ("content-verified", "filename")
-                    else ""
-                )
-                lines.append(
-                    f"    !! newer source post-dates this decision: "
-                    f"{x['id']} ({x['date']}){caveat} — report the tension, "
-                    f"never promote the proposal"
-                )
-        lines.append(f"== sources under consideration ({len(sources)}) ==")
-        lines += [
-            f"  {h['id']}  <{h.get('type') or '?'}>  {h.get('date') or 'undated'}"
-            for h in sources
-        ]
-        if res["retired_excluded"]:
-            lines.append(f"-- {res['retired_excluded']} retired version(s) excluded")
-        footer = _egress_footer(report)
-        if freshness and freshness.get("hint"):
-            footer += f"\n-- {freshness['hint']}"
-        _emit(None, False, "\n".join(lines + [footer]))
+        _emit(None, False, _render_dossier(decisions, sources, res, report, freshness))
     return 0
 
 
 def _run_grep(args, ctx) -> int:
     core = ctx.core
-    items = core.grep(args.pattern, k=args.k, regex=args.regex)
+    # Drop above-ceiling notes BEFORE matching (broker parity, 2026-09-01):
+    # the withheld count was an oracle over content the caller may not read.
+    items = core.grep(args.pattern, k=args.k, regex=args.regex, max_tier=args.max_tier)
     surfaced, report = _filter_dicts(items, args.max_tier)
     if args.json:
         _emit({"pattern": args.pattern, "results": surfaced, "egress": report}, True)
@@ -397,6 +418,7 @@ def _run_grep(args, ctx) -> int:
         lines = [
             f"{h['id']} ({h['classification'] or 'UNLABELLED'}) "
             f"x{h['match_count']}\n    {h['snippet']}"
+            + (f"\n{_concealment_notice(h)}" if _concealment_notice(h) else "")
             for h in surfaced
         ]
         footer = _egress_footer(report)
@@ -420,6 +442,7 @@ def _run_bases_query(args, ctx) -> int:
     else:
         lines = [
             f"{h['id']}  type={h.get('type', '?')}  ({h['classification'] or 'UNLABELLED'})"
+            + (f"\n{_concealment_notice(h)}" if _concealment_notice(h) else "")
             for h in surfaced
         ]
         footer = _egress_footer(report)

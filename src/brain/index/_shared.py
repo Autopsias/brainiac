@@ -20,6 +20,7 @@ from ..chunk import chunk_text
 from ..dbretry import with_write_retry
 from ..embed import Embedder, EmbedderUnavailable, get_embedder
 from ..frontmatter import identifier_shaped, normalize_identity, phrase_tokens
+from ..injection_fold import UNKNOWN_VERDICT, stored_verdict
 from ..index_stages.search_identity import identity_owner_rowids, identity_records, title_phrase_candidates
 from ..notes import Note, scan_vault
 from ..progress import ProgressReporter

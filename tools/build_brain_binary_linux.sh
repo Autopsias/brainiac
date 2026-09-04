@@ -25,7 +25,23 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 OUTDIR="$REPO/dist"
-IMAGE="python:3.10-slim"
+# Pinned by digest (not tag) so the SAME bytes build on every machine and every
+# day — a bare "python:3.10-slim" resolves whatever trixie-slim points at
+# TODAY. Multi-arch index digest (covers both --platform values below);
+# re-pin with `docker buildx imagetools inspect python:3.10-slim`.
+IMAGE="python:3.10-slim@sha256:fd76ade0c607f27677bc04be3c60749f400eedc941d9e72967e19a4cedff80c2"
+# PyInstaller pinned by exact version — an unpinned `pip install pyinstaller`
+# ships whatever PyPI's latest is on build day.
+PYINSTALLER_VERSION="6.22.2"
+# apt reproducibility: pinning IMAGE by digest does NOT pin `apt-get install`
+# afterwards — that still hits the day's rolling deb.debian.org and can yield
+# a different binutils build from identical source. Pin the Debian snapshot
+# (the base image's own sources.list.d already names 20260824T000000Z as a
+# comment; this makes it the actual fetch URI) and the binutils version that
+# snapshot resolves to. Measured 2026-09-03: this snapshot serves
+# binutils=2.44-3 and is reachable from inside the container.
+APT_SNAPSHOT="20260824T000000Z"
+BINUTILS_VERSION="2.44-3"
 
 declare -A PLATFORM=([aarch64]=linux/arm64 [x86_64]=linux/amd64)
 arches=("$@")
@@ -61,11 +77,22 @@ for arch in "${arches[@]}"; do
   # --build-deps: PyInstaller needs a linker; the wheels for onnxruntime /
   # tokenizers are manylinux so nothing else compiles.
   docker run --rm --platform "$plat" \
+    -e APT_SNAPSHOT="$APT_SNAPSHOT" -e BINUTILS_VERSION="$BINUTILS_VERSION" \
+    -e PYINSTALLER_VERSION="$PYINSTALLER_VERSION" \
     -v "$REPO":/repo -w /repo "$IMAGE" \
     bash -eu -c '
-      apt-get update -qq && apt-get install -y -qq --no-install-recommends binutils >/dev/null
+      cat > /etc/apt/sources.list.d/debian.sources <<APTSRC
+Types: deb
+URIs: http://snapshot.debian.org/archive/debian/$APT_SNAPSHOT
+Suites: trixie
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
+APTSRC
+      rm -f /etc/apt/sources.list.d/debian-security.sources
+      apt-get update -qq
+      apt-get install -y -qq --no-install-recommends "binutils=$BINUTILS_VERSION" >/dev/null
       python3 -m pip install --quiet --upgrade pip
-      python3 -m pip install --quiet pyinstaller .
+      python3 -m pip install --quiet "pyinstaller==$PYINSTALLER_VERSION" .
       tools/build_brain_binary.sh /repo/dist
     '
   out="$OUTDIR/brain-linux-$arch"

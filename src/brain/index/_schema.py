@@ -23,7 +23,8 @@ class _SchemaMixin:
                 created TEXT, updated TEXT, sha256 TEXT, content_hash TEXT, body TEXT,
                 document_date TEXT, effective_date TEXT, superseded_date TEXT,
                 is_latest_version TEXT, superseded_by TEXT, previous_version TEXT,
-                title_norm TEXT NOT NULL
+                title_norm TEXT NOT NULL,
+                concealment TEXT
             )"""
         )
         c.execute(
@@ -52,6 +53,72 @@ class _SchemaMixin:
         self._set_meta("embed_model", self.embedder.model_id)
         self._set_meta("embed_dim", str(self.embedder.dim))
         self.backend.setup(c, self.embedder.dim)
+        self._concealment_column = True  # created above, no PRAGMA needed
+
+    #: The one place the M-3b retrieval verdict's column name is written.
+    CONCEALMENT_COL = "concealment"
+
+    def _concealment_sql(self) -> str:
+        """``concealment`` if this index carries the column, else ``''``.
+
+        Every read of the verdict interpolates this ONE fragment, so an index
+        that predates the column degrades to an empty string — which
+        ``injection_fold.retrieval_verdict``'s vocabulary reads as
+        ``unknown`` — instead of raising ``no such column`` out of ``get``.
+
+        WHY A COLUMN AND NOT A SIDE TABLE. ``rebuild`` builds into a temp
+        database and ``os.replace``s the whole FILE into position
+        (``_lifecycle.rebuild``), so anything created outside
+        :meth:`_create_schema` is destroyed on the next rebuild, silently. The
+        column is IN the schema definition above, so it is rebuilt with it.
+
+        WHY NOT A ``SCHEMA_VERSION`` BUMP. A bump makes ``_schema_ready``
+        false, which escalates the next ``sync`` into a full re-index and
+        re-embed of every registered vault — hours per vault, for one nullable
+        column. Instead an existing v4 database is migrated in place by an
+        idempotent ``ALTER TABLE ADD COLUMN``, which SQLite does as a metadata
+        write. Existing rows get NULL and read ``unknown`` until the note is
+        re-ingested; detection is forward-only, so that is the truth.
+
+        A READ-ONLY connection (the VM leg's published snapshot) cannot ALTER.
+        It gets the empty-string fragment and reports ``unknown`` — degraded,
+        never broken — until the host republishes a snapshot built from a
+        migrated index.
+        """
+        if self._concealment_column is None:
+            cols = self._notes_columns()
+            if not cols:
+                # No `notes` table yet (a fresh file). Nothing to migrate and
+                # nothing to cache — `_create_schema` sets the flag itself.
+                return "''"
+            if self.CONCEALMENT_COL not in cols and not self.read_only:
+                try:
+                    self.conn.execute(
+                        f"ALTER TABLE notes ADD COLUMN {self.CONCEALMENT_COL} TEXT")
+                    cols.add(self.CONCEALMENT_COL)
+                except sqlite3.OperationalError:
+                    # The ALTER lost. Re-READ rather than believe the exception:
+                    # a concurrent migrator winning the race and a `database is
+                    # locked` are the same error class, and only the PRAGMA can
+                    # tell them apart (adversarial review B2, 2026-09-04).
+                    cols = self._notes_columns()
+                    if self.CONCEALMENT_COL not in cols:
+                        # NOT cached. Caching `False` here made one transient
+                        # lock permanent for the life of a long-running host
+                        # process: every later read returned a false `unknown`.
+                        # Un-cached, the next call retries the migration.
+                        # `_write_planned` reads this same fragment and DROPS
+                        # the column from its INSERT when it comes back `''`
+                        # (C5, 2026-09-04) — until it did, a lost ALTER
+                        # degraded the read and then aborted the next write
+                        # with `no such column`.
+                        return "''"
+            self._concealment_column = self.CONCEALMENT_COL in cols
+        return self.CONCEALMENT_COL if self._concealment_column else "''"
+
+    def _notes_columns(self) -> set[str]:
+        """Column names on ``notes``; empty if the table does not exist yet."""
+        return {r[1] for r in self.conn.execute("PRAGMA table_info(notes)")}
 
     def _refuse_accidental_hash_stamp(self) -> None:
         """Refuse to stamp `hash-v1` when nobody asked for the hash embedder.

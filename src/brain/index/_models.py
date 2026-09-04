@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..injection_fold import UNKNOWN_VERDICT
+
 @dataclass
 class Hit:
     id: str
@@ -25,6 +27,18 @@ class Hit:
                     # because the ranked list didn't show which was which).
     evidence: str = "weak_semantic"  # ADR-0008 strongest visible match reason.
     create_safety: str = "unknown"   # conservative create/no-create signal.
+    concealment: str = UNKNOWN_VERDICT  # M-3b: what this note's ingest record
+    # says about text HIDDEN from a human reader in its source — `clean`,
+    # `hidden:<n>`, a scan-state word, or `unknown` when nothing was
+    # recorded. See `injection_fold.retrieval_verdict` for the vocabulary.
+    #
+    # EGRESS (decided 2026-09-04, M-3b): this field is emitted at EVERY
+    # tier the row itself passes. `classification.ClassificationFilter`
+    # filters ROWS and never strips fields, so that is not automatic — it
+    # is a decision. It is safe because the value is a closed vocabulary
+    # plus a count, all of it about a row the caller is already allowed to
+    # see; it carries no note text, no attacker-authored string, and
+    # nothing about any note the caller was denied.
     duplicates: list[str] = field(default_factory=list)
     # HYG-01: ids this hit ABSORBED at ranking time — byte-identical, already
     # owner-superseded copies of the same bytes that would otherwise have taken
@@ -48,6 +62,7 @@ class Hit:
             "type": self.type,
             "evidence": self.evidence,
             "create_safety": self.create_safety,
+            "concealment": self.concealment,
             **({"duplicates": list(self.duplicates)} if self.duplicates else {}),
         }
 

@@ -8,8 +8,12 @@ class _RecordMixin:
     """Index record projection methods."""
 
     def _note_row(self, rowid: int) -> dict[str, Any] | None:
+        # FALSE POSITIVE (scanner: string-built SQL): the only interpolation is
+        # `_concealment_sql()`, which returns one of two module literals — the
+        # column name or `''`. No caller input reaches the SQL text.
         r = self.conn.execute(
-            "SELECT id,title,classification,zone,path,body,is_latest_version,type"
+            "SELECT id,title,classification,zone,path,body,is_latest_version,type,"
+            f"{self._concealment_sql()}"  # nosec B608
             " FROM notes WHERE rowid=?",
             (rowid,),
         ).fetchone()
@@ -19,6 +23,10 @@ class _RecordMixin:
             "id": r[0], "title": r[1], "classification": r[2],
             "zone": r[3], "path": r[4], "body": r[5], "is_latest_version": r[6] or "",
             "type": r[7] or "",
+            # M-3b: every Hit is built from this row, so the reader-facing
+            # concealment verdict travels with it. `unknown` (never `clean`) is
+            # what a note indexed before the column existed says about itself.
+            "concealment": stored_verdict(r[8]),
         }
 
     @staticmethod

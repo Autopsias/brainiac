@@ -34,8 +34,9 @@ class WeeklyFoldsMixin:
             result = self.integrity(min_score=run.min_score, k=run.near_dup_k)
             run.results["integrity"] = result
             run.blocked += result.get("blocked", [])
-            if result.get("audit_issue"):
-                run.action_required.append(result["audit_issue"])
+            for key in ("audit_issue", "anchor_issue"):
+                if result.get(key):
+                    run.action_required.append(result[key])
             pairs = result.get("near_dup_pairs")
             if pairs:
                 run.action_required.append(

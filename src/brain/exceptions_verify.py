@@ -31,15 +31,33 @@ pass, checked in this order:
 THE PIN. Both the public key and the vault_id are staged ONCE, at install
 time, by the HOST-run ``tools/cowork_workspace_install.sh`` (``stage_pin``
 below, run under the host Python that can resolve the audit signing key)
-into ``<vault>/.brain/pinned-verify.json`` — never derived from
-``exceptions.json`` itself and never read from the mutable ``vault-id``
-file. This is the SAME trust boundary the staged ELF binaries and the
-bundled model already rely on (``doctor_vm.py``): a Cowork session's
-ordinary CLI surface (``VM_ALLOWED``) never writes to this path, so within
-that surface it is a fixed anchor. It is not a defense against a fully
-compromised VM with arbitrary shell access rewriting its own staged files —
-nothing in this system defends against that, and this module does not claim
-to either.
+into the WORKSPACE runtime dir ``brain.cowork_staging.staging_root(vault,
+workspace)`` names — never derived from ``exceptions.json`` itself and never
+read from the mutable ``vault-id`` file. This is the SAME trust boundary the
+staged ELF binaries and the bundled model already rely on (``doctor_vm.py``):
+a Cowork session's ordinary CLI surface (``VM_ALLOWED``) never writes to this
+path, so within that surface it is a fixed anchor. It is not a defense
+against a fully compromised VM with arbitrary shell access rewriting its own
+staged files — nothing in this system defends against that, and this module
+does not claim to either.
+
+MED-09 (2026-09-02): until this fix, the pin AND the summary/page it
+verifies were all read from ``<vault>/.brain`` unconditionally — safe only
+while the vault sits ON the mount. Once a vault relocates off the mount
+(VULN-3385), that path is unreachable to the VM and ``verify`` always
+reported ``unreachable``, never a fabricated count, but also never a real
+one. Staging the pin alone at the relocation-aware root did not close this:
+a real VM leg calls ``verify`` with ``vault`` already resolved to its own
+workspace-local copy and reads the SUMMARY and the PAGE HASH through
+``config.brain_runtime_dir(vault)`` too — which nothing had ever copied off
+the real, off-mount vault. ``publish_summary`` (host-only, called after
+every ``exceptions_page.generate()`` and at install/re-stage time) now
+mirrors both files into the SAME relocation-aware staging root
+``stage_pin`` uses; ``load_pinned`` and the summary/page readers all try
+that location first and fall back to the legacy ``<vault>/.brain``
+location — printing ONE warning line per artefact naming the new expected
+path — for one release, so a workspace staged by an older installer is not
+stranded mid-upgrade.
 
 SCHEMA COMPATIBILITY IS BOTH DIRECTIONS (codex-verify-r2): a future schema
 is refused loudly; a PAST schema is migrated explicitly via ``_MIGRATIONS``,
@@ -55,6 +73,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -128,12 +147,9 @@ def _parse_date(value: Any) -> datetime.date | None:
         return None
 
 
-def load_pinned(vault: Path) -> dict[str, Any] | None:
-    """The staged identity anchor — ``None`` when this workspace was never
-    staged with it (a pre-EXC-03 install, or a re-stage that failed)."""
+def _load_pin_file(path: Path) -> dict[str, Any] | None:
     try:
-        data = json.loads((_config.brain_runtime_dir(vault) / PINNED_FILENAME)
-                          .read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     if not isinstance(data, dict) or not data.get("public_key_pem") or not data.get("vault_id"):
@@ -141,9 +157,66 @@ def load_pinned(vault: Path) -> dict[str, Any] | None:
     return data
 
 
-def _load_summary(vault: Path) -> dict[str, Any] | None:
+def load_pinned(vault: Path, workspace: Path | None = None) -> dict[str, Any] | None:
+    """The staged identity anchor — ``None`` when this workspace was never
+    staged with it (a pre-EXC-03 install, or a re-stage that failed).
+
+    Tries the relocation-aware workspace runtime dir
+    (``cowork_staging.staging_root(vault, workspace)``) FIRST — where
+    ``stage_pin`` now writes — and falls back to the legacy
+    ``<vault>/.brain`` location (MED-09), printing one warning line naming
+    the new path so a workspace staged by an older installer is reported,
+    never silently treated as never-staged."""
+    from .cowork_staging import staging_root
+
+    new_path = staging_root(vault, workspace) / PINNED_FILENAME
+    data = _load_pin_file(new_path)
+    if data is not None:
+        return data
+
+    old_path = _config.brain_runtime_dir(vault) / PINNED_FILENAME
+    if old_path == new_path:
+        return None
+    data = _load_pin_file(old_path)
+    if data is not None:
+        print(
+            f"[exceptions_verify] WARNING: pinned-verify.json not found at "
+            f"{new_path} -- reading the legacy location {old_path} instead. "
+            f"Re-run tools/cowork_workspace_install.sh to re-stage it there.",
+            file=sys.stderr,
+        )
+    return data
+
+
+def _resolve_mount_path(vault: Path, workspace: Path | None, filename: str) -> Path:
+    """The relocation-aware MOUNT file location (MED-09), same posture as
+    ``load_pinned``: try the workspace staging root first -- where
+    ``publish_summary`` (host) now mirrors ``exceptions.json``/
+    ``exceptions.html`` after every ``brain maintain`` run -- falling back to
+    the legacy ``<vault>/.brain`` location for a workspace whose host has not
+    re-run ``brain maintain``/the installer since upgrading, and printing ONE
+    warning line so the fallback is never silent."""
+    from .cowork_staging import staging_root
+
+    new_path = staging_root(vault, workspace) / filename
+    if new_path.exists():
+        return new_path
+    old_path = _config.brain_runtime_dir(vault) / filename
+    if old_path != new_path and old_path.exists():
+        print(
+            f"[exceptions_verify] WARNING: {filename} not found at "
+            f"{new_path} -- reading the legacy location {old_path} instead. "
+            f"Re-run `brain maintain` on the host (or tools/"
+            f"cowork_workspace_install.sh) to publish it there.",
+            file=sys.stderr,
+        )
+        return old_path
+    return new_path
+
+
+def _load_summary(vault: Path, workspace: Path | None = None) -> dict[str, Any] | None:
     try:
-        data = json.loads((_config.brain_runtime_dir(vault) / JSON_FILENAME)
+        data = json.loads(_resolve_mount_path(vault, workspace, JSON_FILENAME)
                           .read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
@@ -211,9 +284,11 @@ def _check_freshness(raw: dict[str, Any], today: datetime.date) -> str | None:
     return None
 
 
-def _check_html_hash(raw: dict[str, Any], vault: Path) -> str | None:
+def _check_html_hash(
+    raw: dict[str, Any], vault: Path, workspace: Path | None = None,
+) -> str | None:
     try:
-        html_bytes = (_config.brain_runtime_dir(vault) / MOUNT_HTML_FILENAME).read_bytes()
+        html_bytes = _resolve_mount_path(vault, workspace, MOUNT_HTML_FILENAME).read_bytes()
     except OSError:
         return "mounted exceptions page is missing"
     if hashlib.sha256(html_bytes).hexdigest() != str(raw.get("html_hash") or ""):
@@ -222,20 +297,25 @@ def _check_html_hash(raw: dict[str, Any], vault: Path) -> str | None:
 
 
 def verify(
-    vault: Path, today: datetime.date,
+    vault: Path, today: datetime.date, workspace: Path | None = None,
 ) -> tuple[bool, dict[str, Any] | None, str]:
     """Run the full VERIFICATION CONTRACT. Returns ``(ok, summary, reason)``:
     ``summary`` is the migrated payload on success, ``None`` on failure —
     the caller must never read a count out of a failed verification. Each
     check is its own small function so this stays a flat sequence, never a
-    single branch-heavy block."""
-    pinned = load_pinned(vault)
+    single branch-heavy block.
+
+    ``workspace`` is optional and relocation-aware (MED-09): when given, the
+    pin lookup prefers the workspace runtime dir over the legacy
+    ``<vault>/.brain`` location. Omitting it preserves the pre-MED-09
+    behaviour exactly (``None`` is a no-op for ``cowork_staging.staging_root``)."""
+    pinned = load_pinned(vault, workspace)
     if pinned is None:
         return False, None, ("no pinned verification data staged for this "
                              "workspace — re-stage it (tools/"
                              "cowork_workspace_install.sh)")
 
-    raw = _load_summary(vault)
+    raw = _load_summary(vault, workspace)
     if raw is None:
         return False, None, "host summary missing or unparseable"
 
@@ -248,7 +328,7 @@ def verify(
         lambda: _check_vault_id(raw, pinned),
         lambda: _check_version_skew(raw),
         lambda: _check_freshness(raw, today),
-        lambda: _check_html_hash(raw, vault),
+        lambda: _check_html_hash(raw, vault, workspace),
     ):
         reason = check()
         if reason is not None:
@@ -275,15 +355,64 @@ def verify(
 # (`tools/cowork_workspace_install.sh`), under a Python that can resolve the
 # audit signing key. Never called from the VM leg.
 # ---------------------------------------------------------------------------
-def stage_pin(vault: Path) -> dict[str, Any]:
+def stage_pin(vault: Path, workspace: Path | None = None) -> dict[str, Any]:
+    """Write the pin at the relocation-aware staging root (MED-09) — the
+    SAME location every other runtime artefact (engine, model, skills) is
+    staged at. ``workspace=None`` (the default, and every call site before
+    MED-09) matches the old ``<vault>/.brain`` answer for the common case —
+    but NOT byte-identically when ``$BRAIN_RUNTIME_DIR`` is set (a layout
+    ``cowork_snapshot_guard.py`` documents as supported): the old code
+    honoured that override and ``staging_root`` does not. The reader's
+    legacy fallback still finds a pin staged under that override."""
     from . import audit as _audit
+    from .cowork_staging import staging_root
 
     vid = _config.vault_id(vault, create=True) or ""
     pem = _audit.public_key_pem().decode("utf-8")
     data = {"vault_id": vid, "public_key_pem": pem}
-    path = _config.brain_runtime_dir(vault) / PINNED_FILENAME
+    path = staging_root(vault, workspace) / PINNED_FILENAME
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps(data, indent=1, sort_keys=True), encoding="utf-8")
     os.replace(tmp, path)
     return data
+
+
+def publish_summary(vault: Path, workspace: Path | None = None) -> None:
+    """Mirror ``exceptions.json`` + the MOUNT ``exceptions.html`` into the
+    relocation-aware staging root (MED-09) — the SAME location ``stage_pin``
+    writes the pin at.
+
+    Staging the pin alone did not close MED-09: ``verify`` also reads the
+    signed summary and recomputes the page hash, and both of those were
+    still read from ``config.brain_runtime_dir(vault)`` — the REAL vault's
+    own ``.brain``, off the mount once the vault relocates (VULN-3385). A
+    real Cowork VM leg calls ``verify`` with ``vault`` already resolved to
+    its OWN workspace-local copy (``$BRAIN_VAULT``, per
+    ``cowork_session_bootstrap.sh``) and no ``workspace`` argument, so
+    nothing ever copied the summary the host actually wrote into the one
+    directory that call can reach. This closes that gap: HOST-ONLY, called
+    right after ``exceptions_page.generate()`` writes the pair
+    (``folds/reporting.py``, every ``brain maintain`` run) and once more at
+    install/re-stage time (``tools/cowork_workspace_install.sh``).
+
+    Co-located vaults are a no-op — ``staging_root(vault, None)`` is already
+    ``<vault>/.brain``, the same directory ``generate()`` just wrote to.
+    Best-effort: a missing source file (a vault that has never run `brain
+    maintain`) is silently skipped, never a crash — the caller already
+    wraps this in its own best-effort posture."""
+    from .cowork_staging import staging_root
+
+    src_dir = _config.brain_runtime_dir(vault)
+    dest_dir = staging_root(vault, workspace)
+    if src_dir == dest_dir:
+        return
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    for filename in (JSON_FILENAME, MOUNT_HTML_FILENAME):
+        src = src_dir / filename
+        if not src.exists():
+            continue
+        dest = dest_dir / filename
+        tmp = dest.with_name(dest.name + ".tmp")
+        tmp.write_bytes(src.read_bytes())
+        os.replace(tmp, dest)

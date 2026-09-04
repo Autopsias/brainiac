@@ -107,6 +107,7 @@ class _GraphMixin:
             snippet=self._snippet(row["body"]),
             is_latest_version=row.get("is_latest_version", ""),
             type=row.get("type", ""),
+            concealment=stored_verdict(row.get("concealment")),
         )
 
     def _apply_rerank(

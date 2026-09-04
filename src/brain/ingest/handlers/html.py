@@ -10,6 +10,7 @@ import html.parser
 import re
 from pathlib import Path
 
+from . import concealment
 from .base import ExtractResult, Handler, density_gate
 
 MAX_HTML_BYTES = 50 * 1024 * 1024
@@ -59,16 +60,35 @@ class _TextExtractor(html.parser.HTMLParser):
         return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
+#: Control characters a <title> should never carry into a note's frontmatter
+#: (LOW-02) — ``deliverables_absorb._UNSAFE_PROJECT``'s pattern MINUS tab,
+#: newline and carriage return. Those three are ordinary whitespace inside a
+#: pretty-printed ``<title>``, and deleting them outright joined the words
+#: either side: ``"Q3 Results\nDraft"`` came out as ``"Q3 ResultsDraft"``.
+#: Left in, the ``\s+`` collapse two lines below turns each into one space,
+#: which is what a reader expects. Every other control character is a
+#: frontmatter hazard with no reading, so it still goes.
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
 def _extract_title(raw_html: str) -> str | None:
     m = re.search(r"<title[^>]*>(.*?)</title>", raw_html, re.IGNORECASE | re.DOTALL)
     if not m:
         return None
     title = _html_stdlib.unescape(m.group(1))
+    title = _CONTROL_CHARS.sub("", title)
     title = re.sub(r"\s+", " ", title).strip()
     return title or None
 
 
-def _extract_text(raw_html: str) -> tuple[str, list[str]]:
+def _extract_text(raw_html: str, seen: object = None) -> tuple[str, list[str], list[dict]]:
+    """The readable text, the warnings, and the concealed runs.
+
+    ``seen`` is the coverage ledger's sink for ``html:text``. Whichever parser
+    path runs reports the text nodes IT read into it, so the ledger compares
+    two readings of the same bytes rather than trusting a table that says they
+    agree (V15, 2026-09-03).
+    """
     warnings: list[str] = []
     try:
         from lxml.html import fromstring as _fromstring
@@ -76,25 +96,36 @@ def _extract_text(raw_html: str) -> tuple[str, list[str]]:
         doc = _fromstring(raw_html)
         for bad in doc.xpath("//script|//style|//noscript"):
             bad.drop_tree()
+        # BEFORE text_content(): this is the last statement that can still see
+        # colour, size and position (M-3).
+        # `raw_html` too: the <style> subtrees were dropped above, and a
+        # class rule that hides text is only readable from the source.
+        concealed = concealment.collect(
+            lambda: concealment.html_runs_lxml(doc, raw_html, seen), warnings)
         text = doc.text_content()
         text = re.sub(r"[ \t]+", " ", text)
         text = re.sub(r"\n{3,}", "\n\n", text).strip()
         if text:
-            return text, warnings
+            return text, warnings, concealed
         # fall through to stdlib if lxml produced nothing
-    except ImportError:
+    except ImportError:  # coverage-audit: lxml absent; the stdlib walk below reads the same bytes
         pass  # lxml not installed — stdlib fallback below
-    except Exception as exc:
+    except Exception as exc:  # coverage-audit: warns, and the stdlib walk below reads the same bytes
         warnings.append(f"lxml_parse_warning: {type(exc).__name__}: {exc}")
 
+    # ponytail: the fallback parses twice (text, then styles). It runs only
+    # when lxml is missing or raised, and the alternative is threading style
+    # state through _TextExtractor's text assembly.
+    concealed = concealment.collect(
+        lambda: concealment.html_runs_stdlib(raw_html, seen), warnings)
     extractor = _TextExtractor()
     try:
         extractor.feed(raw_html)
-        return extractor.get_text(), warnings
-    except Exception as exc:
+        return extractor.get_text(), warnings, concealed
+    except Exception as exc:  # coverage-audit: the regex fallback's text is still compared against what the walk reported, so a walk that stopped early cannot cover it
         warnings.append(f"html_parse_warning: {type(exc).__name__}: {exc}")
         text = re.sub(r"<[^>]+>", " ", raw_html)
-        return re.sub(r"\s+", " ", text).strip(), warnings
+        return re.sub(r"\s+", " ", text).strip(), warnings, concealed
 
 
 class HtmlHandler(Handler):
@@ -109,7 +140,7 @@ class HtmlHandler(Handler):
     def extract(cls, path: Path) -> ExtractResult:
         try:
             size = path.stat().st_size
-        except OSError:
+        except OSError:  # coverage-audit: an unreadable size falls through to the gates below
             size = 0
         if size > MAX_HTML_BYTES:
             return ExtractResult.quarantine(
@@ -117,7 +148,7 @@ class HtmlHandler(Handler):
             )
         try:
             raw = path.read_bytes()
-        except OSError as exc:
+        except OSError as exc:  # coverage-audit: quarantines; no text is admitted, so none is claimed
             return ExtractResult.quarantine("html_read_error", warnings=[f"{type(exc).__name__}: {exc}"])
 
         text_raw = None
@@ -125,13 +156,19 @@ class HtmlHandler(Handler):
             try:
                 text_raw = raw.decode(enc)
                 break
-            except UnicodeDecodeError:
+            except UnicodeDecodeError:  # coverage-audit: tries the next encoding; exhausting them quarantines
                 continue
         if text_raw is None:
             return ExtractResult.quarantine("html_decode_error")
 
+        # The coverage ledger: every chunk of this note's text, by source, so
+        # `attest` can check that what it claims was searched IS what the note
+        # carries (concealment_gate's coverage rule). `<title>` is a text node
+        # of the same tree the walk covered, so it rides on `html:text`.
+        admitted = concealment.Admitted()
         title = _extract_title(text_raw)
-        body, warnings = _extract_text(text_raw)
+        body, warnings, concealed = _extract_text(
+            text_raw, admitted.watch("html:text"))
         if not body:
             return ExtractResult.quarantine("empty_or_low_text_density", warnings=warnings)
 
@@ -139,4 +176,19 @@ class HtmlHandler(Handler):
         reason = density_gate(markdown)
         if reason:
             return ExtractResult.quarantine(reason, warnings=warnings)
-        return ExtractResult(markdown=markdown, warnings=warnings, metadata={"title": title})
+        if title:
+            admitted.chrome("#")
+            # DECLARED repeat, not a second text: `text_content()` already
+            # carries the <title> inside `body`, and the walker read that one
+            # text node once. The note carries the letters twice, so the
+            # residue check must see them twice; the walk saw them once, so
+            # the occurrence-aware coverage check must not demand a second
+            # sighting. Saying so here is what lets that check stay strict
+            # everywhere else (round 7, 2026-09-04).
+            admitted.repeat("html:text", title)
+        admitted.add("html:text", body)
+        return ExtractResult(markdown=markdown, warnings=warnings,
+                             metadata={"title": title, "concealed": concealed,
+                                       **concealment.attest(
+                                           warnings, body=markdown,
+                                           admitted=admitted)})

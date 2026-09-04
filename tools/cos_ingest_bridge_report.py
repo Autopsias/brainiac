@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 from brain import cos
-from brain.notes import sha256_text
+from brain.notes import sha256_file
 
 from tools.cos_ingest_bridge_store import _bridge_ident, _conv_key
 
@@ -143,8 +143,11 @@ def _observed_dropped(vault, run_id: str, candidates: list[dict],
             continue
         p = cos.proposal_drop_dir(vault) / f"{ident}.md"
         try:
-            if (p.is_file() and sha256_text(p.read_text(encoding="utf-8"))
-                    == w["sha256"]):
+            # RAW BYTES (M-7). `cos.propose` reports a digest over the
+            # bytes it wrote (`staged.encode("utf-8")`); `read_text()`
+            # strips every `\r` on the way back, so a CRLF drop (an OWA
+            # body is the ordinary case) read back as never delivered.
+            if p.is_file() and sha256_file(p) == w["sha256"]:
                 seen.add(key)
         except OSError:
             pass

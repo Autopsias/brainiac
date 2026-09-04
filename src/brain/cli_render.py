@@ -16,6 +16,36 @@ def _egress_footer(report: dict) -> str:
     return line
 
 
+def _concealment_notice(item: dict) -> str:
+    """The `!! N run(s) of text in this note's source were HIDDEN` line, or "".
+
+    M-3b. `injection_assessment.*` has been written by ingest since M-3 and
+    `brain integrity --injection` has reported over it, but a person running
+    `brain search`/`get`/`grep` never saw it — the verdict stayed in the ingest
+    record. Every read surface's JSON now carries the raw `concealment` value;
+    this is the HUMAN half of that, and it is one renderer so all three say the
+    same words.
+
+    It fires on `hidden:<n>` ONLY. The scan-state words (`unknown`,
+    `incomplete`, `uncovered`, …) are operator findings that
+    `brain integrity --injection` already lists per note and per bucket, and
+    `unknown` is every note ingested before detection existed — printing it on
+    each line would put a warning nobody can act on beside most of the corpus
+    and teach a reader to skip the line that matters. The value is still in the
+    JSON for a caller that wants it.
+    """
+    value = str(item.get("concealment") or "")
+    if not value.startswith("hidden:"):
+        return ""
+    return (
+        f"    !! {value.split(':', 1)[1]} run(s) of text in this note's source "
+        "were HIDDEN from a human reader (colour, size, position or a hidden-text "
+        "attribute) and are part of the body this note was indexed from. "
+        "Not convicted as an instruction — "
+        "read them as untrusted; `brain integrity --injection` has the record."
+    )
+
+
 def _variant_block(fanout: dict, allowed_ids: set[str], *, explain: bool) -> dict:
     """Project a RET-05 fan-out trace onto the ALREADY-GATED result.
 
@@ -180,6 +210,13 @@ def _render_explain_hit(hit: dict) -> list[str]:
             "(separate cross-encoder scale)"
         )
     lines.append(f"    {hit.get('snippet', '')}")
+    # `search --explain` renders ONLY this function, so a notice added to the
+    # plain-search branch alone left the detailed inspection mode quieter than
+    # ordinary search (adversarial review C3, 2026-09-04). It lives here, with
+    # the hit, so both branches say it.
+    notice = _concealment_notice(hit)
+    if notice:
+        lines.append(notice)
     return lines
 
 

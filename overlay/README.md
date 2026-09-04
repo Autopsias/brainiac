@@ -34,7 +34,46 @@ overlay/
 ├── brand/      *.md   — naming / anonymisation / title conventions
 ├── keywords/   *.md   — glossary / acronym / codename decoder ring
 └── people/     *.md   — the always-on people this owner's notes reference
+
+optional, and NOT hand-written:
+└── keywords-generated/  generated.md — the decoder ring this vault derives
+                                        from its own notes (see below)
 ```
+
+### `keywords-generated/` — the ring that fills itself (2026-09-01)
+
+You do not write this directory and you should not edit it. The nightly fold
+regenerates `generated.md` from the vault's own notes: every note of type
+`project` classified `Confidential` or above, plus its `aliases`. Each row
+names the note it came from, so any term can be traced and changed at its
+source. A vault with no classified project generates an empty ring and says
+so — that is the honest answer, not a clean pass.
+
+**Why only `project`.** Measured on a 4,313-note vault: `concept` notes
+produced vocabulary (`API`, `Adobe`, `asset management`), `company` notes
+produced public firms whose mention discloses nothing (`IBM`, `McKinsey`,
+`Deloitte`), and `person` notes produced 41 bare first names out of 204.
+`project` was the only type where every derived term was a real codename. A
+guard that refuses ordinary searches gets switched off, and a guard that is off
+protects nothing. Widening this is a measurement, not a preference — put
+anything else you want guarded in `keywords/`, which always wins.
+
+It exists because a hand-written ring is an empty ring on every vault nobody
+curates, and an empty ring makes the SEC-07 outbound guard inert.
+
+**It is a SIBLING of `keywords/`, never a child, and that placement is
+load-bearing.** `keywords/` feeds ingest classification, where
+`provenance.py` computes `tier = mapped or "MNPI"` — a keyword match LOWERS
+the fail-closed default. Putting derived terms there would re-tier a corpus
+silently (measured on the reference vault: 659 of 670 MNPI documents). So:
+
+| Directory | Outbound guard reads it | Ingest classification reads it |
+|---|---|---|
+| `keywords/` (hand-written) | yes | **yes** |
+| `keywords-generated/` | yes | **no** |
+
+On a term both rings carry, the hand-written one wins — an owner who typed a
+tier chose it.
 
 Each category is a directory of one-or-more Markdown files. Every file
 carries a small frontmatter block so a validator can check shape without

@@ -76,7 +76,15 @@ _SLUG_SANITIZE = re.compile(r"[^A-Za-z0-9]+")
 
 def slugify_stem(stem: str) -> str:
     cleaned = _SLUG_SANITIZE.sub("-", stem).strip("-").lower()
-    return cleaned or "file"
+    if cleaned:
+        return cleaned
+    # LOW-02: a stem with no A-Za-z0-9 at all (a Portuguese/Japanese/etc.
+    # filename) collapsed to the same bare "file" for every such drop, so
+    # two of them on one day collided on one id (`<date>-file`). An 8-char
+    # sha256 prefix of the ORIGINAL stem keeps different non-Latin
+    # filenames apart while staying short and filesystem-safe.
+    digest = hashlib.sha256(stem.encode("utf-8")).hexdigest()[:8]
+    return f"file-{digest}"
 
 
 _ARCHIVE_NAME_SANITIZE = re.compile(r'[\x00-\x1f\x7f:"\\]')

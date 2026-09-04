@@ -26,6 +26,30 @@ from tools.validate import (
 
 __doc__ = _source.__doc__
 
+def check_fence(rel: str, text: str) -> None:
+    """Warn when a note's frontmatter fence is not LINE-EXACT (M-8, 2026-09-02).
+
+    ``split`` terminates only on a line that is exactly ``---``, so a fence
+    written ``"--- "`` either loses the whole block or swallows body text into
+    it until the next exact fence. ``split`` is NOT loosened to accept it —
+    byte identity there is load-bearing — so the class surfaces here, naming
+    the line, instead of as a note that quietly lost its frontmatter. Measured
+    2026-09-02: 0 of 4938 notes across every registered vault, which is why the
+    tests give this a known POSITIVE as well as a known negative.
+    """
+    if not text.startswith("---"):
+        return
+    for lineno, line in enumerate(text.split("\n")[1:], start=2):
+        line = line.rstrip("\r")
+        if line == "---":
+            return  # the real terminator reached; anything after it is body
+        if line.strip() == "---":
+            warn(f"{rel}:{lineno}: frontmatter fence is not line-exact "
+                 f"(trailing whitespace after ---) — this note either lost its "
+                 f"frontmatter entirely or holds body text inside the block")
+            return
+
+
 # HYG-03 — state-MOC / index.md freshness-stamp pattern: any heading whose
 # very next non-blank line is "Updated: YYYY-MM-DD" is a freshness-stamped
 # section (the state-MOC template's "## Section: ..." headings, and index.md's

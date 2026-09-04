@@ -17,9 +17,16 @@ from typing import Any, Sequence
 OPEN_DEFAULT_RERANKER_REPO = "onnx-community/gte-multilingual-reranker-base"
 OPEN_DEFAULT_RERANKER_ONNX = "onnx/model.onnx"
 OPEN_DEFAULT_RERANKER_MODEL_ID = "Alibaba-NLP/gte-multilingual-reranker-base"
+# Pinned HF revision (commit SHA) — supply-chain hardening, same shape as
+# embed_onnx.py's E5_SMALL_ONNX_REVISION/BGE_M3_ONNX_REVISION: a bare
+# snapshot_download(repo) resolves whatever `main` points at TODAY, so the
+# model bytes are not reproducible. Verified 2026-09-03 against both the
+# local HF cache's refs/main and the hub's live /revision/main API — both
+# agree on this commit.
+OPEN_DEFAULT_RERANKER_REVISION = "ee64367e35a2db0da46bb6497e13a18f8bd585cb"
 
 
-def _reranker_weights_cached(hf_repo: str, onnx_file: str) -> bool:
+def _reranker_weights_cached(hf_repo: str, onnx_file: str, revision: str | None = None) -> bool:
     """Are this reranker's weights already in the local HF cache?
 
     Offline-only probe: `local_files_only=True` never opens a socket, so this
@@ -33,6 +40,7 @@ def _reranker_weights_cached(hf_repo: str, onnx_file: str) -> bool:
             hf_repo,
             allow_patterns=[onnx_file, onnx_file + "_data", "tokenizer*", "*.json"],
             local_files_only=True,
+            revision=revision,
         )
         return True
     except Exception:
@@ -46,13 +54,15 @@ def warm_reranker_weights() -> dict[str, object]:
     order instead of a surprise download mid-query."""
     repo = OPEN_DEFAULT_RERANKER_REPO
     onnx_file = OPEN_DEFAULT_RERANKER_ONNX
-    if _reranker_weights_cached(repo, onnx_file):
+    revision = OPEN_DEFAULT_RERANKER_REVISION
+    if _reranker_weights_cached(repo, onnx_file, revision):
         return {"repo": repo, "downloaded": False, "cached": True}
     from huggingface_hub import snapshot_download
 
     snapshot_download(
         repo,
         allow_patterns=[onnx_file, onnx_file + "_data", "tokenizer*", "*.json"],
+        revision=revision,
     )
     return {"repo": repo, "downloaded": True, "cached": True}
 
@@ -75,11 +85,20 @@ class OnnxReranker:
         onnx_file: str | None = None,
         local_dir: str | None = None,
         model_id: str | None = None,
+        revision: str | None = None,
     ) -> None:
         self.model_id = model_id or OPEN_DEFAULT_RERANKER_MODEL_ID
         self._hf_repo = hf_repo or OPEN_DEFAULT_RERANKER_REPO
         self._onnx_file = onnx_file or OPEN_DEFAULT_RERANKER_ONNX
         self._local_dir = local_dir or os.environ.get("BRAIN_RERANKER_ONNX_DIR")
+        # Pin the download revision for the known repo only — same convention as
+        # embed_onnx.py's OnnxEmbedder: a custom hf_repo keeps its own revision
+        # semantics (no pin implied), so this stays None unless the repo matches.
+        self._revision = (
+            revision
+            if revision is not None
+            else (OPEN_DEFAULT_RERANKER_REVISION if self._hf_repo == OPEN_DEFAULT_RERANKER_REPO else None)
+        )
         self._sess = None
         self._tok = None
         self._in_names: list[str] | None = None
@@ -111,8 +130,12 @@ class OnnxReranker:
             return False
         if os.environ.get("BRAIN_RERANKER_ONNX_DIR"):
             return True
-        return _reranker_weights_cached(hf_repo or OPEN_DEFAULT_RERANKER_REPO,
-                                       onnx_file or OPEN_DEFAULT_RERANKER_ONNX)
+        repo = hf_repo or OPEN_DEFAULT_RERANKER_REPO
+        return _reranker_weights_cached(
+            repo,
+            onnx_file or OPEN_DEFAULT_RERANKER_ONNX,
+            OPEN_DEFAULT_RERANKER_REVISION if repo == OPEN_DEFAULT_RERANKER_REPO else None,
+        )
 
     def _ensure(self):
         if self._sess is None:
@@ -147,6 +170,7 @@ class OnnxReranker:
                             "*.json",
                         ],
                         local_files_only=True,
+                        revision=self._revision,
                     )
                     onnx_path = os.path.join(base, self._onnx_file)
                 so = ort.SessionOptions()

@@ -121,96 +121,6 @@ def resolve_claude_bin() -> Optional[str]:
 Runner = Callable[..., "subprocess.CompletedProcess[str]"]
 
 
-def _packaged_script(name: str, engine_src: Optional[Path] = None) -> Optional[Path]:
-    """Resolve a bundled script (``vm-selftest.sh``, ``brainiac-alerts.sh``)
-    from either the packaged wheel mirror (``brain/_assets/scripts/``) or the
-    checkout's own ``scripts/`` original — first hit wins. Returns None if
-    neither exists."""
-    candidates: list[Path] = []
-    try:
-        from importlib.resources import files
-        candidates.append(Path(str(files("brain") / "_assets" / "scripts" / name)))
-    except Exception:
-        pass
-    if engine_src is not None:
-        candidates.append(engine_src / "src" / "brain" / "_assets" / "scripts" / name)
-        candidates.append(engine_src / "scripts" / name)
-    for c in candidates:
-        if c.is_file():
-            return c
-    return None
-
-
-# --------------------------------------------------------------------------
-# Engine venv refresh — resolves the engine source path from the workspace
-# registry / explicit override, NEVER a hardcoded ~/brainiac (HARDEN:codex-MEDIUM).
-# --------------------------------------------------------------------------
-
-def resolve_engine_source(
-    *, explicit: Optional[str] = None, repo_root: Optional[Path] = None,
-    claude_home: Optional[Path] = None,
-) -> Optional[Path]:
-    """Resolve the engine checkout to build/refresh against, in order (RC1):
-
-    1. an explicit override (config / CLI flag),
-    2. ``$BRAINIAC_ENGINE_SRC``,
-    3. an explicit ``repo_root`` (caller-supplied),
-    4. the repo root this module ships from — but ONLY when it actually carries
-       a ``pyproject.toml`` (a wheel install resolves this inside site-packages,
-       which has none — the exact RC1 mis-resolution),
-    5. the marketplace's ``installLocation`` (known_marketplaces.json), again
-       pyproject-guarded — the one already-persisted pointer to the real
-       checkout on a directory-source install,
-    6. ``None`` — no checkout resolvable. The downstream gate then honestly
-       skips dist-rebuild / workspace re-stage instead of pointing pip at a
-       nonexistent ``~/brainiac`` (the deleted last-resort fallback).
-    """
-    if explicit:
-        return Path(explicit).expanduser().resolve()
-    env = os.environ.get("BRAINIAC_ENGINE_SRC")
-    if env:
-        return Path(env).expanduser().resolve()
-    if repo_root is not None:
-        return repo_root.resolve()
-    inferred = Path(__file__).resolve().parent.parent.parent
-    if (inferred / "pyproject.toml").exists():
-        return inferred
-    claude_home = claude_home or claude_home_default()
-    loc = marketplace_install_location(claude_home)
-    if loc and (loc / "pyproject.toml").exists():
-        return loc
-    return None
-
-
-def _venv_bin(venv_dir: Path, name: str) -> Path:
-    """Path to an executable inside a venv, cross-platform (Windows fix): POSIX
-    venvs put executables in ``bin/`` bare; Windows in ``Scripts\\`` with a
-    ``.exe`` suffix."""
-    if os.name == "nt":
-        return venv_dir / "Scripts" / f"{name}.exe"
-    return venv_dir / "bin" / name
-
-
-def refresh_engine_venv(
-    engine_src: Optional[Path], brainiac_home: Path, run: Runner = _default_runner,
-) -> dict:
-    """Channel-aware refresh (PYP-04 / RC2): detect which channel the host is
-    actually on — the legacy editable dev checkout, a plain wheel in
-    ``~/.brainiac/venv`` (RC2: previously misdetected as editable), or one of
-    the three PyPI channels (uv tool / pipx / pip --user) — and run THAT
-    channel's own upgrade command. Detecting the live channel via the
-    PATH-resolved `brain` binary is what makes `brain update` self-heal the
-    right thing regardless of how the engine was installed.
-    """
-    return refresh_engine_channel(
-        engine_src,
-        brainiac_home,
-        run,
-        detect_channel=detect_install_channel,
-        venv_bin=_venv_bin,
-        which_brain=shutil.which("brain"),
-        python_executable=sys.executable,
-    )
 
 
 # --------------------------------------------------------------------------
@@ -459,6 +369,17 @@ def _demo() -> None:
 # The plugin-channel steps live in update_plugins.py and the dist/model staging
 # legs in update_model.py since the 2026-08-16 size ratchet; re-exported so
 # every `brain.update.<name>` caller and monkeypatch target is unchanged.
+# The engine-source and venv-refresh legs live in update_venv.py since the
+# 2026-09-04 size ratchet; re-exported so every `brain.update.<name>` caller
+# and monkeypatch target is unchanged.
+from .update_venv import (  # noqa: E402,F401  (facade re-export)
+    _owned_by_current_uid as _owned_by_current_uid,
+    _packaged_script as _packaged_script,
+    _venv_bin as _venv_bin,
+    refresh_engine_venv as refresh_engine_venv,
+    resolve_engine_source as resolve_engine_source,
+)
+
 from .update_model import (  # noqa: E402,F401  (facade re-export)
     _VERSION_STAMP_RE as _VERSION_STAMP_RE,
     _read_version_stamp as _read_version_stamp,

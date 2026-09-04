@@ -6,8 +6,14 @@ to cause a real design error — not a glossary of every noun in the codebase.
 ## Index lifecycle
 
 **Rebuild** — a full re-index of the vault from scratch: every note chunked, embedded and
-written. Builds into a temp DB and atomically swaps it into the live path on success. Can
-run 90+ minutes on the real vault.
+written. Builds into a temp DB and atomically swaps it into the live path on success.
+**Budget hours, not minutes.** This line said "90+ minutes" until 2026-09-04, which read
+as "about ninety" and sent a plan session into a rebuild it could not finish. The one
+window ever captured on the reference vault ran 30.25 minutes and wrote 7,030 of 119,454
+chunks (5.9%, 3.8733 chunks/s); extrapolated, that is **8.57 h**, and the engine's own ETA
+over the same window put it at 7.78 h. Both are PROJECTIONS from a single unfinished run —
+no rate across windows was ever measured — so treat the order of magnitude as the finding,
+not the digits. Source: `_plans/security-followup-2026-09-01/_evidence/security-followup/s05-concealment-design.md`.
 
 **Sync** — an incremental reconcile by path + content-hash; only changed/new notes are
 re-indexed. **Sync is not a separate operation from rebuild**: `sync()` self-delegates to

@@ -17,6 +17,7 @@ from email.message import Message
 from pathlib import Path
 from typing import Any, Optional
 
+from . import concealment
 from .base import ExtractResult, Handler, density_gate, strip_control_chars
 
 MAX_EML_BYTES = 50 * 1024 * 1024
@@ -72,7 +73,7 @@ def _strip_html(raw: str) -> str:
     try:
         stripper.feed(raw)
         stripper.close()
-    except Exception:
+    except Exception:  # coverage-audit: returns no body text, so nothing is admitted to cover
         return ""
     return stripper.get_text()
 
@@ -102,7 +103,7 @@ def _sent_date_iso(raw: str) -> Optional[str]:
     try:
         dt = email.utils.parsedate_to_datetime(raw)
         return dt.isoformat() if dt is not None else None
-    except Exception:
+    except Exception:  # coverage-audit: a header value, admitted under email:headers either way
         return None
 
 
@@ -122,8 +123,34 @@ def _conversation_id(msg: "email.message.Message") -> Optional[str]:
     return strip_control_chars(mid) if mid else None
 
 
-def _extract_body(msg: "email.message.Message") -> tuple[str, list[str]]:
+def _extract_body(
+    msg: "email.message.Message", seen: Any = None,
+) -> tuple[str, list[str], list[dict[str, Any]] | None, str]:
+    """The body text, warnings, any CONCEALED runs, and the body's SOURCE name.
+
+    The fourth element is what the coverage ledger records the body under, and
+    it is what decides the note's scan state: ``email:body_html`` is walked and
+    covered, ``email:body_plain`` is not, so a text/plain mail still reads
+    ``concealment_scan: unknown`` rather than inheriting a ``full`` it never
+    earned (V9, 2026-09-02) — now because the source has no walker in
+    ``COVERED_SOURCES``, not because a boolean said so.
+
+    The concealment walk runs on the html-only branch and ONLY there, because
+    that is the only branch whose bytes reach the Markdown: when a
+    ``text/plain`` part exists it is what gets extracted, and styling in the
+    unused html alternative never reaches a model.
+
+    Mail is this project's primary ingest lane, and until 2026-09-02 this
+    branch was a one-line bypass of the whole handler-boundary control
+    (review finding V1): identical white-on-white bytes gave ``conceal`` as
+    ``.html`` and ``instruction_only`` — admitted, payload in the signed
+    note — as an html-only ``.eml``. The attacker picks the MIME structure.
+    """
     warnings: list[str] = []
+    # `None` until a branch WALKS. A text/plain body never reaches the
+    # concealment detector, so its source is uncovered and the note is
+    # stamped `unknown` rather than `full` (V9, 2026-09-02).
+    concealed: list[dict[str, Any]] | None = None
     text_part = html_part = None
     for part in msg.walk():
         if part.is_multipart() or part.get_content_disposition() == "attachment":
@@ -136,30 +163,40 @@ def _extract_body(msg: "email.message.Message") -> tuple[str, list[str]]:
 
     if text_part is not None:
         try:
-            return text_part.get_content().strip(), warnings
-        except Exception:
+            return (text_part.get_content().strip(), warnings, concealed,
+                    "email:body_plain")
+        except Exception:  # coverage-audit: the same part, decoded by hand; email:body_plain is uncovered regardless
             payload = text_part.get_payload(decode=True) or b""
             charset = text_part.get_content_charset() or "utf-8"
-            return payload.decode(charset, errors="replace").strip(), warnings
+            return (payload.decode(charset, errors="replace").strip(),
+                    warnings, concealed, "email:body_plain")
 
     if html_part is not None:
         try:
             raw_html = html_part.get_content()
-        except Exception:
+        except Exception:  # coverage-audit: the same bytes, decoded by hand, and the walk below reads that same string
             payload = html_part.get_payload(decode=True) or b""
             charset = html_part.get_content_charset() or "utf-8"
             raw_html = payload.decode(charset, errors="replace")
         warnings.append("html_only_fallback: no text/plain part, stripped HTML")
-        return _strip_html(raw_html), warnings
+        # `_HtmlStripper` below sees text only. This is the last point that
+        # can still see colour, size, position and display state (M-3).
+        # The walk REPORTS what it read into the ledger's sink, and the
+        # ledger holds that report against the stripped text admitted below —
+        # two readings of the same bytes, compared, rather than a table
+        # asserting they agree (V15, 2026-09-03).
+        concealed = concealment.collect(
+            lambda: concealment.html_runs_stdlib(raw_html, seen), warnings)
+        return _strip_html(raw_html), warnings, concealed, "email:body_html"
 
     warnings.append("no_body_part: neither text/plain nor text/html present")
-    return "", warnings
+    return "", warnings, concealed, ""
 
 
 def _read_message(path: Path) -> Message | ExtractResult:
     try:
         size = path.stat().st_size
-    except OSError:
+    except OSError:  # coverage-audit: an unreadable size falls through to the gates below
         size = 0
     if size > MAX_EML_BYTES:
         return ExtractResult.quarantine(
@@ -168,14 +205,14 @@ def _read_message(path: Path) -> Message | ExtractResult:
         )
     try:
         raw = path.read_bytes()
-    except OSError as exc:
+    except OSError as exc:  # coverage-audit: quarantines; no text is admitted, so none is claimed
         return ExtractResult.quarantine(
             "eml_read_error",
             warnings=[f"{type(exc).__name__}: {exc}"],
         )
     try:
         return email.message_from_bytes(raw, policy=email.policy.default)
-    except Exception as exc:
+    except Exception as exc:  # coverage-audit: quarantines; no text is admitted, so none is claimed
         return ExtractResult.quarantine(
             "eml_parse_error",
             warnings=[f"{type(exc).__name__}: {exc}"],
@@ -188,7 +225,7 @@ def _attachment_payloads(
 ) -> tuple[list[dict[str, Any]], list[tuple[str, str, int]]]:
     try:
         attachments = list(msg.iter_attachments())
-    except Exception:
+    except Exception:  # coverage-audit: no manifest lines are admitted, so none are claimed
         attachments = []
     if len(attachments) > MAX_ATTACHMENTS:
         warnings.append(
@@ -215,7 +252,7 @@ def _attachment_payloads(
 def _decode_attachment(part: Message, name: str, warnings: list[str]) -> bytes | None:
     try:
         return part.get_payload(decode=True) or b""
-    except Exception as exc:
+    except Exception as exc:  # coverage-audit: warns; the manifest line is admitted and checked like any other
         warnings.append(f"attachment_decode_failed:{name}:{type(exc).__name__}")
         return None
 
@@ -230,27 +267,42 @@ def _render_email(
     sent_iso: str | None,
     body_text: str,
     attachments: list[tuple[str, str, int]],
+    admitted: Any,
+    body_source: str,
 ) -> str:
+    """Render the note, recording every chunk on the coverage ledger.
+
+    A header line mixes the handler's own label with an attacker-supplied
+    value, so the WHOLE line is admitted under ``email:headers`` rather than
+    split — over-attributing a bold label to the document is harmless, and
+    losing the value would not be.
+    """
+    head = "email:headers"
     lines = [
-        "## Email metadata",
+        admitted.chrome("## Email metadata"),
         "",
-        f"- **Subject:** {subject or '(no subject)'}",
-        f"- **From:** {'; '.join(from_addrs) if from_addrs else _EM_DASH}",
-        f"- **To:** {'; '.join(to_addrs) if to_addrs else _EM_DASH}",
+        admitted.add(head, f"- **Subject:** {subject or '(no subject)'}"),
+        admitted.add(head,
+                     f"- **From:** {'; '.join(from_addrs) if from_addrs else _EM_DASH}"),
+        admitted.add(head,
+                     f"- **To:** {'; '.join(to_addrs) if to_addrs else _EM_DASH}"),
     ]
     if cc_addrs:
-        lines.append(f"- **Cc:** {'; '.join(cc_addrs)}")
+        lines.append(admitted.add(head, f"- **Cc:** {'; '.join(cc_addrs)}"))
     if sent_iso:
-        lines.append(f"- **Sent:** {sent_iso} (raw: {sent_raw})")
+        lines.append(admitted.add(head, f"- **Sent:** {sent_iso} (raw: {sent_raw})"))
     elif sent_raw:
-        lines.append(f"- **Sent:** {sent_raw}")
+        lines.append(admitted.add(head, f"- **Sent:** {sent_raw}"))
     if attachments:
-        lines.append(f"- **Attachments:** {len(attachments)}")
-    lines += ["", "## Body", "", body_text or "*(empty body)*", ""]
+        lines.append(admitted.chrome(f"- **Attachments:** {len(attachments)}"))
+    lines += ["", admitted.chrome("## Body"), ""]
+    lines += [admitted.add(body_source, body_text) if body_text
+              else admitted.chrome("*(empty body)*"), ""]
     if attachments:
-        lines += ["## Attachments", ""]
+        lines += [admitted.chrome("## Attachments"), ""]
         lines.extend(
-            f"- `{name}` — {content_type} ({size / 1024:.1f} KB)"
+            admitted.add("email:attachment_manifest",
+                         f"- `{name}` — {content_type} ({size / 1024:.1f} KB)")
             for name, content_type, size in attachments
         )
         lines.append("")
@@ -292,7 +344,9 @@ class EmailHandler(Handler):
         cc_addrs = _addr_list(_decode_header(msg.get("Cc")))
         sent_raw = _decode_header(msg.get("Date"))
         sent_iso = _sent_date_iso(sent_raw)
-        body_text, warnings = _extract_body(msg)
+        admitted = concealment.Admitted()
+        body_text, warnings, concealed, body_source = _extract_body(
+            msg, admitted.watch("email:body_html"))
         nested, attach_meta = _attachment_payloads(msg, warnings)
         body_md = _render_email(
             subject=subject,
@@ -303,6 +357,8 @@ class EmailHandler(Handler):
             sent_iso=sent_iso,
             body_text=body_text,
             attachments=attach_meta,
+            admitted=admitted,
+            body_source=body_source,
         )
         reason = density_gate(body_md)
         if reason:
@@ -311,6 +367,8 @@ class EmailHandler(Handler):
         return ExtractResult(
             markdown=body_md, warnings=warnings,
             metadata={"nested": nested, "attachment_count": len(attach_meta),
-                      "subject": subject,
-                      "provenance": provenance},
+                      "subject": subject, "concealed": concealed or [],
+                      "provenance": provenance,
+                      **concealment.attest(warnings, body=body_md,
+                                          admitted=admitted)},
         )

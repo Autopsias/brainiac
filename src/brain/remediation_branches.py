@@ -76,14 +76,20 @@ def chain_provenance(chain_path: Path) -> ChainProvenance:
     disagreed quietly would be this one."""
     import json
 
+    from .audit_chain import AuditChain
+
     by_hash: dict[str, str] = {}
     latest: dict[str, str] = {}
+    # Through the chain's OWN reader (M-7): raw bytes split on b"\n". A second
+    # text-mode `splitlines()` here also ended a record on \r, \v, \f, U+2028
+    # and U+2029, so this view and `content_drift`'s could be made to disagree
+    # about how many records the log even holds — the exact quiet disagreement
+    # the docstring above says must not exist.
     try:
-        text = chain_path.read_text(encoding="utf-8")
+        lines = AuditChain(chain_path)._lines()
     except OSError:
         return ChainProvenance(by_hash, latest)
-    for line in text.splitlines():
-        line = line.strip()
+    for line in lines:
         if not line.startswith("{"):
             continue
         try:
@@ -191,9 +197,13 @@ def _sign_provenance(
        version resurrection: a v1 body, superseded months ago, reappearing as
        a live note whose frontmatter still says it was superseded."""
     from . import frontmatter as _fm
-    from .notes import sha256_text
+    from .notes import sha256_file
 
-    origin = provenance.by_hash.get(sha256_text(text))
+    # The BYTES on disk, not `sha256_text(text)`: `text` came through
+    # `read_text()`, which deletes every `\r`, so a CR-only edit after signing
+    # hashed identical to the signed bytes and this lookup blessed drift as
+    # covered (M-7, 2026-09-02).
+    origin = provenance.by_hash.get(sha256_file(Path(core.vault) / rel))
     if origin is None:
         return "", ("no host record covers these bytes — TAMPER exception, "
                     "never auto")
@@ -262,7 +272,7 @@ def plan_reguard(core: Any, cap: int) -> tuple[BranchOutcome, list[Intent], list
     2,600-note reference vault). If that ever matters, thread ONE parsed walk
     through both from the maintain run; do not add a second cache here."""
     from .ingest import tierguard
-    from .notes import sha256_text
+    from .notes import sha256_file
 
     out = BranchOutcome(REGUARD, KEY_UNGUARDED)
     out.targets = unguarded_targets(Path(core.vault))
@@ -278,7 +288,7 @@ def plan_reguard(core: Any, cap: int) -> tuple[BranchOutcome, list[Intent], list
         except OSError as exc:
             out.skipped.append({"target": rel, "reason": f"unreadable: {exc}"})
             continue
-        if not provenance.covers_current(rel, sha256_text(text)):
+        if not provenance.covers_current(rel, sha256_file(Path(core.vault) / rel)):
             out.skipped.append({"target": rel, "reason": (
                 "the audit chain does not cover these bytes — the guard stamp "
                 "and the classification floor are unverified claims, so this "

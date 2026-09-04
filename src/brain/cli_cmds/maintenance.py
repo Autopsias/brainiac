@@ -146,8 +146,9 @@ def _run_integrity(args, ctx) -> int:
         )
         for p in gated_pairs
     ]
-    if res.get("audit_issue"):
-        action_required.insert(0, res["audit_issue"])
+    for key in ("anchor_issue", "audit_issue"):
+        if res.get(key):
+            action_required.insert(0, res[key])
     # Gated for DISPLAY only — a finding names a note, so reporting it to an
     # Internal-capped reader would leak the very thing the gate withholds.
     injection = (
@@ -192,6 +193,7 @@ def _run_integrity(args, ctx) -> int:
                 "near_dup_pairs": gated_pairs,
                 "egress": pair_report,
                 "injection": injection,
+                "injection_coverage": res.get("injection_coverage"),
                 "read_log": reads,
                 "outcomes": outcomes,
             },
@@ -203,8 +205,60 @@ def _run_integrity(args, ctx) -> int:
             conceal = sum(1 for r in injection if r["verdict"] == "conceal")
             head += (f"; injection scan: {conceal} concealed, "
                      f"{len(injection) - conceal} flagged")
+        head += _coverage_lines(res.get("injection_coverage"))
         _emit(None, False, head + "\n" + maint.render_outcomes_markdown(outcomes))
     return 0
+
+
+def _coverage_lines(coverage: dict | None) -> str:
+    """The concealment-scan census, and the one bucket that is a fault.
+
+    Counts, no note names — printed UNGATED on purpose. This is the only line
+    that can say a scan was disabled, failed, or never ran for a lane, because
+    such a note has 0 hidden runs and never produces a row (V11, 2026-09-02).
+
+    ``unstamped`` gets its own line because it can only ever be a regression:
+    the note WAS assessed and its coverage key is missing anyway. Left inside
+    the census row it reads as one more resting number beside ``absent``'s
+    four digits, which is how a rising regression stays invisible
+    (2026-09-03). ``uninspected`` and ``unaccounted`` joined it on 2026-09-04:
+    both used to be ``unknown``, which nothing marked (round-6 review,
+    MEDIUM).
+
+    Each fault names WHY, and names the one command that lists the notes it
+    counted — the state is per note and in its frontmatter, so a grep over the
+    vault is the listing, and a count with no way to reach the notes is what
+    the review actually complained about.
+    """
+    from .. import injection_scan as _isc
+
+    if not coverage:
+        return ""
+    out = ("\n  concealment-scan coverage: "
+           + ", ".join(f"{k}={coverage[k]}" for k in _isc.COVERAGE_BUCKETS))
+    faults = {k: coverage.get(k, 0) for k in _isc.REGRESSION_BUCKETS
+              if coverage.get(k)}
+    for bucket, count in faults.items():
+        out += (f"\n  REGRESSION: {count} note(s) {_FAULTS[bucket]} "
+                f"({bucket}) — list them with: grep -rl "
+                f"'concealment_scan: {bucket}' <vault>/vault/"
+                if bucket != "unstamped" else
+                f"\n  REGRESSION: {count} note(s) {_FAULTS[bucket]} "
+                f"({bucket}) — the ingest pipeline stopped recording "
+                "concealment coverage; see docs/ingestion.md")
+    return out
+
+
+#: What each fault bucket MEANS, in the operator's words. One line per entry in
+#: ``injection_fold.REGRESSION_BUCKETS``, and the census test holds the two
+#: lists against each other so a new bucket cannot arrive without one.
+_FAULTS = {
+    "unstamped": "were assessed and carry no concealment key at all",
+    "uninspected": "admitted text a COVERED source's declared walker never "
+                   "reported reading",
+    "unaccounted": "carry body text that never went through the coverage "
+                   "ledger",
+}
 
 
 def _run_promote_scan(args, ctx) -> int:

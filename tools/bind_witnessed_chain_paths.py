@@ -79,8 +79,7 @@ def unbound_paths(vault: Path, chain) -> list[str]:
     prefix = str(vault) + "/"
     live: set[str] = set()
     covered: set[str] = set()
-    for line in chain._lines():
-        s = line.strip()
+    for s in chain._lines():
         if not chain._is_entry(s):
             continue
         try:
@@ -102,9 +101,9 @@ def unbound_paths(vault: Path, chain) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    from brain import audit as audit_mod
     from brain import config
     from brain.audit_chain import AuditChain
+    from brain.notes import sha256_file
 
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("vault", type=Path)
@@ -128,8 +127,10 @@ def main(argv: list[str] | None = None) -> int:
             skipped["no_witness"] += 1
             continue
         # Hash EXACTLY as content_drift will read it back, or every entry this
-        # writes reports as drift on the next doctor run.
-        todo.append((rel, audit_mod._sha256(note.read_text(encoding="utf-8"))))
+        # writes reports as drift on the next doctor run. That is the note's
+        # RAW BYTES since 2026-09-02 (M-7) — read_text() deletes every `\r`,
+        # so binding through it would seal a hash no CRLF note can ever match.
+        todo.append((rel, sha256_file(note)))
 
     print(f"bindable: {len(todo)}   skipped: {skipped['gone']} gone, "
           f"{skipped['no_witness']} without a capture-time witness")

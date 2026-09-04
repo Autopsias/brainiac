@@ -247,24 +247,6 @@ def load_allowlist(path: Path | None = None) -> dict[str, Any]:
     return data
 
 
-def is_allowed(harness_id: str, path: Path | None = None) -> bool:
-    """True iff ``harness_id`` is on the allowlist AND its vendor posture is
-    VERIFIED. PENDING/REJECTED => default-deny (the posture bar is not met).
-
-    NOTE: the brain CLI cannot reliably identify its caller, so this is a
-    GOVERNANCE gate (consumed by val-03 + the cyber review + deployment policy),
-    not a runtime per-request gate. The runtime control is the classification
-    gate (apply_gate) + projection. Until a vendor's no-train/ZDR scope is
-    contractually VERIFIED, the harness is not 'allowed' and must run only
-    against a projected (sensitive-tier-free) workspace.
-    """
-    data = load_allowlist(path)
-    for h in data["harnesses"]:
-        if h["id"] == harness_id:
-            return h["posture_status"] == "VERIFIED"
-    return False
-
-
 def posture_summary(path: Path | None = None) -> dict[str, Any]:
     """Counts by posture_status for the evidence table / CSF profile."""
     data = load_allowlist(path)

@@ -73,6 +73,42 @@ function Fail {
     exit 1
 }
 
+# Pinned checksum of the uv bootstrap installer (curl-pipe-shell hardening,
+# LOW-01 item 4, Windows sibling of install.sh's UV_INSTALL_SH_SHA256):
+# downloaded to a file and verified before it ever runs, instead of piping
+# `irm` straight into `iex`. astral.sh legitimately updates this script now
+# and then - when that happens this pin goes stale and the bootstrap fails
+# closed rather than silently trusting whatever the network handed back.
+# Re-pin after checking the diff by hand:
+#   (irm https://astral.sh/uv/install.ps1) | Get-FileHash -Algorithm SHA256
+$UvInstallPs1Sha256 = '69de475bf929f1ac248efb5a85189177a45517e2346cd68762bde453fec10a6b'
+
+# Fetch the uv installer to a temp file, verify its checksum against the pin
+# above, then run it as a script file - never irm-pipe-iex. Removes the temp
+# file on every exit path (including a checksum-mismatch Fail, which calls
+# `exit`).
+function Invoke-UvInstaller {
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) "uv-install-$([guid]::NewGuid().ToString('N')).ps1"
+    try {
+        Invoke-WebRequest -Uri 'https://astral.sh/uv/install.ps1' -OutFile $tmp -UseBasicParsing
+    } catch {
+        Fail "fetching the uv installer failed: $_"
+    }
+    $actualHash = (Get-FileHash -Path $tmp -Algorithm SHA256).Hash.ToLower()
+    if ($actualHash -ne $UvInstallPs1Sha256) {
+        Remove-Item -Path $tmp -Force -ErrorAction SilentlyContinue
+        Fail "uv installer checksum mismatch (expected $UvInstallPs1Sha256, got $actualHash). astral.sh may have updated the script, or the download was tampered with. Inspect it by hand and, if the update is legitimate, re-pin `$UvInstallPs1Sha256 in install.ps1."
+    }
+    try {
+        & powershell -ExecutionPolicy ByPass -File "$tmp"
+        if ($LASTEXITCODE -ne 0) {
+            Fail "uv installer exited with code $LASTEXITCODE."
+        }
+    } finally {
+        Remove-Item -Path $tmp -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # ---------------------------------------------------------------------------
 # 1. Python check (>=3.9).
 #    Windows machines commonly have the `py` launcher (py.exe) rather than a
@@ -123,10 +159,7 @@ if (-not $PyExe) {
         Say "Fetching uv from https://astral.sh/uv/install.ps1 - a self-contained binary that"
         Say "needs no Python, and that will then download its own CPython $UvManagedPython."
         Say "(Skip this with -NoUvBootstrap and install Python or uv yourself.)"
-        & powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-        if ($LASTEXITCODE -ne 0) {
-            Fail "fetching uv failed. Install uv or Python 3.9+ by hand, then re-run."
-        }
+        Invoke-UvInstaller
         # The uv installer edits the User PATH, which this already-running
         # process does not re-read - put its bin dir on PATH for this run.
         foreach ($cand in @("$env:USERPROFILE\.local\bin", "$env:CARGO_HOME\bin", "$env:USERPROFILE\.cargo\bin")) {

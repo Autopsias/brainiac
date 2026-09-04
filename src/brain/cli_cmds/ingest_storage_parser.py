@@ -82,6 +82,28 @@ def _add_verify_audit(sub) -> None:
         "--pubkey",
         help="verify against this PUBLIC key PEM file instead of the resolved signing key — external verification that never touches the private key (VULN-3388)",
     )
+    sp.add_argument(
+        "--allow-empty",
+        action="store_true",
+        help="treat a chain with no entries as a pass (M-7: an empty chain is "
+             "an ERROR by default — a wiped log and a brand-new vault look "
+             "identical, and only the operator knows which one this is)",
+    )
+    sp.add_argument(
+        "--rerule-legacy-pins",
+        action="store_true",
+        help="list the drift dispositions refused ONLY because they were "
+             "recorded under the pre-2026-09-02 text-hash convention (M-7). "
+             "Implies --check-content. Add --yes to re-record them against "
+             "the byte hash they already match; without it this only reports.",
+    )
+    sp.add_argument(
+        "--yes",
+        action="store_true",
+        help="with --rerule-legacy-pins, actually write the re-ruling. "
+             "Re-ruling is an owner act: it re-accepts standing rulings, so "
+             "it is never automatic and never runs from a fold.",
+    )
     sp.add_argument("--json", action="store_true")
 
 

@@ -20,9 +20,31 @@ class AuditChain:
         self.log_path = Path(log_path)
 
     def _lines(self) -> list[str]:
+        """Every record in the log, read as RAW BYTES and split strictly on
+        ``b"\n"`` — no ``strip()``, no re-encode, no trailing-newline trim.
+
+        Python text mode does not do this. ``read_text().splitlines()`` also
+        terminates a line on ``\r``, ``\v``, ``\f``, ``\x1c-\x1e``, U+2028 and
+        U+2029, and universal newlines rewrites ``\r\n`` to ``\n`` before you
+        ever see it. So swapping ONE ``0x0b`` in for a record separator gives a
+        log whose bytes hold a single merged record while a text reader still
+        sees two — every surviving signature verifies, the prev_hash chain
+        links, and the verifier has attested to bytes that are not on disk.
+        Bytes and ``b"\n"`` only: the verifier must see exactly what is there.
+
+        Undecodable bytes come back through ``surrogateescape`` rather than
+        raising, so a corrupted record fails verification as data — most often
+        ``invalid_signature`` (the signed payload changed but stayed valid
+        JSON), sometimes ``not_canonical``/``parse_failure`` when the damage
+        breaks JSON syntax or the round-trip — instead of taking down the
+        whole verification. This depends on ``_sha256`` (``audit.py``) matching
+        the same leniency on the way OUT: see ``append``'s comment below and
+        the s08 review, 2026-09-04.
+        """
         if not self.log_path.exists():
             return []
-        return self.log_path.read_text(encoding="utf-8").splitlines()
+        return [chunk.decode("utf-8", "surrogateescape")
+                for chunk in self.log_path.read_bytes().split(b"\n")]
 
     @staticmethod
     def _is_entry(line: str) -> bool:
@@ -32,9 +54,8 @@ class AuditChain:
         # F-09 (known, deferred to scale-hardening): O(n) — reads the whole log
         # on every append. Fine for S02 volumes; tail-seek/cache before cutover.
         for line in reversed(self._lines()):
-            s = line.strip()
-            if self._is_entry(s):
-                return s
+            if self._is_entry(line):
+                return line
         return None
 
     def head(self) -> str:
@@ -76,29 +97,94 @@ class AuditChain:
             }
             if content_sha256 is not None:
                 payload["content_sha256"] = content_sha256.strip()
+            # STRICT utf-8 on the way IN, deliberately, and it is not the
+            # `surrogateescape` used to READ the log back (`_lines`, `_sha256`
+            # in audit.py). Reading has to be lenient — a byte already on disk
+            # must be reportable as `parse_failure` rather than crashing the
+            # whole verification. Writing has to be strict: a record this
+            # cannot canonically encode raises here and the append FAILS, which
+            # is the safe direction. Signing it under some repaired encoding
+            # would put a record in the chain whose bytes no longer match what
+            # was signed. (raised as an advisory by the s08 review, 2026-09-04)
             sig = base64.urlsafe_b64encode(
                 key.sign(_canonical(payload).encode("utf-8"))
             ).decode("ascii")
             full = _canonical({**payload, "sig": sig})
-            with self.log_path.open("a", encoding="utf-8") as f:
-                f.write(full + "\n")
+            _append_record(self.log_path, full)
         return {"appended": True, "ts": ts, "verb": verb, "path": path, "source": source}
 
     def verify(self, public_key_pem_bytes: bytes | None = None) -> dict:
-        """Walk the chain; verify prev_hash linkage, signatures, byte-canonicality."""
+        """Walk the chain; verify prev_hash linkage, signatures, byte-canonicality.
+
+        A ``tampered`` verdict carries a ``diagnosis`` when the damage has a
+        known benign cause — see ``_text_mode_crlf_diagnosis``. The verdict
+        itself never softens: the bytes on disk really are not canonical, and
+        a verifier that talks itself out of that is not a verifier.
+        """
         _require_crypto()
-        from cryptography.exceptions import InvalidSignature
         from cryptography.hazmat.primitives.serialization import load_pem_public_key
 
         if public_key_pem_bytes is None:
             public_key_pem_bytes = public_key_pem()
         pub = load_pem_public_key(public_key_pem_bytes)
 
+        lines = self._lines()
+        errors, checked = self._verify_lines(lines, pub)
+        status = ("ok" if not errors and checked
+                  else ("empty" if not checked else "tampered"))
+        out: dict = {"status": status, "entries_checked": checked,
+                     "errors": errors}
+        if status == "tampered":
+            diagnosis = self._text_mode_crlf_diagnosis(lines, pub)
+            if diagnosis:
+                out["diagnosis"] = diagnosis
+        return out
+
+    def _text_mode_crlf_diagnosis(self, lines: list[str], pub) -> str | None:
+        """Name a `tampered` verdict caused by a TEXT-MODE writer, not tampering.
+
+        Until 2026-09-02 `append` wrote through `log_path.open("a")`. On a
+        Windows host — a supported target, `docs/substrate-spec.md`'s build
+        matrix — Python text mode translates every `\n` to `\r\n` on the way
+        out, and the reader of the day (`read_text().splitlines()` + `strip()`)
+        absorbed the `\r` on the way back, so the round trip agreed with
+        itself. The reader is strict now, by design (a `0x0b` swapped in for a
+        record separator used to give a log whose bytes hold one merged record
+        while a text reader saw two). The cost of that strictness is this: an
+        INTACT chain written on Windows now reports `not_canonical` on every
+        entry plus a `prev_hash_mismatch` cascade, which is the loudest alarm
+        this system owns, pointed at nothing.
+
+        PROVEN, never guessed: the diagnosis is returned only if dropping one
+        trailing `\r` per record makes the whole chain verify clean. A real
+        tamper does not repair itself under that transform, and this says
+        nothing at all unless it does. Zero such logs exist on the reference
+        host (9 chains, 3.4 MB largest, measured 2026-09-02) — this is for the
+        Windows install nobody can inspect from here.
+
+        The verdict stays `tampered`. Only the explanation is added.
+        """
+        if not any(line.endswith("\r") for line in lines if line):
+            return None
+        healed = [line[:-1] if line.endswith("\r") else line for line in lines]
+        errors, checked = self._verify_lines(healed, pub)
+        if errors or not checked:
+            return None
+        return ("every record carries a trailing CR and the chain verifies "
+                "clean without it: this log was APPENDED IN TEXT MODE on a "
+                "Windows host by an engine older than 2026-09-02, and is "
+                "intact — not tampered with. Rewrite it with LF line endings "
+                "(the current writer is binary and can no longer produce "
+                "this), then re-run verify-audit.")
+
+    def _verify_lines(self, lines: list[str], pub) -> tuple[list[dict], int]:
+        """The chain walk over EXACTLY these record strings."""
+        from cryptography.exceptions import InvalidSignature
+
         errors: list[dict] = []
         prev_hash = NULL_PREV_HASH
         checked = 0
-        for raw in self._lines():
-            s = raw.strip()
+        for s in lines:
             if not self._is_entry(s):
                 continue
             idx = checked
@@ -129,11 +215,7 @@ class AuditChain:
                 errors.append({"idx": idx, "error": "invalid_signature"})
             prev_hash = _sha256(s)
 
-        return {
-            "status": "ok" if not errors and checked else ("empty" if not checked else "tampered"),
-            "entries_checked": checked,
-            "errors": errors,
-        }
+        return errors, checked
 
     def latest_signed_hashes(self) -> dict[str, str]:
         """Path -> newest ``content_sha256`` the chain signed for it.
@@ -147,8 +229,7 @@ class AuditChain:
         bytes, so it cannot speak for them. Shared by ``content_drift`` and
         the sync-side downgrade guard (VULN-3387)."""
         latest: dict[str, str] = {}
-        for raw in self._lines():
-            s = raw.strip()
+        for s in self._lines():
             if not self._is_entry(s):
                 continue
             try:
@@ -192,7 +273,13 @@ class AuditChain:
                 drift.append({"path": path, "issue": "missing",
                               "expected_sha256": expected})
                 continue
-            actual = _sha256(fp.read_text(encoding="utf-8"))
+            # RAW BYTES (M-7). This used to be `_sha256(fp.read_text(...))`,
+            # and text mode strips `\r` before hashing: a CR-only edit after
+            # signing was invisible, and a note legitimately written with CRLF
+            # raised a false alarm forever. `write_note` signs
+            # `sha256(content.encode("utf-8"))` and writes those same bytes, so
+            # the byte hash is the writer's own convention read back honestly.
+            actual = sha256_file(fp)
             if actual != expected:
                 drift.append({"path": path, "issue": "content_drift",
                               "expected_sha256": expected, "actual_sha256": actual})
@@ -217,8 +304,7 @@ class AuditChain:
         bless every edit already made to those paths."""
         live: set[str] = set()
         covered: set[str] = set()
-        for raw in self._lines():
-            s = raw.strip()
+        for s in self._lines():
             if not self._is_entry(s):
                 continue
             try:
@@ -237,6 +323,38 @@ class AuditChain:
                 covered.discard(path)
         return {"paths": len(live), "covered": len(covered),
                 "uncovered": len(live) - len(covered)}
+
+
+# --------------------------------------------------------------------------
+# the log file itself
+# --------------------------------------------------------------------------
+def _append_record(log_path: Path, record: str) -> None:
+    """Append one record + ``\n``, owner-only and never through a symlink.
+
+    ``O_NOFOLLOW`` because the audit log is the one file whose bytes are the
+    evidence: a symlink planted at its name would hand every signed append to
+    whatever it points at. ``SECURE_FILE_MODE`` because the log carries every
+    note path this vault has ever written — on a shared machine that is a
+    readable map of the corpus, and it was world-readable until now. The
+    ``fchmod`` tightens a log created before this change too; the open mode
+    alone only applies at creation.
+    """
+    from . import config as _config
+
+    flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
+    for name in ("O_CLOEXEC", "O_NOFOLLOW", "O_BINARY"):
+        flags |= getattr(os, name, 0)
+    fd = os.open(str(log_path), flags, _config.SECURE_FILE_MODE)
+    try:
+        try:
+            os.fchmod(fd, _config.SECURE_FILE_MODE)
+        except (OSError, AttributeError):
+            pass  # Windows / exotic fs: the mode bits are best-effort there
+        data = (record + "\n").encode("utf-8")
+        while data:
+            data = data[os.write(fd, data):]
+    finally:
+        os.close(fd)
 
 
 # --------------------------------------------------------------------------
@@ -277,6 +395,7 @@ from .audit import (  # noqa: E402
     public_key_pem as public_key_pem,
     resolve_signing_key as resolve_signing_key,
 )
+from .notes import sha256_file as sha256_file  # noqa: E402
 from .audit_drift import load_drift_dispositions as load_drift_dispositions  # noqa: E402
 from .audit_drift import match_disposition as match_disposition  # noqa: E402
 from .audit_drift import (  # noqa: E402

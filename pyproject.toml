@@ -8,11 +8,11 @@ build-backend = "setuptools.build_meta"
 # check. The IMPORT package stays `brain` and the console script stays
 # `brain` — only the distribution/project name changes.
 name = "brainiac-cli"
-version = "0.20.35"
+version = "0.20.36"
 description = "Brainiac — local any-LLM second-brain core engine + brain CLI (Markdown truth, derived SQLite index)."
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 # DEFAULT INSTALL = FULL CAPACITY (owner decision, 2026-07-04): a plain
 # `pip install .` ships real semantic search (direct-ONNX bge-m3-int8), the
 # sqlite-vec ANN backend, the signed audit chain, PyYAML, and the ReDoS-guard
@@ -26,7 +26,7 @@ dependencies = [
     "numpy>=1.24,<3",
     "sqlite-vec>=0.1.6",
     "huggingface-hub>=0.20",
-    "cryptography>=41",
+    "cryptography>=49",
     "PyYAML>=6",
     "regex>=2023.0.0",
     # Windows Credential Manager backend for the audit signing key
@@ -49,7 +49,7 @@ dependencies = [
     # binary is present — the pytesseract binding itself stays a fully
     # OPTIONAL, NOT-a-pip-dependency probe: OCR degrades gracefully absent
     # it, matching the ADR's "system binaries are never pip deps" rule).
-    "Pillow>=10",
+    "Pillow>=12.3.0",
 ]
 
 [project.optional-dependencies]
@@ -63,7 +63,7 @@ dependencies = [
 vec = ["sqlite-vec>=0.1.6"]
 # Ed25519 audit chain (CORE-03). Without it the audit hook is unavailable and
 # write_note fails closed rather than writing an unsigned record.
-audit = ["cryptography>=41"]
+audit = ["cryptography>=49"]
 # Alternate fastembed-based embedder (NOT installed by default — the default
 # semantic path is the direct-ONNX bge-m3-int8 embedder in the core deps).
 embed = ["fastembed>=0.3"]
@@ -83,7 +83,7 @@ corporate = [
     "numpy>=1.24,<3",
     "sqlite-vec>=0.1.6",
     "huggingface-hub>=0.20",
-    "cryptography>=41",
+    "cryptography>=49",
     "PyYAML>=6",
 ]
 # YAML frontmatter (optional; a stdlib mini-parser is the fallback).
@@ -93,7 +93,7 @@ yaml = ["PyYAML>=6"]
 # message hints valid even though a default install already has these. Absent,
 # `brain ingest` degrades per-handler (reports which extensions are
 # unavailable) rather than crashing.
-ingest = ["pypdf>=6.15.0", "python-docx>=1.1", "python-pptx>=0.6.23", "openpyxl>=3.1", "Pillow>=10"]
+ingest = ["pypdf>=6.15.0", "python-docx>=1.1", "python-pptx>=0.6.23", "openpyxl>=3.1", "Pillow>=12.3.0"]
 # pytest-xdist/-timeout back the documented parallel suite run (AGENTS.md §8,
 # "Running the test suite"): ~15 min sequential -> ~6 min at `-n 8`. Both are
 # pytest-dev org, actively maintained. Declared here so a fresh checkout can
@@ -121,7 +121,7 @@ quant-tools = ["onnx>=1.14"]
 # release pipeline's release-asset handshake gate, after it had already shipped).
 # Upgrade path: port the adapter off FastMCP (mcp.server.lowlevel, or the
 # separate `fastmcp` package) and lift the cap — a real migration, not a bump.
-mcp = ["mcp>=1.0,<2"]
+mcp = ["mcp>=1.28.1,<2"]
 # Timeout-bounded regex engine (mrab-regex) used by BrainIndex.grep's --regex
 # path (RET-04 hardening) as a ReDoS guard: regex.search(text, timeout=...)
 # genuinely bounds catastrophic backtracking, unlike stdlib `re`. Absent ->

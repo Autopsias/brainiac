@@ -47,7 +47,16 @@ MODEL_SRC="${2:?missing <model-cache-dir>}"
 DIST="${3:-$REPO/dist}"
 WORKSPACE_ARG="${4:-}"
 
-VAULT="$(cd "$VAULT" && pwd)"
+# `-P`, not the bare `pwd`: `Path(...).resolve()` on the Python side (every
+# `cowork_staging.staging_root` call, including `stage_pin`/`publish_summary`
+# below) is PHYSICAL. A `VAULT` that is itself a symlink kept its logical
+# spelling here until MED-09's second reviewer pass, so the co-located
+# fallback below (`$VAULT/..`) computed the symlink's OWN parent instead of
+# its target's real parent -- `staging_root` then judged the two unrelated
+# and staged the pin under a THIRD directory neither side ever reads
+# (measured: pin at `.../a/vault/.brain`, reader at
+# `.../real/vault/.brain`, `load_pinned` -> None).
+VAULT="$(cd "$VAULT" && pwd -P)"
 
 # The staging root, and the refusal, both come from brain.cowork_staging --- the
 # ONE relocation-aware resolver, shared with src/brain/update_channels.py. A
@@ -59,7 +68,7 @@ VAULT="$(cd "$VAULT" && pwd)"
 # so the common invocation neither changes behaviour nor gains an interpreter
 # dependency at this point in the run (HOST_PY is not resolved until much later).
 if [ -n "$WORKSPACE_ARG" ]; then
-  WORKSPACE_ROOT="$(cd "$WORKSPACE_ARG" && pwd)"
+  WORKSPACE_ROOT="$(cd "$WORKSPACE_ARG" && pwd -P)"
   _STAGING_PY="${BRAIN_HOST_PY:-python3}"
   if ! BRAIN_DIR="$(PYTHONPATH="$REPO/src" $_STAGING_PY -m brain.cowork_staging \
         --vault "$VAULT" --workspace "$WORKSPACE_ROOT")"; then
@@ -68,7 +77,9 @@ if [ -n "$WORKSPACE_ARG" ]; then
     exit 2
   fi
 else
-  WORKSPACE_ROOT="$(cd "$VAULT/.." && pwd)"
+  # `$VAULT` is already physical (see above), so `$VAULT/..` is the vault's
+  # REAL parent even when the caller's original path went through a symlink.
+  WORKSPACE_ROOT="$(cd "$VAULT/.." && pwd -P)"
   BRAIN_DIR="$VAULT/.brain"
 fi
 
@@ -389,12 +400,28 @@ PYTHONPATH="$REPO/src" "$HOST_PY" -m brain.cli snapshot --dest "$SNAPSHOT_DEST" 
 # the VM leg. Best-effort: a failure here means the VM will report the
 # exceptions summary `unreachable` until this vault's audit key exists and
 # this installer re-runs, never a silent security regression.
+#
+# MED-09 (2026-09-02): staged at $BRAIN_DIR -- the SAME relocation-aware
+# staging root the engine/model/skills above already land at -- not at
+# `$VAULT/.brain` unconditionally. Matches the old call for a co-located
+# vault (WORKSPACE_ROOT is `$VAULT/..` there); on a relocated vault this is
+# the only location the VM mount can reach.
+#
+# Staging the pin alone does not close MED-09: `verify` also reads the
+# signed `exceptions.json` summary and recomputes the page hash, both still
+# read at the REAL vault's own `.brain` -- off the mount once relocated, and
+# nothing else ever copies them there. `publish_summary` mirrors whatever
+# `exceptions.json`/`exceptions.html` this vault already has (a no-op on a
+# brand-new vault that has never run `brain maintain`) into the same
+# staging root; every subsequent `brain maintain` run refreshes it too
+# (`folds/reporting.py`).
 echo "[install] staging pinned verification identity for the Cowork VM leg..."
-if ! PYTHONPATH="$REPO/src" "$HOST_PY" - "$VAULT" <<'PYEOF'
+if ! PYTHONPATH="$REPO/src" "$HOST_PY" - "$VAULT" "$WORKSPACE_ROOT" <<'PYEOF'
 import sys
 from pathlib import Path
-from brain.exceptions_verify import stage_pin
-stage_pin(Path(sys.argv[1]))
+from brain.exceptions_verify import stage_pin, publish_summary
+stage_pin(Path(sys.argv[1]), Path(sys.argv[2]))
+publish_summary(Path(sys.argv[1]), Path(sys.argv[2]))
 PYEOF
 then
   echo "[install]   WARNING: could not stage pinned verification identity" >&2

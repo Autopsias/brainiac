@@ -46,7 +46,7 @@ FINAL stage before stdout. A harness self-discovers the whole contract from
     brain ingest [--dry-run]                # host-broker: drain <vault>/inbox/ (ING-01/03)
     brain ingest-transcript <path> --origin O [--language L]   # host-broker (ING-04)
     brain write <relpath> [--reason R]     # host-broker, audited, fails closed
-    brain verify-audit [--pubkey F] [--json]  # verify the Ed25519 chain — own
+    brain verify-audit [--pubkey F] [--allow-empty] [--json]  # verify the chain — own
                                             # key, or an exported PUBLIC key
                                             # (external verification)   [HOST]
     brain audit-pubkey [--out FILE]        # export the audit PUBLIC key [HOST]
@@ -478,6 +478,7 @@ def _main(argv: list[str] | None = None) -> int:
 from .cli_help import EPILOG as EPILOG  # noqa: E402,F401  (facade re-export)
 from .cli_render import (  # noqa: E402,F401  (facade re-export)
     _capture_rerank_metadata as _capture_rerank_metadata,
+    _concealment_notice as _concealment_notice,
     _egress_footer as _egress_footer,
     _render_diagnose as _render_diagnose,
     _render_explain_hit as _render_explain_hit,

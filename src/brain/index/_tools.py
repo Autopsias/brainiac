@@ -8,6 +8,22 @@ from ._retirement import RETIRED_PREDICATE
 class _ToolMixin:
     """Index tool-query methods."""
 
+    def _grep_rows(self) -> list[Any]:
+        """Every note as ``(id,title,classification,zone,path,body,concealment)``.
+
+        Its own method only so :meth:`grep` stays inside the function-length
+        ratchet; nothing else calls it.
+
+        FALSE POSITIVE (scanner: string-built SQL): the sole interpolation is
+        ``_concealment_sql()``, which returns one of two module literals — the
+        column name, or ``''`` on an index that predates it. No caller input
+        reaches the SQL text. See ``_schema._concealment_sql``.
+        """
+        return self.conn.execute(  # nosec B608
+            "SELECT id,title,classification,zone,path,body,"
+            f"{self._concealment_sql()} FROM notes"
+        ).fetchall()
+
     def grep(
         self, pattern: str, *, k: int = 20, ignore_case: bool = True,
         regex: bool = False, max_tier: str | None = None,
@@ -81,9 +97,7 @@ class _ToolMixin:
             except _re.error:
                 rx = _re.compile(_re.escape(pattern), flags)
             rxs = [rx]
-        rows = self.conn.execute(
-            "SELECT id,title,classification,zone,path,body FROM notes"
-        ).fetchall()
+        rows = self._grep_rows()
         if max_tier is not None:
             allows = cls_mod.ClassificationFilter(max_tier=max_tier).allows
             rows = [r for r in rows if allows(r[2])]
@@ -105,6 +119,7 @@ class _ToolMixin:
                 "terms_matched": distinct,
                 "snippet": self._snippet(matches[0]),
                 "source": "grep",
+                "concealment": stored_verdict(r[6]),
             })
         out.sort(key=lambda d: (-d.get("terms_matched", 1), -d["match_count"], d["id"]))
         return out[:k]
@@ -183,7 +198,11 @@ class _ToolMixin:
             params.append(as_of)
         order_col = order_by if order_by in cols else "updated"
         sql = (
-            "SELECT id,title,classification,zone,path,type,updated,is_latest_version"
+            # `concealment` is deliberately NOT in `cols`: it is emitted, never
+            # filtered or ordered on. `brain integrity --injection` is the
+            # surface that reports OVER the verdict; this one carries it.
+            "SELECT id,title,classification,zone,path,type,updated,is_latest_version,"
+            f"{self._concealment_sql()}"  # nosec B608 - two module literals only
             " FROM notes AS n"
             + (" WHERE " + " AND ".join(where) if where else "")
             + f" ORDER BY {order_col} DESC, id ASC LIMIT ?"  # nosec B608 - order_col is allowlisted above
@@ -191,8 +210,8 @@ class _ToolMixin:
         params.append(k)
         rows = self.conn.execute(sql, params).fetchall()
         keys = ["id", "title", "classification", "zone", "path", "type", "updated",
-                "is_latest_version"]
-        return [dict(zip(keys, r)) for r in rows]
+                "is_latest_version", "concealment"]
+        return [dict(zip(keys, r)) | {"concealment": stored_verdict(r[8])} for r in rows]
 
     def graph_expand(
         self, seeds: list[str], *, depth: int = 2, k: int = 10, use_ppr: bool = True,
@@ -211,9 +230,10 @@ class _ToolMixin:
                         extra_edges=extra_edges, max_tier=max_tier)
 
     def get(self, note_id: str) -> dict[str, Any] | None:
-        r = self.conn.execute(
+        r = self.conn.execute(  # nosec B608 - two module literals only
             "SELECT id,title,type,classification,zone,path,created,updated,sha256,body,"
-            "is_latest_version,superseded_by,previous_version,superseded_date"
+            "is_latest_version,superseded_by,previous_version,superseded_date,"
+            f"{self._concealment_sql()}"
             " FROM notes WHERE id=?",
             (note_id,),
         ).fetchone()
@@ -221,8 +241,11 @@ class _ToolMixin:
             return None
         keys = ["id", "title", "type", "classification", "zone", "path",
                 "created", "updated", "sha256", "body",
-                "is_latest_version", "superseded_by", "previous_version", "superseded_date"]
-        return dict(zip(keys, r))
+                "is_latest_version", "superseded_by", "previous_version",
+                "superseded_date", "concealment"]
+        # `get` is the one verb that returns the WHOLE body, so it is the one a
+        # reader most needs the verdict beside (M-3b).
+        return dict(zip(keys, r)) | {"concealment": stored_verdict(r[14])}
 
     def recent(
         self, limit: int = 10, *, include_retired: bool = False
@@ -247,13 +270,16 @@ class _ToolMixin:
         where = "" if include_retired else f"WHERE NOT {RETIRED_PREDICATE} "
         dated = "(n.updated GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*')"
         rows = self.conn.execute(
-            "SELECT n.id,n.title,n.classification,n.zone,n.path,n.updated "
+            "SELECT n.id,n.title,n.classification,n.zone,n.path,n.updated,"
+            f"{self._concealment_sql()} "
             f"FROM notes AS n {where}"
             f"ORDER BY COALESCE({dated}, 0) DESC, n.updated DESC, n.id ASC LIMIT ?",
             (limit,),
         ).fetchall()
-        keys = ["id", "title", "classification", "zone", "path", "updated"]
-        return [dict(zip(keys, r)) for r in rows]
+        keys = ["id", "title", "classification", "zone", "path", "updated",
+                "concealment"]
+        return [dict(zip(keys, r)) | {"concealment": stored_verdict(r[6])}
+                for r in rows]
 
     def near_dup(self, *, min_score: float = 0.95, k: int = 5) -> list[dict[str, Any]]:
         """Detect backend-independent near-duplicate note pairs."""

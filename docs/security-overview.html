@@ -106,10 +106,18 @@
     residual.</p>
     <p><strong>Accepted, knowingly.</strong> The owner was shown the per-caller clamp and
     DECLINED it on 2026-08-31: the broker cannot tell a Cowork caller from the owner's own
-    Desktop, so capping one caps both. Authoritative record:
-    <code>docs/security-acceptances.md</code> A-05 and
+    Desktop, so capping one caps both.</p>
+    <p><strong>VULN-3385 was CLOSED on 2026-09-01, and the residual moved rather than
+    disappeared.</strong> The reported bypass — a note read off disk, unfiltered and
+    unrecorded — is fixed. An agent obtaining a high-tier note THROUGH the broker is
+    functionality, not the finding (A-01): it may read what its owner may read. The live
+    question is what can LEAVE without the owner deciding, and that is tracked as indirect
+    prompt injection at <code>docs/security-acceptances.md</code> <strong>A-06</strong>,
+    with three limits stated — including that the SEC-07 outbound guard is enforced where
+    Claude Code hooks run, which is the host, and NOT inside Cowork. Authoritative records:
+    <code>docs/security-acceptances.md</code> A-01/A-05/A-06 and
     <code>docs/security/vuln-3385-risk-reduction.md</code>. Until this document is rewritten
-    end to end, those two win over anything below.</p>
+    end to end, those win over anything below.</p>
   </div>
 
   <div class="chips">

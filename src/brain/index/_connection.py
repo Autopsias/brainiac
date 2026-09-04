@@ -86,6 +86,11 @@ class _ConnectionMixin:
         # write raises ``sqlite3.OperationalError`` (attempt to write a readonly
         # database) and no ``-wal``/``-shm`` sidecar is ever created.
         self.read_only = read_only
+        # M-3b: does this index carry the `concealment` column? Resolved
+        # lazily by `_concealment_sql` (which migrates a pre-column index
+        # in place) and reset with the connection, since `rebuild` points
+        # `db_path` at a staging file mid-flight.
+        self._concealment_column: bool | None = None
         self._conn: sqlite3.Connection | None = None
 
     @property
@@ -108,6 +113,7 @@ class _ConnectionMixin:
         return open_connection(self)
 
     def close(self) -> None:
+        self._concealment_column = None
         if self._conn is not None:
             self._conn.close()
             self._conn = None

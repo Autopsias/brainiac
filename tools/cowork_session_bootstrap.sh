@@ -34,10 +34,11 @@ export BRAIN_MODEL_CACHE="${BRAIN_MODEL_CACHE:-$BRAIN_RUNTIME_DIR/model}"
 # The manifest (one `sha256sum`-format line per binary) is produced on the
 # HOST leg by tools/cowork_workspace_install.sh at assembly time.
 #
-#   - Manifest ABSENT  -> WARN and proceed. Older/manually-assembled
-#     workspaces won't have one yet; this check is a supply-chain
-#     improvement layered on top of the existing trust model, not a hard
-#     gate that retroactively breaks every workspace that predates it.
+#   - Manifest ABSENT  -> REFUSE. An unverifiable set of binaries is not a
+#     hardened supply chain (owner ruling 2026-09-02, L3): a workspace staged
+#     before this manifest existed, or staged by hand, will not bootstrap
+#     until it is re-staged with `brain provision-local` (or
+#     tools/cowork_workspace_install.sh), which generates SHA256SUMS.
 #   - Manifest PRESENT -> MUST verify clean, or we refuse to trust the
 #     binaries at all: no symlink, no PATH export, session bootstrap aborts.
 #     A present-but-failing manifest is exactly the case worth catching
@@ -66,8 +67,11 @@ if [ -f "$brain_sha256sums" ]; then
   fi
   unset brain_sha256sums_cmd brain_sha256sums_out
 else
-  echo "[cowork] WARN: no SHA256SUMS manifest at $brain_bin_dir — skipping binary" \
-       "integrity check (re-run tools/cowork_workspace_install.sh to generate one)" >&2
+  echo "[cowork] REFUSING: no SHA256SUMS manifest at $brain_bin_dir — cannot verify" \
+       "binary integrity. Re-stage this workspace with 'brain provision-local'" \
+       "(or tools/cowork_workspace_install.sh) to generate one." >&2
+  unset brain_bin_dir brain_sha256sums
+  return 1 2>/dev/null || exit 1
 fi
 unset brain_bin_dir brain_sha256sums
 

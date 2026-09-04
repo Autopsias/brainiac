@@ -4,7 +4,8 @@ Both host-native clients (Codex/Claude Code/Gemini CLI) and sandboxed VM clients
 (Cowork) route through enforce() to guarantee frontmatter before any write.
 The host signs and indexes; the VM drops to capture-inbox/ unsigned and unindexed.
 
-    host:  enforce() → write_note() → incremental sync → snapshot
+    host:  enforce() → draft_capture() → drain-on-invoke in the same call
+           (validate + sanitise + sign + index) → incremental sync → snapshot
     VM:    enforce() → draft_capture() (capture-inbox/; unsigned, unindexed)
            host drain-on-invoke picks it up on the next brain run
 

@@ -114,6 +114,47 @@ _INSTRUCTION_PATTERNS: tuple[tuple[str, "re.Pattern[str]"], ...] = (
         r"\b(notes?|files?|documents?|contents?|data|emails?|messages?|vault"
         r"|records?|credentials?|secrets?)\b[^.\n]{0,40}?"
         r"\bto\b\s*<?(https?://|[\w.+-]+@[\w-]+\.[\w.]+)", re.I)),
+    # Portuguese alternatives, added 2026-09-02. They go HERE and nowhere
+    # else, because this table is the single vocabulary both signal classes
+    # consume: `_instruction_hits` reads it in the clear, `_concealment_hits`
+    # and `fold_concealed` read it inside a hidden run. So a Portuguese
+    # imperative IN PLAIN SIGHT is `instruction_only` (recorded, ingested,
+    # never quarantined) and the SAME sentence inside a hidden run is
+    # `conceal` — exactly the treatment English already gets, with no
+    # language-keyed branch anywhere. A language pattern is never a
+    # quarantine trigger on its own, and cannot be: `scan()` reaches
+    # `conceal` only through a concealment hit.
+    # Word order and accents are BOTH real: "instruções anteriores" is the
+    # natural order, the reference fixtures carry unaccented "instrucoes",
+    # and `envie` (subjunctive) is the form a Portuguese instruction uses —
+    # an `envia(r)?` alternation cannot match it.
+    ("override_previous", re.compile(
+        r"\b(ignora[r]?|ignore[m]?|desconsidera[r]?|desconsidere[m]?"
+        r"|esquece[r]?|esque[\u00e7c]a[m]?)\b[^.\n]{0,60}?\b"
+        r"(instru[\u00e7c][\u00f5o]es|instru[\u00e7c][\u00e3a]o|indica[\u00e7c][\u00f5o]es|regras?)\b"
+        r"[^.\n]{0,40}?\b(anterior(?:es)?|acima|pr[\u00e9e]vi[ao]s?|antigas?)\b"
+        r"|\b(ignora[r]?|ignore[m]?|desconsidera[r]?|desconsidere[m]?"
+        r"|esquece[r]?|esque[\u00e7c]a[m]?)\b[^.\n]{0,40}?\b"
+        r"(anterior(?:es)?|acima|pr[\u00e9e]vi[ao]s?|antigas?)\b[^.\n]{0,40}?\b"
+        r"(instru[\u00e7c][\u00f5o]es|instru[\u00e7c][\u00e3a]o|indica[\u00e7c][\u00f5o]es|regras?)\b", re.I)),
+    ("role_reassignment", re.compile(
+        r"\b(age|aja|atua|atue|actua|actue|comporta[- ]te)\b[^.\n]{0,20}\bcomo\b"
+        r"[^.\n]{0,40}\b(assistente|agente|sistema)\b", re.I)),
+    ("new_instructions", re.compile(
+        r"\b(nova[s]?|atualizada[s]?|actualizada[s]?|revista[s]?)\s+"
+        r"(instru[\u00e7c][\u00f5o]es|indica[\u00e7c][\u00f5o]es|regras?)\s*:", re.I)),
+    ("conceal_from_user", re.compile(
+        r"\b(n[\u00e3a]o|nunca)\b[^.\n]{0,20}\b(digas?|diga|informes?|informe"
+        r"|mencione[s]?|mostres?|mostre|reveles?|revele)\b[^.\n]{0,25}"
+        r"\bao?\s+(utilizador|usu[\u00e1a]rio)\b", re.I)),
+    ("exfiltration_verb", re.compile(
+        r"\b(envia[r]?|envie[m]?|encaminha[r]?|encaminhe[m]?|carrega[r]?"
+        r"|carregue[m]?|publica[r]?|publique[m]?|transmite|transmita)\b"
+        r"[^.\n]{0,40}?\b(o|a|os|as|todo?s?|toda?s?|este|esta|estes|estas)\b"
+        r"[^.\n]{0,30}?\b(ficheiros?|arquivos?|notas?|documentos?|conte[\u00fau]dos?"
+        r"|dados|emails?|mensagens?|registos?|registros?|credenciais"
+        r"|segredos?)\b[^.\n]{0,40}?\bpara\b\s*<?"
+        r"(https?://|[\w.+-]+@[\w-]+\.[\w.]+)", re.I)),
 )
 
 QUARANTINE_REASON = "concealed_instruction"
@@ -133,9 +174,13 @@ _SOFT_RUN_RE = re.compile(_class(_SOFT_INVISIBLE_RANGES) + "{%d,}" % _DENSE_RUN)
 
 def _instruction_hits(text: str) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for name, pat in _INSTRUCTION_PATTERNS:
+        if name in seen:  # one hit per marker: EN and PT share the names
+            continue
         m = pat.search(text)
         if m:
+            seen.add(name)
             out.append({
                 "marker": name,
                 "offset": m.start(),
@@ -236,6 +281,15 @@ def scan(text: str) -> dict[str, Any]:
     }
 
 
+# The concealment fold lives in its own module (500-LOC file bound), but its
+# names belong to this one: `fold_concealed` is the second half of `scan`.
+from .injection_fold import (COVERAGE_BUCKETS, REGRESSION_BUCKETS,  # noqa: E402,F401
+                             SCAN_STATES, _demo_concealed, assessment_meta,
+                             concealment_scan_state, coverage_bucket,
+                             fold_concealed, frontmatter_assessment,
+                             scan_coverage)
+
+
 def should_quarantine(result: dict[str, Any]) -> bool:
     """True only for concealment. Quoted imperatives are documents, not attacks."""
     return result.get("verdict") == "conceal"
@@ -280,9 +334,15 @@ def scan_corpus(vault: Any) -> list[dict[str, Any]]:
         except OSError:
             continue
         res = scan(text)
-        if res["verdict"] == "clean":
+        # The note's own Markdown carries no styling, so a document whose
+        # HANDLER saw hidden text scans `clean` here. That is precisely the
+        # population this report exists for, and the early `continue` used to
+        # discard every row of it — so the skip now consults the assessment
+        # the ingest stage stamped on the note (`injection_assessment.*`).
+        assessed = frontmatter_assessment(note.meta)
+        if res["verdict"] == "clean" and not assessed:
             continue
-        rows.append({
+        row = {
             "id": note.id,
             "path": str(note.path),
             "classification": note.classification,
@@ -290,7 +350,16 @@ def scan_corpus(vault: Any) -> list[dict[str, Any]]:
             "verdict": res["verdict"],
             "markers": [m["marker"] for m in (res["concealment"] or res["instruction"])],
             "detail": res["concealment"] or res["instruction"],
-        })
+        }
+        if res["verdict"] == "clean" and assessed:
+            # NOT "conceal": `maintenance.py` raises only conceal rows to
+            # action_required, and hidden-but-not-convicted is a 10.4%
+            # population — a report line, never an alarm.
+            row.update(verdict="hidden_not_convicted",
+                       markers=assessed["markers"],
+                       detail=[{k: assessed[k] for k in
+                                ("hidden", "containers", "scanner")}])
+        rows.append(row)
     return rows
 
 
@@ -356,8 +425,9 @@ def demo() -> None:
     plain = "# Weekly note\n\nWe agreed to delay the migration to October.\n"
     assert scan(plain)["verdict"] == "clean"
 
+    _demo_concealed()  # the concealment fold's own asserts
     print("injection_scan self-check OK "
-          "(4 positives fired, 4 negatives stayed quiet)")
+          "(concealment fold and Portuguese included)")
 
 
 if __name__ == "__main__":  # pragma: no cover

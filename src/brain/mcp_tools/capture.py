@@ -11,10 +11,11 @@ own, ever.
 **Body is unchanged from the CLI's, not reimplemented.** The tool is a thin
 call into ``mcp_adapter.dispatch``, which routes to ``dispatch_capture`` in
 :mod:`brain.mcp_capture_verbs` — a call into ``core.capture()``, the SAME
-unified verb ``brain capture`` runs. On the host that signs + indexes
-immediately; on the VM leg it stages an unsigned, untrusted draft the same
-way ``brain draft-capture`` always has, just without the VM ever touching a
-filesystem. The audited commit path, the untrusted-author sanitisation, and
+unified verb ``brain capture`` runs. On the host it stages the draft and
+drains it in the same call (validate, sanitise, sign, index — an existing id
+is refused, never overwritten); on the VM leg it stages an unsigned,
+untrusted draft the same way ``brain draft-capture`` always has, just
+without the VM ever touching a filesystem. The audited commit path, the untrusted-author sanitisation, and
 the unsigned-until-drained contract are unchanged — see
 ``mcp_capture_verbs`` and ``draft_drain.sanitize_untrusted_note`` for where
 each actually lives.
@@ -42,9 +43,13 @@ def register(server: Any, *, core: Any) -> None:
     ) -> dict:
         """Save ``content`` as a draft note.
 
-        Host: signed, indexed, and immediately retrievable. VM (Cowork): staged
-        unsigned and untrusted for the host's next drain-on-invoke — never
-        authoritative, never surfaced by search, until the host promotes it.
+        The draft is staged and then drained through the host's untrusted-author
+        lane: validated, sanitised, signed, indexed — and immediately retrievable
+        when the broker runs on the host (it always does; Cowork reaches it over
+        Claude Desktop's channel). An ``id`` that already exists is REFUSED
+        (``refused: duplicate-id …``), never overwritten — declare
+        ``updates: <id>`` in the frontmatter to change a note. On a ``vm``-role
+        core the draft waits for the host's next drain instead.
         ``id``/``type``/``classification`` are optional overrides; a missing
         classification defaults to Internal so the draft is usable without an
         egress elevation."""

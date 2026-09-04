@@ -202,15 +202,16 @@ def _clean_link(raw: Any) -> str:
 
 
 def _get_note(call: Call, note_id: str, max_tier: Optional[str]) -> tuple:
-    """-> (status, note) with status in ok|missing|withheld."""
+    """-> (status, note) with status in ok|missing (withheld reads as missing)."""
     rc, payload = _cli_json(
         call, ["get", note_id, "--json"] + _tier_args(max_tier))
     if rc == 0:
         return "ok", payload
     if rc == 1 and payload.get("error") == "not_found":
+        # Since 2026-09-01 a note withheld above the caller's ceiling answers
+        # EXACTLY like an absent one (no existence oracle), so "missing" here
+        # also covers "withheld" — the message at the call site says so.
         return "missing", None
-    if rc == 2 and payload.get("error") == "withheld_by_egress_filter":
-        return "withheld", None
     raise ProbeTransient(f"`brain get {note_id}` returned rc={rc}")
 
 
@@ -241,15 +242,13 @@ def _chain_head(call: Call, anchor_id: str,
         if status == "missing":
             if cur == anchor_id:
                 raise ProbeInvalid(
-                    f"anchor id not in index: {anchor_id} — update the "
-                    f"probes file (renamed/removed note?)",
+                    f"anchor id not in index, or withheld above the probe's "
+                    f"ceiling: {anchor_id} — update the probes file "
+                    f"(renamed/removed note?) or re-check the default --max-tier",
                     kind="missing_anchor")
             raise ProbeFail(
-                f"broken supersession chain: {seen[-2]} -> {cur} (missing)")
-        if status == "withheld":
-            raise ProbeFail(
-                f"note {cur} withheld by egress filter — starvation? "
-                f"(re-check the default --max-tier)")
+                f"broken supersession chain: {seen[-2]} -> {cur} "
+                f"(missing, or withheld above the probe's ceiling)")
         nxt = _clean_link(note.get("superseded_by"))
         if not nxt:
             return cur, note, len(seen) - 1

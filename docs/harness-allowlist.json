@@ -1,6 +1,9 @@
 {
   "schema_version": "harness-allowlist-v1",
   "updated": "2026-06-27",
+  "retired": true,
+  "retired_date": "2026-09-04",
+  "retired_note": "SUPERSEDED by docs/security-acceptances.md A-01 (owner ruling, 2026-08-17): the host resolves the full vault for every harness including these three, so a PENDING/default-deny posture keyed on vendor no-train/ZDR verification never matched practice. Retired per loss L4/M-5 (approvals.json, decided 2026-09-02, Option A). `src/brain.egress.is_allowed()` and its test are removed; the file is kept as a historical record only and is no longer read by any code path.",
   "doc": "docs/operations/egress-provider-posture.md",
   "policy": "Openness != 'any app'. A harness is ALLOWED (may run against the full vault) only when its vendor's no-train/ZDR scope is contractually VERIFIED to cover tool-call/API egress of vault content AND MNPI. PENDING/REJECTED => default-deny: that harness runs ONLY against a projected, sensitive-tier-free workspace (brain project). val-03's cross-harness test set MUST equal the VERIFIED subset of this register. We hold NO model API keys; egress rides the desktop app vendor's enterprise agreement, so each vendor is a DISTINCT contract that must be verified separately.",
   "bar": [

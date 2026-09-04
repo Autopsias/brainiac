@@ -17,7 +17,7 @@ import datetime as _dt
 from pathlib import Path
 
 from brain import cos, provenance
-from brain.notes import sha256_text
+from brain.notes import sha256_file, sha256_text
 
 from tools.cos_ingest_bridge_content import (
     CONTENT_ATTACHMENTS, CONTENT_BOTH, CONTENT_TEXT, _anomaly_doc,
@@ -352,8 +352,11 @@ def _execute_fresh_drop(vault, run_id: str, row: dict, outcome: dict, *,
     if res["sha256"] in consumed:
         held = cos.claim_quarantine_dir(vault) / f"{res['id']}.md"
         try:
-            held_ok = held.is_file() and sha256_text(
-                held.read_text(encoding="utf-8")) == res["sha256"]
+            # RAW BYTES (M-7): `res["sha256"]` is over the bytes
+            # `cos.propose` wrote. `read_text()` strips `\r`, so a CRLF
+            # held copy read as absent and the healthy heal was
+            # quarantined as a replay.
+            held_ok = held.is_file() and sha256_file(held) == res["sha256"]
         except OSError:
             held_ok = False
         if not held_ok:

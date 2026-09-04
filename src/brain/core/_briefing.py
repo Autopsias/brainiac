@@ -3,11 +3,13 @@ from __future__ import annotations
 
 from ._shared import (
     Any,
+    Path,
     classification,
     config,
     frontmatter,
     safe_slug,
     source_repo_root,
+    vault_writer_lock,
 )
 
 
@@ -25,13 +27,24 @@ class _CoreBriefingMixin:
     ) -> dict[str, Any]:
         """Unified capture verb (UX-01).
 
-        HOST path: enforce frontmatter → write_note (sign + audit) → incremental
+        HOST path: enforce frontmatter → draft_capture → drain-on-invoke IN THE
+                   SAME CALL (validate + sanitise + sign + index) → incremental
                    sync → note immediately retrievable.
         VM path:   enforce frontmatter → draft_capture (capture-inbox/, unsigned,
                    unindexed) → host drain-on-invoke picks it up on the next run.
 
         No signing key is ever touched on the VM path. The VM drops an untrusted
         draft; the host validates, signs, and indexes it on drain-on-invoke.
+
+        Both legs commit through ONE lane (2026-09-01). Until then the host
+        branch called ``write_note`` directly, and the broker (a host process,
+        serving Cowork too) ran that branch: a sandbox capture was signed and
+        indexed with no untrusted-author checks and could REPLACE an existing
+        note, ``raw/`` included. Now the only difference between the legs is
+        WHEN the drain runs. What the host lane refuses that the direct write
+        did not: an id that already exists (``duplicate-id``; declare
+        ``updates: <id>`` to change a note), a forged ``provenance.verified``,
+        an id that escapes its subtree.
         """
         from .. import capture as cap_mod
 
@@ -49,23 +62,40 @@ class _CoreBriefingMixin:
             meta, _body = frontmatter.parse_text(enforced)
             nid = safe_slug(meta.get("id", "capture"))  # same C-1/C-2 trust boundary
             ntype = str(meta.get("type", "note"))
-            if ntype == "source":
-                rel, subtree = f"raw/{nid}.md", "raw"
-            else:
-                rel, subtree = f"brain/resources/{nid}.md", "brain/resources"
-            write_res = self.write_note(rel, enforced, reason=reason or f"capture {nid}",
-                                        subtree=subtree)
-            sync_res = self.sync(drain=False)  # note already written; just reconcile
+            staged = self.draft_capture(enforced, ident=nid, is_source=(ntype == "source"))
+            draft = Path(staged["draft"])
+            with vault_writer_lock(self.vault, verb="capture"):
+                drain_res = self.drain_drafts()
+            sync_res = self.sync(drain=False)  # drained above; just reconcile
+            sync_out = {
+                "added": sync_res.get("added", 0),
+                "updated": sync_res.get("updated", 0),
+            }
+            refusal = next(
+                (s for s in drain_res["details"]["skipped"] if s["draft"] == draft.name),
+                None,
+            )
+            if refusal is not None:
+                if refusal["reason"].startswith("duplicate-id"):
+                    # The note already exists; a stale draft would be re-refused
+                    # on every drain and count as pending forever.
+                    draft.unlink(missing_ok=True)
+                return {
+                    "id": nid,
+                    "signed": False,
+                    "indexed": False,
+                    "role": "host",
+                    "refused": refusal["reason"],
+                    "sync": sync_out,
+                }
+            rel = f"raw/{nid}.md" if ntype == "source" else f"brain/resources/{nid}.md"
             return {
                 "id": nid,
-                "path": write_res["written"],
+                "path": str(self.vault / rel),
                 "signed": True,
                 "indexed": True,
                 "role": "host",
-                "sync": {
-                    "added": sync_res.get("added", 0),
-                    "updated": sync_res.get("updated", 0),
-                },
+                "sync": sync_out,
             }
         else:
             res = self.draft_capture(enforced, ident=None, is_source=False)

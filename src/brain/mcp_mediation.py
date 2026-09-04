@@ -6,8 +6,11 @@ egress tally. A ROW is not. ``read_log.outcome_from_tally`` returns one of four
 outcomes and only ``written`` puts a line on disk — ``nothing_to_record`` when
 the body never CALLED the gate (fine for a verb declared in
 :data:`BODYLESS_TOOLS`,
-:class:`UngatedToolError` for any other), ``disabled`` under ``BRAIN_READ_LOG=0``
-or a ``vm`` role, ``failed`` when content WAS gated and the line could not be
+:class:`UngatedToolError` for any other), ``disabled`` under a ``vm`` role
+(LOW-02: ``BRAIN_READ_LOG=0`` disables the CLI leg but NOT this one — the
+broker's own flush passes ``respect_env=False`` so an env var left in a
+connector config cannot silently drop an MCP caller's record), ``failed``
+when content WAS gated and the line could not be
 written (:class:`ReadRecordError`, and the caller never sees the data). A fifth
 case sits outside those four: when the BODY raises, the flush still runs but
 inside ``suppress(Exception)`` with its outcome discarded, so that call can
@@ -150,6 +153,10 @@ def in_mediated_call() -> bool:
 def _flush_record(
     *, vault: Any, role: str, cmd: str, max_tier: str, started: float,
 ) -> str:
+    """``respect_env=False`` (LOW-02): a ``BRAIN_READ_LOG=0`` left in a
+    Desktop connector env — the exact scenario :func:`read_log_regime` exists
+    to make loud — must not silently drop the record for every MCP caller.
+    Only a vm role still disables this flush; see ``read_log.enabled``."""
     from . import egress as _egress, read_log as _read_log
 
     return _read_log.outcome_from_tally(
@@ -159,6 +166,7 @@ def _flush_record(
         max_tier=max_tier,
         tally=_egress.take_tally(),
         latency_ms=(_time.perf_counter() - started) * 1000.0,
+        respect_env=False,
     )
 
 
@@ -179,8 +187,12 @@ def mediate(
       :data:`BODYLESS_TOOLS`; for any other tool it means the handler never
       reached ``egress.apply_gate``, and that raises :class:`UngatedToolError`
       instead of returning an unfiltered, unrecorded result (``expects_gate``).
-    * ``disabled`` — ``BRAIN_READ_LOG=0``, or a vm role, for which a
-      self-written access log is not evidence. An operator decision. SUCCEEDS.
+    * ``disabled`` — a vm role, for which a self-written access log is not
+      evidence. An operator decision. SUCCEEDS. **Not ``BRAIN_READ_LOG=0``
+      (LOW-02):** that variable disables the CLI leg, where the operator
+      typed the command and sees ``cli_read_record``'s stderr notice that
+      it did — but ``_flush_record`` above passes ``respect_env=False``, so
+      it cannot silently drop an MCP caller's record the same way.
     * ``written`` — the record is on disk and fsynced. SUCCEEDS.
     * ``failed`` — content WAS gated and the line could not be written (no
       securable log dir, an OSError, a lock timeout). :class:`ReadRecordError`,
@@ -230,25 +242,27 @@ def mediate(
 
 
 def read_log_regime(vault: Any, role: str) -> str:
-    """One line naming which of the four SEC-06 recording states we are in.
+    """One line naming which SEC-06 recording state the broker's OWN flush is
+    actually in — ``respect_env=False``, the same call ``_flush_record``
+    makes (LOW-02), so this banner can never claim "DISABLED" while the
+    broker goes on writing rows.
 
-    Three production states are otherwise indistinguishable to an operator:
-    ``BRAIN_READ_LOG=0`` left in a Desktop connector env, ``BRAIN_ROLE=vm``
-    mis-set on a host broker, and an unwritable log dir. The first two make
-    every read succeed and none get recorded; the third makes every gated read
-    RAISE. Nothing printed anything, and ``brain maintain``'s nightly read_log
-    block cannot tell "disabled" from "nothing was read" (adversarial review
-    2026-08-28). Claude Desktop surfaces a connector's stderr, so one line at
-    startup is the cheapest observability this transport has.
+    Two production states used to be indistinguishable to an operator:
+    ``BRAIN_READ_LOG=0`` left in a Desktop connector env and ``BRAIN_ROLE=vm``
+    mis-set on a host broker both made every read succeed and none get
+    recorded, with nothing printed. Since LOW-02 only the vm-role case still
+    disables the broker's flush — ``BRAIN_READ_LOG=0`` no longer silently
+    drops an MCP caller's record — so that is the only DISABLED state left
+    here; an unwritable log dir makes every gated read RAISE instead, and
+    ``brain maintain``'s nightly read_log block still needs to tell that apart
+    from "nothing was read" (adversarial review 2026-08-28). Claude Desktop
+    surfaces a connector's stderr, so one line at startup is the cheapest
+    observability this transport has.
     """
-    from . import querylog as _querylog, read_log as _read_log
+    from . import read_log as _read_log
 
-    if not _read_log.enabled(role):
-        # The SAME predicate ``read_log.enabled`` used to decide, not a second
-        # spelling of it: ``str(role) == ROLE_VM`` is exact, so a role of "VM"
-        # disabled the log as a vm and then blamed BRAIN_READ_LOG for it.
-        why = "role=vm" if _querylog._is_vm_role(role) else "BRAIN_READ_LOG"
-        return f"read-log DISABLED by {why} — reads will not be recorded"
+    if not _read_log.enabled(role, respect_env=False):
+        return "read-log DISABLED by role=vm — reads will not be recorded"
     location = _read_log._log_dir(vault)
     if location is None:
         return ("read-log UNWRITABLE — no securable log dir; every gated read "

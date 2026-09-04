@@ -29,7 +29,46 @@ default cap = full vault, `--role vm` default = Internal; narrow with
 the published read-only snapshot and never signs — see
 `docs/cowork-windows-install.md`.
 
-**Active plans:** [The Night Porter](_plans/night-porter-2026-08-25/PLAN.html) · 10 sessions · run via `/plan-execute _plans/night-porter-2026-08-25` (built 2026-08-25, hardened 2026-08-25). It is the only plan still to run.
+**Active plans:** [The Night Porter](_plans/night-porter-2026-08-25/PLAN.html) · 10 sessions · run via `/plan-execute _plans/night-porter-2026-08-25` (built 2026-08-25, hardened 2026-08-25). Run `run.py status` on a plan before acting on this line.
+
+**Security Follow-up 2026-09 closed 2026-09-04** and is on `master` as `00360450` (15 sessions, 16 items, all DONE). Suite at the merge: 6010 passed, 0 failed. The automated `land` cannot run in this repo — the sole remote is the push-disabled public export, which has no `master` — so the merge was done by hand and recorded in the plan's `LAND_NOTICE.txt`. Acceptance review: `_plans/security-followup-2026-09-01/_evidence/security-followup/acceptance-review.md` — four of six criteria ACHIEVED, one DEFERRED by s05's own NO-GO, and one **PENDING on two owner-only actions that are still open**: the hand-edit in `_evidence/security-followup/m2-settings-edit.md` (the outbound term guard is installed in the engine and `brain doctor` reports `guard_registered: false` on this machine — it is NOT running) and Require-status-checks on the public `main`. The engine may never write a permission file, so the first one is the owner's. `clean` is no longer a provenance claim (A-12).
+
+Commitment Judging closed 2026-09-03 and is on `master` as `ea9556f5`. SEVEN rounds of judging have
+run, and **round 7 ended the question by measuring the thing five rounds never measured: recall.**
+Revision 5 caught 16 commitments over 8 meetings and MISSED an estimated 181 — **recall 8.1%,
+95% range [5.5%, 13.9%], and that is a CEILING because it credits every staged row as correct.**
+Measured against pass B, a plain reader with no rulebook, so it is independent of the doctrine:
+of 20 owner rulings on a uniform sample of the 452 pass-B rows revision 5 did not stage, 8 were real
+commitments. **The precision gains of revisions 4 and 5 were bought by staging less** — revision 4
+staged 39 of 265 turn pairs, revision 5 staged 16 of 294. A doctrine that catches one commitment in
+twelve cannot deploy at any precision, so the precision census was not run (pooled n would have been
+26, which clears 0.2 only at 0 or 1 errors).
+
+The earlier arc still stands: rounds 1-2 were under-powered; round 3 recovered 8 meetings a
+diarization artifact had excluded and measured 0.474 (9/19); revision 3 measured 0.727 (8/11)
+held-out; revision 4 changed the UNIT to a turn pair and measured 0.282 (11/39); revision 5 closed
+three defects and measured 0.100 (1/10) like-for-like against revision 3's 0.727 on the same 9
+meetings. Three wording revisions made precision worse; changing the unit made it better.
+
+**The revision loop is PAUSED, because the corpus cannot support a revision 6.** All 8 meetings
+collapse two or more diarized speaker slots onto ONE name (one puts five slots on a single name);
+67 slots resolve to 50 distinct labels and 28 of 67 are unnamed — yet all 8 carry `validation: pass`
+and `speaker_resolution: owner-verified`. All eight extraction agents reported this independently.
+Revision 5's `no-promisor` rule fires on an UNNAMED promisor and cannot fire on a WRONGLY NAMED one,
+so rows pass every rule carrying attribution nobody can check. **The transcription pipeline's
+speaker validation could not detect a collapse, so it had never reported one — a pipeline defect, not
+a doctrine defect. FIXED 2026-09-04** in the separate Transcriber repo (`ade8469`): a D-05 detector
+(`transcriber/validate.py detect_shared_name`) reports one real name holding two or more diarized
+slots, graded HIGH when that name also self-addresses and MEDIUM otherwise, plus a distinctness rule
+in the auto-resolver prompt. It REPORTS rather than refuses, because diarization does legitimately
+split one person across slots. All 8 judging transcripts now exit 1 (7 of them exited 0 before);
+3 transcripts with no repeated name stay silent. **The 8 meetings themselves cannot be repaired** —
+none of their source audio is on this machine and none has a matching embedding sidecar. Loosening the doctrine against this corpus would fit a transcription artefact
+rather than predict. One related suspicion was checked rather than assumed: 20 of 51 `duplicate`
+drops repeat verbatim, but 18 sit in one meeting with an ASR loop; outside it 2 of 30, so that rule
+is sound. Nine further revision-5 defects are open, four re-reported from round 6. `96eef39` stands
+and nothing is deployed. Report: `docs/operations/commitment-judging-2026-09.md`; numbers in
+`_plans/commitment-judging-2026-09-03/_evidence/judging/round6/rates.json`.
 
 One Command per Vault closed 2026-08-31 and is on `master` as `c8d97ea`: one
 host command, `brain provision-local <vault> --workspace <dir> --model-dir

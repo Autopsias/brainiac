@@ -35,6 +35,16 @@ class _PlanningMixin:
             and alias.strip() and normalize_identity(alias)
         ] if isinstance(raw_aliases, list) else []
         row["title_norm"] = normalize_identity(row["title"])
+        # M-3b: the concealment verdict a READER is shown, projected from
+        # this note's `injection_assessment.*` frontmatter AS IT STANDS —
+        # nothing here or downstream verifies that those bytes were signed,
+        # and `retrieval_verdict`'s docstring says why that claim was
+        # withdrawn (owner ruling, 2026-09-04). Derived
+        # here rather than in `Note.to_row` so the note shape stays the
+        # substrate's and this stays the index's projection of it.
+        from ..injection_fold import retrieval_verdict
+
+        row["concealment"] = retrieval_verdict(note.meta or {})
         # Real-corpus robustness: a foreign vault has many frontmatter-bearing
         # notes whose id falls back to a non-unique stem (e.g. dozens of
         # SKILL.md / _index.md). notes.id is UNIQUE, so disambiguate a colliding
@@ -76,21 +86,34 @@ class _PlanningMixin:
         DB writes — no embedding (the bulk ``rebuild`` path embeds everything up
         front). Returns the next free chunk rowid."""
         c = self.conn
+        # Migrates a pre-column index before the INSERT names the column, and
+        # says whether that worked. The WRITE degrades exactly as the READS do
+        # (`_concealment_sql`): when the ALTER loses a lock race or the file is
+        # a pre-column one that cannot be migrated, naming `concealment` here
+        # unconditionally aborted the very next write with `no such column`,
+        # which moved the defect rather than closing it (adversarial review C5,
+        # 2026-09-04). Cached after the first call, so this is an attribute read.
+        has_verdict_column = self._concealment_sql() == self.CONCEALMENT_COL
         row = plan.row
+        values = (
+            plan.note_rowid, row["id"], row["title"], row["type"], row["classification"],
+            row["zone"], row["path"], row["created"], row["updated"],
+            row["sha256"], row["content_hash"], row["body"],
+            row.get("document_date", ""), row.get("effective_date", ""),
+            row.get("superseded_date", ""), row.get("is_latest_version", ""),
+            row.get("superseded_by", ""), row.get("previous_version", ""),
+            row.get("title_norm", ""),
+        ) + ((stored_verdict(row.get("concealment")),) if has_verdict_column else ())
         c.execute(
             "INSERT INTO notes(rowid, id, title, type, classification, zone, path,"
             " created, updated, sha256, content_hash, body, document_date,"
             " effective_date, superseded_date, is_latest_version, superseded_by,"
-            " previous_version, title_norm) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (
-                plan.note_rowid, row["id"], row["title"], row["type"], row["classification"],
-                row["zone"], row["path"], row["created"], row["updated"],
-                row["sha256"], row["content_hash"], row["body"],
-                row.get("document_date", ""), row.get("effective_date", ""),
-                row.get("superseded_date", ""), row.get("is_latest_version", ""),
-                row.get("superseded_by", ""), row.get("previous_version", ""),
-                row.get("title_norm", ""),
-            ),
+            " previous_version, title_norm"
+            # Two module literals only, chosen by the flag above — no caller
+            # value reaches the SQL text. See `_schema._concealment_sql`.
+            + (f", {self.CONCEALMENT_COL})" if has_verdict_column else ")")
+            + f" VALUES ({','.join('?' * len(values))})",  # nosec B608
+            values,
         )
         # Projection rows are written in the same transaction as the note,
         # title, chunks, and vectors. Duplicate aliases within one note are a

@@ -209,9 +209,20 @@ def _terminal_rows(
                  *checks.mcp_vault_paths()])
     rows.append(checks.cos_deployed_skill())
     rows.extend(checks.desktop_plugin_store(context.app_support_dir, ssot))
+    from .guard_settings import guard_settings_row as _guard_settings_row
+    from .guard_settings import session_state_row as _session_state_row
+    from .guard_settings import registry_pin_row as _registry_pin_row
     from .session_hook import doctor_rows as _session_hook_rows
 
     rows.extend(_session_hook_rows(context.claude_home))
+    # M-2: `.claude/settings.local.json` is gitignored, so no test or CI leg
+    # can see whether the owner applied the permission edit. This row is the
+    # only surface that can.
+    rows.append(_guard_settings_row(context.repo_root))
+    # And the guard's own accumulated session state, whose degraded mode —
+    # an unwritable directory — silently narrows the guard to one vault.
+    rows.append(_session_state_row())
+    rows.append(_registry_pin_row())
     return rows
 
 

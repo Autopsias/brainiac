@@ -266,6 +266,7 @@ def stuck_draft_alerts(vault: Path, name: str) -> list[dict[str, str]]:
 
 def exceptions_alerts(
     vault: Path, today: datetime.date, name: str, *, role: str,
+    workspace: Path | None = None,
 ) -> list[dict[str, str]]:
     """The one exceptions banner both roles now share: ``N thing(s) need
     you — run `brain exceptions --open`, or read <page path>``. NEVER reads ``inbox.jsonl`` directly any more (GRILL
@@ -279,13 +280,20 @@ def exceptions_alerts(
     anything in it; an unverifiable summary is reported unreachable, never a
     fabricated zero (HARDENED:adv-2026-08-20 / codex-verify-r1). The host
     trusts its own local file (it wrote it) but still checks staleness — the
-    same posture ``degradation_alerts`` takes on the sibling feed."""
+    same posture ``degradation_alerts`` takes on the sibling feed.
+
+    ``workspace`` (MED-09, optional) is forwarded to ``exceptions_verify
+    .verify`` for the relocation-aware pin lookup — a real Cowork VM's own
+    ``$BRAIN_VAULT`` already resolves to the workspace runtime dir by
+    construction, so this is unused by ``brain --role vm alerts`` itself
+    today; it exists so host-side callers that know the vault/workspace
+    registry split can verify a relocated vault directly."""
     from . import exceptions_page as _exc_page
 
     if role == "vm":
         from . import exceptions_verify as _exc_verify
 
-        ok, summary, reason = _exc_verify.verify(vault, today)
+        ok, summary, reason = _exc_verify.verify(vault, today, workspace)
         if not ok:
             return [_alert("exceptions:unreachable",
                            f"exceptions summary unreachable — {reason}", name)]

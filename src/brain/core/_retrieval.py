@@ -176,9 +176,16 @@ class _CoreRetrievalMixin:
 
         for d in decisions:
             d_date = d.get("date") or ""
+            # `concealment` travels with the tension row (adversarial review
+            # C4, 2026-09-04): a tension row IS a source raised as
+            # contradictory evidence, so it is the one place a reader most
+            # needs to know the source may carry text hidden from a human.
+            # Copied from the source hit, which already carries the index's
+            # normalised verdict — never re-derived here.
             d["tensions"] = [
                 {"id": s["id"], "date": s.get("date", ""), "type": s.get("type", ""),
-                 "identity": _identity(s)}
+                 "identity": _identity(s),
+                 "concealment": s.get("concealment", "unknown")}
                 for s in sources
                 if d_date and s.get("date") and s["date"] > d_date
             ]

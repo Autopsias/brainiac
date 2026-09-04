@@ -1,19 +1,32 @@
-# VULN-3385 — risk-reduction record (NOT a closure)
+# VULN-3385 — risk-reduction record (CLOSED 2026-09-01)
 
-**For a reader who did not follow the work.** This finding is not closed. It
-is reduced in severity, and this page says exactly how much and what is left.
-If you take one thing from this page: a Cowork session can still reach the
-same Restricted-tier note the original penetration test read. It now does so
-through a filtered, logged broker instead of an invisible bypass — that
-difference is real, but it is a mitigation, not a fix.
+**For a reader who did not follow the work.** The reported bypass is fixed. A
+Cowork agent read a Restricted note straight off disk — unfiltered, unrecorded,
+with write access. The vault is off the sandbox mount, every read now goes
+through the host broker's classification filter, and the read record fails
+closed. §2 and §3 carry the measurements.
 
-Register entry: `docs/security-acceptances.md` A-05. Install-page summary for
-operators: `docs/install/cowork.md`'s warning box.
+If you take one thing from this page: **a Cowork session can still obtain a
+high-tier note, and that is intended.** It gets it through the filtered, logged
+broker, because an agent that may read what its owner may read is the product
+working (`docs/security-acceptances.md` A-01). The question that stays live is
+not what an agent may read but what can LEAVE without the owner deciding —
+tracked as indirect prompt injection at **A-06**, with its controls and three
+stated limits.
+
+This page read "NOT a closure" until 2026-09-01, on a closure test — a
+per-caller tier ceiling — the owner ruled was the wrong test. §5 records the
+change and preserves the original argument rather than deleting it.
+
+Register entry: `docs/security-acceptances.md` A-05 (closed) and A-06 (the live
+residual). Install-page summary for operators: `docs/install/cowork.md`'s
+warning box.
 
 **On this file's name.** It was written as `vuln-3385-closure.md` and renamed
-on 2026-08-30. A page titled "NOT a closure" sitting at a path ending
-`-closure.md` is read by its filename first, in a directory listing, by exactly
-the reader who has not opened it yet — which is the reader this page is for.
+on 2026-08-30, when a page titled "NOT a closure" could not sit at a path
+ending `-closure.md`. The name stays as it is: this page's value is the
+risk-reduction record, and renaming it again would break every reference to it
+to gain nothing.
 
 ## 1. The finding, as reproduced
 
@@ -204,7 +217,72 @@ marketplace on its own schedule — this repository cannot see, and this page
 does not claim to know, whether any specific already-running Cowork
 workspace has done so yet.
 
-## 5. Why this is a mitigation, not a closure
+**Shipped since, and what it is worth here (2026-09-01, 0.20.35).** Three
+things landed after this page was last re-read. None of them is item 1 of §5,
+so none of them moves the verdict — they are recorded because a residual list
+that omits the mitigations built against it understates the posture, and
+because two of them carry limits a reader must not guess at.
+
+- **SEC-07, the outbound term guard.** `brain check-egress` judges one
+  outbound string against the vault's decoder ring and exits `6` at or above
+  `Confidential`; `scripts/brainiac-egress-guard.sh` is the Claude Code
+  `PreToolUse` wiring. This closes a channel this page never listed: the
+  classification gate decides what a caller may READ and said nothing about
+  what the model then puts into a tool-call argument, and nobody reviews a
+  web-search query string. **Its reach is asymmetric and that matters here.**
+  It is ENFORCED where Claude Code hooks run — the host's `~/.claude`. On the
+  Cowork leg the verb is `VM_ALLOWED` and the rule is carried as PROSE in the
+  staged `AGENTS.md`; nothing fires it automatically, exactly the soft
+  instruction-level guarantee `brain --role vm alerts` relies on. So the leg
+  this finding is ABOUT gets an instruction, not a mechanism.
+- **The decoder ring fills itself.** The guard's ring was hand-written, which
+  meant empty on any vault nobody curates — an inert guard. A nightly fold now
+  derives it from the vault's own `project` notes classified `Confidential` or
+  above, plus their aliases. Narrowed to `project` by measurement: harvesting
+  `concept`/`company`/`person` produced vocabulary, public firm names and bare
+  first names, and an over-refusing guard is switched off within a day. The
+  generated ring is EGRESS-ONLY and deliberately not in `overlay/keywords/`,
+  which feeds ingest classification.
+- **The two indirect-injection detectors now run unattended.** The SEC-05
+  concealed-instruction corpus re-scan and the SEC-06 bulk-read alarm lived in
+  the `brain integrity` CLI body, so they fired only when a human typed the
+  command. Both moved into `core.integrity()` and the Tuesday fold raises each
+  with its own `notify_key`, reporting a COUNT and never note names.
+
+**What none of it does.** A Cowork session can still ask the broker for the
+same Restricted-tier note and receive it, because the ceiling is the full vault
+for every caller by design. The guard constrains one exfiltration channel on
+one leg; it does not establish a per-caller ceiling, and it cannot see a
+paraphrase or a fact restated in the model's own words. §5's verdict is
+unchanged.
+
+## 5. CLOSED 2026-09-01 — and why this section is kept, not deleted
+
+**The finding is closed.** Everything below §5's heading was written while the
+closure test was "a per-caller tier ceiling for the Cowork leg", and it argued
+correctly that the test was not met. On 2026-09-01 the owner ruled that the
+test itself was wrong, and the reasoning is short enough to state in full:
+
+- Retrieving a high-tier note is **functionality, not a vulnerability**. It is
+  the ruling already recorded at A-01, applied here: "the purpose of brainiac
+  is to work and access all kind of information the user has access to".
+- The **reported incident** was an agent reading a note off disk — unfiltered,
+  unrecorded, with write access, invisible. Every part of that is fixed and
+  re-measured in §2–§3.
+- What was left was an agent obtaining a note **through the broker**: filtered,
+  ceiling-checked, and recorded fail-closed. That is the product working.
+- The live risk is therefore not what an agent may READ but **what can leave
+  without the owner deciding** — a prompt-injection question. It is tracked on
+  its own terms at **A-06** in `docs/security-acceptances.md`, together with
+  the controls built for it and three limits stated plainly, including that
+  SEC-07 does not run inside Cowork.
+
+The original argument is preserved verbatim below because a record that
+silently rewrites its own verdict is worth less than one that shows the verdict
+changing and says who changed it and why. Read it as: correct against the test
+it was given, and the test was replaced.
+
+### 5a. The original argument — why this was a mitigation under the old test
 
 The plan's own acceptance criteria, written before any of this work started,
 drew the line explicitly: the outcome is a closure only where a per-caller

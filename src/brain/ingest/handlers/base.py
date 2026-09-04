@@ -45,6 +45,194 @@ class ExtractResult:
         return ExtractResult(quarantine_reason=reason, warnings=list(warnings or []))
 
 
+#: Uncompressed ceiling for an OOXML container (.docx / .pptx). A Word or
+#: PowerPoint file is a zip, and its compressed size says nothing about what
+#: extraction has to hold in memory: measured 2026-09-02 on this checkout, a
+#: 110 KB .docx expanded to 30.5 MB (278:1) and the handler produced 29.7 MB of
+#: Markdown at a 68 MB RSS delta — the existing on-disk caps (100 MB docx /
+#: 150 MB pptx) never saw it.
+#:
+#: 256 MB is STATED, not derived. There is no "largest legitimate deck" to
+#: multiply here: `vault/raw/originals` does not exist in this checkout and
+#: `vault/raw` holds zero .docx/.pptx files (measured 2026-09-01). It is a
+#: ceiling well clear of any real document and well under what an extraction
+#: bomb needs to hurt. If a genuine deck is ever refused by it, RAISE it
+#: deliberately — never widen it to make one file pass.
+MAX_OOXML_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
+
+#: The quarantine reason ``ooxml_expansion_gate`` raises. Distinct from the
+#: plain-zip handler's ``zip_bomb_suspected`` on purpose: that one is backed
+#: by a streamed real-byte count as well as a declared one, this is a
+#: declared-size ceiling. Same family of threat, different strength of
+#: evidence, so it says so rather than borrowing the stronger word. Like
+#: ``zip_bomb_suspected`` it carries NO entry in
+#: ``maintenance_retention._QUARANTINE_REMEDY``: a security refusal is an
+#: owner judgement, never a mechanical auto-retry.
+OOXML_EXPANSION_REASON = "ooxml_expansion_suspected"
+
+#: Member-COUNT ceiling (LOW-02). Reuses ``zip.py``'s ``MAX_MEMBERS`` shape —
+#: refuse before the caller's own reader (``docx.Document()`` /
+#: ``Presentation()``) walks the parts — but scoped higher: a real .docx/.pptx
+#: legitimately declares one part per embedded object — an image, a
+#: diagram, a font — which a plain zip upload never does.
+#: Measured 2026-09-02
+#: (`_evidence/security-followup/s04-office-expansion.txt`, orchestrator-
+#: reproduced): 100,000 ZERO-BYTE members in a 10,577,878-byte archive cost
+#: 51.5 MB retained / 59.2 MB peak — the SAME peak the pre-s04
+#: ``docx.Document()`` path already paid for that member count, so this is not
+#: a new cost, only a bound on how large that count is allowed to grow.
+MAX_OOXML_MEMBERS = 5_000
+
+#: Its own reason word, same convention as ``OOXML_EXPANSION_REASON`` above —
+#: never ``zip_too_many_members``, so a quarantine report never asserts the
+#: plain-zip handler's streamed check ran here.
+OOXML_TOO_MANY_MEMBERS_REASON = "ooxml_too_many_members"
+
+
+def _declared_member_count(path) -> int | None:
+    """Entry count from the zip's own end-of-central-directory record.
+
+    WHY THIS EXISTS AT ALL, measured 2026-09-04: the member cap used to be
+    checked AFTER ``zipfile.ZipFile(path)``, and that is too late. ZipFile
+    reads the whole central directory in its constructor, so 100,001 zero-byte
+    members cost their full 59.2 MB peak BEFORE ``len(infolist())`` could be
+    asked — identical to the unbounded case. The cap bounded the downstream
+    reader and nothing else. Reading the count from the EOCD record costs one
+    64 KB tail read.
+
+    Returns ``None`` when the count cannot be determined (no EOCD found, a
+    short file, an OS error). The caller then falls back to the
+    post-construction check, which is still correct — just not cheap. Never
+    raises.
+    """
+    import struct
+
+    try:
+        size = path.stat().st_size
+        with open(path, "rb") as fh:
+            # The EOCD is last, but a trailing comment may follow it, and the
+            # comment length field is 16 bits — so 64 KB plus the record itself
+            # is the whole search space, never more.
+            tail_len = min(size, 65536 + 22)
+            fh.seek(size - tail_len)
+            tail = fh.read(tail_len)
+        at = tail.rfind(b"PK\x05\x06")
+        if at < 0 or len(tail) - at < 22:
+            return None
+        total = struct.unpack_from("<H", tail, at + 10)[0]
+        if total != 0xFFFF:
+            return total
+        # ZIP64: the 16-bit field is saturated and the real count lives in the
+        # zip64 EOCD record, which precedes this one.
+        at64 = tail.rfind(b"PK\x06\x06", 0, at)
+        if at64 < 0 or len(tail) - at64 < 40:
+            return None
+        return struct.unpack_from("<Q", tail, at64 + 32)[0]
+    except (OSError, struct.error):
+        return None
+
+
+def ooxml_expansion_gate(
+    path: Path, *, cap: int | None = None, member_cap: int | None = None,
+) -> "ExtractResult | None":
+    """Refuse an OOXML file whose members DECLARE more than ``cap`` bytes, or
+    whose member COUNT exceeds ``member_cap``.
+
+    Reads the central directory only — ``ZipInfo.file_size`` — and stops at the
+    FIRST member that carries the running sum past the cap, so a bomb is
+    refused without decompressing any of it. Returns ``None`` when the file is
+    within bounds, or is not a readable zip at all: in that case the handler's
+    own open path produces its own error, which is a better message than
+    anything this gate could invent.
+
+    **A DECLARED-SIZE CEILING, deliberately, and here is why it is a bound and
+    not a hope.** A central directory is attacker-written metadata, so the
+    obvious objection is a file whose ``file_size`` fields UNDERSTATE the
+    payload. Measured on this checkout, CPython 3.13 (2026-09-02, recorded in
+    `_evidence/security-followup/s04-office-expansion.txt`): ``ZipExtFile``
+    carries ``_left = zinfo.file_size`` from the CENTRAL directory and stops
+    decompressing there, so an understated member yields at most its declared
+    byte count and then raises ``BadZipFile: Bad CRC-32``. Both readers behind
+    this gate go through ``zipfile`` (``docx.opc.phys_pkg.ZipFileSystem``,
+    ``pptx.opc.serialized.ZipPkgReader``), so declared size bounds real output
+    for them. ZIP64 does not open a hole either — ``file_size`` is already the
+    64-bit value once ``infolist()`` has parsed the extra field.
+    ``tests/test_ingest_bounds_and_empty_chain.py`` pins that behaviour with a
+    hand-patched mismatched ``file_size``; if a future Python or a reader that
+    bypasses ``zipfile`` breaks it, that test fails and this ceiling has to be
+    re-derived as a streamed one.
+
+    **Its own reason word, NOT the plain-zip handler's.** ``zip.py`` refuses on
+    declared size AND counts real output bytes as they arrive
+    (``_read_member_bounded``); this gate does the first only. The outcomes
+    happen to coincide today for the reason above, but the two are not the same
+    check, and sharing ``zip_bomb_suspected`` would have the quarantine report
+    assert a streamed defence this path does not perform.
+
+    **Member COUNT is now bounded too (LOW-02), and the total-bytes ceiling
+    above does NOT already cover it — corrected 2026-09-04, the prior wording
+    here claimed it did.** A member that declares ``file_size == 0`` adds
+    nothing to the running total regardless of how many of them a file
+    carries, so 100,000 zero-byte members sail past ``cap`` at a running total
+    of 0 while still costing real memory to enumerate (measured
+    2026-09-02, `_evidence/security-followup/s04-office-expansion.txt`:
+    51.5 MB retained / 59.2 MB peak on CPython 3.13.12 for a 10,577,878-byte
+    archive — not a regression, since the pre-s04 ``docx.Document()`` path
+    already paid the identical peak for that member count). ``member_cap``
+    (default :data:`MAX_OOXML_MEMBERS`) refuses such a file — and refuses it
+    from the archive's own end-of-central-directory count, BEFORE
+    ``zipfile.ZipFile`` builds one object per member. That ordering IS the
+    fix: checked after construction the cap still refused, but the peak stayed
+    at the same 59.2 MB, because the constructor had already paid it (measured
+    2026-09-04). Read first, the same file peaks under 1 MB. Per-member size stays unbounded here on purpose —
+    the total above already caps what THAT would buy, since every member's
+    ``file_size`` feeds the same running sum.
+    """
+    import zipfile
+
+    # Resolved at CALL time, not bound as a default: a default argument would
+    # freeze the module constant at import and leave the handler wiring
+    # untestable without writing a 256 MB fixture.
+    if cap is None:
+        cap = MAX_OOXML_UNCOMPRESSED_BYTES
+    if member_cap is None:
+        member_cap = MAX_OOXML_MEMBERS
+    # CHEAP FIRST, and it has to be first: see `_declared_member_count`. The
+    # post-construction check below stays as the backstop for an archive whose
+    # EOCD cannot be read.
+    declared = _declared_member_count(path)
+    if declared is not None and declared > member_cap:
+        return ExtractResult.quarantine(
+            OOXML_TOO_MANY_MEMBERS_REASON,
+            warnings=[f"{declared} members exceeds cap {member_cap}"],
+        )
+    try:
+        with zipfile.ZipFile(path) as zf:
+            infos = zf.infolist()
+            if len(infos) > member_cap:
+                return ExtractResult.quarantine(
+                    OOXML_TOO_MANY_MEMBERS_REASON,
+                    warnings=[
+                        f"{len(infos)} members exceeds cap {member_cap}"
+                    ],
+                )
+            total = 0
+            for info in infos:
+                total += info.file_size
+                if total > cap:
+                    return ExtractResult.quarantine(
+                        OOXML_EXPANSION_REASON,
+                        warnings=[
+                            f"declared uncompressed total exceeds {cap} bytes at "
+                            f"member {info.filename!r} (running total {total}; "
+                            f"file is {path.stat().st_size} bytes on disk)"
+                        ],
+                    )
+    except (zipfile.BadZipFile, OSError):
+        return None
+    return None
+
+
 def density_gate(markdown: str, *, min_chars: int = MIN_CONTENT_CHARS) -> str | None:
     """Generic extraction-quality gate (HARDENED:grill): empty-text / low text
     density detector shared by every handler. Strips table-unparsed fences and

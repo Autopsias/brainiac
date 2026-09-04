@@ -16,6 +16,18 @@ def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def sha256_file(path: "Path | str") -> str:
+    """The hash a note's chain entry is compared against — over its RAW BYTES.
+
+    `write_note` signs `sha256_text(content)` and writes exactly those bytes,
+    so this is the same digest read back honestly. It must never go through
+    `read_text()`: text mode deletes every `\r` on the way in, which made a
+    CR-only edit after signing invisible and a legitimately CRLF note report
+    drift forever (M-7, 2026-09-02). One definition, because every caller that
+    compares a file to `content_sha256` has to use the same one."""
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
 # TMP-02: bitemporal frontmatter (ADR-0003 Ruling 2) — mirrors the id-resolution
 # tools/validate.py already does (link_id) so a "[[id]]"/"[[id|alias]]" wikilink
 # value indexes the same as a bare id.
@@ -105,6 +117,12 @@ class Note:
     updated: str = ""
     sha256: str = ""
     content_hash: str = ""  # sha256 of the FULL on-disk file text (change detection)
+    #: sha256 of the RAW BYTES of the same read (M-7). ``content_hash`` is
+    #: over the DECODED text, and text mode deletes every ``\r``, so it can
+    #: never match the audit chain's ``content_sha256`` on a CRLF note.
+    #: Empty when the note was not loaded from a file — a caller that needs
+    #: proof must treat empty as "cannot prove", never as a match.
+    raw_hash: str = ""
     # TMP-02 bitemporal keys (ADR-0003 Ruling 2) — all optional, "" when absent.
     document_date: str = ""
     effective_date: str = ""
@@ -145,7 +163,16 @@ def _zone_of(path: Path, vault: Path) -> str:
 
 def load_note(path: Path, vault: Path) -> Note | None:
     try:
-        text = path.read_text(encoding="utf-8")
+        # ONE read. `raw_hash` is derived from these exact bytes rather than
+        # re-opening the path later: re-opening to authenticate bytes already
+        # parsed is the substitution window `note_from_text` below exists to
+        # close, and the downgrade guard used to do exactly that (adversarial
+        # review round 5, 2026-09-04).
+        raw = path.read_bytes()
+        # `str.splitlines`-style translation, so `content_hash` keeps the exact
+        # convention `read_text` gave it — the index's change detection,
+        # fingerprint and graph manifest all key on that value.
+        text = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
     except (UnicodeDecodeError, OSError) as exc:
         # H-3: a single bad-encoding (or unreadable) file must not abort a
         # whole-vault rebuild/sync. Skip it with a warning rather than
@@ -153,7 +180,10 @@ def load_note(path: Path, vault: Path) -> Note | None:
         # note is honest; a mojibake-indexed one is not.
         warnings.warn(f"skipping unreadable note {path}: {exc}", stacklevel=2)
         return None
-    return note_from_text(text, path, vault)
+    note = note_from_text(text, path, vault)
+    if note is not None:
+        note.raw_hash = hashlib.sha256(raw).hexdigest()
+    return note
 
 
 def note_from_text(text: str, path: Path, vault: Path) -> Note | None:

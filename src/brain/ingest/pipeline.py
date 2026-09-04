@@ -83,7 +83,7 @@ def _build_frontmatter(meta: dict[str, Any], body: str) -> str:
             lines.append(f"{key}: {'true' if value else 'false'}")
         elif isinstance(value, str):
             value = H.strip_control_chars(value)
-            if key.startswith("provenance."):
+            if key.startswith(("provenance.", "injection_assessment.")):
                 lines.append(f"{key}: {fm.yaml_scalar(value)}")
             elif any(char in value for char in ':#"\\'):
                 lines.append(f'{key}: "{_yaml_dq_escape(value)}"')

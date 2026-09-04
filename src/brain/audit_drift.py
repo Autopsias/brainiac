@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import os
+from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -9,6 +11,30 @@ if TYPE_CHECKING:  # annotation-only; a runtime import here would be a cycle
     from .audit_chain import AuditChain
 
 DRIFT_DISPOSITIONS_FILENAME = "audit-drift-dispositions.json"
+
+# M-7. Until 2026-09-02 `content_drift` hashed the note's text AFTER Python's
+# universal-newline translation, so every disposition recorded before that date
+# is pinned to a hash that CANNOT distinguish the bytes it was ruled on from
+# bytes that differ only in carriage returns -- which is precisely the drift the
+# byte hash exists to detect. Those pins are marked, kept, and never allowed to
+# explain drift again; see `mark_legacy_hash_convention`.
+BYTE_HASH_CUTOVER = "2026-09-02"
+LEGACY_TEXT_CONVENTION = "text (legacy, unverifiable)"
+
+
+def _write_dispositions(path: Path, payload: dict) -> None:
+    """Stage into a sibling temp file, then rename over the target.
+
+    This file is the ONLY record of the owner's drift rulings — 108 of them on
+    the reference vault. `load_drift_dispositions` fails CLOSED on a file it
+    cannot parse, and failing closed reads as zero rulings, so an in-place
+    write killed mid-flight (disk full, host kill, power loss) would silently
+    turn every explained finding back into an unexplained one. `os.replace` is
+    atomic within a filesystem, so a reader sees the old file or the new one.
+    """
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def drift_dispositions_path(vault: Path) -> Path:
@@ -71,15 +97,86 @@ def migrate_drift_dispositions(vault: Path) -> str | None:
             dest.parent.chmod(0o700)
         except OSError:
             pass
-        dest.write_text(json.dumps(
-            {"dispositions": records,
-             "migrated_from_mount": legacy.as_posix()},
-            indent=2), encoding="utf-8")
+        _write_dispositions(dest, {"dispositions": records,
+                                   "migrated_from_mount": legacy.as_posix()})
     except OSError:
         return None
     return (f"carried {len(records)} drift disposition(s) forward from the shared "
             f"mount to {dest} — they were recorded where a Cowork VM could write, "
             f"so re-check them if you have any reason to doubt that host")
+
+
+def _is_legacy_convention_record(record: dict) -> bool:
+    """True when this pin was ruled on under the OLD normalising text hash.
+
+    The discriminator is the record's own ``recorded`` date against the
+    cutover. A record with no ``recorded`` field is NOT stamped: the
+    disposition file is host-private and off the VM-visible mount, so an
+    undated record there is an informal host-authored one, not an attack
+    surface -- and stamping it would break the only way an operator has of
+    writing a disposition by hand.
+    """
+    if record.get("convention"):
+        return str(record["convention"]) == LEGACY_TEXT_CONVENTION
+    recorded = str(record.get("recorded") or "")[:10]
+    return bool(recorded) and recorded < BYTE_HASH_CUTOVER
+
+
+def mark_legacy_hash_convention(vault: Path) -> str | None:
+    """Stamp every pre-cutover pin ``convention: "text (legacy, unverifiable)"``
+    -- ONCE. Returns a one-line note when it acted, else ``None``.
+
+    Deliberately NOT a re-key, and this is the whole point. There is no trusted
+    byte anchor for a note the owner ruled on under the normalising hash: a
+    CR-only edit leaves that hash unchanged, so a pin built on it cannot tell a
+    note whose bytes are untouched from one that drifted in exactly the way
+    this finding exists to surface. Any predicate derived from the old hash
+    therefore re-blesses that drift PERMANENTLY, because the migration runs
+    once. So the pins stay exactly as recorded -- the historical record is not
+    rewritten -- and the notes they covered come back as UNEXPLAINED for the
+    owner to re-rule under the byte convention. The count of pins left legacy
+    IS the size of that re-ruling task, and it is recorded in the file.
+
+    Records added after the cutover carry no marker and are byte-keyed."""
+    try:
+        path = drift_dispositions_path(vault)
+    except Exception:  # noqa: BLE001 — HostPathUnsafe: nothing safe to stamp
+        return None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if isinstance(raw, dict) and raw.get("migrated_hash_convention"):
+        return None  # already stamped; it runs once by construction
+    records = raw.get("dispositions") if isinstance(raw, dict) else raw
+    if not isinstance(records, list):
+        return None
+    stamped = [
+        {**r, "convention": LEGACY_TEXT_CONVENTION}
+        if isinstance(r, dict) and _is_legacy_convention_record(r) else r
+        for r in records
+    ]
+    legacy = sum(1 for r in stamped if isinstance(r, dict)
+                 and r.get("convention") == LEGACY_TEXT_CONVENTION)
+    out = dict(raw) if isinstance(raw, dict) else {}
+    out["dispositions"] = stamped
+    out["migrated_hash_convention"] = {
+        "date": date.today().isoformat(),
+        "cutover": BYTE_HASH_CUTOVER,
+        "legacy_pins": legacy,
+        "note": ("content drift now hashes the note's RAW BYTES. These pins were "
+                 "ruled on under a hash taken after newline normalisation, which "
+                 "cannot see a CR-only edit, so they are kept as the historical "
+                 "record and never explain drift again. The notes they covered "
+                 "surface as unexplained until re-ruled."),
+    }
+    try:
+        _write_dispositions(path, out)
+    except OSError:
+        return None
+    return (f"marked {legacy} drift disposition(s) as recorded under the legacy "
+            f"text-hash convention; the notes they covered now surface as "
+            f"unexplained drift until re-ruled against the note's raw bytes")
 
 
 def load_drift_dispositions(vault: Path) -> dict[str, dict]:
@@ -88,6 +185,7 @@ def load_drift_dispositions(vault: Path) -> dict[str, dict]:
     explained" — an unreadable or untrustworthy disposition file must never
     silently clear a drift count."""
     migrate_drift_dispositions(vault)
+    mark_legacy_hash_convention(vault)
     try:
         path = drift_dispositions_path(vault)
     except Exception:  # noqa: BLE001 — HostPathUnsafe and anything else
@@ -133,6 +231,11 @@ def match_disposition(record: dict, dispositions: dict[str, dict]) -> dict | Non
     d = _candidate_disposition(record, dispositions)
     if d is None or d.get("unverified_migrated"):
         return None
+    if d.get("convention") == LEGACY_TEXT_CONVENTION:
+        # Ruled on under the normalising text hash (M-7). That hash is blind to
+        # a CR-only edit, so accepting it here would let the one drift this
+        # change exists to detect stay explained forever.
+        return None
     return d
 
 
@@ -151,6 +254,12 @@ def drift_disposition_label(record: dict, dispositions: dict[str, dict]) -> tupl
         # reads as "needs re-confirmation" rather than an indistinguishable
         # fresh tamper alarm.
         return None, "needs_reconfirmation_migrated_from_mount"
+    if candidate is not None and candidate.get("convention") == LEGACY_TEXT_CONVENTION:
+        # The pin matches, but it was recorded against the pre-2026-09-02
+        # normalised text hash — kept as history, refused as an explanation,
+        # and named distinctly so the owner sees a re-ruling queue rather than
+        # a wall of indistinguishable fresh tamper alarms.
+        return None, "needs_reruling_text_hash_convention"
     return None, None
 
 
@@ -173,3 +282,79 @@ def drift_summary(vault: Path, chain: "AuditChain") -> dict:
         # that is half unbound is not the all-clear it reads as.
         "coverage": chain.content_coverage(),
     }
+
+
+def rerule_legacy_pins(
+    vault: Path, records: list[dict], *, apply: bool = False
+) -> dict:
+    """Re-rule pins refused ONLY for the legacy text-hash convention (M-7).
+
+    ``mark_legacy_hash_convention`` says "the notes they covered surface as
+    unexplained until re-ruled" — this is that missing re-ruling step. Nothing
+    else in the engine ever WROTE the disposition file, so a vault the
+    migration stamped had no way back: on the reference vault it turned 108
+    standing owner rulings into 97 unexplained drift findings and a stale
+    doctor row, with no command able to clear one.
+
+    What makes re-ruling safe is the marker itself. A record carries
+    ``needs_reruling_text_hash_convention`` only when its pin already matched
+    on path, issue AND the observed hash — and after M-7 that observed hash is
+    the note's RAW BYTES. That equality is the byte anchor the migration said
+    did not exist: the ruled-on text hash equals today's byte hash, so today's
+    file holds no carriage return at all, and a CR-ONLY edit after signing
+    changes the byte hash and never reaches this function.
+
+    The residual, stated rather than hidden: an edit that only REMOVES
+    carriage returns after the ruling produces the same equality. So re-ruling
+    is an OWNER act — nothing in the engine calls this, and ``apply`` defaults
+    to False so a caller reports the list before it writes anything.
+
+    Returns ``{"paths": [...], "applied": bool, "written": int}``.
+    """
+    queued = [
+        r for r in records
+        if r.get("disposition_reason") == "needs_reruling_text_hash_convention"
+    ]
+    paths = [str(r.get("path")) for r in queued]
+    out: dict = {"paths": paths, "applied": False, "written": 0}
+    if not queued or not apply:
+        return out
+    try:
+        path = drift_dispositions_path(vault)
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 — HostPathUnsafe/OSError/ValueError: fail closed
+        return out
+    stored = raw.get("dispositions") if isinstance(raw, dict) else raw
+    if not isinstance(stored, list):
+        return out
+    today = date.today().isoformat()
+
+    def _ident(r: dict) -> tuple:
+        # The SAME triple `_candidate_disposition` matches on. Keying by path
+        # alone would re-rule a shadowed duplicate pin that never reached the
+        # queue — measured on the reference vault: 95 queued paths, 96 records.
+        key = "expected_sha256" if r.get("issue") == "missing" else "actual_sha256"
+        return (str(r.get("path")), r.get("issue"), r.get(key))
+
+    wanted = {_ident(r) for r in queued}
+    written = 0
+    reruled = []
+    for rec in stored:
+        if (isinstance(rec, dict) and _ident(rec) in wanted
+                and rec.get("convention") == LEGACY_TEXT_CONVENTION):
+            # The hashes are NOT re-keyed: they already equal the observed byte
+            # hash, which is the only reason this pin became a candidate.
+            rec = {k: v for k, v in rec.items() if k != "convention"}
+            rec["recorded"] = today
+            rec["reruled_from"] = LEGACY_TEXT_CONVENTION
+            written += 1
+        reruled.append(rec)
+    outraw = dict(raw) if isinstance(raw, dict) else {}
+    outraw["dispositions"] = reruled
+    try:
+        _write_dispositions(path, outraw)
+    except OSError:
+        return out
+    out["applied"] = True
+    out["written"] = written
+    return out

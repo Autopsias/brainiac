@@ -73,6 +73,14 @@ def settle(
     Never raises: a failure to DECIDE must not become a traceback, and the
     conservative reading of an unexpected error here is the same as a failed
     write --- so it returns ``failed`` and the caller withholds the output.
+
+    **The read-log can be switched off silently — LOW-02.** ``BRAIN_READ_LOG=0``
+    made this outcome ``disabled`` with nothing printed anywhere, so an
+    operator who set it once (or inherited it from an old shell profile) had
+    no way to notice a gated read was going unrecorded. When THIS specific
+    cause applies — not a vm role, which is the CLI leg's ordinary state and
+    already unrecorded by design — one line goes to stderr, once per
+    invocation (``settle`` runs once per ``cli.main`` call).
     """
     from . import read_log
 
@@ -85,6 +93,13 @@ def settle(
         )
     except Exception:
         outcome = read_log.RECORD_FAILED
+    if outcome == read_log.RECORD_DISABLED and read_log.enabled(role, respect_env=False):
+        # Disabled with the env check removed still disables ONLY for a vm
+        # role — so reaching `disabled` at all here means BRAIN_READ_LOG=0
+        # is the cause, not role=vm.
+        import sys
+
+        print("read record disabled by BRAIN_READ_LOG=0", file=sys.stderr)
     return outcome, held
 
 

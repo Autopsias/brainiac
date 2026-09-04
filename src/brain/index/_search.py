@@ -67,6 +67,7 @@ class _SearchMixin:
                 snippet=self._snippet(row["body"]),
                 is_latest_version=row.get("is_latest_version", ""),
                 date=str(d or ""), type=row.get("type", ""),
+                concealment=stored_verdict(row.get("concealment")),
                 evidence=(
                     self._evidence_from_exact(exact, rid)
                     or ("keyword_exact" if self._literal_keyword_match(

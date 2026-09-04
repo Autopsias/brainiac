@@ -341,7 +341,7 @@ def auto_para(vault: Path, audit: Any | None = None) -> dict[str, Any]:
     rather than moving unsigned."""
     from . import frontmatter as fm
     from .audit import KeyUnavailable
-    from .notes import sha256_text
+    from .notes import sha256_file
 
     brain_dir = vault / "brain"
     report: dict[str, Any] = {"moved": [], "errors": [], "skipped_unsigned": []}
@@ -379,10 +379,16 @@ def auto_para(vault: Path, audit: Any | None = None) -> dict[str, Any]:
                                           "a signed note to an unsigned path"})
             continue
         # Sign the destination FIRST. If this raises, nothing moved.
+        # `sha256_file(p)`, NOT `sha256_text(text)` (M-7, 2026-09-02):
+        # `text` came through `read_text()`, which strips every `\r`, and
+        # `content_drift` compares the RAW BYTES. The rename does not
+        # rewrite the file, so the source path's bytes ARE the destination's
+        # — signing the text hash made a CRLF note report permanent
+        # UNEXPLAINED drift the moment this fold correctly filed it.
         try:
             audit.append(verb="write", path=new_rel,
                          reason=f"auto-para: filed {note_id} into {dest_zone}/",
-                         content_sha256=sha256_text(text))
+                         content_sha256=sha256_file(p))
         except KeyUnavailable as exc:
             report["skipped_unsigned"].append({"id": note_id, "reason": str(exc)})
             continue

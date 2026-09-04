@@ -61,6 +61,69 @@ adopted for exactly this reason (`$BRAIN_FAMILY_MIN_BODY`, default 1024 bytes;
 every genuine duplicate on that vault is ≥ 6.3 KB, so the floor sits in a wide
 empty gap). Not yet fixed; no ruling.
 
+### Concealed-instruction scan (M-3) — the switch and the four states
+
+Every handler that can see styling searches the document for text hidden from
+a human reader but still readable by a model: white-on-white, sub-2pt, parked
+off the page, Word's `w:vanish`, `display:none`/`visibility:hidden`, and PDF
+text render modes 3 and 7. Hidden text is only QUARANTINED when the revealed
+text is also injection-shaped; hidden-and-harmless is recorded and ingested.
+
+**The kill switch — `BRAIN_CONCEALMENT_SCAN`.** This is what to reach for when
+the scan is quarantining documents it should not, and it needs no code change
+and no release:
+
+```bash
+BRAIN_CONCEALMENT_SCAN=off brain ingest        # one run
+export BRAIN_CONCEALMENT_SCAN=off              # this shell, until unset
+```
+
+`off`, `0`, `false` and `no` all disable it; anything else (including unset)
+leaves it on. It turns off DETECTION only — the ordinary injection scan of the
+extracted Markdown keeps running, so a document that names an attack in plain
+sight is still recorded. Notes ingested while it is off are stamped `off`, so
+they are findable afterwards and are never mistaken for scanned-clean ones.
+Turn it back on by unsetting it; nothing is re-scanned automatically, and
+there is no backfill.
+
+**The seven states.** Every ingested note carries
+`injection_assessment.concealment_scan` in its frontmatter:
+
+| State | What it means | What to do |
+|---|---|---|
+| `full` | Every text this note admitted was searched, occurrence by occurrence, by the walker the source declares. `hidden: 0` beside it really does mean "we looked and found nothing". | Nothing. |
+| `incomplete` | The walk ran and something inside it failed — a malformed style declaration, an unreadable shape, a page whose operand visitor raised. Some hiding may be unseen. The warning on the record names how many elements were skipped. | Re-ingest the source if it matters; the file is unchanged on disk. |
+| `off` | The kill switch was set when this note was ingested. Nothing was searched. | Re-ingest with the switch unset once the over-fire that caused it is fixed. |
+| `unknown` | The lane passed no coverage ledger at all, so there is nothing to say — `xlsx`, `text`, `image`, `zip`. **`hidden: 0` on such a note is not evidence of anything.** | Treat the note as unscanned. |
+| `uncovered` | The note carries text from a source no walker reads: OCR of a slide picture or a scanned PDF page, a `text/plain` mail body. A known, enumerated population, not a fault. | Treat that text as unscanned. `ingest/handlers/concealment_gate.py`'s `UNCOVERED_SOURCES` names every one. |
+| `uninspected` | **A REGRESSION.** A source that IS covered admitted text its declared walker never reported reading — or the sink was fed by the wrong half of the handler. A covered lane failed. | Find them with `grep -rl 'concealment_scan: uninspected' <vault>/vault/` and fix the walk. |
+| `unaccounted` | **A REGRESSION.** Text reached the note's body without passing through the coverage ledger at all, so no claim about what was searched covers it. | Same: `grep -rl 'concealment_scan: unaccounted' <vault>/vault/`. |
+
+The last three were one `unknown` bucket until 2026-09-04. One bucket with
+three causes could not tell a known population (`uncovered`, which is most of
+the corpus and never changes) from a lane that broke this week, so the
+regression was permanently hidden inside the population — which is why only
+`uninspected` and `unaccounted` are in `REGRESSION_BUCKETS`.
+
+A fault state is the DEFAULT for anything the code cannot positively account
+for, including a text source added later that nobody wrote a walker for. That
+is deliberate: four review rounds in a row found `full` claimed over text
+nothing had searched, so `full` is now earned rather than assumed.
+
+**Reading the states across a whole vault:**
+
+```bash
+brain integrity --injection
+#   concealment-scan coverage: full=812, off=0, incomplete=3, uncovered=91,
+#     uninspected=0, unaccounted=0, unknown=0, absent=4104, unstamped=0
+```
+
+`absent` is a resting number — notes written before the key existed, and notes
+that never came through an ingest handler. `unstamped` is not: it counts notes
+that WERE assessed and carry no coverage key anyway, which only a pipeline
+regression produces, and a non-zero count prints its own `REGRESSION:` line —
+as do `uninspected` and `unaccounted`, each naming the `grep` that lists them.
+
 ### ZIP bounds (Zip-Slip-hardened, bomb-guarded)
 
 - **Zip-Slip:** every member's path is checked BEFORE any decompression —

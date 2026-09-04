@@ -10,7 +10,9 @@ delegates to.
 **Host-side staging, unconditionally.** The tool body below calls
 ``core.capture()`` directly — the SAME unified verb the CLI's ``brain
 capture`` runs (:mod:`brain.core._briefing`). That function already branches
-on ``core.role``: on the HOST it writes + signs + indexes immediately; on the
+on ``core.role``: on the HOST it stages the draft and drains it in the same
+call through the untrusted-author lane (until 2026-09-01 it called
+``write_note`` directly — signed, unsanitised, and able to overwrite); on the
 VM it calls ``draft_capture()``, which stages a plain file under
 ``config.capture_inbox_dir(core.vault)``. The broker process that RUNS this
 body is always the HOST process — a Cowork session reaches it over the
@@ -50,12 +52,12 @@ class CaptureRecordError(RuntimeError):
     withheld; nothing is rolled back, and what already happened differs by leg:
 
     * **host** — the leg the broker actually runs (see the module docstring):
-      ``core.capture()`` has ALREADY signed the note, appended its audit-chain
-      entry and indexed it, so the note is committed and searchable before
-      this function is reached. A signed entry therefore exists; the untraced
-      thing is the fact that the BROKER accepted the call. The id is a content
-      hash, so a client that retries rewrites the same path and duplicates
-      nothing.
+      ``core.capture()`` has ALREADY drained the draft — signed the note,
+      appended its audit-chain entry and indexed it — so the note is committed
+      and searchable before this function is reached. A signed entry therefore
+      exists; the untraced thing is the fact that the BROKER accepted the call.
+      The id is a content hash, so a client that retries is refused as
+      ``duplicate-id`` and duplicates nothing.
     * **vm** — the draft is already durable in ``capture-inbox/`` and no
       signed entry exists yet; here this trace is the only record naming the
       event until the host drains it. ``stage_draft_unique`` gives each retry

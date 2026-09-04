@@ -20,7 +20,13 @@ audiences:
   key, never a note slug — with a host-only reverse map alongside it
   (HARDENED:adv-2026-08-20, "OPAQUE IDS").
 * the FULL page (``config.index_dir()/exceptions-full.html``) — host-only,
-  real ids, real text, real options. The desktop ping opens THIS one.
+  real ids, real text, real options. The desktop ping opens THIS one. It
+  applies the OPERATOR's own configured cap too (LOW-02):
+  ``classification.DEFAULT_MAX_TIER`` (``$BRAIN_DEFAULT_MAX_TIER``, the same
+  var every other host read already honours) gates it exactly like the mount
+  page's ceiling gates that page — a note above the cap renders as a
+  ``withheld (tier)`` row here as well. Unset, that var is MNPI (the
+  unfiltered default), so a deployment that never narrows it sees no change.
 
 A third artifact, ``<vault>/.brain/exceptions.json``, is a SIGNED machine
 summary (HARDENED:adv-2026-08-20, "SIGNED SUMMARY") a later session
@@ -299,7 +305,13 @@ def generate(core: Any, today: datetime.date | None = None) -> dict[str, Any]:
     ceiling, _why = _vm_ceiling.resolved_ceiling(vault)
 
     mount_html, tokens = render_page(data, full=False, ceiling=ceiling)
-    full_html, _empty_map = render_page(data, full=True)
+    # LOW-02: the full page used to ignore any cap at all. It still shows
+    # everything by default (DEFAULT_MAX_TIER is MNPI, the un-narrowed
+    # default), but an operator who narrows $BRAIN_DEFAULT_MAX_TIER — the
+    # same var every other host read already honours — now gets the same
+    # withheld-row treatment here instead of an unfiltered page.
+    full_html, _empty_map = render_page(
+        data, full=True, ceiling=_classification.DEFAULT_MAX_TIER)
 
     runtime_dir = _config.brain_runtime_dir(vault)
     runtime_dir.mkdir(parents=True, exist_ok=True)

@@ -2,6 +2,19 @@
 
 **Date:** 2026-06-27 · Design of record: `_design_profile_a_architecture_v5` §3.
 
+> **§4 (below) is RETIRED, 2026-09-04 — superseded by `docs/security-acceptances.md`
+> A-01.** This document's `docs/harness-allowlist.json` register said all three
+> AI vendors were unverified PENDING and should run only against a projected
+> workspace; the owner's ruling (2026-08-17, A-01) is that the host resolves the
+> full vault for every harness, no exceptions. The register never matched
+> practice and cannot be brought into agreement with it without re-litigating
+> A-01, so loss L4/M-5 (`approvals.json`, decided 2026-09-02, Option A) retires
+> it instead of rewriting it: `is_allowed()` (the only code that read the
+> register as a gate) and its test are removed, `docs/harness-allowlist.json`
+> is marked `retired: true`, and §4 stays below as historical record of the
+> posture this vault shipped with before that ruling. **Sections 1-3 and 5 are
+> current and unaffected.**
+
 Egress — the model call — is where vault content actually leaves the machine, so
 this is the **primary** security workstream (design v5 §3). At-rest is FDE
 (`at-rest-posture.md`); the budget goes here.

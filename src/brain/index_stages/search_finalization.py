@@ -87,6 +87,7 @@ def materialize_hits(
                 is_latest_version=row.get("is_latest_version", ""),
                 date=ranking.valid_date.get(rowid, ""),
                 type=row.get("type", ""),
+                concealment=row.get("concealment", "unknown"),
                 duplicates=ranking.candidates.collapse.absorbed_ids.get(rowid, []),
             )
         )

@@ -11,10 +11,17 @@ whole page before assuming Cowork can do what the host clients do. Full matrix:
 `AGENTS.md` §6 (Host / VM trust split); the CLI-level guarantee (code + tests):
 `docs/cowork-windows-install.md`.
 
-> **VULN-3385 (2026-08) — MITIGATED 2026-08-30, the finding stays OPEN at
-> reduced severity. This is NOT a closure.** Full record, tests and residual:
-> `docs/security/vuln-3385-risk-reduction.md`; the register entry:
+> **VULN-3385 (2026-08) — CLOSED 2026-09-01.** The bypass is fixed. What is
+> NOT closed, and is tracked separately, is indirect prompt injection on this
+> leg: `docs/security-acceptances.md` **A-06**, which states its three limits
+> including that the SEC-07 outbound guard runs on the host and NOT inside
+> Cowork. Full record and tests:
+> `docs/security/vuln-3385-risk-reduction.md`; the closed register entry:
 > `docs/security-acceptances.md` A-05.
+>
+> **Read this before assuming more than it says.** A Cowork session can still
+> obtain a high-tier note through the broker. That is intended (A-01) — the
+> agent may read what you may read. The control is on what LEAVES.
 >
 > **What was wrong.** The guarantee above bound the `brain` COMMAND, not the
 > SESSION. Cowork attached the vault folder itself to the VM, read-write, over

@@ -11,7 +11,7 @@ from . import handlers as H
 from . import tierguard as TG
 from .handlers.base import NO_TEXT_MARKER
 from .pipeline_duplicates import prior_extraction_failed, record_duplicate
-from .pipeline_injection import injection_scan_stage
+from .pipeline_injection import apply_injection_assessment, injection_scan_stage
 
 
 @dataclass
@@ -359,6 +359,9 @@ def tierguard_stage(record: ClaimRecord) -> ClaimRecord:
     )
     record.meta["classification"] = record.verdict.tier
     record.meta.update(record.verdict.frontmatter())
+    # `record.meta` was REPLACED four lines up, so the concealment assessment
+    # is stamped here rather than in the stage that computed it (M-3).
+    apply_injection_assessment(record)
     record.classification = str(record.meta["classification"])
     if record.deliverable:
         DLV.open_journal(record)

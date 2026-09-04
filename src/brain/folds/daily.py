@@ -37,6 +37,11 @@ class DailyFoldsMixin:
             self.version_chain_fold(run)
             self.auto_dedup_fold(run)
             self.auto_para_fold(run)
+            # AFTER auto_para/navigation and BEFORE the publish: the ring is
+            # derived from note frontmatter, so it must see this run's
+            # admissions, and the file it writes lives under overlay/ where
+            # the snapshot publish picks it up in the same run.
+            self.egress_ring_fold(run)
             self.navigation_fold(run)
             self.knowledge_orphan_fold(run)
             self.retention_schedule_fold(run)

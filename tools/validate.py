@@ -77,6 +77,8 @@ OKF_ALLOWED_KEYS = REQUIRED_BRAIN | REQUIRED_RAW | BITEMPORAL_KEYS | PROVENANCE_
     # such note, not only raises, so an unraised note proves the guard ran.
     "classification_guard", "classification_guard_leg",
     "classification_guard_reason",
+    # M-3: flat scalar keys the ingest concealment scan stamps on every note it writes (absent = predates the scanner).
+    *(f"injection_assessment.{k}" for k in ("scanner", "verdict", "markers", "hidden", "containers", "hidden_markers", "concealment_scan")),
 }
 JD_FILENAME = re.compile(r"^\d\d[. ]")          # Johnny-Decimal, e.g. "60.03 x"
 # Alias matched non-greedily, right-anchored to the FINAL ]] so an alias with
@@ -121,13 +123,19 @@ def warn(msg: str) -> None:
     warnings.append(msg)
 
 
+# Mirrors brain.frontmatter._FENCE — the terminator is a LINE that is exactly
+# ``---``, never a ``---`` inside one. If these two disagree, the engine and the
+# validator disagree about note shape, which is what this file exists to prevent.
+_FENCE = re.compile(r"^---(?=\r?$)", re.MULTILINE)
+
+
 def split_frontmatter(text: str) -> tuple[str, str] | None:
     if not text.startswith("---"):
         return None
-    parts = text.split("---", 2)
-    if len(parts) < 3:
+    match = _FENCE.search(text, 3)
+    if match is None:
         return None
-    return parts[1], parts[2]
+    return text[3:match.start()], text[match.end():]
 
 
 def _strip_inline_comment(val: str) -> str:
@@ -427,6 +435,7 @@ def check_note(path: Path, zone: str, okf: bool) -> dict | None:
     text = path.read_text(encoding="utf-8")
     fm = split_frontmatter(text)
     rel = path.as_posix()
+    check_fence(rel, text)
     if fm is None:
         err(f"{rel}: missing YAML frontmatter")
         return None
@@ -480,6 +489,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.modules.setdefault("tools.validate", sys.modules[__name__])
 from tools.validate_invariants import (  # noqa: E402,F401
     SECTION_UPDATED,
+    check_fence,
     STATE_MOC_STALE_DAYS,
     check_bitemporal_global,
     check_section_staleness,

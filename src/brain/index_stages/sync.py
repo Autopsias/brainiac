@@ -186,18 +186,57 @@ def _refused_downgrade(
     if new_rank >= old_rank:
         return False
     rel = _chain_key(path, vault)
-    if signed_hashes is not None and signed_hashes.get(rel) == note.content_hash:
-        return False  # these exact bytes were signed — audited change
+    return not _bytes_are_audited(
+        note, rel, signed_hashes=signed_hashes, dispositions=dispositions)
+
+
+def _bytes_are_audited(
+    note: Note,
+    rel: str,
+    *,
+    signed_hashes: dict[str, str] | None,
+    dispositions: dict[str, dict] | None,
+) -> bool:
+    """Did THESE EXACT BYTES come through the audited write path, or get
+    triaged by the owner afterwards?
+
+    The predicate behind the VULN-3387 downgrade guard, and its only caller.
+    It was briefly shared with the concealment projection; that use was
+    withdrawn with the provenance claim (owner ruling, 2026-09-04), and this
+    answers nothing about a note's concealment verdict.
+
+    RAW BYTES (M-7), not ``note.content_hash``. Both things this compares
+    against — the chain's ``content_sha256`` and a disposition's
+    ``actual_sha256`` — are hashes over the file's BYTES, while
+    ``content_hash`` is over the DECODED text and text mode deletes every
+    ``\r``. On a CRLF note the two conventions never agree, so a downgrade
+    that WAS signed through the audited write path was refused anyway.
+
+    IT READS NO FILE. ``note.raw_hash`` is the digest of the bytes this sync
+    already read and parsed, so the guard decides about the same bytes it
+    scanned. Re-opening the path here to authenticate bytes already in hand
+    re-opens the substitution window (adversarial review round 5, 2026-09-04):
+    an attacker who restores the signed file between the scan and this call
+    makes the signed hash authorise the forged note.
+
+    An empty ``raw_hash`` — a note not loaded from a file — answers False: it
+    cannot be PROVEN audited, and the caller wants the fail-closed direction.
+    """
+    on_disk_sha = note.raw_hash
+    if not on_disk_sha:
+        return False
+    if signed_hashes is not None and signed_hashes.get(rel) == on_disk_sha:
+        return True  # these exact bytes were signed — audited change
     if dispositions:
         from ..audit_drift import match_disposition
 
         if match_disposition(
             {"path": rel, "issue": "content_drift",
-             "actual_sha256": note.content_hash},
+             "actual_sha256": on_disk_sha},
             dispositions,
         ):
-            return False  # the owner triaged exactly these bytes
-    return True
+            return True  # the owner triaged exactly these bytes
+    return False
 
 
 def _upsert_notes(
@@ -253,6 +292,57 @@ def _upsert_notes(
     return added, updated, unchanged, refused
 
 
+def _project_concealment(
+    index: Any,
+    on_disk: dict[str, Note],
+) -> int:
+    """Fill the M-3b verdict on rows the ALTER TABLE migration left NULL.
+
+    ``_concealment_sql`` migrates a pre-column index with
+    ``ALTER TABLE ... ADD COLUMN``, and SQLite gives every existing row NULL.
+    Nothing else would ever fill them: ``_upsert_notes`` skips a note whose
+    ``content_hash`` is unchanged, which is every already-indexed note, so only
+    a full ``brain rebuild`` projected the value — and nothing triggered or
+    reported that (adversarial review B3, 2026-09-04).
+
+    The verdict is derived PURELY from frontmatter, so this is a metadata-only
+    UPDATE: no re-chunk, no re-embed, no vector write. It is bounded by the
+    number of NULL rows, is self-clearing (``_write_planned`` never writes
+    NULL), and therefore runs once, on the first ``sync`` after a migration.
+
+    A NULL row whose path is no longer on disk gets ``unknown`` — the honest
+    answer for a note this sync cannot read.
+
+    THE INDEXED BODY IS NOT ALWAYS THE FILE ON DISK. ``_upsert_notes`` above
+    REFUSES an unexplained classification downgrade and keeps the OLD indexed
+    row; the file on disk is the rejected replacement. Deriving the verdict
+    from ``note.meta`` there would stamp the retained body with a verdict read
+    off bytes this same sync just refused — a rejected note claiming
+    ``hidden: 0`` would make the retained one read ``clean``, the vocabulary's
+    ONE positive assurance, granted to a record that did not earn it
+    (adversarial review C1, 2026-09-04). So the row is filled only when the
+    indexed ``content_hash`` still equals the on-disk note's; anything else is
+    ``unknown``.
+    """
+    if index._concealment_sql() != index.CONCEALMENT_COL:
+        return 0  # pre-column index that could not be migrated; nothing to fill
+    from ..injection_fold import retrieval_verdict
+
+    rows = index.conn.execute(
+        "SELECT rowid, path, content_hash FROM notes WHERE concealment IS NULL"
+    ).fetchall()
+    for rowid, path, indexed_hash in rows:
+        note = on_disk.get(path)
+        if note is None or note.content_hash != indexed_hash:
+            verdict = "unknown"  # not the body that is indexed — see the docstring
+        else:
+            verdict = retrieval_verdict(note.meta or {})
+        index.conn.execute(
+            "UPDATE notes SET concealment = ? WHERE rowid = ?", (verdict, rowid)
+        )
+    return len(rows)
+
+
 def _commit_vault_fingerprint(index: Any) -> None:
     fingerprint = index._vault_fingerprint_projection(
         (str(path), str(content_hash or ""))
@@ -283,6 +373,7 @@ def _do_sync(
         index, on_disk, local_indexed, json_mode=json_mode, vault=vault,
         signed_hashes=signed_hashes, dispositions=dispositions,
     )
+    _project_concealment(index, on_disk)
     _commit_vault_fingerprint(index)
     index.conn.commit()
     return counts.as_dict(), refused

@@ -203,6 +203,43 @@ class OrganizationFoldsMixin:
                 )
             )
 
+    def egress_ring_fold(self, run: MaintenanceRun) -> None:
+        """Rewrite the generated EGRESS decoder ring from this vault's notes.
+
+        A metadata fold in the 2026-07-11 sense: derived from frontmatter the
+        owner already maintains, applied automatically, never asked about. It
+        writes ONLY `overlay/keywords-generated/`, which the outbound guard
+        reads and ingest classification does not — see
+        `brain.overlay_generated` for the measurement behind that split.
+
+        Reports only when the file actually changed: this runs hourly, and a
+        fold that logs an identical result every hour trains the reader to
+        skip the log.
+        """
+        try:
+            from .. import overlay_generated as og
+
+            result = og.regenerate(Path(self.vault))
+            run.results["egress_ring"] = result
+            if result["changed"]:
+                run.auto_fixed.append(
+                    maintenance.auto_fixed_item(
+                        "egress-ring",
+                        result["path"],
+                        f"regenerated the outbound term guard's ring: "
+                        f"{result['terms']} term(s) from {result['sources']} "
+                        f"classified note(s)",
+                    )
+                )
+        except Exception as exc:
+            run.blocked.append(
+                maintenance.blocked_item(
+                    f"egress ring regeneration failed: {exc}",
+                    "filesystem",
+                    "next maintain run",
+                )
+            )
+
     def navigation_fold(self, run: MaintenanceRun) -> None:
         """Regenerate backlinks and zone catalogs from canonical notes."""
         try:

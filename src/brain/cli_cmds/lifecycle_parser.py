@@ -130,6 +130,17 @@ def _add_check_egress(sub) -> None:
         help="also refuse when the overlay maps NO terms — for a deployment that "
              "will not accept an all-clear produced by an empty decoder ring",
     )
+    sp.add_argument(
+        "--extra-vault",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="merge another vault's decoder ring into this check (repeatable). "
+             "The outbound guard passes every vault the SESSION has entered, "
+             "because leaving a vault does not empty the conversation. One "
+             "call for any number of rings: the hook budget is 5 seconds and "
+             "exceeding it FAILS OPEN, so a call per vault does not scale.",
+    )
 
 
 def _add_exceptions(sub) -> None:

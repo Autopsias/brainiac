@@ -201,6 +201,22 @@ def check_audit_content_drift(vault: Path) -> dict:
     # would bless every edit already made (owner ruling 2026-08-24: report
     # first, decide the backfill separately).
     cov = summary.get("coverage") or {}
+    # M-7 (2026-09-02): zero signed paths is NOT "no drift". A wiped chain and a
+    # brand-new vault produce the identical summary — total 0, unexplained 0 —
+    # and this row used to call both of them green, which is the one reading a
+    # wiped log must never get. Say what is actually true instead, and stop
+    # short of gating: only the operator knows which vault this is
+    # (`brain verify-audit` is where the exit code lives, and it now needs
+    # --allow-empty to pass on an empty chain).
+    if not cov.get("paths"):
+        return _row(surface, NOT_DETECTABLE,
+                    "no signed notes — the audit chain binds no live path, so "
+                    "nothing can be checked for drift (expected on a brand-new "
+                    "vault; on one that has signed notes before, the log is "
+                    "missing or was wiped)",
+                    remediation="brain verify-audit --json  # --allow-empty if "
+                                "this vault has genuinely never signed a note",
+                    raw={"total": total, "unexplained": unexplained, "coverage": cov})
     blind = ""
     if cov.get("uncovered"):
         pct = 100 * cov["uncovered"] / cov["paths"]
@@ -208,14 +224,38 @@ def check_audit_content_drift(vault: Path) -> dict:
                  f"({pct:.0f}%) carry no signed content hash and cannot be "
                  f"checked at all")
     if unexplained:
+        # NAME THE COMMAND WHEN ONE EXISTS. M-7 stamped every pre-cutover pin
+        # unverifiable and the engine had no way to write the disposition file
+        # back, so this row sent the owner to hand-edit JSON for findings they
+        # had already ruled on — 97 of them on the reference vault, none of
+        # them new. `--rerule-legacy-pins` is the writer; point at it whenever
+        # the queue actually holds one.
+        legacy = sum(1 for r in summary["records"]
+                     if r.get("disposition_reason")
+                     == "needs_reruling_text_hash_convention")
+        triage = ("brain verify-audit --check-content --json  # then triage "
+                  "into the host-private disposition file (brain doctor "
+                  "--json shows its path) or restore the note")
+        rerule = ("brain verify-audit --rerule-legacy-pins  # "
+                  f"{legacy} standing ruling(s) refused only for the "
+                  "pre-2026-09-02 hash convention; add --yes to accept")
+        if not legacy:
+            remediation = triage
+        elif legacy >= unexplained:
+            remediation = rerule
+        else:
+            # The shortcut clears ONLY the legacy pins. Naming it alone on a
+            # vault whose findings are mostly fresh drops the one instruction
+            # that covers the rest, and this row still reports them afterwards.
+            remediation = (f"{rerule}. The other {unexplained - legacy} are "
+                           f"genuinely new: {triage}")
         return _row(
             surface, STALE,
             f"{unexplained} signed note(s) changed after signing with no recorded "
             f"disposition ({explained} triaged, {total} total){blind}",
-            remediation="brain verify-audit --check-content --json  # then triage into "
-                        "the host-private disposition file (brain doctor --json shows "
-                        "its path) or restore the note",
-            raw={"total": total, "unexplained": unexplained, "coverage": cov})
+            remediation=remediation,
+            raw={"total": total, "unexplained": unexplained, "coverage": cov,
+                 "legacy_pins_awaiting_reruling": legacy})
     detail = ("no drift — every signed note matches its signed bytes" if not total
               else f"0 unexplained ({explained} triaged historical drift record(s))")
     return _row(surface, CURRENT, detail + blind,

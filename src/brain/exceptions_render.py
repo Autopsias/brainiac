@@ -90,7 +90,33 @@ def _plain_key(key: str) -> str:
     return text or str(key)
 
 
-def _question_row_full(q: dict[str, Any]) -> str:
+def _question_row_full(q: dict[str, Any], ceiling: str) -> str:
+    """The full page's row — real key, real text — but still honours the
+    host's OWN configured cap (LOW-02). ``ceiling`` defaults to ``""`` at the
+    call site, which ``_classification.rank`` treats as MNPI (default-deny's
+    top rank doubles as "no cap"), so an operator who never set
+    ``$BRAIN_DEFAULT_MAX_TIER`` sees exactly what this page always showed.
+    Only an operator who narrowed that var now gets a withheld row here,
+    matching what ``search``/``get``/``recent`` already do for that same
+    var — the full page was the one surface that never looked at it."""
+    batch = q["batch"]
+    if batch is not None:
+        tier = _classification.TIERS[int(batch.get("tier_rank") or 0)]
+        if _classification.rank(tier) > _classification.rank(ceiling):
+            expiry = batch.get("ttl_expires")
+            expiry_text = (
+                f"If you say nothing, this is decided for you on {expiry}."
+                if expiry else "This waits until you answer it.")
+            return (
+                '<li><p><strong>A decision is waiting, and it cannot be '
+                'shown here.</strong></p>'
+                f'<p class="muted-note">Its content is marked {_esc(tier)}, '
+                f'which is above your configured cap ({_esc(ceiling)}). '
+                'Raise $BRAIN_DEFAULT_MAX_TIER to read it.</p>'
+                f'<p>If you do nothing: <strong>{_esc(q["default"])}</strong>. '
+                f'{_esc(expiry_text)}</p>'
+                f'<p class="date">Reference: <code>{_esc(q["key"])}</code></p></li>'
+            )
     expiry = (q["batch"] or {}).get("ttl_expires") if q["batch"] else None
     expiry_text = (f"If you say nothing, this is decided for you on {expiry}."
                    if expiry else "This waits until you answer it.")
@@ -292,11 +318,16 @@ def _header(data: dict[str, Any], *, full: bool, ceiling: str,
                     f"need{'' if count != 1 else 's'} you")
     else:
         headline = "Nothing needs you"
-    where = ("You are reading the full page on your own Mac."
-             if full else
-             "You are reading the shared copy. Anything above this "
-             f"machine&rsquo;s {_esc(ceiling)} limit is hidden here and "
-             "readable on the host Mac.")
+    if full:
+        where = "You are reading the full page on your own Mac."
+        if ceiling and _classification.rank(ceiling) < _classification.rank("MNPI"):
+            where += (f" Your configured cap is {_esc(ceiling)}; anything "
+                      "above it is hidden below. Raise "
+                      "$BRAIN_DEFAULT_MAX_TIER to see it.")
+    else:
+        where = ("You are reading the shared copy. Anything above this "
+                 f"machine&rsquo;s {_esc(ceiling)} limit is hidden here and "
+                 "readable on the host Mac.")
     return (
         '<header class="brief-header">'
         f'<h1>{_esc(vault_name)} &mdash; {_esc(headline)}</h1>'
@@ -340,7 +371,14 @@ def render_page(
     when ``full=True`` (the real key is shown directly; there is nothing to
     map). On the mount page every question id is a freshly-minted OPAQUE
     token; the map is host-only and thrown away between renders — nothing
-    outside this one render needs a token to stay stable."""
+    outside this one render needs a token to stay stable.
+
+    ``ceiling`` gates BOTH pages now (LOW-02): on the mount page it is the VM
+    egress ceiling as before; on the full page it is the caller's own
+    configured cap (``classification.DEFAULT_MAX_TIER`` — unset means MNPI,
+    which is unfiltered, so a deployment that never narrows it sees no
+    change). Withheld rows on either page still say a decision is waiting —
+    only the content, never the existence, is hidden."""
     questions = data["questions"]
     findings = data["findings"]
     feed_issue = findings.get("missing") or findings.get("stale")
@@ -354,7 +392,7 @@ def render_page(
     rows = []
     for q in questions:
         if full:
-            rows.append(_question_row_full(q))
+            rows.append(_question_row_full(q, ceiling))
         else:
             token = secrets.token_hex(6)
             token_map[token] = q["key"]

@@ -53,6 +53,25 @@ KEYS: tuple[str, ...] = CLAIM_KEYS + (TRUST_KEY, VERIFIED_KEY)
 #: these stripped unconditionally at the parse — never checked per use site.
 HOST_ONLY_KEYS: tuple[str, ...] = (VERIFIED_KEY,)
 
+#: Host-only key PREFIXES — every key under one is stripped, not just an
+#: enumerated few. ``injection_assessment.`` is the whole concealment
+#: assessment ``ingest/pipeline_injection`` stamps: it says whether the HOST
+#: searched a document for hidden text, and ``concealment_scan: full`` is the
+#: most reassuring sentence in the frontmatter. The line-based sanitizer used
+#: to strip ``provenance.verified`` and nothing else, so a VM-authored draft
+#: carrying a forged ``full`` reached ``BrainCore.write_note`` and was SIGNED
+#: with it (review finding V10, 2026-09-02). A supplied value is never
+#: trusted: it is stripped, and the host re-derives its own.
+#:
+#: Unlike ``keys``, prefixes are NOT overridable by a caller — a boundary a
+#: call site can forget to widen is not a boundary.
+HOST_ONLY_PREFIXES: tuple[str, ...] = ("injection_assessment.",)
+
+
+def is_host_only_key(key: str, keys: tuple[str, ...] = HOST_ONLY_KEYS) -> bool:
+    """True when ``key`` is host-only: an exact match, or under a prefix."""
+    return key in keys or str(key).startswith(HOST_ONLY_PREFIXES)
+
 
 class HostOnlyKeyResidue(ValueError):
     """A document still resolves a host-only key after sanitization.
@@ -140,7 +159,7 @@ def without_host_only(meta: Mapping[str, Any] | None,
     """
     if not isinstance(meta, Mapping):
         return {}
-    return {k: v for k, v in meta.items() if k not in keys}
+    return {k: v for k, v in meta.items() if not is_host_only_key(k, keys)}
 
 
 def without_host_only_text(text: str, *,
@@ -212,7 +231,7 @@ def _is_host_only_line(line: str, keys: tuple[str, ...] = HOST_ONLY_KEYS) -> boo
     from . import frontmatter as fm
 
     meta, _ = fm.parse_text(f"---\n{line}\n---\n")
-    return any(k in meta for k in keys)
+    return any(is_host_only_key(k, keys) for k in meta)
 
 
 def _carries_host_only(text: str, keys: tuple[str, ...] = HOST_ONLY_KEYS) -> bool:
@@ -221,7 +240,7 @@ def _carries_host_only(text: str, keys: tuple[str, ...] = HOST_ONLY_KEYS) -> boo
     from . import frontmatter as fm
 
     meta, _ = fm.parse_text(text)
-    return any(k in meta for k in keys)
+    return any(is_host_only_key(k, keys) for k in meta)
 
 
 def claim_from(source: Mapping[str, Any] | None) -> dict[str, str]:

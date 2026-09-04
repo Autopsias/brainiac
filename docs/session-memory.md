@@ -300,10 +300,32 @@ copied from an ingested document) without a human proofreading pass first.
    as `additionalContext` — the fence is the primary backstop, the sanitizer
    is defence-in-depth.
 
+**The fence is a per-run random marker, not backticks (M-6, 2026-09-04.)**
+Until then the block was wrapped in triple backticks, which the content can
+simply *write*: a line of three backticks inside `handoff.md` ended the block,
+and everything after it arrived as prose the model reads as instruction —
+measured, `_evidence/security-followup/s08-fence-before.txt`. The hook now
+mints a marker per run (`head -c 16 /dev/urandom | base64`, alphanumerics
+only), opens with `BEGIN-<marker>` and closes with `END-<marker>`, and the
+sanitizer neutralizes any line carrying the marker. If the random source
+yields nothing, the hook **aborts** rather than open a block with an empty
+marker — `set -e` alone does not see a failure inside a pipeline (`base64`
+exits 0 on empty input), so the mint runs under `set -o pipefail` with an
+explicit non-empty check. Claude Code may render the marker lines as plain
+text rather than a code block; that is fine, the label and the marker are the
+boundary, not the rendering.
+
+Both harnesses carry this. `.claude/hooks/session-start.sh` and
+`.codex/hooks/session-start.sh` are twins that nothing keeps in sync — they
+had already drifted by 37 lines — so
+`tests/test_session_start_hook.py::test_the_two_hooks_build_the_same_fence`
+compares the three fence-construction regions between them; the rest of the
+two files may differ, the fence may not.
+
 `tests/test_session_memory.py::test_session_start_neutralizes_prompt_injection`
-pins this: a handoff containing an "Ignore all previous instructions..." line
-arrives in the hook's stdout already neutralized and inside the labelled
-fence.
+pins the sanitizer: a handoff containing an "Ignore all previous
+instructions..." line arrives in the hook's stdout already neutralized and
+inside the labelled fence.
 
 ## Stale-nightly heartbeat check
 

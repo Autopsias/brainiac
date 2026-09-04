@@ -12,6 +12,36 @@ from .. import exceptions_page, maintenance, remediation_questions, remediation_
 class ReportingFoldsMixin:
     """Provide health-history, update, and state-finalization folds."""
 
+    def _publish_exceptions_to_workspaces(self) -> None:
+        """MED-09: for every registered Cowork workspace this vault stages
+        into, mirror ``exceptions.json``/``exceptions.html`` there too — the
+        SAME registry lookup ``update_channels.restage_workspaces`` uses, so
+        this never invents a second notion of "which workspace does this
+        vault belong to". A vault with no registered workspace (or none of
+        target ``cowork-vm``) is a no-op, not an error.
+
+        ``$BRAINIAC_HOME`` resolved HERE, at call time — never
+        ``workspaces.REGISTRY_PATH``, which binds at import and is inert to
+        an env pin (a test fixture's ``monkeypatch.setenv``, or a real
+        per-session override) set after this module first loads
+        (``doctor_wiring._registry_path``'s documented class of bug)."""
+        import os
+
+        from .. import exceptions_verify as _exc_verify
+        from ..pathkey import real_key
+        from ..workspaces import list_entries
+
+        registry_path = (Path(os.environ.get("BRAINIAC_HOME", Path.home() / ".brainiac"))
+                         / "workspaces.json")
+        vault = Path(self.vault)
+        vault_key = real_key(str(vault))
+        for entry in list_entries(registry_path=registry_path, target="cowork-vm"):
+            if real_key(str(entry.get("vault_path") or "")) != vault_key:
+                continue
+            workspace_path = entry.get("workspace_path") or None
+            _exc_verify.publish_summary(
+                vault, Path(workspace_path) if workspace_path else None)
+
     def health_history_fold(self, run: MaintenanceRun) -> None:
         """Append exactly one OBS health record before evaluating notifications."""
         health_record: dict[str, Any] | None = None
@@ -116,6 +146,17 @@ class ReportingFoldsMixin:
                     self, today=run.date)
             except Exception:  # noqa: BLE001
                 pass
+            else:
+                # MED-09: mirror the summary/page just written into any
+                # registered Cowork workspace's staging root, so a relocated
+                # vault's VM leg can actually verify it (staging the pin
+                # alone left `verify` reading the summary from the real,
+                # off-mount vault). Same best-effort posture — a publish
+                # failure must never fail the maintain run.
+                try:
+                    self._publish_exceptions_to_workspaces()
+                except Exception:  # noqa: BLE001
+                    pass
         return {
             "ritual": "maintain",
             "dry_run": run.dry_run,

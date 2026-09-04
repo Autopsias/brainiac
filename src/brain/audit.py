@@ -64,7 +64,21 @@ def _require_crypto():
 
 
 def _sha256(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+    # `surrogateescape` ON THE WAY OUT, to match how the log is read IN.
+    # `AuditChain._lines()` decodes the log with `surrogateescape` so an
+    # undecodable byte becomes a lone surrogate instead of raising, and its
+    # docstring promises such a record surfaces as `not_canonical` /
+    # `parse_failure` rather than taking down the verification. A plain
+    # `.encode("utf-8")` here broke that promise: `verify()` ends each record
+    # with `prev_hash = _sha256(s)`, so ONE 0xff byte anywhere in the chain
+    # raised UnicodeEncodeError and aborted the whole pass, and the crash
+    # reached `brain verify-audit` and the doctor rows (found by the s08
+    # review, 2026-09-04, reproduced by appending {"corrupt":"\xff"} to a log).
+    # Round-tripping instead hashes exactly the bytes on disk, which is what a
+    # chain hash is for. Measured byte-identical to the old call for 2000/2000
+    # ordinary strings — a string with no surrogates encodes the same either
+    # way, so no existing hash moves.
+    return hashlib.sha256(text.encode("utf-8", "surrogateescape")).hexdigest()
 
 
 def _canonical(obj: dict) -> str:
@@ -171,11 +185,22 @@ def provision_signing_key() -> dict:
     priv_pem, _pub = generate_key_pem()
 
     if sys.platform == "darwin" and shutil.which("security"):
+        # `-w` with NO value and placed LAST makes `security` read the secret
+        # from stdin instead of argv (its own help text: "Use of the -p or -w
+        # options is insecure. Specify -w as the last option to be
+        # prompted."). Passing the value as an argument (the old form) put
+        # the private key in plain sight of any local user via `ps`. The
+        # non-interactive stdin prompt asks for the secret TWICE (entry +
+        # retype confirmation) — probed 2026-09-04 against a scratch
+        # keychain: one line of stdin makes the retype read empty and the
+        # confirmation silently fails ("passwords don't match"); the secret
+        # must be written twice.
+        secret_stdin = f"{priv_pem.hex()}\n{priv_pem.hex()}\n".encode("utf-8")
         try:
             out = subprocess.run(
                 ["security", "add-generic-password",
-                 "-s", service, "-a", account, "-w", priv_pem.hex()],
-                capture_output=True, timeout=10,
+                 "-s", service, "-a", account, "-w"],
+                input=secret_stdin, capture_output=True, timeout=10,
             )
         except (OSError, subprocess.SubprocessError) as exc:
             raise KeyUnavailable(f"keychain store failed to run: {exc}") from exc
@@ -280,21 +305,34 @@ def _exclusive_lock(log_path: Path) -> Iterator[None]:
     Best-effort on exotic platforms with neither fcntl nor msvcrt (documented),
     but covered on macOS/Linux (host) and Windows.
     """
+    from . import config as _config
+
     lock_path = log_path.with_name(log_path.name + ".lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    f = open(lock_path, "w")
+    # Owner-only and never through a symlink, same as the log it guards
+    # (M-7, low finding "audit files are world-readable"). Not O_TRUNC:
+    # nothing is ever written here, the file exists only to be flocked, and
+    # truncating through a planted name is exactly what O_NOFOLLOW is for.
+    flags = os.O_RDWR | os.O_CREAT
+    for name in ("O_CLOEXEC", "O_NOFOLLOW", "O_NOINHERIT", "O_BINARY"):
+        flags |= getattr(os, name, 0)
+    fd = os.open(str(lock_path), flags, _config.SECURE_FILE_MODE)
+    try:
+        os.fchmod(fd, _config.SECURE_FILE_MODE)
+    except (OSError, AttributeError):
+        pass  # Windows / exotic fs: the mode bits are best-effort there
     locked_with = None
     try:
         try:
             import fcntl
 
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            fcntl.flock(fd, fcntl.LOCK_EX)
             locked_with = "fcntl"
         except ImportError:
             try:
                 import msvcrt
 
-                msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+                msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
                 locked_with = "msvcrt"
             except Exception:
                 locked_with = None  # best-effort fallback
@@ -303,16 +341,16 @@ def _exclusive_lock(log_path: Path) -> Iterator[None]:
         if locked_with == "fcntl":
             import fcntl
 
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            fcntl.flock(fd, fcntl.LOCK_UN)
         elif locked_with == "msvcrt":
             try:
                 import msvcrt
 
-                f.seek(0)
-                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
             except Exception:
                 pass
-        f.close()
+        os.close(fd)
 
 
 def public_key_pem() -> bytes:

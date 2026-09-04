@@ -46,6 +46,53 @@ BIN_DIR="$HOME/.local/bin"
 say()  { printf '\033[1m==> %s\033[0m\n' "$*"; }
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
+# Pinned checksum of the uv bootstrap installer (curl-pipe-shell hardening,
+# LOW-01 item 4): downloaded to a file and verified before it ever runs,
+# instead of piping curl straight into `sh`. astral.sh legitimately updates
+# this script now and then — when that happens this pin goes stale and the
+# bootstrap fails closed (same posture as the sandbox-bootstrap checksum
+# elsewhere in this repo) rather than silently trusting whatever the network
+# handed back. Re-pin after checking the diff by hand:
+#   curl -LsSf https://astral.sh/uv/install.sh | shasum -a 256
+UV_INSTALL_SH_SHA256="222e006c0fe4a0d793031833e469b21df72311f4e3526ffecca0e19e6dfabc32"
+UV_INSTALL_TMP=""
+trap 'rm -f "$UV_INSTALL_TMP"' EXIT
+
+sha256_of() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  fi
+}
+
+# Fetch the uv installer to a file, verify its checksum against the pin
+# above, then run it — never curl-pipe-shell. Cleans up the temp file itself
+# (the EXIT trap above is the backstop for a checksum-mismatch `fail()`,
+# which exits mid-function).
+fetch_and_run_uv_installer() {
+  # The XXXXXX run MUST be the trailing characters of the template — BSD/macOS
+  # mktemp only randomizes a run of X's at the very end (a ".sh" suffix after
+  # it is left as literal text, so a second run collides with "File exists";
+  # measured 2026-09-04). sh does not care that the file has no extension.
+  UV_INSTALL_TMP="$(mktemp "${TMPDIR:-/tmp}/uv-install.XXXXXX")"
+  curl -LsSf https://astral.sh/uv/install.sh -o "$UV_INSTALL_TMP" \
+    || fail "fetching the uv installer failed."
+  actual_sha="$(sha256_of "$UV_INSTALL_TMP")"
+  [ -n "$actual_sha" ] \
+    || fail "no sha256 tool (shasum/sha256sum) found — cannot verify the uv installer, refusing to run it unverified."
+  if [ "$actual_sha" != "$UV_INSTALL_SH_SHA256" ]; then
+    fail "uv installer checksum mismatch (expected $UV_INSTALL_SH_SHA256, got $actual_sha).
+  astral.sh may have updated the script, or the download was tampered with.
+  Inspect $UV_INSTALL_TMP by hand; if the update is legitimate, re-pin
+  UV_INSTALL_SH_SHA256 in install.sh with:
+    curl -LsSf https://astral.sh/uv/install.sh | shasum -a 256"
+  fi
+  sh "$UV_INSTALL_TMP"
+  rm -f "$UV_INSTALL_TMP"
+  UV_INSTALL_TMP=""
+}
+
 # 1. Python check (>=3.9).
 #
 # This used to be a hard failure for EVERY path, which was wrong on the default
@@ -84,8 +131,7 @@ if [ -z "$PY" ]; then
     say "Fetching uv from https://astral.sh/uv/install.sh — a self-contained binary"
     say "that needs no Python, and that will then download its own CPython $UV_MANAGED_PYTHON."
     say "(Skip this with --no-uv-bootstrap and install Python or uv yourself.)"
-    curl -LsSf https://astral.sh/uv/install.sh | sh \
-      || fail "fetching uv failed. Install uv or Python 3.9+ by hand, then re-run."
+    fetch_and_run_uv_installer
     # The uv installer drops the binary here and only edits shell profiles,
     # which this shell has already read — so put it on PATH for this run.
     for cand in "${XDG_BIN_HOME:-}" "${CARGO_HOME:-$HOME/.cargo}/bin" "$HOME/.local/bin"; do

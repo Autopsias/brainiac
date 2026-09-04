@@ -40,7 +40,16 @@ CATEGORIES: tuple[str, ...] = ("voice", "brand", "keywords", "people")
 # cos-priority-map`). MIGRATION: a pre-0.17 overlay simply has no cos/ dir and
 # stays exactly as valid as before — adding the dir later needs no other
 # change, and removing it is the complete rollback.
-OPTIONAL_CATEGORIES: tuple[str, ...] = ("cos",)
+#
+# ``keywords-generated/`` (SEC-07, owner ruling 2026-09-01) holds the ring
+# DERIVED from this vault's own entity notes by `brain.overlay_generated`. It
+# is a sibling of ``keywords/`` and never a child, because ``keywords/`` feeds
+# INGEST classification and this must not: see that module's docstring for the
+# measurement (659 of 670 MNPI documents would have been re-tiered).
+OPTIONAL_CATEGORIES: tuple[str, ...] = ("cos", "keywords-generated")
+
+#: The generated egress ring's directory. Defined HERE so `overlay_generated`
+#: can import it without this module having to import that one back.
 
 # TAX-01/TAX-02 — the ingest/no-ingest category taxonomy lives in
 # `overlay/cos/ingest.md`. It is a GATE (a `never` rule suppresses candidates
@@ -53,12 +62,8 @@ DISPOSITIONS: tuple[str, ...] = ("always", "propose", "never")
 DEFAULT_DISPOSITION = "propose"
 INGEST_LANES: tuple[str, ...] = ("text", "attachment", "both")
 DEFAULT_LANE = "both"
-TIERS: tuple[str, ...] = ("Public", "Internal", "Confidential", "Restricted", "MNPI")
 
 _RULE_RE = re.compile(r"^-\s+([a-z0-9]+(?:-[a-z0-9]+)*)\s*:\s*(\S.*)$")
-_FENCE_RE = re.compile(r"^\s*(```|~~~)")
-_COMMENT_OPEN = "<!--"
-_COMMENT_CLOSE = "-->"
 
 # AUT-01/AUT-03 (ADR-0003 Ruling c/e): the HTML brief/digest renderers are
 # pure-render — all overlay I/O happens here, once, before the render call.
@@ -71,24 +76,25 @@ _DEFAULT_ACCENT = "#2563eb"
 _HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 
 
-def overlay_dir(
-    vault: str | os.PathLike[str] | None = None,
-    explicit: str | os.PathLike[str] | None = None,
-) -> Path:
-    """Resolve the active overlay directory.
 
-    Precedence: ``explicit`` arg (``--overlay-dir``) > ``$BRAIN_OVERLAY_DIR`` >
-    ``<vault>/overlay`` (the overlay travels with the user's vault, alongside
-    ``raw/`` and ``brain/`` — see AGENTS.md §1).
-    """
-    if explicit:
-        return Path(explicit).expanduser().resolve()
-    env = os.environ.get("BRAIN_OVERLAY_DIR")
-    if env:
-        return Path(env).expanduser().resolve()
-    from . import config
 
-    return config.vault_root(vault) / "overlay"
+# Split out at the 2026-09-04 size ratchet; re-exported so every
+# `brain.overlay.<name>` caller and monkeypatch target is unchanged.
+from .overlay_core import (  # noqa: E402,F401  (facade re-export)
+    KEYWORDS_GENERATED_DIR as KEYWORDS_GENERATED_DIR,
+    TIERS as TIERS,
+    _strip_noise as _strip_noise,
+    overlay_dir as overlay_dir,
+)
+from .overlay_keywords import (  # noqa: E402,F401  (facade re-export)
+    _ring_files as _ring_files,
+    _table_cells as _table_cells,
+    _tiers_from_dir as _tiers_from_dir,
+    _uncell as _uncell,
+    match_keyword_tier as match_keyword_tier,
+    resolve_egress_keyword_tiers as resolve_egress_keyword_tiers,
+    resolve_keyword_tiers as resolve_keyword_tiers,
+)
 
 
 def _validate_category_file(path: Path, category: str) -> list[str]:
@@ -115,28 +121,6 @@ def _validate_category_file(path: Path, category: str) -> list[str]:
     return issues
 
 
-def _strip_noise(body: str) -> list[str]:
-    """Drop fenced code blocks and HTML comments — the two places a template
-    legitimately shows EXAMPLE rules that must never be read as real ones."""
-    out: list[str] = []
-    in_fence = False
-    in_comment = False
-    for line in body.splitlines():
-        if in_comment:
-            if _COMMENT_CLOSE in line:
-                in_comment = False
-            continue
-        if _COMMENT_OPEN in line:
-            # a whole-line or trailing comment opener; single-line comments close here
-            if _COMMENT_CLOSE not in line.split(_COMMENT_OPEN, 1)[1]:
-                in_comment = True
-            continue
-        if _FENCE_RE.match(line):
-            in_fence = not in_fence
-            continue
-        if not in_fence:
-            out.append(line)
-    return out
 
 
 def parse_ingest_rules(body: str) -> dict[str, Any]:
@@ -267,71 +251,8 @@ def validate_overlay(path: Path) -> dict[str, Any]:
 # "material mentioning this term is <Tier>". It is the ONLY thing that lowers
 # an email-derived source off its MNPI default, so it is read strictly: a row
 # whose third cell is not an exact tier name contributes nothing.
-_TABLE_ROW_RE = re.compile(r"^\s*\|(.+)\|\s*$")
-_PLACEHOLDER_RE = re.compile(r"^<.*>$")
 
 
-def _table_cells(line: str) -> list[str]:
-    m = _TABLE_ROW_RE.match(line)
-    if not m:
-        return []
-    return [c.strip().strip("`").strip() for c in m.group(1).split("|")]
-
-
-def resolve_keyword_tiers(
-    vault: str | os.PathLike[str] | None = None,
-    explicit: str | os.PathLike[str] | None = None,
-) -> dict[str, str]:
-    """``{term (casefolded): tier}`` from the overlay's ``keywords/*.md`` tables.
-
-    Rows are ``| Term | Expansion | Classification |``; the third column is
-    OPTIONAL (a glossary without it maps nothing, exactly as before). Template
-    placeholders (``<ACRONYM>``) and header/separator rows are skipped. Never
-    raises — an unreadable or absent overlay maps nothing.
-    """
-    out: dict[str, str] = {}
-    kdir = overlay_dir(vault, explicit) / "keywords"
-    if not kdir.is_dir():
-        return out
-    for f in sorted(kdir.glob("*.md")):
-        try:
-            _meta, body = frontmatter.parse_text(f.read_text(encoding="utf-8"))
-        except Exception:  # pragma: no cover - unreadable file is rare
-            continue
-        for line in _strip_noise(body):
-            cells = _table_cells(line)
-            if len(cells) < 3:
-                continue
-            term, tier = cells[0], cells[2]
-            if tier not in TIERS or not term or _PLACEHOLDER_RE.match(term):
-                continue
-            out[term.casefold()] = tier
-    return out
-
-
-def match_keyword_tier(
-    text: str,
-    vault: str | os.PathLike[str] | None = None,
-    explicit: str | os.PathLike[str] | None = None,
-) -> tuple[str | None, str | None]:
-    """Highest tier any mapped keyword found in ``text`` resolves to, plus the
-    term that matched. Word-boundary matching, case-insensitive."""
-    tiers = resolve_keyword_tiers(vault, explicit)
-    if not tiers:
-        return None, None
-    hay = text.casefold()
-    best: tuple[str, str] | None = None
-    for term, tier in sorted(tiers.items()):
-        pattern = re.escape(term)
-        if term[:1].isalnum():
-            pattern = r"\b" + pattern
-        if term[-1:].isalnum():
-            pattern = pattern + r"\b"
-        if not re.search(pattern, hay):
-            continue
-        if best is None or TIERS.index(tier) > TIERS.index(best[0]):
-            best = (tier, term)
-    return best if best else (None, None)
 
 
 def load_ingest_rules(

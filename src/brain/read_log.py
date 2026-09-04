@@ -47,10 +47,20 @@ DEFAULT_BULK_THRESHOLD = 200
 _FALSE_VALUES = {"0", "false", "no", "off"}
 
 
-def enabled(role: str | None) -> bool:
-    """Host-only and opt-out. A VM-written access log is not evidence anyway."""
+def enabled(role: str | None, *, respect_env: bool = True) -> bool:
+    """Host-only and opt-out. A VM-written access log is not evidence anyway,
+    so vm role disables regardless of ``respect_env``.
+
+    ``respect_env=False`` is the broker's read path (LOW-02,
+    :func:`brain.mcp_mediation._flush_record`): a ``BRAIN_READ_LOG=0`` left in
+    a Desktop connector env must not silently drop the SEC-06 record for every
+    MCP caller the way it may for an operator who typed ``BRAIN_READ_LOG=0``
+    at their own CLI and can see :mod:`brain.cli_read_record`'s stderr notice
+    that it did."""
     if _q._is_vm_role(role):
         return False
+    if not respect_env:
+        return True
     return str(os.environ.get("BRAIN_READ_LOG", "1")).strip().lower() not in _FALSE_VALUES
 
 
@@ -158,9 +168,16 @@ def record(
     gates: int = 1,
     latency_ms: float | int | None = None,
     now: _dt.datetime | None = None,
+    respect_env: bool = True,
 ) -> bool:
-    """Append one access record. Returns True when a line was written."""
-    if not enabled(role):
+    """Append one access record. Returns True when a line was written.
+
+    ``respect_env`` passes straight through to :func:`enabled` — a caller
+    that already decided ``respect_env=False`` (the broker's flush, via
+    :func:`outcome_from_tally`) must not have this second, lower-level check
+    silently re-apply the env var and turn its ``disabled`` decision back
+    into a ``failed`` write."""
+    if not enabled(role, respect_env=respect_env):
         return False
     location = _log_dir(vault)
     if location is None:
@@ -227,9 +244,11 @@ def record(
 #:     bury the real reads (see :func:`egress.take_tally`). NOT a failure.
 #:     This is also what a caller sees when a CONCURRENT task consumed the
 #:     shared tally, which is why S02 moved the tally to a ContextVar first.
-#:   * the log is switched off for this caller — ``BRAIN_READ_LOG=0``, or a vm
-#:     role, for which a self-written access log is not evidence anyway. An
-#:     operator decision, NOT a failure.
+#:   * the log is switched off for this caller — a vm role, for which a
+#:     self-written access log is not evidence anyway, or (CLI leg only —
+#:     LOW-02) ``BRAIN_READ_LOG=0``. An operator decision, NOT a failure. The
+#:     broker's own flush passes ``respect_env=False`` and so is disabled by
+#:     vm role alone; the env var cannot silently drop an MCP caller's record.
 #:   * the record could not be written — no securable log dir, an OSError, a
 #:     lock timeout. THAT is the failure a read must not survive.
 RECORD_WRITTEN = "written"
@@ -241,16 +260,21 @@ RECORD_FAILED = "failed"
 def outcome_from_tally(
     *, vault: Any, role: str, cmd: str, max_tier: str | None,
     tally: dict[str, int] | None, latency_ms: float | int | None = None,
+    respect_env: bool = True,
 ) -> str:
-    """Flush an ``egress.take_tally()`` result, saying WHICH of the four happened."""
+    """Flush an ``egress.take_tally()`` result, saying WHICH of the four happened.
+
+    ``respect_env`` passes straight through to :func:`enabled` — see its
+    docstring. Default ``True`` (every existing caller, including the CLI
+    leg); the broker's own flush passes ``False``."""
     if not tally or not tally.get("gates"):
         return RECORD_NOTHING_TO_RECORD
-    if not enabled(role):
+    if not enabled(role, respect_env=respect_env):
         return RECORD_DISABLED
     written = record(
         vault=vault, role=role, cmd=cmd, max_tier=max_tier,
         surfaced=tally.get("surfaced", 0), withheld=tally.get("withheld", 0),
-        gates=tally.get("gates", 1), latency_ms=latency_ms,
+        gates=tally.get("gates", 1), latency_ms=latency_ms, respect_env=respect_env,
     )
     return RECORD_WRITTEN if written else RECORD_FAILED
 

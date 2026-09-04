@@ -34,8 +34,13 @@ ANCHOR_LOG_NAME = "chain_anchor.log"  # JSONL, append-only, in the OFF-HOST dir
 
 
 def _entry_lines(chain: AuditChain) -> list[str]:
-    """Ordered, stripped chain-entry lines — the SAME predicate the chain uses."""
-    return [s for line in chain._lines() if (s := line.strip()) and chain._is_entry(s)]
+    """Ordered chain-entry records — the SAME bytes the chain hashes.
+
+    No ``strip()``: ``_lines()`` reads raw bytes split on ``b"\n"``, and the
+    anchor's ``head_as_of`` re-hashes these records to compare against the
+    chain's own head. Normalising here and not there would make a whitespace
+    difference read as a divergence (or hide one)."""
+    return [line for line in chain._lines() if chain._is_entry(line)]
 
 
 def head_as_of(lines: list[str], count: int) -> str:

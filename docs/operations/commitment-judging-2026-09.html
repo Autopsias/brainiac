@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Commitment-extraction doctrine — judging run, September 2026</title>
+<style>
+  :root { color-scheme: light; }
+  body { margin: 0; background: #faf9f7; color: #1c1a17;
+         font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 40px 24px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { color: #6b6560; font-size: 13px; margin: 0 0 28px; }
+  .rates { display: flex; gap: 16px; flex-wrap: wrap; margin: 0 0 8px; }
+  .rate { flex: 1 1 300px; background: #fff; border: 1px solid #e3ded7;
+          border-radius: 10px; padding: 20px 22px; }
+  .rate .name { font-size: 12px; letter-spacing: .09em; text-transform: uppercase;
+                color: #8a8078; margin: 0 0 6px; }
+  .rate .val { font-size: 56px; line-height: 1.02; font-weight: 650; margin: 0;
+               letter-spacing: -0.03em; }
+  .rate .val.undef { font-size: 40px; color: #a8442a; }
+  .rate .meta { font-size: 13px; color: #514c47; margin: 10px 0 0; }
+  .warn { background: #fdf3ee; border: 1px solid #edc9b6; border-radius: 10px;
+          padding: 14px 18px; margin: 16px 0 28px; font-size: 14px; }
+  h2 { font-size: 15px; margin: 30px 0 8px; letter-spacing: .01em; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 8px 0 4px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #e8e3dc; }
+  th { color: #6b6560; font-weight: 600; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .card { background: #fff; border: 1px solid #e3ded7; border-radius: 10px;
+          padding: 4px 22px 18px; margin-top: 10px; }
+  .opt { border-bottom: 1px solid #efeae3; padding: 14px 0; }
+  .opt:last-of-type { border-bottom: 0; }
+  .opt b { display: block; margin-bottom: 3px; }
+  .tag { display: inline-block; font-size: 11px; letter-spacing: .06em;
+         text-transform: uppercase; padding: 2px 7px; border-radius: 4px;
+         background: #ece7df; color: #6b6560; margin-left: 6px; vertical-align: 2px; }
+  .tag.rec { background: #dcead8; color: #35602c; }
+  .tag.no { background: #f6ddd4; color: #97402a; }
+  .rec { background: #f2f7f0; border: 1px solid #cddcc6; border-radius: 8px;
+         padding: 12px 16px; margin-top: 14px; font-size: 14px; }
+  p { margin: 8px 0; }
+  code { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+         background: #f0ece6; padding: 1px 4px; border-radius: 3px; }
+  .foot { color: #8a8078; font-size: 12px; margin-top: 32px; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Commitment-extraction doctrine &mdash; judging run, September 2026</h1>
+<p class="sub">2026-09-04 &middot; round 7: recall measured &middot; 8 meetings &middot; 294 pass-A rows &middot; <b>20 owner rulings</b> on a sample of what the doctrine did NOT stage &middot; figures from <code>round6/rates.json</code></p>
+
+<div class="warn"><b>Updated 2026-09-04 (round 7) &mdash; recall is 8%, and that ends the question.</b> Revision 5 caught <b>16 commitments and missed an estimated 181</b>. Recall <b>8.1%</b>, 95% range [5.5%, 13.9%] &mdash; and that is a ceiling, because it credits every staged row as correct. The precision gains of revisions 4 and 5 were bought by staging less: revision 4 staged 39 of 265 turn pairs, revision 5 staged 16 of 294. <b>A doctrine that catches one commitment in twelve cannot deploy at any precision.</b> The precision census was not run; the rulings went to recall instead. Every INVENTED figure below is superseded as the headline, though still true of what it measured.</div>
+
+<div class="rates">
+  <div class="rate">
+    <p class="name">Recall &mdash; commitments the doctrine caught</p>
+    <p class="val undef">8.1%</p>
+    <p class="meta"><b>16 caught, ~181 missed.</b> 95% range <b>[5.5%, 13.9%]</b>. Measured against pass B, a plain reader with no rulebook, so it is independent of the doctrine. 20 owner rulings on a uniform sample of the 452 pass-B rows revision 5 did not stage; 8 came back as real commitments.</p>
+  </div>
+  <div class="rate">
+    <p class="name">Corpus defect &mdash; found by all 8 agents</p>
+    <p class="val undef">8 of 8</p>
+    <p class="meta"><b>Every meeting merges speakers under one name</b> &mdash; up to five slots on a single name; 28 of 67 slots are unnamed. All 8 still carry <code>validation: pass</code>. Revision 5's <code>no-promisor</code> rule fires on an UNNAMED promisor and cannot fire on a WRONGLY NAMED one, so rows pass carrying attribution nobody can check.</p>
+  </div>
+</div>
+
+<h2>Why the revision loop is paused</h2>
+<p>A revision 6 aimed at recall would be written against a corpus whose speaker
+labels are wrong in all eight meetings. Some of the 181 estimated misses belong to
+the doctrine and some belong to the transcript, and the rows alone cannot separate
+them. Loosening the rules now would fit a transcription artefact rather than
+predict anything &mdash; the same trap that produced a measured miss factor of 3.6
+in an earlier round.</p>
+<p>A separate defect sits behind it: the transcription pipeline's speaker
+validation cannot detect a collapse, so it has never reported one. That is a
+pipeline defect, not a doctrine defect.</p>
+<p>One suspicion was checked rather than assumed. 20 of 51 <code>duplicate</code>
+drops repeat verbatim in the transcript, but 18 of those sit in one meeting where
+an automatic-transcription loop repeats a 90-second block seven times. Outside it
+the figure is 2 of 30, so the new deduplication rule is sound.</p>
+<p><b>Status:</b> <code>96eef39</code> stands. The doctrine is authored, NOT
+deployed.</p>
+
+<p><b>The nine open revision-5 defects.</b> Do NOT act on these while the loop is
+paused. They are recorded here because <code>rates.json</code> sits under
+<code>_plans/</code>, which <code>.gitignore</code> excludes wholesale &mdash; this
+page and its Markdown twin are the only durable copy. Four are re-reported from
+round 6, which means two independent rounds found them and neither closed them.</p>
+<ol>
+  <li>no-promisor has no precedence against hypothetical for an unnameable speaker making a modal offer</li>
+  <li>no-promisor is defined against the resolved speaker list, so a promise by a named non-attendee falls to the wrong reason</li>
+  <li>no drop reason fits a promise REFUSED out loud, though the stage-it text names refusal</li>
+  <li>no rule for a DUPLICATED name in the speaker list (distinct from a numbered speaker)</li>
+  <li>no rule for a request directed AT the owner; the stage-it bullet covers only the owner asking others</li>
+  <li>no-creditor vs workstream still has no precedence (re-reported)</li>
+  <li>the dedupe rule still contradicts itself on which restatement to keep (re-reported)</li>
+  <li>counterparty defined two ways: instructions say creditor, section 3 says the other human (re-reported)</li>
+  <li>no drop reason fits a pure forecast that binds nobody</li>
+</ol>
+<p>Each one is a case the rulebook cannot decide, not a case it decides wrongly. A
+revision 6 must answer them, and it cannot be written against this corpus while the
+speaker labels collapse.</p>
+
+<div class="warn"><b>Updated 2026-09-04 (round 6) &mdash; the best point estimate of five variants, and the run cannot decide.</b> Revision 5 closed three defects the extraction agents found. On the 9 held-out meetings of rounds 1-2 it measured INVENTED <b>0.100 (1/10)</b>, Wilson [0.018, 0.404]. On that same corpus revision 3 measured 0.727 (8/11), so the like-for-like fall is large. But revision 5 staged only 10 rows, and <b>at n = 10 the Wilson upper bound is 0.278 even for a perfect 0 of 10</b> &mdash; this corpus cannot clear the 0.2 threshold at any outcome. The doctrine is not cleared to deploy, and this run does not refute it either. Every earlier figure on this page is superseded.</div>
+
+<div class="rates">
+  <div class="rate">
+    <p class="name">Invented &mdash; staged, but not a commitment</p>
+    <p class="val">0.100 (1/10)</p>
+    <p class="meta"><b>Measured on a held-out corpus, by census, 0 unsure.</b> Wilson 95% <b>[0.018, 0.404]</b>. The point estimate is the best of five measured variants; the interval is too wide to decide. <i>On these SAME 9 meetings revision 3 measured 0.727 (8/11). Revision 4's 0.282 (11/39) was measured on the other 8 meetings and is not directly comparable.</i></p>
+  </div>
+  <div class="rate">
+    <p class="name">Drop error &mdash; a real commitment refused</p>
+    <p class="val">2 of 9</p>
+    <p class="meta"><b>Indicative only.</b> One row per drop reason, below the non-vacuity floor of 5, so no rate and no interval come from it. <code>no-creditor</code> and <code>uncertain</code> were overturned; <code>duplicate</code>, <code>hypothetical</code>, <code>third-party</code> and <code>workstream</code> held; <code>inferred</code>, <code>no-promisor</code> and <code>past-tense</code> came back unsure. Pass B was not run this round, so MISSED is not measured.</p>
+  </div>
+</div>
+
+<div class="warn">
+  <b>The measurement ran out of rows before it ran out of doctrine.</b>
+  <p>On one corpus &mdash; these 9 meetings &mdash; revision 3 measured 0.727 (8/11) and revision 5 measures 0.100 (1/10). That is the cleanest doctrine comparison the whole programme has produced, and the improvement is large. It is also the point where the corpus stops cooperating: revision 5 staged 10 rows, and <b>no result on 10 rulings can put a Wilson upper bound below 0.2</b>. To decide at a true rate near 0.10 takes about 60 staged rows.</p>
+  <p><b>Revision 5 is much more conservative, and the cost is unmeasured.</b> It staged 10 rows from 266; revision 4 staged 39 from 265 on the other corpus. The two new rules account for 49 drops &mdash; <code>duplicate</code> 31, <code>no-promisor</code> 18. Fewer wrong stages is what the threshold rewards, but pass B was not run, so how many REAL commitments the new rules refuse is not measured. A doctrine that stages almost nothing scores well on precision and may be useless.</p>
+  <p><b>Closing three defects exposed ten more.</b> Four were reported by two or three agents independently, which makes them defects in the text rather than one reader&rsquo;s quirk: the deduplication rule contradicts itself (keep the most detailed statement, but drop the LATER ones); <code>no-creditor</code> and <code>workstream</code> have no precedence when both a creditor and a deliverable are missing; no reason fits an obligation satisfied INSIDE the meeting; and the deduplication rule cannot tell a speaker restating a promise from a transcription artifact repeating a line. Six more are listed in <code>round5/rates.json</code>.</p>
+  <p><b>What the run verified about itself.</b> Two extraction agents hit a shared-scratchpad filename collision and initially read the WRONG transcript. Both caught it and redid the work. The orchestrator&rsquo;s own verifier re-checks every quote against the transcript named in <code>frame.json</code> and found <b>0 defects across all nine files</b>, which clears the run independently of what any agent reported. Diarization remains poor: duplicated speaker entries, bare <code>Speaker N</code> labels, and turns attributed to a speaker who plainly did not say them.</p>
+</div>
+
+<h2>Decision card</h2>
+<div class="card">
+
+<div class="opt">
+  <b>(a) Run revision 5 over the other 8 meetings to reach a deciding sample<span class="tag rec">recommended</span></b>
+  Revision 5 has been measured on 10 rows. The other corpus staged 39 rows under revision 4, so re-running revision 5 there should add enough to put the pooled count near 40&ndash;50 &mdash; the range where a true rate of 0.10 clears 0.2. Trade-off: 8 more extraction agents and a second census, and those 8 meetings are where revision 5&rsquo;s defects were found, so that half is not fully held out.
+</div>
+
+<div class="opt">
+  <b>(b) Stop, and record the doctrine as measured-but-undecided<span class="tag">baseline</span></b>
+  Six rounds, five measured variants. The last one has the best point estimate of all and an interval too wide to act on. Zero further cost. The honest record is that the corpus ran out before the doctrine did.
+</div>
+
+<div class="opt">
+  <b>(c) Deploy on the point estimate<span class="tag no">not recommended</span></b>
+  0.100 looks good and rests on a single wrong row out of ten. One more error would make it 0.200. The threshold was written against the interval precisely to stop this.
+</div>
+
+<div class="rec">
+  <b>Recommendation: (a).</b> This is the first round whose result argues for continuing rather than stopping. The same-corpus fall from 0.727 to 0.100 is large, and the only thing blocking a decision is sample size, which one more extraction pass can fix. Run pass B alongside it, because revision 5&rsquo;s conservatism means MISSED is now the open risk, not INVENTED.
+  <br><b>If he does nothing:</b> the doctrine stays authored-not-deployed behind revert <code>96eef39</code>. Nothing breaks.
+</div>
+</div>
+
+<h2>Sampling fractions &mdash; design vs realised</h2>
+<table>
+<tr><th>bucket</th><th class="n">rows</th><th class="n">design</th><th class="n">ruled</th><th class="n">realised</th><th class="n">weight</th></tr>
+<tr><td>agree-promise</td><td class="n">6</td><td class="n">1.0</td><td class="n">0</td><td class="n">0.000</td><td class="n">&mdash;</td></tr>
+<tr><td>agree-not-promise</td><td class="n">5</td><td class="n">1.0</td><td class="n">0</td><td class="n">0.000</td><td class="n">&mdash;</td></tr>
+<tr><td>disagree-A-refused</td><td class="n">343</td><td class="n">1.0</td><td class="n">40</td><td class="n">0.1166</td><td class="n">8.575</td></tr>
+</table>
+<p>They differ, and enormously. Weights use the realised fraction only; the design fraction after a cap inflates the rate by the cap factor.</p>
+
+<h2>The rest of the counts</h2>
+<table>
+<tr><td>Unsure share</td><td class="n">0.050 (2/40)</td></tr>
+<tr><td>Yield per meeting (descriptive, no interval)</td><td class="n">0.667 (6/9)</td></tr>
+<tr><td>Pass A: emitted / staged / dropped</td><td class="n">80 / 6 / 74</td></tr>
+<tr><td>Drop reasons over A's 74 drops</td><td class="n">hypothetical 20, inferred 16, third-party 12, past-tense 10, unnamed-counterparty 9, uncertain 7</td></tr>
+<tr><td>&ldquo;Refused&rdquo; vs &ldquo;never looked&rdquo; in the 343-row bucket</td><td class="n">69 A-dropped / 274 never emitted</td></tr>
+<tr><td>Leave-one-meeting-out, MISSED (9 recomputes)</td><td class="n">[1.000, 1.000]</td></tr>
+<tr><td>Leave-one-agree-not-promise-yes-out sensitivity</td><td class="n">not exercised (0 droppable)</td></tr>
+<tr><td>Reader agreement: Po / Gwet's AC1 (n=354)</td><td class="n">0.031 / &minus;0.938</td></tr>
+<tr><td>Intra-rater agreement (s05 repeats)</td><td class="n">4/4</td></tr>
+<tr><td>Agreement-sample rows reaching the owner</td><td class="n">0 of 11</td></tr>
+<tr><td>Known positive (s02)</td><td class="n">MATCH &mdash; 1 staged, 4 dropped</td></tr>
+</table>
+
+<h2>The limit</h2>
+<p>A promise <b>neither</b> reader emitted cannot appear in any bucket, so it is unmeasurable here. MISSED is measured over what pass B or the agreement sample surfaced and is therefore a <b>lower bound</b>. The agreement sample is the only probe that could have touched that joint blind spot; 0 of its 11 rows reached the owner, so the joint blind spot is not measured at all by this run.</p>
+<p>The two readers are the same model family, so their errors are <b>correlated</b> and two readings are worth materially less than two independent ones. This plan did not quantify that correlation and asserts no figure for it &mdash; direction only: it pushes the true miss rate <b>above</b> what is reported. The Wilson intervals ignore stratification and meeting clustering, so they are a <b>floor</b> on the uncertainty, not a full account of it.</p>
+<p><b>Open question closed:</b> pass B should <em>not</em> have run on a different vendor's model &mdash; doing so would have exported restricted client transcripts outside this project's data boundary, which the plan forbids outright. That holds regardless of how much independence a second vendor would have bought, a quantity this plan never measured.</p>
+
+<h2>Corpus ceiling &mdash; a finding in its own right</h2>
+<p>45 transcript files, 34,479 turns total; at ~1 staged candidate per 1,400 turns that projects <b>~25 staged candidates even if every file were readable</b>. Only 10 files pass the usability rule (6,618 turns, ~4.7 projected); this draw took 9 of them (6,230 turns, ~4.5 projected; 6 actually staged). Relaxing to &ldquo;owner named at least once&rdquo; adds 11 duplicate-owner meetings (9,831 turns) and reaches only ~12. s01's power table needs ~20 for a HIGH result and ~40 for a LOW one. <b>No sample this corpus can supply resolves the 0.2 INVENTED rule, at any N</b> &mdash; more meetings is not a route to a decision. MISSED is <em>not</em> bound by that ceiling: its denominator comes from pass B's 349-row list, not from pass A's staged rows.</p>
+
+<p class="foot">Meetings are named by id only. Source of truth for every number: <code>_plans/commitment-judging-2026-09-03/_evidence/judging/rates.json</code>, reproduced byte for byte by <code>scripts/report.py --recompute</code>.</p>
+
+</main>
+</body>
+</html>

@@ -42,14 +42,38 @@ def identifier_shaped(token: str) -> bool:
             or any(ch in token for ch in "-_/"))
 
 
+#: The frontmatter terminator is a LINE that is exactly ``---`` — never a
+#: ``---`` that happens to sit inside one. Deliberately ``\r?$`` and not
+#: ``\s*$``: in Python ``\s`` matches ``\n``, so ``\s*$`` can swallow blank
+#: lines past the delimiter and shift the frontmatter/body boundary. The
+#: line-end test is a LOOKAHEAD so the match consumes only the three dashes:
+#: a CRLF note's body must keep its own ``\r``, byte for byte, or a content
+#: digest taken after a round-trip stops matching the one taken before it.
+_FENCE = re.compile(r"^---(?=\r?$)", re.MULTILINE)
+
+
 def split(text: str) -> tuple[str, str] | None:
-    """Return (frontmatter_block, body) or None if no leading frontmatter."""
+    """Return (frontmatter_block, body) or None if no leading frontmatter.
+
+    LINE-ANCHORED (2026-09-02, M-8). The old form was ``text.split("---", 2)``,
+    which cut at the first ``---`` ANYWHERE after the opening fence — so a note
+    titled ``A --- B`` ended its frontmatter inside its own title line, and
+    everything after it (``provenance.trust``, the signed keys, the rest of the
+    block) silently became body. A body ``---`` rule was already safe under the
+    old form (the split stopped at the closing fence first); the hole was an
+    inline ``---`` INSIDE the frontmatter.
+
+    The returned pair is byte-identical to the old one for a well-formed note:
+    the block keeps the newline that follows the opening fence, and the body
+    keeps the newline that follows the closing one.
+    """
     if not text.startswith("---"):
         return None
-    parts = text.split("---", 2)
-    if len(parts) < 3:
+    # Search from 3, past the opening fence, so ``^`` can never re-match it.
+    match = _FENCE.search(text, 3)
+    if match is None:
         return None
-    return parts[1], parts[2]
+    return text[3:match.start()], text[match.end():]
 
 
 def _unquote(value: str) -> str:
@@ -164,6 +188,14 @@ def _scalar(v: Any) -> str:
     return str(v)
 
 
+#: Words PyYAML resolves to a BOOLEAN under YAML 1.1, so a STRING that spells
+#: one has to be quoted or it comes back as ``True``/``False``. Measured
+#: 2026-09-02: ``injection_assessment.concealment_scan: off`` — the kill-switch
+#: state — read back as ``False``, so every note the switch protected was
+#: indistinguishable from one whose state was unrecognised.
+_YAML11_BOOLS = frozenset({"y", "n", "yes", "no", "true", "false", "on", "off"})
+
+
 def yaml_scalar(value: Any) -> str:
     """Serialise ``value`` as a SAFE one-line YAML scalar.
 
@@ -178,7 +210,8 @@ def yaml_scalar(value: Any) -> str:
     text = str(value)
     text = "".join(" " if ch < " " or ch == "\x7f" else ch for ch in text)
     if (any(c in text for c in (":", "#", "[", "]", "{", "}", ",", '"', "\\", "'"))
-            or text != text.strip() or not text or not text[:1].isalnum()):
+            or text != text.strip() or not text or not text[:1].isalnum()
+            or text.lower() in _YAML11_BOOLS):
         escaped = text.replace("\\", "\\\\").replace('"', '\\"')
         return f'"{escaped}"'
     return text

@@ -234,6 +234,8 @@ def _run_check_egress(args, ctx) -> int:
 
     result = egress_terms.check(
         text, vault=vault, threshold=args.min_tier, strict=args.strict,
+        extra_vaults=[v for v in getattr(args, "extra_vault", []) or []
+                      if v and v != str(vault)],
     )
     result["explanation"] = egress_terms.explain(result)
     if args.json:

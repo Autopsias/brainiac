@@ -3,17 +3,13 @@ from __future__ import annotations
 
 from ._shared import *  # noqa: F401,F403
 from ._facade import public
-from ._claims_state import _quarantined, _sweep_pending_without_valid_run, claim_quarantine_dir, quarantined_claims
-from ._criteria import evidence_lineage_key, evidence_unit_key
-from ._ingress import _validate_correction_payload
-from ._io import _append_jsonl, _read_jsonl, _write_atomic
-from ._layout import _env_days, _ts, _utcnow, proposal_drop_dir, proposals_dir, verdict_drop_dir
-from ._learning_ledger import _claims_path, demote_category, log_defect, record_outcome
-from ._ledger_join import join_ledger_category, ledger_index
+from ._claims_state import _sweep_pending_without_valid_run, claim_quarantine_dir, quarantined_claims
+from ._io import _append_jsonl, _read_jsonl
+from ._layout import _env_days, _ts, _utcnow, proposals_dir
+from ._learning_ledger import _claims_path, log_defect
+from ._ledger_join import ledger_index
 from ._routing import _bump_route_stats
-from ._run_migration import run_manifest
-from ._runs import run_validity
-from ._taxonomy import ingest_taxonomy, resolve_category
+from ._taxonomy import ingest_taxonomy
 from ._claim_evaluation import _bind_claim
 from ._claim_sweep import _claim_correction_drops, _claim_text_drops
 

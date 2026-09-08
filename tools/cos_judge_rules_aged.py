@@ -32,8 +32,85 @@ AGED_READ_SIGNAL = "aged-read-no-action"
 #:
 #: Every OTHER screen is untouched and is what stands in place of the buffer:
 #: read-observed-never-set, the body actually opened, no unanswered ask, no
-#: live deadline, no open commitment, no unsent draft, P0/P1 never archived.
+#: live deadline, no open commitment, no unsent draft. (The tier floor is
+#: gone from this lane as of the 2026-09-04 ruling: a `read` thread archives at
+#: any tier, P0 included. `cos_chips.p0_floor_refuses` is the one definition.)
 AGED_READ_MIN_DAYS = 0
+
+
+def unreadable_body_refusal(signal: str, ctx: dict[str, Any]) -> str | None:
+    """THE SHARED FLOOR OF EVERY AUTO-ARCHIVE LANE: a body this run could not
+    read justifies NOTHING. The reason, or None.
+
+    IT IS NOT `screens_ran_unresolved` (review 2026-08-25, attempt 2, finding
+    1). That flag means the body never OPENED. This means it opened and came
+    back UNUSABLE — a rights-protected placeholder, an empty extraction — and
+    `cos_signals_body.readable_newest_text` then hands every content screen an
+    EMPTY STRING. So `unanswered_direct_ask`, `live_deadline` and
+    `stale_deadline_passed` all read False on such a row, and every lane clause
+    that refuses on a True reads their silence as agreement.
+
+    MEASURED on one rights-protected row (`body_opened: True`,
+    `body_chars: 120`, corpus text "Please send me the annex by Friday. Can you
+    confirm?", `extraction.error: "rights-protected"`, run date 2026-08-25):
+    READABLE, both lanes refuse it on the standing ask; UNREADABLE, BOTH accept
+    it — the aged-read lane archives a `read` thread and the stale-act lane an
+    `act` one, on the ABSENCE of evidence rather than evidence of absence. It
+    was found on the stale lane and it was never the stale lane's bug: the
+    blanking happens in the shared producer, so both lanes inherited it.
+
+    ONE DEFINITION, STATED BY EACH LANE UNDER ITS OWN SIGNAL NAME — the same
+    idiom both lanes already use for the unread shield, so a refusal names the
+    lane that refused. It lives in THIS module because `cos_judge_rules_stale`
+    imports this one and nothing imports it back: one home, no ring.
+
+    `cos_judge_rules.first_failed_screen` already answers `Held · protected`
+    for exactly this thread. The fact had a producer and a name all along; the
+    archive lanes were the readers that never asked for it.
+    """
+    if not ctx.get("body_unreadable"):
+        return None
+    return (f"`{signal}` claimed on a thread whose body this run itself "
+            "declared UNREADABLE — the ask detector and both deadline parses "
+            "scan an EMPTY string on such a row, so their silence is the "
+            "ABSENCE of evidence, not evidence of absence (`Held · protected` "
+            "is what the documented screen order does with this thread)")
+
+
+def _draft_refusal(cid: str | None, ctx: dict[str, Any]) -> str | None:
+    """The aged-read lane's draft clause — one rule read off two sources.
+
+    Lifted out of `aged_read_refusal` (2026-09-02) so that function keeps
+    its length bound. Nothing about the rule changed in the move.
+    """
+    # TWO SOURCES, BOTH REAL. `thread_carries_draft` is the HOST's own answer
+    # (`cos_judge_night.load_night`: the driver's `isDraft` census of tonight's
+    # enumeration, unioned with this lane's own undo ledgers via
+    # `cos_mutate_ledger.threads_already_drafted`). It was added because the
+    # `drafts_inventory` clause below CANNOT FIRE — `load_night` publishes that
+    # key as a literal `[]` and nothing has ever published
+    # `expired_cos_draft_convids` at all, so DOCTRINE's promise that "the host
+    # re-checks the drafts inventory" was a guard with no producer (review
+    # 2026-08-25, finding 5). The old clause stays: it is what the golden
+    # fixtures and a future real inventory drive, and OR-ing the two can only
+    # refuse more, never less.
+    # THE OWNER'S LEVER (ruling 2026-09-02), off `overlay/cos/auto-archive.md`
+    # via `load_night`. It waives BOTH draft clauses together, because they are
+    # two readings of one fact and honouring one while waiving the other would
+    # refuse on whichever source happened to see the draft. Absent from ctx ⇒
+    # falsy ⇒ the pre-ruling refusal, so an old fixture keeps its old verdict.
+    # Every other clause above still binds, and the ruling is scoped to THIS
+    # lane: `cos_judge_rules_stale` keeps its own draft refusal untouched.
+    if not ctx.get("archive_over_draft"):
+        if ctx.get("thread_carries_draft"):
+            return (f"`{AGED_READ_SIGNAL}` claimed on a thread the host's own draft census "
+                    "reports as carrying an unsent draft — work in progress is "
+                    "never archived, however confident")
+        if cid in (ctx.get("drafts_inventory") or []) \
+                and cid not in (ctx.get("expired_cos_draft_convids") or []):
+            return (f"`{AGED_READ_SIGNAL}` claimed on a thread carrying an unsent "
+                    "draft — work in progress is never archived, however confident")
+    return None
 
 
 def aged_read_refusal(v: dict[str, Any],
@@ -59,15 +136,21 @@ def aged_read_refusal(v: dict[str, Any],
        measured on run 178, 42 of 91 otherwise-eligible threads had an opened
        body, so the lane converges over several nights instead of clearing the
        backlog blind in one;
+    3b. and the body it opened came back READABLE — `unreadable_body_refusal`,
+       the floor both archive lanes share. A body that opened and returned a
+       rights-protected placeholder blanks the text every clause below scans,
+       so 4-6 all read False and agree with the model by default;
     4-6. no unanswered direct ask, no live deadline, no open spine commitment —
        the three screens the ruling named ("checking if there is an action
        classifier on said email");
     7. no unsent draft on the conversation ("and a draft"), the same
        draft-protection idiom `hold.draft_protected_keeps` already uses.
 
-    Tier (P2/P3) and the P0/P1 refusal are NOT repeated here — the blast-radius
-    floor already enforces them for every signal, and a condition checked twice
-    is a condition that can be relaxed in one place and look enforced.
+    Tier is NOT repeated here — the blast-radius floor already enforces what is
+    left of it for every signal, and a condition checked twice is a condition
+    that can be relaxed in one place and look enforced. Since 2026-09-04 what
+    is left of it for THIS lane is nothing: a `read` verdict archives at any
+    tier, P0 included (`cos_chips.p0_floor_refuses`).
     """
     if ctx.get("read_state") != "read":
         return (f"`{AGED_READ_SIGNAL}` claimed on a thread the mailbox reports "
@@ -86,16 +169,29 @@ def aged_read_refusal(v: dict[str, Any],
                 "opened, so the action screens could not run — 'no action' "
                 "over screens that did not run is a guess about the owner's "
                 "obligations, not a finding")
+    # 3b. AND THE BODY THAT OPENED CAME BACK READABLE. Clause 3 asks whether
+    # the screens RAN; this asks whether they had anything to run ON. The three
+    # content clauses immediately below all read False over a blanked body, so
+    # without this one they agree with the model by default.
+    blanked = unreadable_body_refusal(AGED_READ_SIGNAL, ctx)
+    if blanked:
+        return blanked
     for key, what in (("unanswered_direct_ask", "an unanswered direct ask"),
                       ("live_deadline", "a live deadline"),
                       ("open_spine_commitment", "an open commitment")):
         if ctx.get(key):
             return (f"`{AGED_READ_SIGNAL}` claimed on a thread carrying {what} "
                     "— the owner's ruling archives read mail he owes NOTHING on")
-    cid = v.get("conversation_id")
-    if cid in (ctx.get("drafts_inventory") or []) \
-            and cid not in (ctx.get("expired_cos_draft_convids") or []):
-        return (f"`{AGED_READ_SIGNAL}` claimed on a thread carrying an unsent "
-                "draft — work in progress is never archived, however confident")
+    draft = _draft_refusal(v.get("conversation_id"), ctx)
+    if draft:
+        return draft
+    # (RULE 1, 2026-08-30) NOTE: the owner's substance gate — a read thread
+    # archives only when the ingest pass cleared it as `no-substance` — is NOT
+    # here on purpose. `disposition` is a judge OUTPUT set by `mark_candidates`,
+    # which runs AFTER `accept_verdicts` (where this belt fires), so `v` carries
+    # no disposition yet at this point; reading it here would refuse every
+    # aged-read thread on an absent field. The gate lives in belt 2
+    # (`cos_mutate_plan_aged.aged_read_refusal`, off the finished ledger row) and
+    # is re-checked by belt 3 (`cos_runverify_join._aged_read_bad`).
     return None
 

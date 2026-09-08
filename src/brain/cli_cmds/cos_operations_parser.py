@@ -149,7 +149,46 @@ def _add_cos_standing_approval(sub) -> None:
     sp.add_argument("--json", action="store_true")
 
 
+def _add_cos_feedback(sub) -> None:
+    sp = sub.add_parser(
+        "cos-feedback",
+        help="HOST-only owner-feedback pen: read the owner's marks off a morning sheet and append what they say to the feedback record (three marks per thread — judgment, label, draft — plus a suggested standing rule and a revoke tick). Two transports, ONE meaning: --from-marks reads the JSON file the sheet's Save button downloads (this is the normal route, and it needs nothing running), --from-sheet reads a sheet page republished through the Artifact tool. Each sheet is filed ONCE: a second read of the same sheet is refused on its sheet_id, not on its filename. The record is host-private, off every VM-visible root; the judge and draft prompts quote it as standing owner instructions. Prints what it appended.",
+    )
+    route = sp.add_mutually_exclusive_group(required=True)
+    route.add_argument("--from-marks", dest="from_marks", default=None,
+                       help="path to the marks JSON the sheet's Save button "
+                            "wrote (normally ~/Downloads/cos-marks-<date>.json)")
+    route.add_argument("--from-sheet", dest="from_sheet", default=None,
+                       help="path to a sheet page republished through the "
+                            "Artifact tool, with the marks inside it")
+    sp.add_argument("--json", action="store_true")
+
+
+def _add_cos_sheet(sub) -> None:
+    """The attended publication handoff: ``brain cos sheet --publish``."""
+    sp = sub.add_parser(
+        "cos",
+        help="HOST-only attended COS output commands.",
+    )
+    actions = sp.add_subparsers(dest="cos_action", required=True)
+    sheet = actions.add_parser(
+        "sheet",
+        help="Build the durable morning sheet from the batch/run ledgers.",
+    )
+    sheet.add_argument("--date", default=None, help="run date (YYYY-MM-DD)")
+    output = sheet.add_mutually_exclusive_group()
+    output.add_argument(
+        "--publish",
+        action="store_true",
+        help="print only the HTML path for the Artifact tool; invoke that tool "
+        "with the returned artifact capability declaration",
+    )
+    output.add_argument("--json", action="store_true")
+
+
 def add_parser(sub) -> None:
+    _add_cos_sheet(sub)
+    _add_cos_feedback(sub)
     _add_cos_standing_approval(sub)
     _add_cos_broker(sub)
     _add_cos_correct(sub)

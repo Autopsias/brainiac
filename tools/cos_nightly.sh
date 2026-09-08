@@ -52,6 +52,18 @@
 #      claim. The drops are already written; what is missing is the FILE the
 #      sweep would claim, so the night stops before archiving the mail that
 #      carried it. The per-file reason is in the report line above the die.
+#   22 a plan session's live-mailbox lock is held (deferred: plan lock held) —
+#      a plan session takes this lock with `tools/cos_plan_lock.py acquire`
+#      before its first mutation and releases it after the last, whatever the
+#      outcome (the ACQUIRER; this script is only the consumer). That is what
+#      makes `serial_reason`'s one-writer claim real rather than aspirational:
+#      two writers on the same mailbox at once is a race, so the night skips
+#      itself rather than contend for it. Not a failure; the next scheduled
+#      night tries again.
+#   23 a plan session's lock was found PAST its 6h stale bar (deferred: stale
+#      plan lock cleared) — the night still skips itself (it does not know
+#      what died mid-batch or why), but it also removes the stale lock so it
+#      is the ONLY night that skips, not every night after it forever.
 #
 # THE BROWSER. It drives a COPIED Chrome profile with a debug port
 # (`~/Library/Application Support/Google/Chrome-COS`) — never the owner's own
@@ -59,8 +71,9 @@
 # it if it is not up.
 #
 # Usage:
-#   tools/cos_nightly.sh            # full run, uncapped, last COS_SINCE_DAYS days
-#   tools/cos_nightly.sh --all      # historic: lift the window, the whole mailbox
+#   tools/cos_nightly.sh            # one batch, last COS_SINCE_DAYS days
+#   tools/cos_nightly.sh --batches 2 --thread-cap 120
+#   tools/cos_nightly.sh --all      # historic: lift the window; still cap each model batch
 #   tools/cos_nightly.sh --dry      # everything except the apply
 #   tools/cos_nightly.sh --no-model # stop after the batches (no judgment)
 set -u
@@ -90,19 +103,30 @@ export BRAIN_VAULT="${BRAIN_VAULT:-$HOME/DeveloperFolder/Brainiac/vault}"
 export PYTHONPATH="$REPO/src"
 LOG_DIR="${BRAIN_LOG_DIR:-$HOME/.brain/logs}"
 CLAUDE_BIN="${COS_CLAUDE_BIN:-$(command -v claude || echo "$HOME/.local/bin/claude")}"
-PY="${COS_PYTHON:-python3}"
+# A bare `python3` is whatever PATH resolves first — on this host homebrew's,
+# which has no onnxruntime, so `brain` silently degraded to the hash embedder
+# and stamped `hash-v1` on a 10-hour rebuild (2026-08-26). Pin the interpreter
+# that owns the real model, and REFUSE the degrade rather than take it: the
+# index-side guard added in a40cd2f now blocks the stamp, but a run that
+# reaches that guard has already wasted the night. Fail at the first import.
+PY="${COS_PYTHON:-$HOME/.brainiac/venv/bin/python}"
+export BRAIN_REQUIRE_REAL_EMBEDDER=1
 
-# OWNER RULING 2026-08-11: no artificial numeric caps — "the content and emails
-# and context should drive that". All three lanes run UNLIMITED; the SCOPE is a
-# recency window (the last COS_SINCE_DAYS days) plus per-lane self-exclusion (an
-# archived thread leaves the inbox, a chipped thread is skipped, a thread with a
-# draft is skipped). `--all` lifts the window for a historic sweep. This is safe
-# because the reversal is one command (`cos_mutate.py undo`), the noise rules are
-# narrow (never P0/P1, never unread, never act/read, sender with >= 3 rows), and
-# every mutation is verified and recorded per thread.
+# OWNER RULING 2026-08-11 keeps the MUTATION lanes content-driven and
+# unlimited. S06 adds a different boundary: the model transport demonstrably
+# fails around 250 rows, so each model batch is capped while the FULL census
+# remains the backlog and the controller keeps taking oldest-first slices.
+# Scope is still the recency window (the last COS_SINCE_DAYS days) plus the
+# lane's own guards. `--all` still lifts the window for a historic sweep.
 SINCE_DAYS="${COS_SINCE_DAYS:-14}"
 BODY_CAP="${COS_BODY_CAP:-20}"
 MAX_TURNS="${COS_MAX_TURNS:-40}"
+BATCHES="${BRAIN_COS_BATCHES:-1}"
+# The two model legs fail together around 250 rows: one-message overflow and
+# declining closed-vocabulary compliance. 120 leaves deliberate headroom and
+# is the population ceiling for BOTH category and judgment prompts.
+THREAD_CAP="${BRAIN_COS_BATCH_THREAD_CAP:-120}"
+CHAIN_CHILD=0
 
 # HOW MANY CHUNKS OF EITHER MODEL LEG RUN AT ONCE. The chunks are independent
 # READ-ONLY model calls — each reads only its own chunk dir and writes only its
@@ -221,11 +245,15 @@ MODEL_TOOLS=(--tools "Read,Glob" --strict-mcp-config
 # --- END model tool gate ---
 
 DRY=0; MODEL=1; SCOPE_ARGS="--since-days $SINCE_DAYS"; SCOPE_DESC="${SINCE_DAYS}d window"
-# ATTENDED MODE, off by default. `--archive-cap=N` is ONE token on purpose:
-# this loop reads "$@" without shifting, which is what keeps it parseable by
-# the /bin/bash 3.2 the plist actually invokes (the shebang is overridden).
+# ATTENDED MODE, off by default. The parser uses only indexed shell variables
+# and shifts; both are available in the /bin/bash 3.2 the plist invokes.
 ARCHIVE_CAP=""; ATTENDED_ARGS=""; PLAN_CAP_ARGS=""; SESSION_APPROVED=0
-for a in "$@"; do
+# Bash 3.2 + `set -u` treats an empty indexed-array expansion as unbound.
+# The documented default invocation has NO argv, so keep the same sentinel
+# shape the selection arrays below use and strip it only at the child call.
+PARSE_ARGS=(sentinel "$@")
+while [ "$#" -gt 0 ]; do
+  a="$1"; shift
   case "$a" in
     --dry) DRY=1 ;;
     --no-model) MODEL=0 ;;
@@ -246,14 +274,73 @@ for a in "$@"; do
       esac
       ATTENDED_ARGS="--attended"
       PLAN_CAP_ARGS="--archive-abort-cap $ARCHIVE_CAP" ;;
+    --batches)
+      [ "$#" -gt 0 ] || { echo "--batches needs a positive integer" >&2; exit 2; }
+      BATCHES="$1"; shift ;;
+    --batches=*) BATCHES="${a#*=}" ;;
+    --thread-cap)
+      [ "$#" -gt 0 ] || { echo "--thread-cap needs a positive integer" >&2; exit 2; }
+      THREAD_CAP="$1"; shift ;;
+    --thread-cap=*) THREAD_CAP="${a#*=}" ;;
+    --chain-child) CHAIN_CHILD=1 ;;
     *) echo "unknown argument: $a" >&2; exit 2 ;;
   esac
+done
+for n in "$BATCHES" "$THREAD_CAP"; do
+  case "$n" in ''|*[!0-9]*|0) echo "batch counts must be positive integers, got '$n'" >&2; exit 2 ;; esac
 done
 
 mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/cos-nightly-$(date +%F).log"
 find "$LOG_DIR" -name 'cos-nightly-*.log' -mtime +30 -delete 2>/dev/null
 log() { printf '%s %s\n' "$(date '+%F %T')" "$*" | tee -a "$LOG"; }
+
+# --- BEGIN plan-lock guard ---
+# A PLAN SESSION MUTATING THE LIVE MAILBOX AND THIS SCHEDULED NIGHT ARE TWO
+# WRITERS ON ONE MAILBOX. `serial_reason` claims only one writer runs at a
+# time; without this guard that claim is aspirational — nothing stops a plan
+# session and the 02:00 night from racing on the same OWA session. A plan
+# session that touches the live mailbox takes this lock first (`tools/
+# cos_plan_lock.py acquire` — this script is only the CONSUMER; that tool is
+# the acquirer) and drops it when done. FIXED HOST PATH, not vault-scoped:
+# the lock protects the MAILBOX, and every vault on this host shares one.
+#
+# Format is plain KEY=VALUE, not JSON — grepped, never sourced (a lock file a
+# plan session writes is still less-trusted input than code, and `source`ing
+# it would run whatever it said).
+#   PLAN_LOCK_PID=<pid>
+#   PLAN_LOCK_ACQUIRED_EPOCH=<unix seconds>
+#
+# A deferred night and a night that ran are DIFFERENT STATES and must stay
+# different on disk (see the exit-code table above, 22/23): this guard never
+# silently no-ops and never silently runs through a held lock.
+PLAN_LOCK_FILE="${COS_PLAN_LOCK_FILE:-$HOME/.brain/locks/cos-plan-lock}"
+PLAN_LOCK_STALE_SECONDS="${COS_PLAN_LOCK_STALE_SECONDS:-21600}"  # 6h
+
+check_plan_lock() {
+  [ -f "$PLAN_LOCK_FILE" ] || return 0
+  LOCK_EPOCH="$(grep -m1 '^PLAN_LOCK_ACQUIRED_EPOCH=' "$PLAN_LOCK_FILE" 2>/dev/null | cut -d= -f2-)"
+  LOCK_PID="$(grep -m1 '^PLAN_LOCK_PID=' "$PLAN_LOCK_FILE" 2>/dev/null | cut -d= -f2-)"
+  case "$LOCK_EPOCH" in
+    ''|*[!0-9]*)
+      log "STOP: deferred: plan lock held ($PLAN_LOCK_FILE exists but its acquired-epoch is missing or unreadable; treating as held, pid=${LOCK_PID:-unknown})"
+      exit 22 ;;
+  esac
+  LOCK_AGE=$(( $(date +%s) - LOCK_EPOCH ))
+  if [ "$LOCK_AGE" -ge "$PLAN_LOCK_STALE_SECONDS" ]; then
+    log "STOP: deferred: stale plan lock cleared ($PLAN_LOCK_FILE age=${LOCK_AGE}s >= ${PLAN_LOCK_STALE_SECONDS}s stale bar, pid=${LOCK_PID:-unknown}; removing so only THIS night skips itself)"
+    rm -f "$PLAN_LOCK_FILE"
+    exit 23
+  fi
+  log "STOP: deferred: plan lock held ($PLAN_LOCK_FILE age=${LOCK_AGE}s < ${PLAN_LOCK_STALE_SECONDS}s stale bar, pid=${LOCK_PID:-unknown})"
+  exit 22
+}
+# A chained child re-invokes this exact script (--chain-child); the parent
+# already cleared the guard for this whole sign-in session, so a child does
+# not re-check — re-checking mid-session would let a lock written between
+# batches abort a batch that is already safely inside its own run.
+[ "$CHAIN_CHILD" -eq 1 ] || check_plan_lock
+# --- END plan-lock guard ---
 
 # EVERY STOP REBUILDS THE MORNING SURFACE (review 2026-08-13, round 1, HIGH).
 # `die()` did not, while exits 13, 14 and 15 all did — so a run that
@@ -277,6 +364,417 @@ die() {
   fi
   exit "${2:-1}"
 }
+
+# Validate the attended-ingest contract before either the chained controller
+# or the legacy diagnostic path can reach the browser.  Keeping this as one
+# producer prevents the parent and child paths from drifting apart.
+validate_attended_bridge() {
+  if [ -n "$ARCHIVE_CAP" ] && [ "$SESSION_APPROVED" -eq 1 ] \
+     && [ "${COS_INGEST_BRIDGE:-0}" != "1" ]; then
+    die "an attended backfill (--approve-cap=$ARCHIVE_CAP) was started with
+ COS_INGEST_BRIDGE unset, so the ingest bridge would not run and the night
+ would judge candidates and drop none of them. Re-run with
+ COS_INGEST_BRIDGE=1, or drop --approve-cap for a triage-only night."
+  fi
+}
+
+# --- chained sign-in session ------------------------------------------------
+# The 1,300-line body below remains ONE batch. The parent invokes that body as
+# a child, drains it through the audited broker, and repeats. This keeps one
+# producer for every per-run artifact and makes the batch controller testable
+# with a small stub without copying the COS run into a second implementation.
+run_batch_chain() {
+  CHAIN_SESSION_ID="${COS_CHAIN_SESSION_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
+  INIT="$($PY tools/cos_batch_session.py init --vault "$BRAIN_VAULT" \
+      --session-id "$CHAIN_SESSION_ID" --batches "$BATCHES" \
+      --thread-cap "$THREAD_CAP" 2>>"$LOG")" \
+      || die "the chained-session state could not be created" 2
+  CHAIN_STATE="$(printf '%s' "$INIT" | $PY -c \
+      'import json,sys; print(json.load(sys.stdin)["state"])')"
+  CHAIN_DIR="$(dirname "$CHAIN_STATE")"
+  STALE_BEFORE=0; STALE_AFTER=0; CHAIN_PID=""; CHAIN_RECEIPT=""
+
+  chain_open_count() {
+    if [ -n "${COS_CHAIN_OPEN_COUNT_STUB:-}" ]; then
+      "$COS_CHAIN_OPEN_COUNT_STUB"
+    else
+      PYTHONPATH=src $PY -c 'import sys
+from brain.cos import open_batches
+print(len(open_batches(sys.argv[1])))' "$BRAIN_VAULT"
+    fi
+  }
+  chain_broker() {
+    if [ -n "${COS_CHAIN_BROKER_STUB:-}" ]; then
+      "$COS_CHAIN_BROKER_STUB"
+    else
+      $PY -m brain.cli cos-broker --json
+    fi
+  }
+  chain_open_state() {
+    if [ -n "${COS_CHAIN_OPEN_COUNT_STUB:-}" ]; then
+      chain_open_count
+    else
+      PYTHONPATH=src $PY -c 'import json,sys
+from brain.cos import open_batches
+print(json.dumps([{"batch_id": b.get("batch_id"), "digest": b.get("digest"),
+                   "generation": b.get("generation")} for b in open_batches(sys.argv[1])],
+                 sort_keys=True))' "$BRAIN_VAULT"
+    fi
+  }
+  chain_drain() {
+    # A standing approval is recorded at the END of one broker fold and
+    # consumed near the START of the next, so a real drain can require two
+    # calls. Continue while the signed open-batch identity changes; two
+    # consecutive identical states means the owner has not answered and the
+    # conservative outcome is a named stop, never the next child's exit 18.
+    # Empty means "not measured". Initialising this to zero made a broker
+    # failure look like a successful stale-batch reconciliation in the final
+    # ledger even though the post-drain open count had never run.
+    DRAIN_PREV=""; DRAIN_SAME=0; DRAIN_CALLS=0; CHAIN_DRAIN_OPEN=""
+    while [ "$DRAIN_CALLS" -lt 20 ]; do
+      chain_broker >>"$LOG" 2>&1 || return 1
+      DRAIN_CALLS=$((DRAIN_CALLS + 1))
+      CHAIN_DRAIN_OPEN="$(chain_open_count 2>>"$LOG")" || return 1
+      case "$CHAIN_DRAIN_OPEN" in ''|*[!0-9]*) return 1 ;; esac
+      [ "$CHAIN_DRAIN_OPEN" -eq 0 ] && return 0
+      DRAIN_STATE="$(chain_open_state 2>>"$LOG")" || return 1
+      if [ "$DRAIN_STATE" = "$DRAIN_PREV" ]; then
+        DRAIN_SAME=$((DRAIN_SAME + 1))
+      else
+        DRAIN_SAME=0
+      fi
+      [ "$DRAIN_SAME" -ge 1 ] && return 18
+      DRAIN_PREV="$DRAIN_STATE"
+    done
+    return 18
+  }
+  chain_finish() {
+    REASON="$1"; STATUS="$2"; UNRECONCILED="$3"
+    FINISH="$($PY tools/cos_batch_session.py finish --state "$CHAIN_STATE" \
+        --vault "$BRAIN_VAULT" --reason "$REASON" --status "$STATUS" \
+        --unreconciled "$UNRECONCILED" --stale-before "$STALE_BEFORE" \
+        --stale-after "$STALE_AFTER" 2>>"$LOG")" || return 1
+    log "batch stop: $REASON (status=$STATUS, unreconciled=$UNRECONCILED, thread-cap=$THREAD_CAP)"
+    log "batch ledger: $FINISH"
+
+    # SHEET-01 is a product of the WHOLE sign-in session, not of any one child
+    # run.  The batch ledger above is the first point at which its named door
+    # and stop facts exist, so building earlier would force the sheet to guess
+    # them or read an empty default.  Keep a failed build loud but do not rewrite
+    # the mailbox outcome: the sheet refuses missing/torn run inputs, and the
+    # out-of-band sheets-directory heartbeat reports that independent failure.
+    SHEET_OUT="$($PY -m brain.cli cos sheet 2>>"$LOG")"; SHEET_RC=$?
+    if [ "$SHEET_RC" -eq 0 ]; then
+      log "sheet build: $(printf '%s' "$SHEET_OUT" | tr -d '\n')"
+    else
+      log "MORNING SHEET REFUSED (rc=$SHEET_RC): $(printf '%s' "$SHEET_OUT" | tr -d '\n')"
+    fi
+    return "$SHEET_RC"
+  }
+  chain_child_facts() {
+    RUN_ID=""; EV=""; SELECTED=""; FULL_ENUM=""; INGEST_LEDGER=""
+    if [ -s "$CHAIN_RECEIPT" ]; then
+      RUN_ID="$($PY -c 'import json,sys; print(json.load(open(sys.argv[1])).get("run_id") or "")' "$CHAIN_RECEIPT" 2>/dev/null)"
+      EV="$($PY -c 'import json,sys; print(json.load(open(sys.argv[1])).get("evidence") or "")' "$CHAIN_RECEIPT" 2>/dev/null)"
+    fi
+    if [ -n "$RUN_ID" ]; then
+      [ -n "$EV" ] || EV="$REPO/_evidence/nightly/$RUN_ID"
+      SELECTED="$EV/enumeration.json"
+      FULL_ENUM="$EV/enumeration-full.json"
+      INGEST_LEDGER="$BRAIN_VAULT/cos-ops/_cos_ingestion_ledger_$RUN_ID.jsonl"
+    fi
+  }
+  chain_record() {
+    chain_child_facts
+    RECORD_ARGS=(record --state "$CHAIN_STATE" --run-id "${RUN_ID:-not-started}")
+    [ -n "$SELECTED" ] && RECORD_ARGS+=(--selected "$SELECTED")
+    [ -n "$INGEST_LEDGER" ] && RECORD_ARGS+=(--ledger "$INGEST_LEDGER")
+    RECORD="$($PY tools/cos_batch_session.py "${RECORD_ARGS[@]}" 2>>"$LOG")" \
+        || return 1
+    UNRECONCILED="$($PY -c 'import json,sys; print(json.load(sys.stdin)["unreconciled"])' <<<"$RECORD")"
+    # `unreconciled` is a JUDGMENT-completeness count (selected minus judged),
+    # NOT a mutation-safety one: an unjudged thread never reached a plan, so it
+    # is safe to leave for a later batch. RECORDED/JUDGED_ADDED tell a benign
+    # dropped verdict (recorded, progress made) from a torn ledger (nothing
+    # recorded) — the guard below acts on the difference (owner ruling 2026-08-30).
+    RECORDED="$($PY -c 'import json,sys; print(str(json.load(sys.stdin).get("recorded")).lower())' <<<"$RECORD")"
+    JUDGED_ADDED="$($PY -c 'import json,sys; print(json.load(sys.stdin).get("judged_added") or 0)' <<<"$RECORD")"
+    SELECTED_N="$($PY -c 'import json,sys; print(json.load(sys.stdin).get("selected") or 0)' <<<"$RECORD")"
+    REMAINING_ARGS=(remaining --state "$CHAIN_STATE")
+    [ -n "$FULL_ENUM" ] && REMAINING_ARGS+=(--enumeration "$FULL_ENUM")
+    REMAINING_JSON="$($PY tools/cos_batch_session.py \
+        "${REMAINING_ARGS[@]}" 2>>"$LOG")" || return 1
+    REMAINING="$($PY -c 'import json,sys; v=json.load(sys.stdin).get("remaining"); print("unknown" if v is None else v)' <<<"$REMAINING_JSON")"
+    log "batch record: run=${RUN_ID:-not-started} $RECORD remaining=$REMAINING"
+    # A missing census is not an empty backlog. Without it, a fully judged
+    # selected file would otherwise report zero unreconciled rows and the
+    # parent could start another batch against an unknowable denominator.
+    [ "$REMAINING" != "unknown" ] || return 1
+  }
+  chain_signal() {
+    trap '' TERM INT HUP
+    if [ -n "$CHAIN_PID" ] && kill -0 "$CHAIN_PID" 2>/dev/null; then
+      kill -TERM "$CHAIN_PID" 2>/dev/null || true
+      wait "$CHAIN_PID" 2>/dev/null || true
+    fi
+    chain_drain || true
+    chain_record || { UNRECONCILED=0; }
+    chain_finish "session-died" "session died mid-batch, ${UNRECONCILED:-0} threads unreconciled" "${UNRECONCILED:-0}" || true
+    exit 14
+  }
+  trap chain_signal TERM INT HUP
+
+  log "=== cos-nightly chained start (batches=$BATCHES, thread-cap=$THREAD_CAP, oldest-first) ==="
+
+  # ACROSS-NIGHT recovery. The broker gets the first chance to consume an
+  # owner answer or close an expired batch. If it cannot, the session writes a
+  # named ledger stop instead of hitting the old exit-18 preflight silently on
+  # every subsequent night.
+  STALE_BEFORE="$(chain_open_count 2>>"$LOG")" || STALE_BEFORE=""
+  case "$STALE_BEFORE" in ''|*[!0-9]*)
+    # Keep the ledger writer's integer contract even when the measurement
+    # itself failed.  The status names that failure; an empty argv here would
+    # make argparse refuse and erase the only durable account of the stop.
+    STALE_BEFORE=0; STALE_AFTER=0
+    chain_finish "session-died" "open-batch recovery could not read its input" 0 || true
+    return 18 ;;
+  esac
+  STALE_AFTER="$STALE_BEFORE"
+  if [ "$STALE_BEFORE" -gt 0 ]; then
+    log "stale open recovery: found $STALE_BEFORE prior proposal batch(es); running brain cos-broker"
+    chain_drain; DRAIN_RC=$?
+    STALE_AFTER="${CHAIN_DRAIN_OPEN:-$STALE_BEFORE}"
+    if [ "$DRAIN_RC" -ne 0 ] || [ "$STALE_AFTER" -gt 0 ]; then
+      chain_finish "session-died" "stale open proposal batch remains after audited recovery" 0 || true
+      return 18
+    fi
+    log "stale open recovery: reconciled $((STALE_BEFORE - STALE_AFTER)); proceeding"
+  fi
+
+  BATCH_NO=1
+  while [ "$BATCH_NO" -le "$BATCHES" ]; do
+    DOOR_FILE="$CHAIN_DIR/door-$BATCH_NO.json"
+    # ONE PROBE, TWO CALLERS. The retry below must go through the SAME path
+    # as the first attempt, stub included — a retry that only exists on the
+    # real browser path is a branch no test can reach, and this repo has
+    # shipped a SyntaxError inside exactly that shape before.
+    door_probe() {
+      if [ -n "${COS_CHAIN_DOOR_STUB:-}" ]; then
+        "$COS_CHAIN_DOOR_STUB" "$BATCH_NO" >"$DOOR_FILE" 2>>"$LOG"
+      else
+        # 900s, not 3600s. The 3600 bar was scored against a snapshot that is
+        # usually mid-life: OWA mints one access token with a 4254-5514s life
+        # and REUSES it until it nears expiry, so the gate could only pass in
+        # roughly the first third of a token's life. It closed a perfectly
+        # good session 35 SECONDS short on 2026-08-27 (3565 of 3600) and cost
+        # run191 its second batch. The bar does not need to cover a whole
+        # batch, because the token refreshes UNDER the run: measured that same
+        # night, the door opened at 4295s, the batch took 2465s, and the door
+        # then read 3565s where an unrefreshed token would have read 1818s.
+        # And a token that dies anyway costs nothing: cos_mutate_apply reads
+        # `cap.freshestSeed` at APPLY time and stops clean on a 401 with every
+        # applied row already verified and logged, so a re-run resumes.
+        # Override per-run with BRAIN_COS_BATCH_REQUIRED_SECONDS.
+        $PY tools/cos_ego_arm.py --door-check \
+            --required-seconds "${BRAIN_COS_BATCH_REQUIRED_SECONDS:-900}" \
+            >"$DOOR_FILE" 2>>"$LOG"
+      fi
+    }
+    door_probe; DOOR_RC=$?
+    # ONE RETRY, AND ONLY ON A DEGRADED PAGE (2026-08-28). The unattended lane
+    # had run three times and failed three times, each differently (`no-tab`
+    # on 08-21 and 08-26, `degraded` on 08-28), because the door gets exactly
+    # one attempt and a closed door ends the whole night. A re-arm is a fresh
+    # navigation and reload, so it costs ~15s when it works and at most one
+    # more poll deadline when it does not.
+    #
+    # NOT retried: `skipped-not-signed-in`, because signing in is the owner's
+    # action and a retry is pure latency; and a door closed on SHORT VALIDITY
+    # while `arm_status` is `armed`, because the repair there is to wait for
+    # the token to roll -- a retry seconds later reads the same token and
+    # gives the same answer.
+    if [ "$DOOR_RC" -eq 6 ] \
+       && grep -q '"arm_status": "degraded"' "$DOOR_FILE"; then
+      log "door check: batch=$BATCH_NO degraded — re-arming once"
+      door_probe; DOOR_RC=$?
+    fi
+    # WAIT FOR THE ROLL (2026-09-01). A door closed on SHORT VALIDITY while
+    # `arm_status` is `armed` is the token's PHASE, not a fault: the reused
+    # token has <900s left, and OWA mints the next one around expiry
+    # (measured 2026-08-31: 840s left at 22:42, a fresh 3909s token by
+    # 23:24). A retry SECONDS later reads the same token, so the first wait
+    # is the remaining validity itself plus a margin; two spaced re-probes
+    # cover a mint that lags the expiry. Worst case this costs ~25 minutes
+    # against the alternative: a dead night and a human re-kick (two of
+    # those on 2026-09-01).
+    TOKEN_TRIES=0
+    while [ "$DOOR_RC" -eq 6 ] && [ "$TOKEN_TRIES" -lt 3 ] \
+        && grep -q '"arm_status": "armed"' "$DOOR_FILE"; do
+      ROLL_WAIT="$($PY -c 'import json,sys;d=json.load(open(sys.argv[1]));d=d.get("door_check",d);r=d.get("remaining_validity_seconds");q=d.get("required_validity_seconds") or 900;import os;print(min(max(int(r),0)+int(os.environ.get("COS_DOOR_ROLL_MARGIN") or 120),1200) if isinstance(r,(int,float)) and r<q else 0)' "$DOOR_FILE" 2>>"$LOG" || echo 0)"
+      [ "${ROLL_WAIT:-0}" -gt 0 ] || break
+      [ "$TOKEN_TRIES" -gt 0 ] && ROLL_WAIT="${COS_DOOR_ROLL_RETRY_WAIT:-300}"
+      TOKEN_TRIES=$((TOKEN_TRIES + 1))
+      log "door check: batch=$BATCH_NO closed on token phase — waiting ${ROLL_WAIT}s for the roll (probe $TOKEN_TRIES of 3)"
+      sleep "$ROLL_WAIT"
+      door_probe; DOOR_RC=$?
+    done
+    DOOR="$($PY tools/cos_batch_session.py door --state "$CHAIN_STATE" \
+        --input "$DOOR_FILE" --command-rc "$DOOR_RC" 2>>"$LOG")"; DOOR_PARSE_RC=$?
+    if [ "$DOOR_PARSE_RC" -ne 0 ]; then
+      chain_finish "door-closed" "door check failed closed" 0 || true
+      return 6
+    fi
+    DOOR_VERDICT="$($PY -c 'import json,sys; print(json.load(sys.stdin)["verdict"])' <<<"$DOOR")"
+    log "door check: batch=$BATCH_NO verdict=$DOOR_VERDICT rc=$DOOR_RC details=$DOOR"
+    if [ "$DOOR_VERDICT" != "open" ]; then
+      if [ "$DOOR_VERDICT" = "skipped-not-signed-in" ]; then
+        CHAIN_STATUS="skipped: not signed in"
+      else
+        CHAIN_STATUS="door closed before batch $BATCH_NO"
+      fi
+      chain_finish "door-closed" "$CHAIN_STATUS" 0 || true
+      [ "$DOOR_VERDICT" = "skipped-not-signed-in" ] && return 0
+      return 6
+    fi
+
+    CHAIN_RECEIPT="$CHAIN_DIR/child-$BATCH_NO.json"
+    rm -f "$CHAIN_RECEIPT"
+    export COS_CHAIN_STATE="$CHAIN_STATE" COS_CHAIN_CHILD_RECEIPT="$CHAIN_RECEIPT"
+    export COS_CHAIN_BATCH_NUMBER="$BATCH_NO"
+    if [ -n "${COS_CHAIN_RUN_STUB:-}" ]; then
+      "$COS_CHAIN_RUN_STUB" "$BATCH_NO" &
+    else
+      /bin/bash "$REPO/tools/cos_nightly.sh" "${PARSE_ARGS[@]:1}" --chain-child &
+    fi
+    CHAIN_PID=$!
+    wait "$CHAIN_PID"; CHILD_RC=$?
+    CHAIN_PID=""
+
+    # Drain after EVERY attempted batch, including a child that died: its
+    # proposal batch may be the only durable work it left behind.
+    chain_drain; BROKER_RC=$?
+    chain_record || {
+      chain_finish "session-died" \
+          "session died mid-batch, ${UNRECONCILED:-0} threads unreconciled; session state could not reconcile the batch" \
+          "${UNRECONCILED:-0}" || true
+      return 14
+    }
+
+    if [ "$BROKER_RC" -eq 18 ] && [ "${CHAIN_DRAIN_OPEN:-0}" -gt 0 ]; then
+      chain_finish "session-died" \
+          "session died mid-batch, $UNRECONCILED threads unreconciled; session drain left $CHAIN_DRAIN_OPEN open proposal batch(es), refusing the next batch before its exit-18 preflight" \
+          "$UNRECONCILED" || true
+      return 18
+    fi
+
+    if [ "$CHILD_RC" -eq 21 ] && [ "$REMAINING" = "0" ]; then
+      chain_finish "backlog-empty" "backlog empty" 0 || true
+      return 0
+    fi
+    if [ "$CHILD_RC" -ne 0 ] || [ "$BROKER_RC" -ne 0 ]; then
+      # Two DIFFERENT failures shared one word until 2026-08-31: a child that
+      # died mid-batch, and a broker drain that exited non-zero AFTER a healthy
+      # child (that night: an index-schema error in an enrichment stage).
+      # `session-died` sends the diagnosis to the browser lane; a broker
+      # failure lives in the drain. Name each one.
+      if [ "$CHILD_RC" -eq 0 ]; then
+        chain_finish "broker-failed" \
+            "broker drain failed after a healthy batch (broker rc=$BROKER_RC), $UNRECONCILED threads unreconciled" \
+            "$UNRECONCILED" || true
+        return 14
+      fi
+      # A child that exits 18/19 did not die: its ingest bridge STOPPED the
+      # night on purpose (backpressure/refusal, or writer-lock contention)
+      # before any mutation. Until 2026-08-31 this wore "session-died" too
+      # and sent the diagnosis to the browser lane for the third time.
+      if [ "$CHILD_RC" -eq 18 ] || [ "$CHILD_RC" -eq 19 ]; then
+        chain_finish "bridge-blocked" \
+            "the ingest bridge stopped the night before any mutation (child rc=$CHILD_RC: 18=backpressure/refusal, 19=writer-lock contention), $UNRECONCILED threads unreconciled" \
+            "$UNRECONCILED" || true
+        return "$CHILD_RC"
+      fi
+      # EVERY DOCUMENTED EXIT CODE IS ITS OWN DIAGNOSIS (2026-09-03). The
+      # header table above names what each one means, and three of them were
+      # already carved out below; everything else still landed on
+      # `session-died`, which points a reader at the browser lane. Measured on
+      # 2026-09-03: run 250 stopped at rc=4 (the mailbox session lapsed) and
+      # run 251 at rc=20 (one attachment of 44 did not download). Both were
+      # logged as a dead session. The second cost real time — the true cause,
+      # a single chunk answering with no verdicts, sat one line above the
+      # wrong word. `session-died` now means 14 and the genuinely unknown.
+      case "$CHILD_RC" in
+        4)
+          CHILD_STOP="session-lapsed"
+          CHILD_WHY="the mailbox session lapsed and the re-prime could not recover it (child rc=4) — a human has to sign in" ;;
+        5)
+          CHILD_STOP="browser-silent"
+          CHILD_WHY="the automation browser never answered (child rc=5)" ;;
+        6)
+          CHILD_STOP="read-stopped"
+          CHILD_WHY="the read pass stopped before it produced a thread selection, so no mail was judged (child rc=6)" ;;
+        13)
+          CHILD_STOP="apply-partial"
+          CHILD_WHY="the apply stopped early: part of the plan applied, the rest did not (child rc=13)" ;;
+        15)
+          CHILD_STOP="rehearsal-failed"
+          CHILD_WHY="the rehearsal did not clear, so nothing was tried (child rc=15)" ;;
+        16)
+          CHILD_STOP="bearer-expired"
+          CHILD_WHY="the re-primed bearer aged out DURING the apply (child rc=16)" ;;
+        20)
+          CHILD_STOP="attachment-incomplete"
+          CHILD_WHY="the attachment lane did not deliver every file this run claims, so the night stopped before archiving the mail that carried it (child rc=20)" ;;
+        *)
+          CHILD_STOP="session-died"
+          CHILD_WHY="session died mid-batch" ;;
+      esac
+      chain_finish "$CHILD_STOP" \
+          "$CHILD_WHY, $UNRECONCILED threads unreconciled (child rc=$CHILD_RC, broker rc=$BROKER_RC)" \
+          "$UNRECONCILED" || true
+      return "$CHILD_RC"
+    fi
+    # A batch that recorded NO judgment — a torn or absent ledger, zero
+    # progress — is a real failure: halt rather than loop blind on an unknowable
+    # population. This is the ONLY unreconciled case that still stops the chain.
+    if [ "$RECORDED" != "true" ] || [ "${JUDGED_ADDED:-0}" -eq 0 ]; then
+      chain_finish "session-died" \
+          "batch judged nothing (recorded=$RECORDED, $UNRECONCILED of ${SELECTED_N:-?} unreconciled)" \
+          "$UNRECONCILED" || true
+      [ "$CHILD_RC" -eq 0 ] && CHILD_RC=14
+      return "$CHILD_RC"
+    fi
+    # A PARTIAL dropped verdict (recorded=true, progress made) is BENIGN and
+    # self-healing: the unjudged thread never reached a plan and stays in the
+    # backlog for a later batch. WARN so it is never silent, but CONTINUE — a
+    # stray dropped verdict must not cost the night its remaining batches
+    # (owner ruling 2026-08-30: "unacceptable that the run stops and we don't
+    # get any kind of warning or restart it").
+    if [ "$UNRECONCILED" -gt 0 ]; then
+      log "batch WARN: $UNRECONCILED of ${SELECTED_N:-?} selected thread(s) dropped a verdict this batch; they stay in the backlog for a later batch — chain CONTINUES"
+    fi
+    if [ "$REMAINING" = "0" ]; then
+      chain_finish "backlog-empty" "backlog empty" 0 || true
+      return 0
+    fi
+    if [ "$BATCH_NO" -ge "$BATCHES" ]; then
+      chain_finish "batches-reached" "N reached ($BATCHES batch(es))" 0 || true
+      return 0
+    fi
+    BATCH_NO=$((BATCH_NO + 1))
+  done
+}
+
+# Diagnostic modes intentionally keep the existing one-run path: --dry and
+# --no-model cannot produce the judged-set fact chaining needs, so pretending
+# they were batches would either loop or manufacture completion. Scheduled and
+# ordinary full runs always take the controller, including the default N=1.
+if [ "$CHAIN_CHILD" -eq 0 ] && [ "$DRY" -eq 0 ] && [ "$MODEL" -eq 1 ]; then
+  cd "$REPO" || die "no repo at $REPO"
+  [ -d "$BRAIN_VAULT" ] || die "no vault at $BRAIN_VAULT"
+  validate_attended_bridge
+  run_batch_chain
+  exit $?
+fi
 
 # --- the interrupt contract -------------------------------------------------
 # KILLING THE SHELL SKIPPED EVERY OUTCOME (review 2026-08-12). `RC=$?` is taken
@@ -368,13 +866,7 @@ cd "$REPO" || die "no repo at $REPO"
 # no `Brainiac · Ingested` mark either. Exit 0 read as success. This refuses
 # BEFORE the browser and before any model call, which is the only point where
 # refusing is free.
-if [ -n "$ARCHIVE_CAP" ] && [ "$SESSION_APPROVED" -eq 1 ] \
-   && [ "${COS_INGEST_BRIDGE:-0}" != "1" ]; then
-  die "an attended backfill (--approve-cap=$ARCHIVE_CAP) was started with
- COS_INGEST_BRIDGE unset, so the ingest bridge would not run and the night
- would judge candidates and drop none of them. Re-run with
- COS_INGEST_BRIDGE=1, or drop --approve-cap for a triage-only night."
-fi
+validate_attended_bridge
 
 # AN OPEN PROPOSAL BATCH KILLS THE NIGHT AT THE BRIDGE, THIRTY MINUTES IN.
 # The bridge refuses on backpressure (see the ingest-bridge block) and that
@@ -400,7 +892,7 @@ print(len(open_batches(sys.argv[1])))' "$BRAIN_VAULT" 2>>"$LOG")" || OPEN_BATCHE
 fi
 # --- END open-batch preflight ---
 
-log "=== cos-nightly start (dry=$DRY model=$MODEL scope=$SCOPE_DESC, lanes uncapped) ==="
+log "=== cos-nightly start (dry=$DRY model=$MODEL scope=$SCOPE_DESC, model-thread-cap=$THREAD_CAP, mutation lanes uncapped) ==="
 
 # --- 1. the browser ---------------------------------------------------------
 # COS_TRANSPORT picks the lane (owner ruling 2026-08-18: ego is the DEFAULT —
@@ -497,7 +989,14 @@ p = e.grounding_path(Path('$BRAIN_VAULT'), '$RUN_ID')
 print(json.loads(p.read_text())['state'] if p.exists() else 'MISSING')")"
 [ "$GROUNDING_STATE" = "ungrounded" ] || [ "$GROUNDING_STATE" = "grounded" ] \
   || die "the grounding declaration did not land (read back '$GROUNDING_STATE')" 16
-log "grounding: $GROUNDING_STATE"
+# THE LINE SAYS WHICH DECLARATION IT IS (2026-09-03). This one is
+# written BEFORE the fetch can have run, and it read identically to
+# the finished verdict — same word, same file, same log line. On
+# 2026-09-03 that cost two wrong diagnoses in one session ("the fetch
+# is failing instantly"), when the finished payload for the same run
+# recorded 110 of 120 covered and ZERO failed lookups. `cos_ground.py`
+# re-declares later (GRD-02); the split line carries the real state.
+log "grounding: $GROUNDING_STATE (declared at LAUNCH, before the fetch — the state the night reached is on the judgment split line)"
 # --- END grounding declaration ---
 
 # THE RUN DIRECTORY IS OWNER-ONLY (grounding design D14, storage posture).
@@ -531,6 +1030,16 @@ log "grounding: $GROUNDING_STATE"
 # stays as the second belt: it also narrows a directory a PREVIOUS run created.
 EV="$REPO/_evidence/nightly/$RUN_ID"
 ( umask 077; mkdir -p "$EV" ); chmod 700 "$EV"
+if [ -n "${COS_CHAIN_CHILD_RECEIPT:-}" ]; then
+  $PY -c 'import json,os,sys,tempfile
+p=sys.argv[1]; d=os.path.dirname(p); os.makedirs(d, exist_ok=True)
+fd,tmp=tempfile.mkstemp(prefix=".child.", dir=d)
+with os.fdopen(fd,"w") as f:
+ json.dump({"run_id":sys.argv[2],"evidence":sys.argv[3]},f); f.write("\n")
+os.chmod(tmp,0o600); os.replace(tmp,p)' \
+      "$COS_CHAIN_CHILD_RECEIPT" "$RUN_ID" "$EV" \
+      || die "the chained parent could not receive run id $RUN_ID" 2
+fi
 
 # --- 3. enumerate, categorise, THEN read the bodies -------------------------
 # THE CATEGORY GATE, ARMED (GAP 9). `body_draw`'s `exclude` parameter IS rule
@@ -548,9 +1057,37 @@ EV="$REPO/_evidence/nightly/$RUN_ID"
 # active taxonomy (exit 4 below) reads exactly as it used to, gate `not-run`.
 CATEGORIES=""
 DRAW_BINDING=""
+# Bash 3.2 + `set -u` treats an empty indexed-array expansion as unbound.
+# Keep a sentinel and expand the slice after it; the slice is zero argv when
+# unset and preserves whitespace in the optional path when populated.
+SELECTION_ARGS=(sentinel)
+DRIVER_EXCLUSION_ARGS=(sentinel)
 if [ "$MODEL" -eq 1 ]; then
-  $PY tools/cos_driver.py $TFLAG --enumerate-only --out "$EV/enumeration.json" \
-      >> "$LOG" 2>&1 || die "the enumeration stopped — see $EV/enumeration.json" 6
+  if [ -n "${COS_CHAIN_STATE:-}" ]; then
+    ENUMERATION_OUT="$EV/enumeration-full.json"
+  else
+    ENUMERATION_OUT="$EV/enumeration.json"
+  fi
+  $PY tools/cos_driver.py $TFLAG --enumerate-only --out "$ENUMERATION_OUT" \
+      >> "$LOG" 2>&1 || die "the enumeration stopped — see $ENUMERATION_OUT" 6
+  if [ -n "${COS_CHAIN_STATE:-}" ]; then
+    SELECT_OUT="$($PY tools/cos_batch_session.py select \
+        --state "$COS_CHAIN_STATE" --enumeration "$ENUMERATION_OUT" \
+        --selected "$EV/enumeration.json" \
+        --excluded "$EV/excluded-conversation-ids.json" --run-id "$RUN_ID" \
+        2>>"$LOG")" || die "the per-batch thread selection failed closed" 6
+    SELECTED_COUNT="$(printf '%s' "$SELECT_OUT" | $PY -c \
+        'import json,sys; print(json.load(sys.stdin)["selected"])')"
+    log "batch selection: $SELECT_OUT"
+    log "thread cap: $THREAD_CAP (selected $SELECTED_COUNT; full census remains in enumeration-full.json)"
+    if [ "$SELECTED_COUNT" -eq 0 ]; then
+      log "batch child stop: backlog-empty (no unjudged conversation selected)"
+      exit 21
+    fi
+    SELECTION_ARGS+=(--selection "$EV/enumeration.json")
+    DRIVER_EXCLUSION_ARGS+=(--exclude-conversation-ids
+                            "$EV/excluded-conversation-ids.json")
+  fi
   $PY tools/cos_judge.py --category-batch --vault "$BRAIN_VAULT" \
       --enumeration "$EV/enumeration.json" --out "$EV/batches/batch-category.md" \
       >> "$LOG" 2>&1
@@ -804,9 +1341,48 @@ fi
  (rc=$RC) — refusing to scan a page that may be degraded" 5
 # --- END read-lane rearm gate ---
 
+# --- BEGIN downloads dir recovery ---
+# THE STAGING DIR THE FETCH WRITES INTO, RECOVERED FROM THE JOB THAT HAS IT.
+# `$BRAIN_COS_DOWNLOADS_DIR` names a dedicated host-only directory; without it
+# the fetch stops with "the attachment lane is BLOCKED". Only the MAINTENANCE
+# plist (`com.brainiac.nightly.*`) carries it — `com.brainiac.cos-nightly.plist`
+# does not, so the scheduled COS job and every hand-run night hit that stop
+# even on a host where the directory is configured and exists. `cos-run-now.sh`
+# already recovered it this exact way for the Codex lane (its comment cites
+# run 59); the same recovery belongs HERE, where every lane passes. Measured
+# 2026-08-23 (run172): the bridge claimed 13 files, all 13 were unreachable,
+# and the night reported a blocked lane that was only a missing variable.
+# An unset value after this stays unset, and the fetch still stops loudly —
+# this recovers a configured directory, it never invents one.
+#
+# IT RUNS BEFORE THE READ PASS, not beside the fetch that needs it (review
+# 2026-08-25). `cos_driver.py` writes the run's metrics row in the read pass
+# below, and that row's `attachment_lane` word is READ OUT OF THIS VARIABLE
+# (`_attachment_lane_at_write_time`). Recovered afterwards, every scheduled
+# night stamped `blocked-no-downloads-mount` into its row of record on a host
+# where the mount is configured — and the fetch leg's stamp only supersedes it
+# when a file was actually dropped or fetched, so a text-only night kept the
+# false word forever. Nothing between here and the fetch reads or writes it,
+# so moving it earlier costs nothing and makes the read pass honest.
+# `tests/test_cos_night_phase_order.py` pins the ordering.
+if [ -z "${BRAIN_COS_DOWNLOADS_DIR:-}" ]; then
+  BRAIN_COS_DOWNLOADS_DIR="$(plutil -extract \
+      EnvironmentVariables.BRAIN_COS_DOWNLOADS_DIR raw -o - \
+      "$HOME"/Library/LaunchAgents/com.brainiac.nightly.*.plist 2>/dev/null \
+      | head -1)"
+  if [ -n "$BRAIN_COS_DOWNLOADS_DIR" ]; then
+    export BRAIN_COS_DOWNLOADS_DIR
+    log "downloads dir: $BRAIN_COS_DOWNLOADS_DIR (recovered from the nightly job)"
+  fi
+fi
+# --- END downloads dir recovery ---
+
+# --- BEGIN read pass ---
 $PY tools/cos_driver.py $TFLAG --cap "$BODY_CAP" $CATEGORIES $DRAW_BINDING \
+    "${DRIVER_EXCLUSION_ARGS[@]:1}" \
     --out "$EV/read-night.json" \
     >> "$LOG" 2>&1 || die "the read night stopped — see $EV/read-night.json" 6
+# --- END read pass ---
 log "category gate: $($PY -c "
 import json;g=json.load(open('$EV/read-night.json')).get('category_gate') or {}
 print(g.get('state'), '—', g.get('excluded_before_draw'), 'of',
@@ -907,12 +1483,20 @@ GROUND="$($PY tools/cos_ground.py --vault "$BRAIN_VAULT" --run-id "$RUN_ID" \
 if [ "$RC" -eq 0 ] && [ -n "$GROUND" ]; then
   log "grounding fetch: $(printf '%s' "$GROUND" | $PY -c "
 import json, sys
+def _why(d):
+    # The producer records this (cos_ground._failure_reasons). SINK 14 forbids
+    # this file from opening a grounding block, and that rule is deliberately
+    # blunt, so the reason words arrive already counted.
+    seen = d.get('lookup_failed_reasons') or {}
+    if not seen:
+        return ''
+    return ' (' + ', '.join('%d %s' % (n, r) for r, n in seen.items()) + ')'
 d = json.load(sys.stdin)
 c = d.get('classes') or {}
 print(d.get('state'), '—', len(d.get('covered') or []), 'of',
       len(d.get('required') or []), 'covered,',
       len(d.get('covered_with_content') or []), 'with content,',
-      len(d.get('lookup_failed') or []), 'lookup-failed; classes',
+      len(d.get('lookup_failed') or []), 'lookup-failed' + _why(d) + ';', 'classes',
       c.get('internal'), 'internal /', c.get('counterparty'), 'counterparty /',
       c.get('external'), 'external; %.1fs' % (d.get('elapsed_s') or 0),
       ((': ' + d['reason']) if d.get('reason') else ''))")"
@@ -924,7 +1508,7 @@ fi
 
 # --- 4. the four batches, then the judgment leg -----------------------------
 $PY tools/cos_judge.py --batches --vault "$BRAIN_VAULT" --run-id "$RUN_ID" \
-    $CATEGORIES --out "$EV/batches" >> "$LOG" 2>&1 \
+    $CATEGORIES "${SELECTION_ARGS[@]:1}" --out "$EV/batches" >> "$LOG" 2>&1 \
     || die "the judgment batches failed" 7
 if [ "$MODEL" -eq 0 ]; then
   log "--no-model: stopping with the batches at $EV/batches"; exit 0
@@ -939,8 +1523,8 @@ fi
 # question instead of the array — 24 verdicts of 258, and the H4 coverage floor
 # correctly made the night READ-ONLY. It judges ~50 fine (run 130 one-shot 232),
 # and it itself proposed doing 258 "as a second pass". `cos_batch_chunk.py
-# --split` reads the conversation ORDER from batch-triage.md (the full-population
-# file) and writes one chunk-NN/batch-<type>.md per group; the staging text/offset
+# --split` reads the conversation ORDER from batch-triage.md (the full bounded
+# batch file) and writes one chunk-NN/batch-<type>.md per group; the staging text/offset
 # rows are per-row self-contained, so the slice keeps every span valid. A split
 # failure is fatal (exit 7) exactly as a batches failure is — there is nothing to
 # judge.
@@ -954,7 +1538,57 @@ fi
 # the only component that knows the grouping and because a rule that cannot be
 # executed by a test without slicing this shell script is a rule nothing can
 # prove.
+# THE OWNER'S DRAFT LEVER, STATED TO THE MODEL (ruling 2026-09-02). The two
+# host belts read `overlay/cos/auto-archive.md` for themselves; this line tells
+# the JUDGE which way they are set tonight. Without it the doctrine's standing
+# prohibition holds and the model withholds every aged-read claim on a drafted
+# thread — the belts would never see one to admit. Read through the SAME
+# `kill_switch` reader both belts use, so three legs cannot disagree; any
+# failure prints the empty string, which leaves the doctrine's default in force.
+AOD="$($PY -c 'import sys,pathlib
+sys.path.insert(0, "tools")
+from cos_mutate_gates import kill_switch
+print("true" if kill_switch(pathlib.Path(sys.argv[1])).get("archive_over_draft")
+      else "false")' "$BRAIN_VAULT" 2>>"$LOG" || echo false)"
+if [ "$AOD" = "true" ]; then
+  AOD_LINE="RUN HEADER — archive_over_draft: true. The owner has set this lever in
+his own overlay. For the AGED-READ lane ONLY, an unsent draft is NOT a reason to
+withhold the claim: judge the thread on what he OWES, and claim
+\`aged-read-no-action\` on a drafted thread when he owes nothing. Every other
+rule stands, the stale-act lane is unchanged, and the host still refuses on the
+read state, the age, the action screens and the substance gate."
+else
+  AOD_LINE="RUN HEADER — archive_over_draft: false. The doctrine's standing draft
+prohibition is in force tonight: never claim \`aged-read-no-action\` on a thread
+carrying an unsent draft."
+fi
+# THE SECOND LEVER, ON THE SAME READER (ruling 2026-09-02). `read_never_categories`
+# un-fuses "never INGEST this category" from "never READ it": with it on, a
+# `never` thread's body IS opened so the aged-read action screens can run and
+# the thread can finally leave the inbox. The ingestion answer does not move —
+# the host stamps `no-substance` / `never-category` from the taxonomy and
+# overwrites whatever the model says over that open body (run 246 staged 33
+# candidates and lost the night). The header says so, so the model does not
+# spend the effort.
+RNC="$($PY -c 'import sys,pathlib
+sys.path.insert(0, "tools")
+from cos_mutate_gates import kill_switch
+print("true" if kill_switch(pathlib.Path(sys.argv[1])).get("read_never_categories")
+      else "false")' "$BRAIN_VAULT" 2>>"$LOG" || echo false)"
+if [ "$RNC" = "true" ]; then
+  AOD_LINE="$AOD_LINE
+
+RUN HEADER — read_never_categories: true. Some threads in a \`never\` ingest
+category arrive tonight WITH their bodies read. That is deliberate: their bodies
+are open so the aged-read action screens can run on them, NOT so their ingestion
+can be reconsidered. Stage NO candidate from one. The host stamps the pairing
+(\`disposition: no-substance\`, \`held_reason: never-category\`) from the owner's
+taxonomy and discards any staging you send on those rows."
+fi
+log "judge lever: archive_over_draft=$AOD read_never_categories=$RNC"
 cat > "$EV/judgment-instruction.txt" <<JINS
+$AOD_LINE
+
 You are the judgment leg of the chief-of-staff nightly. Code validates every
 verdict against a closed vocabulary and writes the ledger; you write no ledger
 and touch no mailbox. ONE thing you write does reach the mailbox: a reply draft
@@ -1125,6 +1759,71 @@ for CHUNK in "$EV"/chunks/chunk-*; do
 done
 wait
 
+# --- BEGIN draft answer gate ---
+# DRAFT-01. Same marker shape as the judgment and category gates above, so
+# the MNPI persistence canary slices and scans THIS leg too.
+# THE DRAFT JOB RUNS IN ITS OWN CALL, and this is why. Measured 2026-08-27
+# against run193's own captured mail, with this binary and these flags, one
+# variable changed at a time: the merged four-batch prompt answers the TRIAGE
+# question completely — 120 verdicts, 40 of them `act` — and never emits the
+# `draft` key at all. Zero drafts across 30 slots, no error, no refusal,
+# `malformed_drafts: 0`. The instruction plus the draft batch alone returns 3;
+# adding the closing still returns 3; adding the TRIAGE batch takes it to 0.
+#
+# A SECOND TASK IN ONE CALL SILENCES THE FIRST, and nothing counted it. There
+# was no per-task completion check anywhere in the leg, so "you were offered 10
+# candidates and returned 0" read exactly like "you correctly declined all 10" —
+# which is how the lane wrote 4-10 replies a night for 35 nights, went to zero,
+# and left no record saying so. `graft_drafts` in the merge now REPORTS the
+# join (`drafts_grafted`), so a silent zero is visible in the run log.
+#
+# IT COSTS A CALL ONLY WHERE THERE IS SOMETHING TO DRAFT: the chunker writes
+# `prompt-draft.txt` only for a chunk that holds a draft row, and this loop
+# skips every chunk without one. Same tool grant, same read-only settings, same
+# clean-exit rule as the judgment leg — a nonzero exit removes the answer file
+# and the chunk simply contributes no drafts.
+draft_chunk_leg() {
+  DCHUNK="$1"
+  rm -f "$DCHUNK/verdicts-draft.json" "$DCHUNK/draft-leg.stderr"
+  : > "$DCHUNK/draft-leg.stderr" && chmod 600 "$DCHUNK/draft-leg.stderr"
+  "$CLAUDE_BIN" -p "${MODEL_TOOLS[@]}" \
+      --setting-sources "" --no-session-persistence \
+      --max-turns "$MAX_TURNS" \
+      < "$DCHUNK/prompt-draft.txt" 2>>"$DCHUNK/draft-leg.stderr" \
+    | $PY tools/cos_model_answer.py --envelope - \
+        --out "$DCHUNK/verdicts-draft.json" --allow-empty \
+        --batches-dir "$DCHUNK" >> "$LOG" 2>&1
+  DRAFT_PIPE=("${PIPESTATUS[@]}")
+  DRAFT_RC=${DRAFT_PIPE[0]}
+  # THE ALLOWLISTED SINK IS BOUNDED HERE TOO, on the same rule and the same
+  # ceiling as the judgment leg: every other file this leg writes is
+  # host-authored and host-sized, and this one's size is the leg's to choose.
+  # AFTER the `PIPESTATUS` copy, never before. Keep the FIRST bytes — a
+  # screaming process repeats itself, and its first complaint explains the run.
+  DRAFT_ERR_MAX="${COS_LEG_STDERR_MAX:-65536}"
+  DRAFT_ERR_SZ="$(wc -c < "$DCHUNK/draft-leg.stderr" | tr -d ' ')"
+  if [ "${DRAFT_ERR_SZ:-0}" -gt "$DRAFT_ERR_MAX" ]; then
+    head -c "$DRAFT_ERR_MAX" "$DCHUNK/draft-leg.stderr" > "$DCHUNK/draft-leg.stderr.b"
+    printf '\n[host: draft leg stderr was %s bytes, kept the first %s]\n' \
+        "$DRAFT_ERR_SZ" "$DRAFT_ERR_MAX" >> "$DCHUNK/draft-leg.stderr.b"
+    mv -f "$DCHUNK/draft-leg.stderr.b" "$DCHUNK/draft-leg.stderr"
+  fi
+  [ "$DRAFT_RC" -eq 0 ] || rm -f "$DCHUNK/verdicts-draft.json"
+  [ -s "$DCHUNK/verdicts-draft.json" ] || log "$(basename "$DCHUNK"): the draft
+ leg produced no usable answer (model rc=$DRAFT_RC) — its rows get no draft this
+ run; the night still triages, and the leg's own stderr is
+ $DCHUNK/draft-leg.stderr"
+}
+for CHUNK in "$EV"/chunks/chunk-*; do
+  [ -f "$CHUNK/prompt-draft.txt" ] || continue
+  while [ "$(jobs -rp | wc -l | tr -d ' ')" -ge "$CHUNK_PARALLEL" ]; do
+    sleep 2
+  done
+  draft_chunk_leg "$CHUNK" &
+done
+wait
+# --- END draft answer gate ---
+
 # CONCATENATE the per-chunk verdicts into the one file the judge consumes. A
 # chunk that produced nothing is SKIPPED and REPORTED in the merge summary (never
 # silent — a dropped chunk shows up as a coverage shortfall the H4 floor catches);
@@ -1141,12 +1840,112 @@ log "judgment merge: $MERGE_OUT"
 
 $PY tools/cos_judge.py --judge --vault "$BRAIN_VAULT" --run-id "$RUN_ID" \
     --verdicts "$EV/verdicts.json" $CATEGORIES --out "$EV/judgment.json" \
+    "${SELECTION_ARGS[@]:1}" \
     --grounding "$EV/grounding.json" --chunks-dir "$EV/chunks" \
     >> "$LOG" 2>&1 \
     || die "the judgment was REFUSED by the validator — see $LOG" 10
 log "judged: $($PY -c "
 import json;d=json.load(open('$EV/judgment.json'))
 print(json.dumps(d.get('counters')), '| rejected', len(d.get('rejected') or []))")"
+
+# --- BEGIN voice check leg (VOICE-01) -----------------------------------------
+# THE DRAFTS ARE WRITTEN; NOW SCORE THEM, IN A CALL THAT CANNOT SEE WHAT WROTE
+# THEM. `DRAFT_PROMPT` has said "in his voice" since 2026-08-12 and nothing put
+# the owner's profile in front of the model until VOICE-01; this leg is the
+# other half — every draft, plus one FROZEN deliberately off-voice control, is
+# scored against the `voice` skill's 27-check CHECK rubric in its own model
+# call, whose prompt carries the profile, the rubric and one draft and nothing
+# else. Drafter and scorer are the same model family, so a rubric block inside
+# the judgment call would grade each draft from the very context that produced
+# it — the self-confirming variant, and the one that makes s09's headline
+# metric and s10's criterion (1) unfalsifiable.
+#
+# THE CONTROL IS THE INSTRUMENT'S OWN CHECK. Its text cannot improve, so a score
+# that rises past `cos_voice.NEGATIVE_CONTROL_CEILING` means the rubric has gone
+# rubber-stamp; `--fold` then reports the night's voice leg NOT ok, and the
+# draft scores with it.
+#
+# IT SITS HERE, between the judgment and the re-prime, for one reason: the
+# re-prime below re-takes the OWA bearer, so minutes spent here cost the
+# mutation lane nothing. Measured 2026-08-25 on the frozen control with the
+# live profile: $0.262/call on the host-default model, $0.129 on sonnet,
+# $0.059 on haiku, ~33-42s each. The night pays one call per draft plus the
+# control — hence the sonnet default and the off switch, both named below.
+#
+# NOTHING HERE CAN KILL THE NIGHT. A voice score is a quality signal on UNSENT
+# text; trading a real archive lane for a report would be the wrong bargain, so
+# every failure logs and continues.
+VOICE_CHECK="${COS_VOICE_CHECK:-1}"
+# SONNET BY DEFAULT, and the pin is a measured decision rather than a habit —
+# this is the only leg in the file that names a model. Scoring text against a
+# fixed 27-line checklist is a standard-build judgment, not the agentic reading
+# the judgment leg does, and the three tiers were measured on the same frozen
+# control with the live profile (2026-08-25): opus $0.262/call scoring 5/27,
+# sonnet $0.129 scoring 6/27, haiku $0.059 scoring 7/27 — all three well under
+# the 0.45 ceiling, so the control holds whichever is pinned. THE COUNT RIDES
+# `DRAFT_CAP`, so do not restate it here: run 258 wrote 24 drafts, so 25 calls
+# — ~$6.55, ~$3.23 or ~$1.48 at the rates above. Override with
+# COS_VOICE_MODEL, or turn the leg off with COS_VOICE_CHECK=0.
+VOICE_MODEL="${COS_VOICE_MODEL:-sonnet}"
+# A REHEARSAL DOES NOT PAY FOR THIS. `--dry` stops before the apply and exists
+# to prove the lane works; 11 model calls to score drafts nobody will read is
+# the ingest bridge's `--dry-run` lesson in a cheaper place.
+if [ "$VOICE_CHECK" = "1" ] && [ "${DRY:-0}" -ne 1 ]; then
+  VOICE_DIR="$EV/voice"
+  VOICE_OUT="$($PY tools/cos_voice_cli.py --prompts --vault "$BRAIN_VAULT" \
+      --run-id "$RUN_ID" --out "$VOICE_DIR" 2>>"$LOG")"; VOICE_RC=$?
+  if [ "$VOICE_RC" -ne 0 ]; then
+    log "voice check: the scoring prompts could not be built (rc=$VOICE_RC) —
+ tonight's drafts go unscored; see $LOG"
+  else
+    log "voice check: $(printf '%s' "$VOICE_OUT" | tr -d '\n')"
+    voice_check_leg() {
+      SLOT="$1"
+      rm -f "$SLOT/score.json" "$SLOT/leg.stderr"
+      : > "$SLOT/leg.stderr" && chmod 600 "$SLOT/leg.stderr"
+      # THE LEG'S STDOUT IS PIPED INTO THE PARSER, NEVER WRITTEN — the same
+      # rule the judgment leg carries (D14): what lands on disk is
+      # `{check_id: PASS|FAIL}` from a closed set, and no model prose.
+      #
+      # `"${MODEL_TOOLS[@]}"`, THE SAME BOUNDARY THE OTHER TWO LEGS CARRY, and
+      # deliberately not a narrower one of this leg's own. This prompt is
+      # self-contained, so `--tools ""` would do — but the recurring defect in
+      # this file is a leg added beside the pinned array rather than behind it,
+      # and a second array is the shape that invites the next one to be looser
+      # rather than tighter. One boundary, pinned in one place.
+      "$CLAUDE_BIN" -p "${MODEL_TOOLS[@]}" --model "$VOICE_MODEL" \
+          --setting-sources "" --no-session-persistence \
+          --max-turns "${COS_VOICE_MAX_TURNS:-6}" \
+          < "$SLOT/prompt.txt" 2>>"$SLOT/leg.stderr" \
+        | $PY tools/cos_voice_cli.py --score --slot "$SLOT" >> "$LOG" 2>&1
+      VOICE_PIPE=("${PIPESTATUS[@]}")
+      [ "${VOICE_PIPE[0]}" -eq 0 ] || rm -f "$SLOT/score.json"
+      [ -s "$SLOT/score.json" ] || log "voice check: $(basename "$SLOT") produced
+ no usable score (model rc=${VOICE_PIPE[0]}) — that slot stays unscored"
+    }
+    for SLOT in "$VOICE_DIR"/*; do
+      [ -f "$SLOT/prompt.txt" ] || continue
+      # BASH 3.2, so poll the running-job count rather than `wait -n`.
+      while [ "$(jobs -rp | wc -l | tr -d ' ')" -ge "$CHUNK_PARALLEL" ]; do
+        sleep 2
+      done
+      voice_check_leg "$SLOT" &
+    done
+    wait
+    FOLD_OUT="$($PY tools/cos_voice_cli.py --fold --vault "$BRAIN_VAULT" \
+        --run-id "$RUN_ID" --dir "$VOICE_DIR" --out "$EV/voice-check.json" \
+        2>>"$LOG")"; FOLD_RC=$?
+    log "voice check fold (rc=$FOLD_RC): $(printf '%s' "$FOLD_OUT" | tr -d '\n')"
+    [ "$FOLD_RC" -eq 0 ] || log "voice check: THE NEGATIVE CONTROL DRIFTED. The
+ frozen off-voice draft scored past its ceiling, so tonight's draft scores are
+ not trustworthy — the rubric, not the drafts, is what to look at. Detail in
+ $EV/voice-check.json"
+  fi
+else
+  log "voice check: OFF (COS_VOICE_CHECK=$VOICE_CHECK, dry=${DRY:-0}) —
+ tonight's drafts carry no voice score"
+fi
+# --- END voice check leg (VOICE-01) -------------------------------------------
 
 # --- BEGIN ingest bridge (s03 ING-01..03) -------------------------------------
 # THE CANDIDATES THE JUDGE JUST STAGED GO NOWHERE WITHOUT THIS (ING-01). The
@@ -1187,19 +1986,49 @@ if [ "${COS_INGEST_BRIDGE:-0}" = "1" ]; then
       --run-id "$RUN_ID" $BRIDGE_DRY --json 2>>"$LOG")"; BRIDGE_RC=$?
   log "ingest bridge: $(printf '%s' "$BRIDGE_OUT" | tr -d '\n')"
   if [ "$BRIDGE_RC" -eq 3 ]; then
+    # BACKPRESSURE GETS ONE RE-PROBE, because "open" can be a race, not a
+    # state: on 2026-08-31 the broker consumed the blocking batch ONE SECOND
+    # after this probe aborted, and the abort cost run228 its self-eval and
+    # its validity. A real open batch is still open after the wait and still
+    # dies below; only the consumed-moments-later race survives.
+    log "ingest bridge: backpressure on first probe — one retry in ${COS_BRIDGE_RETRY_WAIT:-20}s"
+    sleep "${COS_BRIDGE_RETRY_WAIT:-20}"
+    BRIDGE_OUT="$($PY tools/cos_ingest_bridge.py --vault "$BRAIN_VAULT" \
+        --run-id "$RUN_ID" $BRIDGE_DRY --json 2>>"$LOG")"; BRIDGE_RC=$?
+    log "ingest bridge retry: $(printf '%s' "$BRIDGE_OUT" | tr -d '\n')"
+  fi
+  if [ "$BRIDGE_RC" -eq 3 ]; then
     die "the ingest bridge ABORTED on backpressure: a proposal batch is
- already open, so NOTHING was dropped and nothing was dispatched — answer or
- expire the open batch, then re-run the night. See $LOG" 18
+ already open (still open after one retry), so NOTHING was dropped and nothing
+ was dispatched — answer or expire the open batch, then re-run the night.
+ See $LOG" 18
   fi
   # 4 IS CONTENTION, NOT A REFUSAL. The hourly `brain-nightly` rebuild holds
   # the same single-writer lock, legitimately, for up to 90 minutes. Reported
   # as a refusal it sends the morning looking at the mail; it is the clock.
+  # --- BEGIN bridge writer-lock wait ---
+  BRIDGE_LOCK_TRIES=0
+  while [ "$BRIDGE_RC" -eq 4 ] \
+      && [ "$BRIDGE_LOCK_TRIES" -lt "${COS_BRIDGE_LOCK_TRIES:-45}" ]; do
+    # WAIT IT OUT, do not die: the holder is the clock, not a fault, and a
+    # dead night here discards a finished capture and judgment leg (run239,
+    # 2026-09-01, collided with the hourly fold at 22:56 and cost the whole
+    # night). 45 one-minute waits ride out the common holds; the 90-minute
+    # legitimate ceiling still dies below and names the holder.
+    BRIDGE_LOCK_TRIES=$((BRIDGE_LOCK_TRIES + 1))
+    log "ingest bridge: writer lock held — waiting ${COS_BRIDGE_LOCK_WAIT:-60}s (try $BRIDGE_LOCK_TRIES of ${COS_BRIDGE_LOCK_TRIES:-45})"
+    sleep "${COS_BRIDGE_LOCK_WAIT:-60}"
+    BRIDGE_OUT="$($PY tools/cos_ingest_bridge.py --vault "$BRAIN_VAULT" \
+        --run-id "$RUN_ID" $BRIDGE_DRY --json 2>>"$LOG")"; BRIDGE_RC=$?
+    log "ingest bridge lock retry: $(printf '%s' "$BRIDGE_OUT" | tr -d '\n')"
+  done
   if [ "$BRIDGE_RC" -eq 4 ]; then
     die "the ingest bridge could not take the vault writer lock — another
  writer (normally the hourly brain-nightly rebuild) holds it. NOTHING was
  dropped, nothing is wrong with the candidates, and nothing was dispatched:
  re-run the night once the holder finishes. See $LOG" 19
   fi
+  # --- END bridge writer-lock wait ---
   [ "$BRIDGE_RC" -eq 0 ] || die "the ingest bridge refused the run
  (rc=$BRIDGE_RC — a missing ingestion ledger, or quarantined conversations at
  or over the BRAIN_COS_BRIDGE_QUARANTINE_MAX threshold; see the REFUSED and
@@ -1218,6 +2047,42 @@ except Exception:
     log "ingest bridge QUARANTINED $BRIDGE_Q conversation(s) — the night
  carries on; each reason is in the report line above and the parked evidence
  is in the claim-quarantine store"
+  fi
+else
+  # DEFAULT OFF IS NOT DEFAULT SILENT (ATT-02, s04 2026-09-05). The block
+  # above is skipped whole when the flag is unset, and until now that meant
+  # the night invoked nothing, logged nothing and wrote no
+  # `_cos_ingest_bridge_<run>.jsonl` — while the judgment leg had already
+  # staged candidates the bridge is the ONLY path for. Measured as of run
+  # 2026-09-05-run260: 15 of the 49 runs that staged an `act` +
+  # `ingest.relevant` row have no bridge file at all and 596 of 1656 such rows
+  # sit on them; ELEVEN of those runs (513 rows) were exactly this arm. The
+  # split was hand-launched daytime runs versus the launchd night, whose plist
+  # exports the flag — not a code branch.
+  #
+  # So the leg is still OFF, and it is no longer SILENT: the recorder stamps a
+  # closed-vocabulary `leg-disabled` on every unreached row, writes the bridge
+  # file recording zero, and exits 9 so this arm can shout. It does NOT die —
+  # killing every hand-run night would break the one promise `default off`
+  # makes — the LOUDNESS lands in the run's own host checks instead
+  # (`brain.cos_runverify_bridge.check_bridge_reach` FAILS the run on any row
+  # naming a skip), which is what makes the night red instead of green.
+  #
+  # A SEPARATE SCRIPT from the bridge on purpose: the slice-and-run test above
+  # stubs `tools/cos_ingest_bridge.py`, and a stub cannot answer "were
+  # candidates staged" — the known-negative (a night staging nothing relevant
+  # must stay completely quiet) has to run this decision for real.
+  BRIDGE_SKIP_OUT="$($PY tools/cos_bridge_skip.py --vault "$BRAIN_VAULT" \
+      --run-id "$RUN_ID" --reason leg-disabled --json 2>>"$LOG")"
+  BRIDGE_SKIP_RC=$?
+  # ANY nonzero is loud, not just 9: a recorder that failed is the same silence
+  # it exists to close, so it may never be swallowed.
+  if [ "$BRIDGE_SKIP_RC" -ne 0 ]; then
+    log "ingest bridge NOT RUN (COS_INGEST_BRIDGE unset) and this run STAGED
+ candidates the bridge is the only path for — recorded rc=$BRIDGE_SKIP_RC:
+ $(printf '%s' "$BRIDGE_SKIP_OUT" | tr -d '\n')
+ The night carries on, and cos_run_verify's bridge_reach control FAILS this
+ run until the bridge is re-run for it (COS_INGEST_BRIDGE=1)."
   fi
 fi
 # --- END ingest bridge (s03 ING-01..03) ---------------------------------------
@@ -1248,10 +2113,50 @@ else
   REPRIME="$($PY tools/cos_cdp_capture.py --prepare 2>&1)"; RC=$?
 fi
 log "re-prime before the mutation lane: $(printf '%s' "$REPRIME" | tr -d '\n ')"
+# A DEGRADED PAGE IS RE-ARMABLE, and the night that dies on it throws away a
+# finished capture and judgment leg (run241, 2026-09-02: rows=0, boot=false,
+# with 4747s of token validity left — the page, not the session). The door
+# gate has re-armed once on `degraded` since 2026-08-28 for the same reason;
+# this is that repair, at the other end of the model leg. Bounded at two
+# retries: an unrecoverable page must still reach the die below.
+REPRIME_TRIES=0
+while [ "$RC" -ne 0 ] && [ "$RC" -ne 4 ] && [ "$REPRIME_TRIES" -lt 2 ] \
+    && printf '%s' "$REPRIME" | grep -q 'degraded'; do
+  REPRIME_TRIES=$((REPRIME_TRIES + 1))
+  log "re-prime: page degraded — re-arming (try $REPRIME_TRIES of 2) in ${COS_REPRIME_RETRY_WAIT:-20}s"
+  sleep "${COS_REPRIME_RETRY_WAIT:-20}"
+  if [ "${COS_TRANSPORT:-ego}" = "ego" ]; then
+    REPRIME="$($PY tools/cos_ego_arm.py 2>&1)"; RC=$?
+  else
+    REPRIME="$($PY tools/cos_cdp_capture.py --prepare 2>&1)"; RC=$?
+  fi
+  log "re-prime retry: $(printf '%s' "$REPRIME" | tr -d '\n ')"
+done
+# RC=4 DOES NOT YET MEAN "SIGNED OUT" (2026-09-03). Normal arming NEVER opens a
+# tab — `cos_ego_arm.py` says so in its own docstring — while `--door-check` is
+# the one mode that opens or reuses the Outlook URL and runs `gotoAndWait`
+# before it is allowed to conclude "not signed in". So a tab that merely
+# drifted during the model leg reports rc=4 exactly like a lapsed session, and
+# the night below dies on the honest one and the recoverable one alike. Run the
+# repair ONCE, then re-arm; a genuine sign-out still falls through to the die,
+# because the door check keeps reporting `skipped-not-signed-in` after its own
+# gotoAndWait (re-probed twice on 2026-09-03, both genuine).
+if [ "$RC" -eq 4 ] && [ "${COS_TRANSPORT:-ego}" = "ego" ]; then
+  log "re-prime: not signed in — trying the door-check repair, the one mode that opens the tab"
+  REPAIR="$($PY tools/cos_ego_arm.py --door-check 2>&1)" || true
+  log "re-prime repair: $(printf '%s' "$REPAIR" | tr -d '\n ')"
+  # THE VERDICT, NEVER THE EXIT CODE: `--door-check` exits 0 while reporting
+  # `skipped-not-signed-in`, so reading rc alone would call a sign-out a repair.
+  if printf '%s' "$REPAIR" | grep -q '"verdict": *"open"'; then
+    REPRIME="$($PY tools/cos_ego_arm.py 2>&1)"; RC=$?
+    log "re-prime after repair: $(printf '%s' "$REPRIME" | tr -d '\n ')"
+  fi
+fi
 if [ "$RC" -eq 4 ]; then
   die "the mutation lane could not be re-primed — the browser is up but
- captured no authorized call, which means the mailbox session lapsed during the
- judgment leg. Open Chrome-COS, sign in once, then re-run." 4
+ captured no authorized call, and the door-check repair (which opens the tab and
+ runs gotoAndWait) did not recover it, so the mailbox session really has lapsed.
+ Sign in once inside the ego \`cos\` space, then re-run." 4
 fi
 [ "$RC" -eq 0 ] || die "the automation browser did not answer the re-prime
  (rc=$RC) — nothing was dispatched" 5
@@ -1262,29 +2167,6 @@ fi
 # the 401 path, where it is the whole diagnosis.
 REPRIME_TS="$(date -u +%FT%TZ)"
 # --- END reprime gate ---
-
-# THE STAGING DIR THE FETCH WRITES INTO, RECOVERED FROM THE JOB THAT HAS IT.
-# `$BRAIN_COS_DOWNLOADS_DIR` names a dedicated host-only directory; without it
-# the fetch stops with "the attachment lane is BLOCKED". Only the MAINTENANCE
-# plist (`com.brainiac.nightly.*`) carries it — `com.brainiac.cos-nightly.plist`
-# does not, so the scheduled COS job and every hand-run night hit that stop
-# even on a host where the directory is configured and exists. `cos-run-now.sh`
-# already recovered it this exact way for the Codex lane (its comment cites
-# run 59); the same recovery belongs HERE, where every lane passes. Measured
-# 2026-08-23 (run172): the bridge claimed 13 files, all 13 were unreachable,
-# and the night reported a blocked lane that was only a missing variable.
-# An unset value after this stays unset, and the fetch still stops loudly —
-# this recovers a configured directory, it never invents one.
-if [ -z "${BRAIN_COS_DOWNLOADS_DIR:-}" ]; then
-  BRAIN_COS_DOWNLOADS_DIR="$(plutil -extract \
-      EnvironmentVariables.BRAIN_COS_DOWNLOADS_DIR raw -o - \
-      "$HOME"/Library/LaunchAgents/com.brainiac.nightly.*.plist 2>/dev/null \
-      | head -1)"
-  if [ -n "$BRAIN_COS_DOWNLOADS_DIR" ]; then
-    export BRAIN_COS_DOWNLOADS_DIR
-    log "downloads dir: $BRAIN_COS_DOWNLOADS_DIR (recovered from the nightly job)"
-  fi
-fi
 
 # --- BEGIN attachment fetch (the file lane's bytes) --------------------------
 # THE SECOND EVIDENCE LANE, AND UNTIL 2026-08-22 IT HAD NO PRODUCER. The bridge
@@ -1619,6 +2501,58 @@ if [ "$RC" -ne 0 ] || [ "$REPORT_OK" -eq 0 ]; then
   exit 14
 fi
 # --- END apply-outcome gate ---
+
+# --- BEGIN supersede: discard the drafts tonight replaced -------------------
+# ONE DRAFT PER THREAD, AND IT IS THE NEWEST (owner ruling 2026-08-28: "Each
+# thread should only have one draft based on latest information"). The plan
+# lane now WRITES a fresh draft onto a thread this lane drafted before; this is
+# the other half — without it the thread simply accumulates, which is the
+# 59-drafts-over-15-threads defect the refusal was built to end.
+#
+# WHY IT SITS HERE, AFTER THE APPLY AND NOT BEFORE. The manifest keeps the
+# NEWEST eligible item on each thread and selects every older one. Tonight's
+# draft is only the newest once the apply has saved it and reconciled its
+# ledger row. Run this before the apply and the survivor is last week's draft:
+# the night would delete the wrong ones and still leave two standing.
+#
+# IT NEVER FAILS THE NIGHT. Everything the apply did is applied and verified by
+# the time we get here; a discard that cannot run leaves a second draft on a
+# thread, which is untidy and not damage. `MoveToDeletedItems` is the disposal
+# type (`cos_mutate_page.js`), so a discarded draft is recoverable from Deleted
+# Items — and the manifest admits ONLY this lane's own reconciled, verified,
+# signed saves, so the owner's own drafts are not selectable at any age.
+DISCARD_MANIFEST="$EV/draft-discard-manifest.json"
+DISCARD_N=""
+$PY tools/cos_mutate.py discard-draft-manifest --run-id "$RUN_ID" \
+    --out "$DISCARD_MANIFEST" >> "$LOG" 2>&1 \
+  && DISCARD_N="$($PY -c "
+import json
+print(json.load(open('$DISCARD_MANIFEST'))['counts']['selected'])" 2>/dev/null)"
+if [ "${DISCARD_N:-0}" -gt 0 ] 2>/dev/null; then
+  # ARM FIRST, LIKE EVERY OTHER BROWSER LEG. The apply is budgeted at forty
+  # minutes and the arming lapses across a long leg (measured 2026-08-22 on the
+  # category batch), so a discard that inherited the apply's tab would fail on
+  # most real nights. Best-effort: a failed arm falls through to the repair line
+  # below rather than killing a night whose mailbox work is already done.
+  if [ "${COS_TRANSPORT:-ego}" = "ego" ]; then
+    $PY tools/cos_ego_arm.py >> "$LOG" 2>&1; ARM_RC=$?
+  else
+    $PY tools/cos_cdp_capture.py --prepare >> "$LOG" 2>&1; ARM_RC=$?
+  fi
+  if [ "$ARM_RC" -eq 0 ] \
+     && $PY tools/cos_mutate.py discard-drafts --run-id "$RUN_ID" $TFLAG \
+      --discard-manifest "$DISCARD_MANIFEST" >> "$LOG" 2>&1; then
+    log "superseded: $DISCARD_N older draft(s) moved to Deleted Items, so each
+ thread carries only tonight's"
+  else
+    log "superseded: $DISCARD_N older draft(s) could NOT be discarded, so those
+ threads now carry more than one draft. Nothing else is affected — the repair is
+ \`tools/cos_ctl.sh discard-drafts $RUN_ID\`"
+  fi
+else
+  log "superseded: no older draft on any thread this run touched"
+fi
+# --- END supersede ---
 
 # --- BEGIN echeck answering ---
 # THE HOST ANSWERS THE E-CHECKS (DOCTRINE v7 §8.1 rule 1), from this run's own

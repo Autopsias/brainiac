@@ -250,7 +250,6 @@ def wire_sweep(vault: Path, deliverables: Path, plist: Path, *,
     """
     res = _wire_sweep(vault, deliverables, plist, repair=repair, create=create)
     if registered is False and res["status"] in ("already", "done"):
-        from . import config as _config
 
         return {**res, "status": "failed", "reload_required": False,
                 "detail": f"{res['detail']} — but launchd does NOT hold "

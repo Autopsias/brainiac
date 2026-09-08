@@ -200,6 +200,16 @@ def exception_keys(data: dict[str, Any]) -> list[str]:
     keys |= {k for k, _t in findings.get("dead_automation") or []}
     keys |= {k for k, _t in findings.get("untriaged") or []}
     keys |= {k for k, _t in findings.get("other") or []}
+    # A feed that is MISSING or STALE is itself an exception. Without this the
+    # page's own `_feed_warning` reads UNKNOWN while `count`, `brain alerts`,
+    # `brain exceptions` and the desktop ping all take the empty findings
+    # lists for "nothing needs you" — an all-clear from an input that never
+    # reached the check. The key is STATIC text, never the stale date, so a
+    # feed that stays broken re-pings once instead of every night.
+    if findings.get("missing"):
+        keys.add("exceptions-feed-missing")
+    elif findings.get("stale"):
+        keys.add("exceptions-feed-stale")
     return sorted(keys)
 
 

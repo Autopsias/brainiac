@@ -51,8 +51,8 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
-import os
-import re
+import os as os
+import re as re
 import sys
 import tempfile
 from collections import defaultdict

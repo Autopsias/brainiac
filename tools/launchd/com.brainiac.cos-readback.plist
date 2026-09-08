@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  FB-02 — the morning read-back, on its own schedule. Template rendered the
+  same way as the other COS jobs (see install-cos-jobs.sh); this file is
+  copied but never loaded by any script — loading is an attended action, by
+  the owner, with launchctl.
+
+  __COS_REPO__ must point at a STABLE checkout — never a plan worktree, which
+  disappears the moment its branch merges and silences the job with no error
+  anywhere (the same rule tools/cos_nightly_schedule_check.py enforces for
+  cos-nightly). It reads cos_sheet_readback.py's own Downloads default
+  (~/Downloads), not BRAIN_COS_DOWNLOADS_DIR — that env var names the
+  UNRELATED attachment-fetch staging directory; this job never sets it.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.brainiac.cos-readback</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__PYTHON__</string>
+    <string>__COS_REPO__/tools/cos_sheet_readback.py</string>
+    <string>--vault</string>
+    <string>__BRAIN_VAULT__</string>
+    <string>--json</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>7</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__HOME__/.local/bin:__HOME__/.brainiac/venv/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>__LOG_DIR__/cos-readback-launchd.out</string>
+  <key>StandardErrorPath</key>
+  <string>__LOG_DIR__/cos-readback-launchd.err</string>
+  <key>ExitTimeOut</key>
+  <integer>60</integer>
+</dict>
+</plist>

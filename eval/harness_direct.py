@@ -190,47 +190,74 @@ def _per_query_recall(qrels_d: dict, run_d: dict, qids: list[str], k: int = 10) 
     return out
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--golden", required=True)
-    ap.add_argument("--qrels", required=True)
-    ap.add_argument("--current", required=True)
-    ap.add_argument("--new", required=True)
-    ap.add_argument("--out", required=True)
-    ap.add_argument("--md", default=None)
-    ap.add_argument("--session", default="s05")
-    ap.add_argument("--codename-map", default=None,
-                    help="HYG-02: fixture-codename -> corpus-name map applied to the "
-                         "QRELS doc keys before they are matched against a run's doc "
-                         f"keys (default: {pn.CODENAME_MAP_PATH}; absent == identity). "
-                         "Pass /dev/null to score with the map deliberately off.")
-    args = ap.parse_args()
+def _remap_qrels(qrels_d: dict, cmap: dict) -> tuple[dict, int]:
+    """Apply the codename map to the QRELS doc keys, and count what it moved.
 
-    golden = _load(args.golden)
-    qrels_d = _load(args.qrels)
-    cur = _load(args.current)
-    new = _load(args.new)
+    HYG-02 — reconcile the fixture's anonymization scheme with the corpus
+    BEFORE any doc key is compared. Applied to the qrels side only: a run
+    already speaks the corpus's own namespace. Never silent — the scorecard
+    stamps which map was used and how many keys it moved, so "no map" and
+    "map that changed nothing" stay distinguishable."""
+    if not cmap:
+        return qrels_d, 0
+    rewritten = 0
+    remapped = {}
+    for qid, docs in qrels_d.items():
+        out_docs = {}
+        for doc, grade in docs.items():
+            new_doc = pn.apply_codenames(doc, cmap)
+            rewritten += new_doc != doc
+            out_docs[new_doc] = grade
+        remapped[qid] = out_docs
+    return remapped, rewritten
 
-    # HYG-02 — reconcile the fixture's anonymization scheme with the corpus
-    # BEFORE any doc key is compared. Applied to the qrels side only: a run
-    # already speaks the corpus's own namespace. Never silent — the scorecard
-    # stamps which map was used and how many keys it moved, so "no map" and
-    # "map that changed nothing" stay distinguishable.
-    cmap_path = args.codename_map or pn.CODENAME_MAP_PATH
-    cmap = pn.load_codename_map(args.codename_map)
-    cmap_rewritten = 0
-    if cmap:
-        remapped = {}
-        for qid, docs in qrels_d.items():
-            out_docs = {}
-            for doc, grade in docs.items():
-                new_doc = pn.apply_codenames(doc, cmap)
-                cmap_rewritten += new_doc != doc
-                out_docs[new_doc] = grade
-            remapped[qid] = out_docs
-        qrels_d = remapped
 
+def _segments(qids: list[str], qmeta: dict, qstratum) -> dict[str, list[str]]:
+    """The scored ids split into the segments the scorecard reports."""
+    segs = {"overall": qids}
+    for lng in sorted({qmeta[q]["lang"] for q in qids if q in qmeta}):
+        segs[f"lang:{lng}"] = [q for q in qids if qmeta[q]["lang"] == lng]
+    for st in sorted({qstratum(q) for q in qids if q in qmeta}):
+        segs[f"class:{st}"] = [q for q in qids if qstratum(q) == st]
+    segs["held_out"] = [q for q in qids if qmeta.get(q, {}).get("held_out")]
+    return segs
+
+
+def _power_of(seg_name: str, cov: dict, strata_cov: dict) -> str:
+    """One segment's power label, from the golden set's own coverage block."""
+    if seg_name == "overall":
+        return "gate"
+    if seg_name.startswith("class:"):
+        return strata_cov.get(seg_name[6:], {}).get("power", "smoke")
+    if seg_name.startswith("lang:"):
+        return cov.get("languages", {}).get(seg_name[5:], {}).get("power", "smoke")
+    return "smoke"
+
+
+def _segment_metrics(qrels_d, cur_runs, new_runs, segs, cov, strata_cov) -> dict:
+    """current/new/delta per segment, skipping segments neither system scored."""
+    by_segment = {}
+    for seg, qids in segs.items():
+        cur_m = _seg_eval(qrels_d, cur_runs, qids)
+        new_m = _seg_eval(qrels_d, new_runs, qids)
+        if not cur_m and not new_m:
+            continue
+        delta = {}
+        for m in SCORED_METRICS:
+            if m in cur_m and m in new_m:
+                delta[m] = round(new_m[m] - cur_m[m], 4)
+        by_segment[seg] = {
+            "n": new_m.get("n", cur_m.get("n", 0)),
+            "power": _power_of(seg, cov, strata_cov),
+            "current": cur_m, "new": new_m, "delta": delta,
+        }
+    return by_segment
+
+
+def _build_scorecard(golden: dict, qrels_d: dict, cur: dict, new: dict,
+                     session: str, cmap_path, cmap: dict,
+                     cmap_rewritten: int) -> dict:
+    """The whole scorecard for one paired current-vs-new capture."""
     qmeta = {q["id"]: q for q in golden["queries"]}
     cur_runs, new_runs = cur["runs"], new["runs"]
     cur_lat, new_lat = cur.get("latency_ms", {}), new.get("latency_ms", {})
@@ -242,30 +269,14 @@ def main() -> int:
     def qstratum(qid: str) -> str:
         return canonical_stratum(qmeta[qid]["stratum"])
 
-    def segments(qids):
-        segs = {"overall": qids}
-        for lng in sorted({qmeta[q]["lang"] for q in qids if q in qmeta}):
-            segs[f"lang:{lng}"] = [q for q in qids if qmeta[q]["lang"] == lng]
-        for st in sorted({qstratum(q) for q in qids if q in qmeta}):
-            segs[f"class:{st}"] = [q for q in qids if qstratum(q) == st]
-        segs["held_out"] = [q for q in qids if qmeta.get(q, {}).get("held_out")]
-        return segs
-
-    segs = segments(scored)
     cov = golden.get("coverage", {})
     strata_cov = {canonical_stratum(k): v for k, v in cov.get("strata", {}).items()}
 
-    def power_of(seg_name: str, n: int) -> str:
-        if seg_name == "overall":
-            return "gate"
-        if seg_name.startswith("class:"):
-            return strata_cov.get(seg_name[6:], {}).get("power", "smoke")
-        if seg_name.startswith("lang:"):
-            return cov.get("languages", {}).get(seg_name[5:], {}).get("power", "smoke")
-        return "smoke"
+    cl = [cur_lat[q] for q in scored if q in cur_lat]
+    nl = [new_lat[q] for q in scored if q in new_lat]
 
-    scorecard = {
-        "session": args.session,
+    return {
+        "session": session,
         "metrics_engine": "direct (ranx-free; validated vs ranx on MiniLM scorecard)",
         "golden_set": {"schema": golden.get("schema_version"),
                        "total_queries": len(golden["queries"])},
@@ -276,8 +287,13 @@ def main() -> int:
         "paired_scope": {"scored_n": len(scored), "scored_ids": scored,
                          "missing_from_current": missing_current,
                          "missing_from_new": missing_new},
-        "metrics": {"by_segment": {}},
-        "latency_ms": {},
+        "metrics": {"by_segment": _segment_metrics(
+            qrels_d, cur_runs, new_runs,
+            _segments(scored, qmeta, qstratum), cov, strata_cov)},
+        "latency_ms": {
+            "current": {"p50": _pctl(cl, 0.50), "p95": _pctl(cl, 0.95), "n": len(cl)},
+            "new": {"p50": _pctl(nl, 0.50), "p95": _pctl(nl, 0.95), "n": len(nl)},
+        },
         "per_query_recall@10": {
             "current": _per_query_recall(qrels_d, cur_runs, scored),
             "new": _per_query_recall(qrels_d, new_runs, scored),
@@ -298,60 +314,74 @@ def main() -> int:
                          "rewritten_doc_keys": cmap_rewritten},
     }
 
-    for seg, qids in segs.items():
-        cur_m = _seg_eval(qrels_d, cur_runs, qids)
-        new_m = _seg_eval(qrels_d, new_runs, qids)
-        if not cur_m and not new_m:
-            continue
-        delta = {}
-        for m in SCORED_METRICS:
-            if m in cur_m and m in new_m:
-                delta[m] = round(new_m[m] - cur_m[m], 4)
-        scorecard["metrics"]["by_segment"][seg] = {
-            "n": new_m.get("n", cur_m.get("n", 0)),
-            "power": power_of(seg, new_m.get("n", 0)),
-            "current": cur_m, "new": new_m, "delta": delta,
-        }
 
-    cl = [cur_lat[q] for q in scored if q in cur_lat]
-    nl = [new_lat[q] for q in scored if q in new_lat]
-    scorecard["latency_ms"] = {
-        "current": {"p50": _pctl(cl, 0.50), "p95": _pctl(cl, 0.95), "n": len(cl)},
-        "new": {"p50": _pctl(nl, 0.50), "p95": _pctl(nl, 0.95), "n": len(nl)},
-    }
+def _markdown_report(scorecard: dict, cur: dict, new: dict, session: str,
+                     cmap_path, cmap: dict, cmap_rewritten: int) -> str:
+    """The human-readable twin of the scorecard JSON."""
+    scope = scorecard["paired_scope"]
+    lines = [f"# A/B scorecard ({session}) — current (SC) vs new (brain)", "",
+             f"- current: `{cur.get('system')}` captured {cur.get('captured')}",
+             f"- new: `{new.get('system')}` captured {new.get('captured')}",
+             f"- metrics engine: {scorecard['metrics_engine']}",
+             f"- paired scored set: **{scope['scored_n']}** queries "
+             f"(missing from current: {len(scope['missing_from_current'])}, "
+             f"from new: {len(scope['missing_from_new'])})",
+             f"- codename map: `{cmap_path}` — {len(cmap)} entries, "
+             f"{cmap_rewritten} qrel doc keys rewritten",
+             "", "## Metrics by segment", "",
+             "| segment | n | power | R@10 cur | R@10 new | Δ R@10 | nDCG@10 cur | nDCG@10 new "
+             "| MRR@10 cur | MRR@10 new | bpref cur | bpref new | Δ bpref |",
+             "|---|--:|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|"]
+    for seg, d in scorecard["metrics"]["by_segment"].items():
+        c, n, dl = d["current"], d["new"], d["delta"]
+        lines.append(
+            f"| {seg} | {d['n']} | {d['power']} | {c.get('recall@10','-')} | "
+            f"{n.get('recall@10','-')} | {dl.get('recall@10','-')} | "
+            f"{c.get('ndcg@10','-')} | {n.get('ndcg@10','-')} | "
+            f"{c.get('mrr@10','-')} | {n.get('mrr@10','-')} | "
+            f"{c.get('bpref','-')} | {n.get('bpref','-')} | {dl.get('bpref','-')} |")
+    lat = scorecard["latency_ms"]
+    lines += ["", "## Latency (ms)", "",
+              f"- current p50={lat['current']['p50']} p95={lat['current']['p95']}",
+              f"- new p50={lat['new']['p50']} p95={lat['new']['p95']}", ""]
+    return "\n".join(lines) + "\n"
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--golden", required=True)
+    ap.add_argument("--qrels", required=True)
+    ap.add_argument("--current", required=True)
+    ap.add_argument("--new", required=True)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--md", default=None)
+    ap.add_argument("--session", default="s05")
+    ap.add_argument("--codename-map", default=None,
+                    help="HYG-02: fixture-codename -> corpus-name map applied to the "
+                         "QRELS doc keys before they are matched against a run's doc "
+                         f"keys (default: {pn.CODENAME_MAP_PATH}; absent == identity). "
+                         "Pass /dev/null to score with the map deliberately off.")
+    args = ap.parse_args()
+
+    cur, new = _load(args.current), _load(args.new)
+    cmap_path = args.codename_map or pn.CODENAME_MAP_PATH
+    cmap = pn.load_codename_map(args.codename_map)
+    qrels_d, cmap_rewritten = _remap_qrels(_load(args.qrels), cmap)
+
+    scorecard = _build_scorecard(_load(args.golden), qrels_d, cur, new,
+                                 args.session, cmap_path, cmap, cmap_rewritten)
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(scorecard, ensure_ascii=False, indent=2) + "\n",
                               encoding="utf-8")
-
     if args.md:
-        lines = [f"# A/B scorecard ({args.session}) — current (SC) vs new (brain)", "",
-                 f"- current: `{cur.get('system')}` captured {cur.get('captured')}",
-                 f"- new: `{new.get('system')}` captured {new.get('captured')}",
-                 f"- metrics engine: {scorecard['metrics_engine']}",
-                 f"- paired scored set: **{len(scored)}** queries "
-                 f"(missing from current: {len(missing_current)}, from new: {len(missing_new)})",
-                 f"- codename map: `{cmap_path}` — {len(cmap)} entries, "
-                 f"{cmap_rewritten} qrel doc keys rewritten",
-                 "", "## Metrics by segment", "",
-                 "| segment | n | power | R@10 cur | R@10 new | Δ R@10 | nDCG@10 cur | nDCG@10 new "
-                 "| MRR@10 cur | MRR@10 new | bpref cur | bpref new | Δ bpref |",
-                 "|---|--:|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|"]
-        for seg, d in scorecard["metrics"]["by_segment"].items():
-            c, n, dl = d["current"], d["new"], d["delta"]
-            lines.append(
-                f"| {seg} | {d['n']} | {d['power']} | {c.get('recall@10','-')} | "
-                f"{n.get('recall@10','-')} | {dl.get('recall@10','-')} | "
-                f"{c.get('ndcg@10','-')} | {n.get('ndcg@10','-')} | "
-                f"{c.get('mrr@10','-')} | {n.get('mrr@10','-')} | "
-                f"{c.get('bpref','-')} | {n.get('bpref','-')} | {dl.get('bpref','-')} |")
-        lat = scorecard["latency_ms"]
-        lines += ["", "## Latency (ms)", "",
-                  f"- current p50={lat['current']['p50']} p95={lat['current']['p95']}",
-                  f"- new p50={lat['new']['p50']} p95={lat['new']['p95']}", ""]
-        Path(args.md).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        Path(args.md).write_text(
+            _markdown_report(scorecard, cur, new, args.session, cmap_path,
+                             cmap, cmap_rewritten), encoding="utf-8")
 
-    print(f"scored {len(scored)} paired queries; segments={len(scorecard['metrics']['by_segment'])}; "
+    print(f"scored {scorecard['paired_scope']['scored_n']} paired queries; "
+          f"segments={len(scorecard['metrics']['by_segment'])}; "
           f"codename_map={len(cmap)} entries -> {cmap_rewritten} qrel doc keys rewritten")
     print(f"wrote {args.out}" + (f" + {args.md}" if args.md else ""))
     return 0

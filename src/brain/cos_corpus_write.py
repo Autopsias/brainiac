@@ -4,7 +4,6 @@ from __future__ import annotations
 import datetime as _dt
 import hashlib
 import json
-from pathlib import Path
 from typing import Any
 
 from . import config, cos, provenance
@@ -49,7 +48,7 @@ def append_thread(vault, run_id: Any, *, conversation_id: Any, text: str,
             f"{type(body_opened).__name__} — it is read as a fact about what "
             f"the run did, and a truthy string is not that fact.")
     if extraction is not None:
-        _bounded_json(extraction, field="extraction")
+        _bounded_json(extraction, field="extraction", cap=MAX_EXTRACTION_BYTES)
     p = corpus_path(vault, rid)
     _ensure(vault)
     row: dict[str, Any] = {
@@ -96,13 +95,19 @@ def _opt(value: Any, *, field: str) -> str | None:
     return s or None
 
 
-def _bounded_json(value: Any, *, field: str) -> None:
-    """``value`` must be strict JSON and fit the per-field cap ENCODED.
+def _bounded_json(value: Any, *, field: str, cap: int | None = None) -> None:
+    """``value`` must be strict JSON and fit ``cap`` bytes ENCODED.
+
+    ``cap`` defaults to ``MAX_FIELD_CHARS``, resolved at CALL time — the cap
+    constants are imported at the foot of this module, so a def-time default
+    would bind ``NameError`` on import.
 
     ``allow_nan=False`` because Python's default writes the bare tokens ``NaN``
     and ``Infinity``, which are not JSON — one optional browser field could
     make an otherwise valid corpus unreadable to any strict replay.
     """
+    if cap is None:
+        cap = MAX_FIELD_CHARS
     try:
         encoded = json.dumps(value, sort_keys=True, separators=(",", ":"),
                              allow_nan=False)
@@ -112,9 +117,9 @@ def _bounded_json(value: Any, *, field: str) -> None:
             f"as JSONL and a row it cannot write is a row it must refuse."
         ) from None
     n = len(encoded.encode("utf-8"))
-    if n > MAX_FIELD_CHARS:
+    if n > cap:
         raise CorpusRefused(
-            f"{field} encodes to {n} bytes, over the {MAX_FIELD_CHARS}-byte "
+            f"{field} encodes to {n} bytes, over the {cap}-byte "
             f"field cap")
 
 
@@ -215,6 +220,7 @@ from .cos_corpus import (  # noqa: E402
     CLASSIFICATION as CLASSIFICATION,
     CorpusClosed as CorpusClosed,
     CorpusRefused as CorpusRefused,
+    MAX_EXTRACTION_BYTES as MAX_EXTRACTION_BYTES,
     MAX_FIELD_CHARS as MAX_FIELD_CHARS,
     MAX_TEXT_BYTES as MAX_TEXT_BYTES,
     _corpus_run_id as _corpus_run_id,

@@ -350,6 +350,11 @@ _EXACT: dict[str, Remedy] = {
     "maintain:no-feed": Remedy(BANNER),
     "maintain:unparseable-feed": Remedy(
         BANNER, note="a forged/broken feed fails closed to stale"),
+    "cos:sheet-heartbeat": Remedy(
+        BANNER,
+        note="out-of-band COS liveness: the sheets directory, not a run "
+             "record the dead night would have needed to write, missed its "
+             "configured publication window"),
     "exceptions": Remedy(
         BANNER, note="EXC-03: the unified 'N exception(s) — open <page>' "
                      "banner, read the SAME way on host and VM from the "
@@ -404,6 +409,29 @@ _PREFIXES: tuple[tuple[str, Remedy], ...] = (
     ("trend:", Remedy(
         BANNER, note="a latency/quality regression no branch can heal and no "
                      "owner can answer as a question — it stays visible")),
+    # The two COS intake findings (`folds/intake.py`). Both are keyed by the
+    # DIGEST of the thread set, so each is a prefix, not an exact key.
+    #
+    # BANNER for the same reason `stuck-drafts` is. NOT `auto`: no remediation
+    # branch owns either — the porter already tried and the mail server or the
+    # owner's own `never` category is the answer, so there is no apparatus to
+    # escalate. NOT `owner`: an owner row must be ONE decidable question with
+    # options and a stated default, and neither of these has options. The
+    # 2026-09-06 ruling already DECIDED the unreadable ones ("their own list,
+    # cleared by hand"), and the withheld ones name their one fix in the
+    # finding text (re-run the fetch for the named files). So: the report that
+    # something stopped, visible for as long as it is true.
+    ("cos-unreadable-threads:", Remedy(
+        BANNER,
+        note="threads whose body the porter can never read, so they are never "
+             "archived, drafted or decided. Owner ruling 2026-09-06: they get "
+             "their own list he clears by hand in Outlook")),
+    ("cos-attachment-withheld:", Remedy(
+        BANNER,
+        note="ATT-03 holds a thread whose attachment bytes never reached a "
+             "signed note, so it is not chipped and will not be archived; the "
+             "fix is to re-run the fetch for the named files, which no branch "
+             "may do unattended")),
 )
 
 

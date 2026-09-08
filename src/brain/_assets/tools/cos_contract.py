@@ -40,7 +40,6 @@ output side under-counts before it over-counts.
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
 import hashlib
 import json
 import re
@@ -61,7 +60,7 @@ from cos_contract_snapshot_shape import candidate_shape_problem  # noqa: E402
 from cos_contract_verdict_clauses import (  # noqa: E402
     accounting_reasons, candidate_scan, capability_liveness, degenerate_reasons,
     provenance_reasons)
-from cos_reconcile_metrics import _rows, counts_archive, counts_draft  # noqa: E402
+from cos_reconcile_metrics import counts_archive, counts_draft  # noqa: E402
 
 BUCKETS = ("archived", "held_non_drafted", "held_drafted", "chipped",
            "unaccounted", "stopped_by_guard")

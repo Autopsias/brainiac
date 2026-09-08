@@ -39,14 +39,12 @@ how a host still carrying the pre-0.20.7 inline copy gets fixed.
 
 from __future__ import annotations
 
-import json
 import os
-import shlex
 import shutil
 import stat
 import sys
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any
 
 
 

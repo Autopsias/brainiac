@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
+import re as re
 import subprocess
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable as Callable
 
 from . import cos, cos_chips, cos_runverify
 
@@ -184,14 +184,14 @@ def by_conversation(ledger: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
 
 
 def in_scope(row: dict[str, Any]) -> bool:
-    """THE ONE Phase-1.6 eligibility definition — `act`, plus `read` at P0/P1.
+    """THE ONE Phase-1.6 eligibility definition — `act`, plus `read` at ANY
+    tier (owner ruling 2026-09-01: informational mail is ingested like every
+    other email; only `noise` stages nothing).
 
     Shared by batching, grounding and E9's denominator. Three copies is how a
     denominator drifts (DOCTRINE §8.2 E9).
     """
-    return (row.get("verdict") == "act"
-            or (row.get("verdict") == "read"
-                and row.get("judged_tier") in ("P0", "P1")))
+    return row.get("verdict") in ("act", "read")
 
 
 def archive_join(vault, run_id: str, run: dict[str, Any] | None = None
@@ -226,8 +226,25 @@ def chip_join(vault, run_id: str, run: dict[str, Any] | None = None
     """Every CHIP this run dispatched, joined to the verdict that chose it."""
     run = run or load_run(vault, run_id)
     verdicts = by_conversation(run["ledger"])
+    rows = dispatched(run["undo"], "categorize")
+    # ONE VAULT SCAN FOR THE WHOLE JOIN, not one per row: `signed_ingest_notes`
+    # hashes every note in the vault (~1.2s / 3,993 notes on the reference
+    # host), so the per-row shape this replaced would have cost four minutes on
+    # a 200-row night. Built only when a mark is actually present.
+    #
+    # AND IT ASKS THE CATCHING-UP QUESTION, not the same-night one (review
+    # 2026-08-25). A candidate offered by a night's ingest bridge is signed by
+    # a LATER maintenance drain, so the mark a plan legitimately dispatches
+    # tonight is almost always for a candidate an EARLIER run offered. Judged
+    # under `run_id` alone every one of those reads as unsigned and E4 raises
+    # a false alarm on correct work — the planner and this check now call the
+    # one definition, `cos.signed_ingested_catching_up`.
+    signed_cids: set[str] | None = None
+    if any(r.get("chip") == cos_chips.CHIP_INGESTED for r in rows):
+        signed_cids = cos.signed_ingested_catching_up(
+            vault, run_id, list(verdicts.values()))
     out = []
-    for r in dispatched(run["undo"], "categorize"):
+    for r in rows:
         cid = r.get("conversation_id")
         v = verdicts.get(cid) or {}
         want = cos_chips.chip_for(v.get("verdict"), v.get("judged_tier"))
@@ -241,12 +258,16 @@ def chip_join(vault, run_id: str, run: dict[str, Any] | None = None
             "verdict": v.get("verdict"),
             "judged_tier": v.get("judged_tier"),
             "before_image": r.get("before_image") or [],
-            # The INGESTION MARK's authority (E4). The mark is not a priority
-            # write, so the (bucket, tier) matrix cannot judge it; what makes
-            # it legitimate is that this run's own ledger row carries the
-            # bridge's drop stamp. ONE definition, the engine's — the planner
-            # chose the mark by the same call.
-            "dropped": cos.bridge_dropped_row(v, run_id),
+            # The INGESTION MARK's authority (E4, FIX-03 2026-08-25). The mark
+            # is not a priority write, so the (bucket, tier) matrix cannot
+            # judge it; what makes it legitimate is that the vault SIGNED a
+            # note for this thread's own candidate — a content-hash join of
+            # this run's claims rows against signed notes, with the matched
+            # note's provenance naming this conversation. ONE definition, the
+            # engine's — the planner chooses the mark by the same call. (The
+            # old authority was the bridge's DROP stamp, which said "offered",
+            # not "signed".)
+            "signed": (signed_cids is not None and cid in signed_cids),
             "verification": r.get("verification"),
             "state": r.get("state"),
         })
@@ -276,10 +297,10 @@ def archive_truth_table(ledger: list[dict[str, Any]]) -> dict[str, Any]:
             return "no verdict"
         if row.get("read_state") != "read":
             return "unread — the shield"
-        if row.get("tier") in ("P0", "P1"):
-            return "carries a P0/P1 chip"
-        if row.get("judged_tier") in ("P0", "P1"):
-            return "judged P0/P1 — the blast floor"
+        if p0_floor_refuses(row.get("verdict"), row.get("tier")):
+            return "carries a P0 chip outside the `read` bucket"
+        if p0_floor_refuses(row.get("verdict"), row.get("judged_tier")):
+            return "judged P0 outside the `read` bucket — the blast floor"
         return None
 
     before, after = [], []
@@ -307,6 +328,7 @@ from .cos_echecks import (  # noqa: E402
     CAPABILITY_BLOCKS as CAPABILITY_BLOCKS,
     EcheckError as EcheckError,
     FAIL as FAIL,
+    p0_floor_refuses as p0_floor_refuses,
     _cos_driver as _cos_driver,
     _cos_judge as _cos_judge,
 )

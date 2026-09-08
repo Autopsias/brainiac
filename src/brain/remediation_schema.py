@@ -88,6 +88,7 @@ UNSUPPRESSIBLE_KEYS = frozenset({
     "maintain:stale",
     "maintain:no-feed",
     "maintain:unparseable-feed",
+    "cos:sheet-heartbeat",
     "degradation:unrecognised-key",
     "exceptions",
     "exceptions:unreachable",

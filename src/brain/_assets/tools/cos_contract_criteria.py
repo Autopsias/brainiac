@@ -19,7 +19,7 @@ from cos_contract import (
     _require,
     _run_token,
     guard_stop_corroborated,
-    lane_pin,
+    lane_pin as lane_pin,
     run_scoped_rows,
 )
 

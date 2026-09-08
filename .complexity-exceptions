@@ -6,11 +6,6 @@
       "complexity": 36
     },
     {
-      "file": "tests/_pathguard_helpers.py",
-      "function": "_tainted_path_uses",
-      "complexity": 32
-    },
-    {
       "file": "eval/s06_reachability.py",
       "function": "main",
       "complexity": 28
@@ -19,16 +14,6 @@
       "file": "eval/s09_fusion_drop_trace.py",
       "function": "main",
       "complexity": 24
-    },
-    {
-      "file": "eval/gate.py",
-      "function": "main",
-      "complexity": 23
-    },
-    {
-      "file": "eval/capture_run.py",
-      "function": "main",
-      "complexity": 22
     },
     {
       "file": "eval/pt_leg_attribution.py",
@@ -41,19 +26,9 @@
       "complexity": 18
     },
     {
-      "file": "eval/harness_direct.py",
-      "function": "main",
-      "complexity": 18
-    },
-    {
       "file": "eval/s04_variant_arms.py",
       "function": "main",
       "complexity": 18
-    },
-    {
-      "file": ".codex/hooks/block-vault-recursive-scan.py",
-      "function": "_check_grep",
-      "complexity": 16
     },
     {
       "file": "eval/s02_paired_capture.py",
@@ -71,34 +46,9 @@
       "complexity": 15
     },
     {
-      "file": "src/brain/ingest/handlers/pptx.py",
-      "function": "extract",
-      "complexity": 15
-    },
-    {
       "file": "eval/fusion_constant_calibration.py",
       "function": "main",
       "complexity": 14
-    },
-    {
-      "file": "eval/harness.py",
-      "function": "main",
-      "complexity": 14
-    },
-    {
-      "file": "tests/_pathguard_helpers.py",
-      "function": "_raw_write_offenders",
-      "complexity": 14
-    },
-    {
-      "file": ".codex/hooks/block-vault-recursive-scan.py",
-      "function": "_check_find",
-      "complexity": 13
-    },
-    {
-      "file": ".codex/hooks/block-vault-recursive-scan.py",
-      "function": "main",
-      "complexity": 13
     },
     {
       "file": "eval/s08_expand_split.py",

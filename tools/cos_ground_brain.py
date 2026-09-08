@@ -17,8 +17,26 @@ from typing import Any
 
 # --- D3, the caller's own two budgets. The run-level allocations (workers,
 # deadline) stay in `cos_ground`; these two belong to the caller itself. ------
-CALL_TIMEOUT_S = 8.0      # a STALL cutoff, not a working budget (~200ms-1s median)
-CALL_RETRIES = 1          # so one call's worst case is 16s, not 8
+# Each call is a FRESH `python -m brain.cli search` subprocess, and `search`
+# always embeds the query, so every call pays a COLD bge-m3 model load — 8-12s
+# measured on this host (2026-08-30), not the ~200ms-1s a warm resident embedder
+# would give. The old 8.0s cutoff was below that floor, so EVERY sender lookup
+# timed out and run212 judged 246 threads blind (grounding covered 0). 15s fits
+# a cold subprocess with ~2x margin; the run-level DEADLINE_S still caps total
+# time, so a generous per-call cutoff costs coverage-breadth, never wall-clock.
+CALL_TIMEOUT_S = 60.0     # a STALL cutoff sized for a cold-subprocess embed load
+#                           UNDER CONTENTION. 15 -> 30 (2026-08-30) -> 60
+#                           (2026-09-03). The 2026-08-30 note already had the
+#                           argument right — "a retry re-pays the full cold load
+#                           from a fresh subprocess, so one 30s allowance beats
+#                           two 15s tries" — and then kept the retry, so the
+#                           call's 60s worst case was still spent as two 30s
+#                           tries. On run 249 that lost 24 of 36 threads, every
+#                           one of them `timeout`, while the run-level 720s
+#                           deadline finished with 467s unused. One 60s
+#                           allowance covers the same worst case and a call
+#                           needing 35s now RETURNS instead of failing twice.
+CALL_RETRIES = 1          # for a call that failed FAST, never one that stalled
 
 
 def brain_cmd() -> list[str]:
@@ -55,8 +73,13 @@ class Brain:
                                       timeout=self.timeout,
                                       env=dict(os.environ, BRAIN_ROLE="host"))
             except subprocess.TimeoutExpired:
+                # A STALL IS NOT RETRIED. The budget above is the whole
+                # allowance, spent on one attempt: a second subprocess re-pays
+                # the same cold bge-m3 load that caused the stall, so retrying
+                # a timeout doubles the wall clock and changes nothing. Every
+                # OTHER failure below is fast and genuinely worth one more try.
                 last = "timeout"
-                continue
+                break
             except OSError as exc:
                 last = f"could not run the engine: {exc}"
                 continue

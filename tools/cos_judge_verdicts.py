@@ -12,7 +12,12 @@ the parent is still honoured.
 from __future__ import annotations
 
 import json
+import sys
+from pathlib import Path
 from typing import Any, Callable
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import cos_judge_ingest  # noqa: E402  sibling, not the parent
 
 
 def group_verdicts(verdicts: list[dict[str, Any]]
@@ -72,6 +77,18 @@ def _prepared_verdict(row, answer, cid, ctx, categories, taxonomy_ids, *,
     # supplied. An explicit null is not an answer.
     if mech and v.get("disposition") is None:
         v.update(mech)
+    # THE TAXONOMY OVERRIDES THE MODEL, and only here (run 246, 2026-09-02).
+    # Every OTHER mechanical stamp is a fallback for a row the model was never
+    # asked about, so it defers to any answer that arrives. `never_category` is
+    # the opposite: the owner's taxonomy ALREADY decided ingestion, and with
+    # `read_never_categories` on, the model now sees an open body and answers
+    # anyway. On run 246 it staged candidates on 33 of them and
+    # `staging.never_category_zero_candidates` refused 27.5% of the night
+    # against a 5% abort threshold. The stamp wins, and the staging span goes
+    # with the disposition it belonged to.
+    if mech and row.get("never_category"):
+        v.update(mech)
+        v.pop("evidence_span", None)
     # THE PRE-DRAW STAMP IS THE CATEGORY. Applied AFTER the empty check, so
     # it can never turn a row that no verdict reached — a legitimately
     # PENDING row — into a rejected one.
@@ -105,6 +122,12 @@ def _prepared_verdict(row, answer, cid, ctx, categories, taxonomy_ids, *,
     # the abort threshold and threw away a whole valid night's triage.
     if v.get("hold_verdict") or v.get("hold_category"):
         v["hold_category"] = first_screen(v, ctx)
+    # (INGEST-01) `ingest` is DERIVED, never accepted — the same idiom as
+    # `hold_category` above and for the same reason: the model is not offered
+    # the field, cannot claim one, and `staging.ingest_independent` recomputes
+    # it and refuses a disagreement. It is attached LAST so it sees the
+    # category stamp and the mechanical disposition this function just settled.
+    v["ingest"] = cos_judge_ingest.ingest_field(v, ctx)
     return v
 
 

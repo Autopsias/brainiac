@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Sequence
+from typing import Sequence
 
 # --- Fully-open reranker of record (replaces the CC-BY-NC jina-reranker-v2) ---
 # gte-multilingual-reranker-base is Apache-2.0, an XLM-R ENCODER cross-encoder

@@ -3,9 +3,8 @@ from __future__ import annotations
 
 from ._shared import *  # noqa: F401,F403
 from ._facade import public
-from ._approval import _identity_binds, approved_vault_identity, approved_verify_key
+from ._approval import _identity_binds, approved_vault_identity
 from ._guards import _safe_meta_id
-from ._io import _write_atomic
 from ._layout import _parse_ts, _ts, _utcnow, hold_dir
 
 def _hold_body(nid: str, sha: str, not_before: str, created: str,

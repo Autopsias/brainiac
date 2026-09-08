@@ -35,12 +35,15 @@ def four_chips_check(chips: list[dict[str, Any]],
 def archive_eligibility_check(archives: list[dict[str, Any]]) -> tuple[bool, str]:
     """(2) every archive READ + bucket noise, citing a recognized signal."""
     bad = [a for a in archives
-           if a["verdict"] != "noise" or a["read_state"] != "read"
-           or a["judged_tier"] in ("P0", "P1")
+           if a["verdict"] not in cos_echecks.ARCHIVE_BUCKETS.get(
+               a["noise_signal"], cos_echecks.DEFAULT_ARCHIVE_BUCKETS)
+           or a["read_state"] != "read"
+           or cos_echecks.p0_floor_refuses(a["verdict"], a["judged_tier"])
            or a["noise_signal"] not in cos_echecks.ARCHIVING_SIGNALS]
     ok = not bad and bool(archives)
     detail = (f"{len(archives)} archived thread(s); "
-              + ("every one was READ, sits in bucket `noise`, is not P0/P1 and "
+              + ("every one was READ, sits in the bucket its own signal admits, "
+                 "clears the P0 blast floor and "
                  "cites a recognized typed signal" if not bad else
                  f"{len(bad)} breach it: "
                  + str([(a['digest'], a['verdict'], a['read_state'],

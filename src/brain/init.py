@@ -32,12 +32,12 @@ human can run the registrar by hand.
 """
 from __future__ import annotations
 
-import datetime as _dt
+import datetime as _dt  # noqa: F401
 import importlib.util
 import os
 import shutil
-import subprocess
-import sys
+import subprocess as subprocess
+import sys as sys
 from pathlib import Path
 from typing import Any
 

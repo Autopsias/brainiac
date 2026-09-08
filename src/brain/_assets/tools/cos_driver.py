@@ -47,15 +47,15 @@ the source of this file and of `tools/cos_driver_page.js`.
 from __future__ import annotations
 
 import argparse
-import base64
+import base64 as base64
 import datetime as _dt
-import hashlib
+import hashlib as hashlib
 import json
 import os
-import subprocess
+import subprocess as subprocess
 import sys
-import time
-from collections.abc import Iterable
+import time as time
+from collections.abc import Iterable as Iterable
 from pathlib import Path
 from typing import Any
 
@@ -63,7 +63,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from cos_driver_accounting import (  # noqa: E402,F401  batch-2 drain
-    BUCKET_RESIDENT, CONTRACT, READ_LANE, _persist, accounting_from_corpus,
+    BUCKET_RESIDENT, CONTRACT, READ_LANE, _persist,
     body_open_succeeded,
     build_accounting, build_contract_inputs, corpus_extraction, run_contract,
     run_host_checks, write_corpus, write_jsonl, write_report)
@@ -74,15 +74,15 @@ from cos_driver_completeness import (  # noqa: E402,F401
     SET_DIFFERENCE_TOLERANCE, assert_complete, completeness)
 from cos_driver_enumeration import (  # noqa: E402,F401
     ENUMERATION_FIELDS, bind_categories, enumerate_only, enumeration_row,
-    row_digest)
+    owner_reversals, row_digest)
 from cos_driver_draw import (  # noqa: E402,F401
     AMBIGUOUS_TIER_CHIPS, CHIP_TIER, TIER_SOURCE_PRIORITY_CHIP,
     TIER_SOURCE_READ_CHIP, _draw_rank, _observed_chip, _tier, _tier_source,
     body_draw, conversations, starvation_stop)
 from cos_driver_gate import gate_evidence_block, gate_scope_and_exclusions  # noqa: E402
 from cos_driver_night_records import (  # noqa: E402
-    fixture_ref, night_evidence_skeleton, replay_determinism,
-    write_night_artifacts)
+    accounting_from_corpus, fixture_ref, night_evidence_skeleton,
+    replay_determinism, write_night_artifacts)
 from cos_driver_selfcheck import selfcheck  # noqa: E402,F401
 from cos_driver_transport import (  # noqa: E402,F401
     BODY_BUDGET, BODY_BUDGET_CHARS, BODY_OPEN_CAP, BOOTSTRAP, CHUNK, CdpTab,
@@ -90,6 +90,7 @@ from cos_driver_transport import (  # noqa: E402,F401
     _await_run, _fresh_node, _read_out, _start, _ts, _utcnow,
     assert_ready, bootstrap_for, capture_bodies, capture_night, load_sheet,
     open_tab, short, stage)
+from cos_signals_sent import sent_body_convs, sent_draft_feedback  # noqa: E402
 
 #: Fields excluded from the determinism diff, and why. Everything else in the
 #: ledger and the metrics row is a function of the capture alone.
@@ -100,6 +101,24 @@ DIFF_EXCLUDED = {
     "extraction_rules_version": "stamped by the host from the run manifest",
     "skill_sha256": "stamped by the host from the run manifest",
 }
+
+
+def _attachment_lane_at_write_time() -> str:
+    """The lane word the READ pass may honestly claim (FIX-02).
+
+    The read pass knows the lane's CONFIGURATION and nothing else: the
+    manifest lines and the fetched files both come hours later. `blocked-…`
+    when the staging directory the sweep reads is not configured (the same
+    fact `cos_attachment_fetch.staging_dir` refuses over), `not-exercised`
+    while it is — and `stamp_attachment_lane`, called by the fetch leg that
+    moves the bytes, supersedes the row with `downloads-mounted` plus the real
+    counts. A constant here is the defect: run188 fetched 32 files and its
+    row of record still said the lane never ran.
+    """
+    configured = os.environ.get("BRAIN_COS_DOWNLOADS_DIR")
+    if not configured or not str(configured).strip():
+        return "blocked-no-downloads-mount"
+    return "not-exercised"
 
 
 def run_night(vault: Path, tab_id: int | None, *, cap: int,
@@ -150,7 +169,9 @@ def _bodies_and_accounting(tab: Any, capture: dict[str, Any],
         capture, run_id=run_id,
         bundle_version=str(manifest.get("bundle_version") or ""),
         rules_version=str(manifest.get("extraction_rules_version") or ""),
-        enumerated_at=enumerated_at, gate_excluded=gate["in_scope_excluded"])
+        enumerated_at=enumerated_at, gate_excluded=gate["in_scope_excluded"],
+        cap=cap, read_never=bool(gate.get("read_never_categories")),
+        never_ids=gate.get("never_category_ids") or frozenset())
     return accounting, enumerated_at, reported_at
 
 
@@ -163,7 +184,17 @@ def _metrics_contract_and_host_checks(ops: Path, vault: Path, run_id: str,
                                       recon: Any) -> None:
     """Append the metrics row (kept IN THIS FILE: a test pins the literal
     `"read_lane": READ_LANE` to the driver's own source), run the outcome
-    contract, the host checks."""
+    contract, the host checks.
+
+    THE ATTACHMENT LANE IS WRITTEN AS THE READ PASS KNOWS IT (FIX-02), and the
+    read pass knows the lane's CONFIGURATION, not its outcome: the manifest
+    lines and the fetched files do not exist until hours after this row. So
+    the row's lane word names the staging mount, the two count fields start at
+    the honest zero, and `stamp_attachment_lane` — called by the fetch leg
+    that actually moves the bytes — SUPERSEDES this row with the per-run
+    counts. The old constant said "not-exercised" forever on runs that
+    fetched 32 files.
+    """
     metrics_row = {
         "date": run_id[:10], "run": run_id.rsplit("run", 1)[-1], "run_id": run_id,
         "run_ts": reported_at, "run_profile": "full",
@@ -172,8 +203,10 @@ def _metrics_contract_and_host_checks(ops: Path, vault: Path, run_id: str,
         "marked": 0, "archived": 0, "captured": 0, "drafts_created": 0,
         "held_drafted": 0, "held_non_drafted": report["enumerated_count"],
         "stopped_by_guard": 0,
-        "attachment_lane": "not-exercised",
-        "body_open_cap": BODY_OPEN_CAP,
+        "attachment_lane": _attachment_lane_at_write_time(),
+        "attachments_dropped": 0,
+        "attachments_fetched": 0,
+        "body_open_cap": accounting.get("body_open_cap", BODY_OPEN_CAP),
         "body_open_actual": accounting["body_open_actual"],
         "body_budget": BODY_BUDGET,
         "mutation_lane": "none-read-only",
@@ -225,7 +258,8 @@ def _run_night(vault: Path, tab_id: int | None, *, cap: int,
     tab, transport = open_tab(tab_id, use_cdp=use_cdp, use_ego=use_ego)
     evidence["driver_transport"] = transport
     capture = capture_night(tab, cap=cap, poll_seconds=poll_seconds,
-                            max_wait=max_wait, now=now)
+                            max_wait=max_wait, now=now,
+                            sent_body_convs=sent_body_convs(vault))
     report = completeness(capture)
     evidence["completeness"] = report
     assert_complete(report)
@@ -271,6 +305,11 @@ def _run_night(vault: Path, tab_id: int | None, *, cap: int,
         write_report=write_report)
     corpus = artifacts["corpus"]
     evidence["corpus"] = corpus
+    # PEN 3 (FB-05). The owner's own reply is the best draft feedback there is
+    # and it costs him nothing; until now the night read Sent Items for the
+    # zero-send proof and threw the text away. Runs AFTER the artifacts, so a
+    # feedback lane can never be what stops a night from writing its ledger.
+    evidence["sent_draft_feedback"] = sent_draft_feedback(vault, run_id, capture)
     pre_path, post_path = artifacts["pre_path"], artifacts["post_path"]
 
     _metrics_contract_and_host_checks(ops, vault, run_id, report, accounting,
@@ -313,8 +352,23 @@ def _live_night_mode(args: argparse.Namespace, vault: Path) -> int:
             print(f"the enumeration at {args.enumeration} is unreadable: {exc}",
                   file=sys.stderr)
             return 2
+    exclude_convids: set[str] | None = None
+    if args.exclude_conversation_ids is not None:
+        try:
+            raw_exclusions = json.loads(
+                args.exclude_conversation_ids.read_text(encoding="utf-8"))
+            if (not isinstance(raw_exclusions, list)
+                    or any(not isinstance(cid, str) or not cid
+                           for cid in raw_exclusions)):
+                raise ValueError("expected a JSON list of non-empty strings")
+            exclude_convids = set(raw_exclusions)
+        except (OSError, ValueError, TypeError) as exc:
+            print(f"the exclusion set at {args.exclude_conversation_ids} is "
+                  f"unreadable: {exc}", file=sys.stderr)
+            return 2
     try:
         ev = run_night(vault, args.tab_id, cap=args.cap, evidence_path=args.out,
+                       exclude_convids=exclude_convids,
                        categories=(load_categories(args.categories)
                                    if args.categories else None),
                        prior_enumeration=prior_rows,

@@ -446,3 +446,36 @@ def lease_state(
     if exp <= now:
         return "expired", str(holder)
     return "held", str(holder)
+
+
+def p0_floor_refuses(bucket: object, tier: object) -> bool:
+    """THE P0 BLAST-RADIUS FLOOR, in ONE place (owner ruling 2026-09-04).
+
+    The 2026-09-01 ruling widened auto-archive to "read + no action" and
+    stopped at P1; on 2026-09-04 the owner was asked the one case that left
+    open — an informational P0 thread with no action for him — and RETIRED the
+    exemption: "a thread with no action for him is archived whatever its
+    priority, P0 included". So the floor now refuses P0 on every bucket EXCEPT
+    `read`, which is the bucket that means exactly "worth your eyes, nothing
+    owed".
+
+    WHAT IS UNCHANGED, and both halves matter:
+      * `triage.p0_never_noise` stands — a P0 sender is never `noise`, so the
+        P0/`noise` pair this still refuses is a pair no legal verdict produces;
+      * the stale-act lane keeps the floor in full. A P0 the judge left in
+        `act` still owes the owner something; "the world moved past it" is not
+        the ruling's "no action for him", and widening it there would archive
+        the one class of mail the ruling deliberately keeps in the inbox.
+
+    IT IS ONE FUNCTION BECAUSE IT WAS SIX CONDITIONS. Until this ruling the
+    same floor was restated in `cos_judge_rules._r_floor`,
+    `cos_judge_apply.archive_eligibility`, `cos_mutate_plan.screen_ledger_rows`
+    (on the OBSERVED chip), `cos_s02b_assert_checks.archive_eligibility_check`,
+    `cos_echecks_answers._e3_archive` and `cos_runverify_join._aged_read_bad` —
+    and a floor left standing at ONE of them drops every P0 archive silently,
+    which is the same defect shape (a refused rule quoted to the judge and
+    executed by nobody) this ruling exists to remove. `tier` is read from
+    whichever column the caller owns: the judged tier, or the chip the mailbox
+    already carries.
+    """
+    return tier == "P0" and bucket != "read"

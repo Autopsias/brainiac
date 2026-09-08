@@ -4,7 +4,6 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import os
-from pathlib import Path
 from typing import Any
 
 from . import config, cos

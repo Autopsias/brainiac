@@ -1,10 +1,10 @@
 """Direct-ONNX embedders of record and their model-spec resolution (DIST-01)."""
 from __future__ import annotations
 
-import math
+import math as math
 import os
-import re
-import sys
+import re as re
+import sys as sys
 from dataclasses import dataclass
 from typing import Sequence
 

@@ -5,7 +5,6 @@ by the parent so its `cos_mutate` module path is unchanged.
 """
 from __future__ import annotations
 
-import datetime as _dt
 import hashlib
 
 import json
@@ -26,13 +25,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 #: THE BOUND IS A SUBSET, NOT AN EQUALITY, and that is a decision rather than a
 #: slip (design revision 4, carried finding 3). Exact key-set equality is
 #: unsatisfiable as the record stated it: the write-ahead `intent` row
-#: serializes 24 keys against this 28-key set, and the four merge keys do not
+#: serializes 25 keys against this 29-key set, and the four merge keys do not
 #: exist yet when it is written. The UPPER bound — nothing outside this set may
 #: be serialized — is the half that closes the sink, and it is unambiguous. The
 #: lower bound is deliberately not asserted: filling absent keys with `None`
 #: would make every intent row claim a `receipts` it does not have.
 LEDGER_ROW_KEYS = frozenset({
-    # the 23 `_undo_row` names
+    # the 24 `_undo_row` names (including FIX-04's deterministic signature)
     "idempotency_key", "conversation_id", "conversation_id_digest", "verb",
     "state", "reason", "account", "message_id", "key_scheme", "thread_id",
     "mutation_lane", "original_folder", "destination_folder", "action_ts",
@@ -42,12 +41,17 @@ LEDGER_ROW_KEYS = frozenset({
     "ts",
     # and exactly the four the apply/unchip merges add
     "new_item_id", "dispatched", "receipts", "observed_after",
+    # The exact machine marker a draft save/discard is bound to. It is not
+    # model prose: `draft_signature(run, conversation_id)` is a closed,
+    # deterministic value, and persisting it makes future reversals literal
+    # instead of compatibility-derived from the verified receipt.
+    "signature",
 })
 
 from cos_mutate_gates import (  # noqa: E402
     MUTATION_LANE, MutationStop, _read_jsonl, _ts, short)
 from cos_mutate_policy import (  # noqa: E402
-    DEFAULT_CAPS, DRAFT_FOLDER, STATES, TERMINAL)
+    DRAFT_FOLDER, STATES, TERMINAL)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from cos_reconcile_metrics import applied_counts  # noqa: E402
 import os
@@ -337,6 +341,7 @@ def _undo_row(m: dict[str, Any], resolved: dict[str, Any], *, state: str,
         "primitive": PRIMITIVE[m["verb"]],
         "connector_result": None,
         "verification": None,
+        "signature": m.get("signature"),
         # WHICH CHIP, on the row. Reconciliation asks "is this chip on the
         # thread"; without the name it asked about `undefined` and answered NO —
         # so run 118 recorded `aborted-not-applied` for a chip the mailbox was
@@ -351,3 +356,74 @@ def _undo_row(m: dict[str, Any], resolved: dict[str, Any], *, state: str,
     }
     row.update(extra)
     return row
+
+
+def split_the_draft_belts(vault: Path, rows: list[dict[str, Any]]
+                          ) -> tuple[set[str], set[str]]:
+    """Who wrote the draft already on the thread — the owner, or this lane?
+
+    ONE DRAFT PER THREAD, AND IT IS THE NEWEST. The two belts answer two
+    DIFFERENT questions, so they are two sets and never a union (owner ruling
+    2026-08-28). Belt 2 is the lane's own undo ledgers: on disk, unable to
+    degrade, and the only thing that can say "the porter wrote that draft" — so
+    those threads are REPLACEABLE, and the discard step the nightly runs after
+    the apply removes what tonight superseded. Belt 1 is the read pass's live
+    `isDraft` census; what it sees and belt 2 does not is the OWNER'S OWN
+    draft, and that is refused.
+
+    Belt 1 is a browser call that FAILS SOFT, which is why it may only ever ADD
+    a refusal and never authorize a replacement: a census that could not run
+    leaves the flag off, so the failure direction is that the owner's draft may
+    be drafted beside, never deleted. Nothing here deletes anything, and the
+    discard lane admits only this lane's own signed saves, so it cannot reach
+    his either.
+
+    Returns `(owner_drafted, porter_drafted)` — refuse, and replace.
+    """
+    porter_drafted = threads_already_drafted(vault)
+    owner_drafted = {r["conversation_id"] for r in rows
+                     if r.get("isDraft") is True} - porter_drafted
+    return owner_drafted, porter_drafted
+
+
+def threads_already_drafted(vault: Path) -> set[str]:
+    """Conversations THIS LANE's own undo ledgers say already carry a draft.
+
+    Belt 2 of one-draft-per-thread (FIX-01). Every `_cos_undo_ledger_*.jsonl`
+    in the vault's cos-ops dir, this run's included — a thread with a
+    reconciled draft row from a resumed checkpoint is exactly as drafted as one
+    from last night.
+
+    LATEST ROW PER CONVERSATION WINS, ORDERED BY `action_ts` and never by file
+    name: the ledgers are named `<date>-run<N>` and `run99` sorts after
+    `run124` inside one day, so a filename sort can hand back a stale state.
+    Latest-wins is what keeps this from being a life sentence — an aborted
+    draft does not hold a thread hostage, and a `sent` draft is not a draft any
+    more, so a thread we replied to months ago can be drafted again.
+
+    WHAT THE CALLER DOES WITH THIS CHANGED ON 2026-08-28. It used to be half a
+    union that REFUSED the thread. Since the owner's ruling — "we should indeed
+    write a new one with the new context of the new email(s) and get rid of the
+    previous outdated drafts in that thread" — it names the threads whose draft
+    the porter may REPLACE. A thread belt 1 sees and this function does not is
+    the owner's own draft, and that one is still refused. See
+    `cos_mutate_plan.screen_drafts`.
+
+    STATED CEILING: a draft the OWNER deleted by hand still reads as present
+    here. The consequence is now benign rather than a life sentence — the
+    thread is re-drafted, and the discard pass, which re-reads every item live
+    before deleting it, simply finds nothing to remove.
+    """
+    from brain import cos                                        # noqa: PLC0415
+
+    latest: dict[str, tuple[str, str]] = {}
+    for ledger in sorted(cos.run_ops_dir(vault).glob("_cos_undo_ledger_*.jsonl")):
+        for row in _read_jsonl(ledger):
+            cid = str(row.get("conversation_id") or "")
+            if row.get("verb") != "draft" or not cid:
+                continue
+            stamp = str(row.get("action_ts") or "")
+            if stamp >= latest.get(cid, ("", ""))[0]:
+                latest[cid] = (stamp, str(row.get("state") or ""))
+    return {cid for cid, (_, state) in latest.items()
+            if state in ("reconciled", "confirmed")}

@@ -15,18 +15,18 @@ zone — so it does not go through ``audited_write`` at all; see
 
 from __future__ import annotations
 
-import datetime
+import datetime as datetime
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from . import frontmatter as fm
 from .remediation_extract_retry import (
-    _attempt_entry,
-    _retry_already_resolved,
-    plan_extract_retry,
-    quarantine_retry_targets,
-    subfloor_retry_targets,
+    _attempt_entry as _attempt_entry,
+    _retry_already_resolved as _retry_already_resolved,
+    plan_extract_retry as plan_extract_retry,
+    quarantine_retry_targets as quarantine_retry_targets,
+    subfloor_retry_targets as subfloor_retry_targets,
 )
 from .remediation_folds import (
     BranchOutcome, Intent, KEY_UNGUARDED, KEY_UNSIGNED, RAISE_CLASSIFICATION,

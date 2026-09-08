@@ -26,6 +26,10 @@ export BRAIN_MODEL_CACHE="${BRAIN_MODEL_CACHE:-$BRAIN_RUNTIME_DIR/model}"
 # raising a VM cap. Raise it from the HOST with:
 #   brain vm-egress-tier Restricted     # (host-broker; signs tier + vault_id)
 # and drop back to the shipped Internal cap with `brain vm-egress-tier`.
+# STATED LIMIT (A-13, 2026-09-05): the pinned anchor sits in this same runtime
+# dir, which the session can write, so a session can mint its own key and
+# raise its own clamp. The ceiling records a host preference; the boundary
+# is that the vault and snapshot are off the mount (A-05), not this file.
 
 # --------------------------------------------------------------------------
 # Supply-chain check (hardening pass): verify the shipped binaries against a

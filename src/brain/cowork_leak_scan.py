@@ -39,16 +39,13 @@ reclaim it. If leases are ever built, the active/abandoned split belongs here.
 from __future__ import annotations
 
 import os
-import stat
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
 from .cowork_leak_artifact import Artifact
 from .cowork_leak_notes import _is_note_file, _scan_note_dumps
 from .cowork_leak_databases import (
     _classify_db,
-    _looks_like_sqlite,
     _sqlite_body_rows,
     _sqlite_candidates,
 )

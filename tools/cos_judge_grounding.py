@@ -13,6 +13,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cos_judge_batches import batch_membership             # noqa: E402
+from cos_judge_body_facts import no_body_held_reason       # noqa: E402
 
 
 def load_categories(path: Path | None) -> dict[str, str]:
@@ -68,6 +69,23 @@ def shell_held_reason(row: dict[str, Any]) -> str:
         lane, "navigation-refused-row-unreachable")
 
 
+#: Microsoft rights-protected mail. The readable body is the standard "this
+#: message is protected" wrapper; the message itself is ENCRYPTED inside this
+#: attachment and only the owner's own rights licence opens it.
+RIGHTS_PROTECTED_TYPE = "application/x-microsoft-rpmsg-message"
+
+
+def rights_protected(row: dict[str, Any]) -> bool:
+    """Is this thread's substance sealed inside a rights-protected attachment?
+
+    A DRIVER FACT — the attachment's content type, read straight off the same
+    `AllProperties` GetItem the body pass already paid for. Never a judgment
+    about the mail, which is the whole criterion for deciding it here.
+    """
+    return any(str(a.get("content_type") or "").lower() == RIGHTS_PROTECTED_TYPE
+               for a in (row.get("attachments") or []))
+
+
 def mechanical_disposition(row: dict[str, Any]) -> dict[str, Any] | None:
     """What the DRIVER's own facts already settle — never a judgment.
 
@@ -76,6 +94,32 @@ def mechanical_disposition(row: dict[str, Any]) -> dict[str, Any] | None:
     in code is the point of the split: the model is never asked a question whose
     answer is already in the ledger.
     """
+    # RULE 1¾'s ZERO-CANDIDATE HALF IS DECIDED BEFORE THE BODY IS CONSULTED,
+    # and after the 2026-09-02 ruling that is no longer the same thing as the
+    # body being unread. With `read_never_categories` on, a `never` thread IS
+    # opened — so the aged-read action screens can run and the thread can leave
+    # the inbox — but the owner's taxonomy already answered the ingestion
+    # question, and re-asking the model over an open body is how a
+    # `market-digest` it happens to find interesting stages a candidate and
+    # fails the run on the very rule this pairing writes. So the pairing is
+    # stamped from the taxonomy fact, above the `body_opened` return.
+    if row.get("never_category"):
+        return {"disposition": "no-substance", "held_reason": "never-category",
+                "dedup_check": "not-run"}
+    # A SEALED MESSAGE IS NOT A FAILED READ (2026-09-03). Rights-protected
+    # mail DOES open: the lane gets the 609-character "this message is
+    # protected" wrapper, which is a real body, so the row reached the model
+    # and the model reached for the nearest read-lane word it had. Four threads
+    # wore `rest-read-returned-shell` or `no-body-access-on-lane` that way, and
+    # three of them had done so on eleven consecutive nights — reading as a
+    # recurring machine failure when nothing is failing. Nothing the run can do
+    # opens these; only the owner's own rights licence does. So they earn their
+    # own word, above the `body_opened` return, and stay in the inbox as HIS
+    # call rather than as a defect the night keeps re-attempting.
+    if rights_protected(row):
+        return {"disposition": "held",
+                "held_reason": "rights-protected-message",
+                "dedup_check": "not-run"}
     if row.get("body_opened"):
         return None
     # RULE 1¾'s PAIRING, written from a driver fact. `category_gate_excluded`
@@ -98,8 +142,8 @@ def mechanical_disposition(row: dict[str, Any]) -> dict[str, Any] | None:
     outcome = row.get("body_open_outcome")
     held = _REFUSED_HELD_REASON.get(outcome)
     if held:
-        if outcome == "shell":
-            held = shell_held_reason(row)
+        held = (shell_held_reason(row) if outcome == "shell"
+                else no_body_held_reason(row, held))
         return {"disposition": "held", "held_reason": held,
                 "dedup_check": "not-run"}
     return {"disposition": "held", "held_reason": "over-cap", "dedup_check": "not-run"}
@@ -314,3 +358,12 @@ def projection_refused_ids(chunks_dir: Path | None) -> set[str]:
             continue
         out |= {str(x) for x in (d.get("refused_ids") or []) if x}
     return out
+
+
+# ---------------------------------------------------------------------------
+# THE RULINGS BLOCK lives in `cos_judge_rulings` since 2026-09-07 (the 500-LOC
+# bound). Re-exported here so every existing caller and test keeps its import.
+# ---------------------------------------------------------------------------
+from cos_judge_rulings import (  # noqa: E402,F401  (facade re-export)
+    NOTE_CHARS, RULINGS_ABSENT, _note_suffix, _rule_line, _thread_line,
+    _wanted_more_lines, owner_rulings, rulings_block)

@@ -37,10 +37,18 @@ and an ambiguous numeric date whose readings straddle the run date is refused.
 
 WHAT THIS FILE CANNOT SEE, STATED. "Unanswered" is decided from what the OWNER'S
 INBOX knows: the newest message in the thread is inbound, so nothing in the
-thread answers it. An owner reply that exists only in Sent Items is invisible —
-the driver enumerates `sentitems` but keeps only `{item_id, timestamp}` and drops
-`ConversationId`, so the two cannot be joined. Carrying `ConversationId` on that
-enumeration is the one change that would close it, and it needs a live run.
+thread answers it. An owner reply that exists only in Sent Items is invisible to
+THESE FIVE FACTS, and still is.
+
+The JOIN that was missing, however, now exists (FB-05, 2026-09-06). This
+paragraph used to end "carrying `ConversationId` on that enumeration is the one
+change that would close it, and it needs a live run" — `cos_driver_page.js` now
+carries `conv_id` on every sent item, and `cos_signals_sent` + `feedback_sent`
+use it to score the owner's real reply against the porter's draft (PEN 3). What
+that closes is DRAFT FEEDBACK, not this module: wiring a sent reply into
+`unanswered_direct_ask` would change what the judge does with live mail on the
+strength of a lane that has never run against this mailbox, so the fact stays as
+written until Pen 3 has rows to argue from.
 """
 from __future__ import annotations
 
@@ -459,19 +467,11 @@ def signals_for_row(row: dict[str, Any], corpus_row: dict[str, Any], *,
     """
     prov = (corpus_row.get("provenance") or {}) if corpus_row else {}
     subject = prov.get("subject")
-    text = (corpus_row or {}).get("text") or ""
     opened = bool(row.get("body_opened"))
-    # The extraction RESULT lives on the corpus row (the ledger records the
-    # verdict, the corpus records what the read actually returned).
-    extraction = (corpus_row or {}).get("extraction")
-    unreadable = body_unreadable(
-        body_opened=opened, body_chars=int(row.get("body_chars") or 0),
-        text=text, subject=subject,
-        extraction_error=(extraction or {}).get("error")
-        if isinstance(extraction, dict) else None)
-    # An unreadable body contributes NO content evidence — reading markers out
-    # of a UI placeholder would be reading the mail client, not the mail.
-    new_text = "" if unreadable else newest_message_text(text)
+    # ONE PRODUCER, in its own module so the stale sibling can import it
+    # without a ring (see `cos_signals_body`'s header for the defect).
+    from cos_signals_body import readable_newest_text  # noqa: PLC0415
+    new_text, unreadable = readable_newest_text(row, corpus_row)
     ask, ask_leg = unanswered_direct_ask(subject=subject, new_text=new_text)
     dl, dl_leg = live_deadline(subject=subject, new_text=new_text, now=now)
     return {

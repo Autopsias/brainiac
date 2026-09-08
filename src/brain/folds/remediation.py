@@ -19,7 +19,7 @@ that ran at 02:00 and skipped 03:00 would banner for the other 23 hours.
 
 from __future__ import annotations
 
-import datetime
+import datetime as datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -27,7 +27,7 @@ from .context import MaintenanceRun
 from .remediation_bookkeeping import (
     apply_extract_retry_intents,
     apply_intents,
-    heal_streaks,
+    heal_streaks as heal_streaks,
     in_shadow,
     record_extract_retry_run,
     record_failure,
@@ -35,7 +35,7 @@ from .remediation_bookkeeping import (
     record_shadow,
     render_hot_entry,
 )
-from .. import maintenance, remediation, remediation_folds as rf
+from .. import maintenance, remediation as remediation, remediation_folds as rf
 from .. import remediation_branches as rb
 from .. import remediation_state as rs
 from ..lock import WriterLockBusy, vault_writer_lock

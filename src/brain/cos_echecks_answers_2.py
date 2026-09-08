@@ -1,8 +1,8 @@
 """The E6-E10 run-integrity checks and the grounding-delivery helpers."""
 from __future__ import annotations
 
-import re
-from typing import Any, Callable
+import re as re
+from typing import Any, Callable as Callable
 
 from . import cos
 from . import cos_echecks_delivery as delivery
@@ -36,15 +36,25 @@ def _e6(run: dict[str, Any]) -> dict[str, Any]:
         problems.append(f"the binding claims {binding.get('planned')} planned "
                         f"row(s), the plan carries {len(planned)}")
     keys = {(m.get("conversation_id"), m.get("verb")) for m in planned}
+    planned_convs = {m.get("conversation_id") for m in planned}
     states = {}
     for r in run["undo"]:
         states.setdefault((r.get("conversation_id"), r.get("verb")), set()
                           ).add(str(r.get("state")))
     unterminated = [k for k in keys
                     if not (states.get(k, set()) & set(_TERMINAL))]
+    # The draft-discard REVERSAL (`rest-discard-signed-draft`) is dispatched
+    # OUTSIDE the frozen mutation plan by design — it is the cleanup that
+    # retires a superseded draft this run created, and no planner ever lists a
+    # `discard-draft` verb. It is legitimate only where it reverses a draft the
+    # plan actually made, so it is a stranger by CONVERSATION (its cid must be
+    # one the plan named), not by the (cid, verb) tuple every other row keys on.
+    def _stranger(r: dict[str, Any]) -> bool:
+        if r.get("verb") == "discard-draft":
+            return r.get("conversation_id") not in planned_convs
+        return (r.get("conversation_id"), r.get("verb")) not in keys
     strangers = sorted({str(r.get("conversation_id_digest") or "?")
-                        for r in disp
-                        if (r.get("conversation_id"), r.get("verb")) not in keys})
+                        for r in disp if _stranger(r)})
     if unterminated:
         problems.append(f"{len(unterminated)} planned row(s) reached no "
                         "terminal state")
@@ -135,7 +145,7 @@ def _e8(run: dict[str, Any]) -> dict[str, Any]:
 
 def _e9(run: dict[str, Any]) -> dict[str, Any]:
     scope = [r for r in run["ledger"] if in_scope(r)]
-    of = "in-scope row(s) (`act`, plus `read` at P0/P1)"
+    of = "in-scope row(s) (`act`, plus `read` at any tier)"
     if not scope:
         return _answer(9, NA, 0, of,
                        "no row reached the Phase-1.6 in-scope population")

@@ -1,4 +1,4 @@
-"""The role=vm egress ceiling, from a source the VM cannot forge (VULN-3386).
+"""The role=vm egress ceiling: a host-recorded PREFERENCE, not a boundary (VULN-3386).
 
 The ceiling a VM session may never exceed used to resolve from
 ``$BRAIN_VM_MAX_EGRESS_TIER`` — but the session's own shell can export that
@@ -14,6 +14,16 @@ anchor, missing file, malformed, bad signature, foreign vault_id — fails
 CLOSED to the shipped ``Internal`` cap. The env var no longer raises a VM
 ceiling at all (it remains host-role configuration, where the operator's
 shell is the trusted context).
+
+**Stated limit (A-13, 2026-09-05).** The anchor this verifies against lives in
+the staging directory on the mount (or wherever ``$BRAIN_RUNTIME_DIR`` points),
+and the sandbox can write both. A session that mints its own keypair and
+writes a matching ``pinned-verify.json`` + signed file raises its own clamp.
+This closed the ENV hole the pentest used; it is not a confidentiality
+boundary and no control may be built on it. What keeps note bodies from a
+sandbox is that the vault and the snapshot are OFF the mount (A-05) — the
+role=vm CLI has nothing to surface at any ceiling, and Cowork reads go
+through the host broker at the host's ceiling.
 """
 from __future__ import annotations
 

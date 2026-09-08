@@ -131,7 +131,6 @@ def _mcp_entry_present(servers: dict, vault: str) -> bool:
 
 def _wire_row(vault: str, entries: list[dict], *, desktop_config_path: Path,
              plist_dir: Any) -> dict:
-    from . import config as _config
     from . import provision
     from .doctor import CURRENT, NOT_DETECTABLE, WARN, _row
 

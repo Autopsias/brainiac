@@ -90,6 +90,17 @@ def write_chunks(src: ChunkSources, placed: list[tuple[list[str], int, bool, boo
                 _h, rows_t = split_batch(bodies[t])
                 batch_ids |= {r.get("conversation_id") for r in rows_t
                               if isinstance(r, dict)}
+            # DRAFT-01: THE DRAFT JOB GETS ITS OWN PROMPT, and only when
+            # this chunk actually has a draft row. A chunk with none writes no
+            # file, and the nightly then fires no second call for it — the leg
+            # costs a call only where there is something to draft.
+            _h, draft_rows = split_batch(bodies["draft"])
+            if src.compose_draft is not None and draft_rows:
+                src.ground().write_text_0600(
+                    chunk_dir / "prompt-draft.txt",
+                    src.compose_draft(src.instruction, bodies["draft"],
+                                      src.closing))
+                rec["draft_rows"] = len(draft_rows)
             join_records.append(join_chunk(chunk_name, prompt_text,
                                            mt[0] if mt else None,
                                            mt[1] if mt else None,
@@ -120,9 +131,16 @@ def write_join(src: ChunkSources, join_out: Path, join_records: list[dict],
                             "batch_ids_not_required": sorted(all_batch_ids - src.required)}
     # ONE predicate, called by the producer, `cos_echecks` and the shell.
     bad = short_chunks(join)
-    # `ok` is a claim about DELIVERY, so an ungrounded night — which claims
-    # no delivery — is never `ok` here and E10 never reads this file for one.
-    join["ok"] = (src.grounded and not bad
+    # `ok` IS A CLAIM ABOUT DELIVERY AND NOTHING ELSE (2026-09-03). It used to
+    # carry `src.grounded` as well, back when an ungrounded night shipped no map
+    # at all. It ships one now, so the state of the fetch and the fate of the
+    # map are two different questions and this field answers only the second:
+    # every block the map claims reached a composed prompt. The night's own
+    # state is on the declaration, where E10 reads it. A night with NO payload
+    # still claims nothing: with no map, `required` is 0 and every count below
+    # passes vacuously, which is the one thing the dropped conjunct was also
+    # holding shut.
+    join["ok"] = (isinstance(src.payload, dict) and not bad
                   and not join["required_not_in_batches"]
                   and join["required_covered_by_chunks"] >= join["required"])
     src.ground().write_text_0600(join_out, json.dumps(join, indent=2) + "\n")

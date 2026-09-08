@@ -82,6 +82,116 @@ def _per_query_recall(qrels_d: dict, run_d: dict, qids: list[str], k: int = 10) 
     return out
 
 
+def _segments(qids: list[str], qmeta: dict) -> dict[str, list[str]]:
+    """The scored ids split into the segments the scorecard reports."""
+    segs = {"overall": qids}
+    for lng in sorted({qmeta[q]["lang"] for q in qids if q in qmeta}):
+        segs[f"lang:{lng}"] = [q for q in qids if qmeta[q]["lang"] == lng]
+    for st in sorted({qmeta[q]["stratum"] for q in qids if q in qmeta}):
+        segs[f"class:{st}"] = [q for q in qids if qmeta[q]["stratum"] == st]
+    segs["held_out"] = [q for q in qids if qmeta.get(q, {}).get("held_out")]
+    return segs
+
+
+def _power_of(seg_name: str, cov: dict) -> str:
+    """One segment's power label, from the golden set's own coverage block."""
+    if seg_name == "overall":
+        return "gate"
+    if seg_name.startswith("class:"):
+        return cov.get("strata", {}).get(seg_name[6:], {}).get("power", "smoke")
+    if seg_name.startswith("lang:"):
+        return cov.get("languages", {}).get(seg_name[5:], {}).get("power", "smoke")
+    return "smoke"
+
+
+def _segment_metrics(qrels_d, cur_runs, new_runs, segs, cov) -> dict:
+    """current/new/delta per segment, skipping segments neither system scored."""
+    by_segment = {}
+    for seg, qids in segs.items():
+        cur_m = _seg_eval(qrels_d, cur_runs, qids)
+        new_m = _seg_eval(qrels_d, new_runs, qids)
+        if not cur_m and not new_m:
+            continue
+        delta = {}
+        for m in METRICS:
+            if m in cur_m and m in new_m:
+                delta[m] = round(new_m[m] - cur_m[m], 4)
+        by_segment[seg] = {
+            "n": new_m.get("n", cur_m.get("n", 0)),
+            "power": _power_of(seg, cov),
+            "current": cur_m, "new": new_m, "delta": delta,
+        }
+    return by_segment
+
+
+def _build_scorecard(golden: dict, qrels_d: dict, cur: dict, new: dict) -> dict:
+    """The whole scorecard for one paired current-vs-new capture."""
+    qmeta = {q["id"]: q for q in golden["queries"]}
+    cur_runs, new_runs = cur["runs"], new["runs"]
+    cur_lat, new_lat = cur.get("latency_ms", {}), new.get("latency_ms", {})
+
+    # PAIRED scope: only queries present in BOTH systems' runs AND in qrels.
+    scored = sorted(set(cur_runs) & set(new_runs) & set(qrels_d))
+    missing_current = sorted(set(qrels_d) - set(cur_runs))
+    missing_new = sorted(set(qrels_d) - set(new_runs))
+
+    # latency over the scored set
+    cl = [cur_lat[q] for q in scored if q in cur_lat]
+    nl = [new_lat[q] for q in scored if q in new_lat]
+
+    return {
+        "session": "s05",
+        "golden_set": {"schema": golden.get("schema_version"), "total_queries": len(golden["queries"])},
+        "current_system": {"label": cur.get("system"), "captured": cur.get("captured"),
+                           "index_state": cur.get("index_state"), "scope": cur.get("scope")},
+        "new_system": {"label": new.get("system"), "captured": new.get("captured"),
+                       "index_state": new.get("index_state"), "scope": new.get("scope")},
+        "paired_scope": {"scored_n": len(scored), "scored_ids": scored,
+                         "missing_from_current": missing_current,
+                         "missing_from_new": missing_new},
+        "metrics": {"by_segment": _segment_metrics(
+            qrels_d, cur_runs, new_runs, _segments(scored, qmeta),
+            golden.get("coverage", {}))},
+        "latency_ms": {
+            "current": {"p50": _pctl(cl, 0.50), "p95": _pctl(cl, 0.95), "n": len(cl)},
+            "new": {"p50": _pctl(nl, 0.50), "p95": _pctl(nl, 0.95), "n": len(nl)},
+        },
+        "per_query_recall@10": {
+            "current": _per_query_recall(qrels_d, cur_runs, scored),
+            "new": _per_query_recall(qrels_d, new_runs, scored),
+        },
+        # maps the gate uses for per-language / per-class bootstrap
+        "_qlang": {q: qmeta[q]["lang"] for q in scored if q in qmeta},
+        "_qstratum": {q: qmeta[q]["stratum"] for q in scored if q in qmeta},
+    }
+
+
+def _markdown_report(scorecard: dict, cur: dict, new: dict) -> str:
+    """The human-readable twin of the scorecard JSON."""
+    scope = scorecard["paired_scope"]
+    lines = ["# S05 A/B scorecard — current (SC) vs new (brain)", "",
+             f"- current: `{cur.get('system')}` captured {cur.get('captured')}",
+             f"- new: `{new.get('system')}` captured {new.get('captured')}",
+             f"- paired scored set: **{scope['scored_n']}** queries "
+             f"(missing from current: {len(scope['missing_from_current'])}, "
+             f"from new: {len(scope['missing_from_new'])})",
+             "", "## Metrics by segment", "",
+             "| segment | n | power | R@10 cur | R@10 new | Δ R@10 | nDCG@10 cur | nDCG@10 new | MRR@10 cur | MRR@10 new |",
+             "|---|--:|---|--:|--:|--:|--:|--:|--:|--:|"]
+    for seg, d in scorecard["metrics"]["by_segment"].items():
+        c, n, dl = d["current"], d["new"], d["delta"]
+        lines.append(
+            f"| {seg} | {d['n']} | {d['power']} | {c.get('recall@10','-')} | "
+            f"{n.get('recall@10','-')} | {dl.get('recall@10','-')} | "
+            f"{c.get('ndcg@10','-')} | {n.get('ndcg@10','-')} | "
+            f"{c.get('mrr@10','-')} | {n.get('mrr@10','-')} |")
+    lat = scorecard["latency_ms"]
+    lines += ["", "## Latency (ms)", "",
+              f"- current p50={lat['current']['p50']} p95={lat['current']['p95']}",
+              f"- new p50={lat['new']['p50']} p95={lat['new']['p95']}", ""]
+    return "\n".join(lines) + "\n"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -93,113 +203,18 @@ def main() -> int:
     ap.add_argument("--md", default=None)
     args = ap.parse_args()
 
-    golden = _load(args.golden)
-    qrels_d = _load(args.qrels)
-    cur = _load(args.current)
-    new = _load(args.new)
-
-    qmeta = {q["id"]: q for q in golden["queries"]}
-
-    cur_runs, new_runs = cur["runs"], new["runs"]
-    cur_lat, new_lat = cur.get("latency_ms", {}), new.get("latency_ms", {})
-
-    # PAIRED scope: only queries present in BOTH systems' runs AND in qrels.
-    scored = sorted(set(cur_runs) & set(new_runs) & set(qrels_d))
-    missing_current = sorted(set(qrels_d) - set(cur_runs))
-    missing_new = sorted(set(qrels_d) - set(new_runs))
-
-    def segments(qids):
-        segs = {"overall": qids}
-        for lng in sorted({qmeta[q]["lang"] for q in qids if q in qmeta}):
-            segs[f"lang:{lng}"] = [q for q in qids if qmeta[q]["lang"] == lng]
-        for st in sorted({qmeta[q]["stratum"] for q in qids if q in qmeta}):
-            segs[f"class:{st}"] = [q for q in qids if qmeta[q]["stratum"] == st]
-        segs["held_out"] = [q for q in qids if qmeta.get(q, {}).get("held_out")]
-        return segs
-
-    segs = segments(scored)
-    cov = golden.get("coverage", {})
-
-    def power_of(seg_name: str, n: int) -> str:
-        if seg_name == "overall":
-            return "gate"
-        if seg_name.startswith("class:"):
-            return cov.get("strata", {}).get(seg_name[6:], {}).get("power", "smoke")
-        if seg_name.startswith("lang:"):
-            return cov.get("languages", {}).get(seg_name[5:], {}).get("power", "smoke")
-        return "smoke"
-
-    scorecard = {
-        "session": "s05",
-        "golden_set": {"schema": golden.get("schema_version"), "total_queries": len(golden["queries"])},
-        "current_system": {"label": cur.get("system"), "captured": cur.get("captured"),
-                           "index_state": cur.get("index_state"), "scope": cur.get("scope")},
-        "new_system": {"label": new.get("system"), "captured": new.get("captured"),
-                       "index_state": new.get("index_state"), "scope": new.get("scope")},
-        "paired_scope": {"scored_n": len(scored), "scored_ids": scored,
-                         "missing_from_current": missing_current,
-                         "missing_from_new": missing_new},
-        "metrics": {"by_segment": {}},
-        "latency_ms": {},
-        "per_query_recall@10": {
-            "current": _per_query_recall(qrels_d, cur_runs, scored),
-            "new": _per_query_recall(qrels_d, new_runs, scored),
-        },
-        # maps the gate uses for per-language / per-class bootstrap
-        "_qlang": {q: qmeta[q]["lang"] for q in scored if q in qmeta},
-        "_qstratum": {q: qmeta[q]["stratum"] for q in scored if q in qmeta},
-    }
-
-    for seg, qids in segs.items():
-        cur_m = _seg_eval(qrels_d, cur_runs, qids)
-        new_m = _seg_eval(qrels_d, new_runs, qids)
-        if not cur_m and not new_m:
-            continue
-        delta = {}
-        for m in METRICS:
-            if m in cur_m and m in new_m:
-                delta[m] = round(new_m[m] - cur_m[m], 4)
-        scorecard["metrics"]["by_segment"][seg] = {
-            "n": new_m.get("n", cur_m.get("n", 0)),
-            "power": power_of(seg, new_m.get("n", 0)),
-            "current": cur_m, "new": new_m, "delta": delta,
-        }
-
-    # latency over the scored set
-    cl = [cur_lat[q] for q in scored if q in cur_lat]
-    nl = [new_lat[q] for q in scored if q in new_lat]
-    scorecard["latency_ms"] = {
-        "current": {"p50": _pctl(cl, 0.50), "p95": _pctl(cl, 0.95), "n": len(cl)},
-        "new": {"p50": _pctl(nl, 0.50), "p95": _pctl(nl, 0.95), "n": len(nl)},
-    }
+    cur, new = _load(args.current), _load(args.new)
+    scorecard = _build_scorecard(_load(args.golden), _load(args.qrels), cur, new)
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(scorecard, ensure_ascii=False, indent=2) + "\n",
                               encoding="utf-8")
-
     if args.md:
-        lines = ["# S05 A/B scorecard — current (SC) vs new (brain)", "",
-                 f"- current: `{cur.get('system')}` captured {cur.get('captured')}",
-                 f"- new: `{new.get('system')}` captured {new.get('captured')}",
-                 f"- paired scored set: **{len(scored)}** queries "
-                 f"(missing from current: {len(missing_current)}, from new: {len(missing_new)})",
-                 "", "## Metrics by segment", "",
-                 "| segment | n | power | R@10 cur | R@10 new | Δ R@10 | nDCG@10 cur | nDCG@10 new | MRR@10 cur | MRR@10 new |",
-                 "|---|--:|---|--:|--:|--:|--:|--:|--:|--:|"]
-        for seg, d in scorecard["metrics"]["by_segment"].items():
-            c, n, dl = d["current"], d["new"], d["delta"]
-            lines.append(
-                f"| {seg} | {d['n']} | {d['power']} | {c.get('recall@10','-')} | "
-                f"{n.get('recall@10','-')} | {dl.get('recall@10','-')} | "
-                f"{c.get('ndcg@10','-')} | {n.get('ndcg@10','-')} | "
-                f"{c.get('mrr@10','-')} | {n.get('mrr@10','-')} |")
-        lat = scorecard["latency_ms"]
-        lines += ["", "## Latency (ms)", "",
-                  f"- current p50={lat['current']['p50']} p95={lat['current']['p95']}",
-                  f"- new p50={lat['new']['p50']} p95={lat['new']['p95']}", ""]
-        Path(args.md).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        Path(args.md).write_text(_markdown_report(scorecard, cur, new),
+                                 encoding="utf-8")
 
-    print(f"scored {len(scored)} paired queries; segments={len(scorecard['metrics']['by_segment'])}")
+    print(f"scored {scorecard['paired_scope']['scored_n']} paired queries; "
+          f"segments={len(scorecard['metrics']['by_segment'])}")
     print(f"wrote {args.out}" + (f" + {args.md}" if args.md else ""))
     return 0
 

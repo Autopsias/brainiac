@@ -1,7 +1,7 @@
 """Mutation counters, unread-touch, target-identity, and chip re-eval checks."""
 from __future__ import annotations
 
-import re
+import re as re
 from typing import Any
 
 from . import cos

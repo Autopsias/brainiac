@@ -206,6 +206,7 @@ def plan_extract_retry(
             (KEY_SUBFLOOR, f"raw/{nid}.md", original, "quarantine-exhausted:subfloor"))
 
     by_key: dict[str, list[str]] = {}
+    retried_this_run: set[str] = set()
     exhausted: dict[str, list[str]] = {}
     intents: list[Intent] = []
     for key, target, source, exhaust_key in candidates:
@@ -224,6 +225,20 @@ def plan_extract_retry(
         if count >= EXTRACT_RETRY_MAX_ATTEMPTS:
             exhausted.setdefault(exhaust_key, []).append(target)
             continue
+        if content_hash in retried_this_run:
+            # A SECOND path holding bytes we are already retrying — which is
+            # what this branch's own output becomes: a retry copy that fails
+            # extraction again is re-quarantined under a new name, and next
+            # run BOTH paths were targets. Measured 2026-09-07 on the live
+            # vault: 2 documents became 16 files in three nights, doubling
+            # nightly until the per-hash bound stopped it. The attempt bound
+            # is keyed on the bytes, so the target is the bytes too.
+            out.skipped.append({
+                "target": target,
+                "reason": "duplicate bytes of a target already retried this "
+                          "run (an earlier retry copy that re-quarantined)"})
+            continue
+        retried_this_run.add(content_hash)
         out.targets.append(target)
         by_key.setdefault(key, []).append(target)
         if entry.get("count_last_day") == today_iso:

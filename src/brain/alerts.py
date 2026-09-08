@@ -225,11 +225,20 @@ def vault_alerts(
 
     out += exceptions_alerts(vault, today, name, role=role)
     out += degradation_alerts(vault, today, name)
+    # OUT-OF-BAND: reads only the sheet directory's newest mtime, so a dead
+    # job cannot hide by failing to write its own ledger. Imported through the
+    # facade (which re-exports sheet_heartbeat) to avoid an import cycle.
+    from . import cos_runverify as _cos_alerts                 # noqa: PLC0415
+    heartbeat = _cos_alerts.sheet_heartbeat(
+        vault,
+        now=datetime.datetime.combine(
+            today, datetime.time(12, 0), tzinfo=datetime.timezone.utc),
+    )
+    if heartbeat.get("firing"):
+        out.append(_alert("cos:sheet-heartbeat", heartbeat["text"], name))
     if role != "vm":
-        # Host-only: the capture inbox lives on the host's filesystem
-        # (closed-stacks), and the fix the alert names (`brain sync`,
-        # `brain write`) is a host action anyway. The VM leg does not read
-        # this, and a VM zero would be a fabricated one.
+        # Host-only: the capture inbox and the fix (`brain sync`/`brain write`)
+        # are host-side; a VM zero here would be fabricated.
         out += stuck_draft_alerts(vault, name)
     return out
 
@@ -474,26 +483,9 @@ def collect(
     }
 
 
-def render_human(report: dict[str, Any]) -> str:
-    """One line per alert. Deliberately terse — this is read at session start."""
-    lines: list[str] = []
-    for item in report["alerts"]:
-        scope = item.get("scope")
-        lines.append(f"  ! {scope + ': ' if scope else ''}{item['text']}")
-    if not lines:
-        lines.append("  no alerts")
-    for note in report.get("unreachable", []):
-        lines.append(f"  - not checkable from role={report['role']}: {note}")
-    header = f"brain alerts — {len(report['alerts'])} finding(s), role={report['role']}"
-    return "\n".join([header, *lines])
-
-
-def one_line(report: dict[str, Any]) -> str:
-    """The banner form a SessionStart hook injects. Empty when all clear."""
-    if not report["alerts"]:
-        return ""
-    parts = []
-    for item in report["alerts"]:
-        scope = item.get("scope")
-        parts.append(f"{scope}: {item['text']}" if scope else item["text"])
-    return "BRAINIAC ALERTS: " + " | ".join(parts)
+# Re-exported so `alerts.render_human` / `alerts.one_line` keep working;
+# they live in alerts_render.py only to keep this file under the ratchet.
+from .alerts_render import (  # noqa: E402  the split is the only reason
+    one_line as one_line,
+    render_human as render_human,
+)

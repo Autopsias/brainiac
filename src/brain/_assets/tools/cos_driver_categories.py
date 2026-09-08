@@ -83,7 +83,7 @@ from pathlib import Path                                       # noqa: E402
 from typing import Any                                         # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from cos_driver_transport import DriverStop, short             # noqa: E402
+from cos_driver_transport import short             # noqa: E402
 
 
 def resolve_never(vault: Path, categories: dict[str, str]

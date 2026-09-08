@@ -145,8 +145,15 @@ fi
 # record is what stamps this run's candidates at claim time; without it every
 # candidate is quarantined (unattributable), so a failure here aborts the
 # launch rather than starting a run whose output cannot be claimed.
+#
+# This script ALWAYS launches via `codex exec` below, so the executing surface
+# IS the codex-automation lane — assert it. Auto-resolution REFUSES when the
+# scheduled automation is PAUSED (LaneUnresolved), which is exactly the state an
+# attended on-demand run wants to launch from. Override with COS_RUN_LANE only
+# to launch the cowork-desktop surface on demand.
 BRAIN_RUN_BEGIN="${BRAIN_BIN:-brain}"
-if ! RUN_JSON="$("$BRAIN_RUN_BEGIN" ${VAULT:+--vault "$VAULT"} cos-run-begin --json)"; then
+RUN_LANE="${COS_RUN_LANE:-codex-automation}"
+if ! RUN_JSON="$("$BRAIN_RUN_BEGIN" ${VAULT:+--vault "$VAULT"} cos-run-begin --lane "$RUN_LANE" --json)"; then
   echo "cos-run-begin FAILED — refusing to launch a run whose candidates could" >&2
   echo "not be attributed to a bundle. Fix the deployment lane first." >&2
   exit 1
@@ -191,8 +198,14 @@ echo "Starting. This is a real run against real mail; it never sends."
 # looks like a lane defect when it is only a missing env var — measured on
 # run 59.
 if [[ -z "${BRAIN_COS_DOWNLOADS_DIR:-}" ]]; then
+  # There can be MORE THAN ONE nightly plist, and a second one need not carry
+  # this key: `plutil` then exits non-zero, and under `set -euo pipefail` that
+  # aborts the whole launch AFTER "Starting" but BEFORE codex runs — a silent
+  # non-launch (the scheduled job never hits this; it has the var already).
+  # Grep the path line and swallow the exit so a missing key is a no-op, not a
+  # dead run.
   BRAIN_COS_DOWNLOADS_DIR="$(plutil -extract EnvironmentVariables.BRAIN_COS_DOWNLOADS_DIR raw -o - \
-      "$HOME"/Library/LaunchAgents/com.brainiac.nightly.*.plist 2>/dev/null | head -1)"
+      "$HOME"/Library/LaunchAgents/com.brainiac.nightly.*.plist 2>/dev/null | grep '^/' | head -1 || true)"
   [[ -n "$BRAIN_COS_DOWNLOADS_DIR" ]] && export BRAIN_COS_DOWNLOADS_DIR \
     && echo "  downloads dir: $BRAIN_COS_DOWNLOADS_DIR (from the nightly job)"
 fi

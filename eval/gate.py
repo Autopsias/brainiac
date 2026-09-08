@@ -170,7 +170,9 @@ def _stratum_verdict(sd, slb: float, bound: float, test: str) -> "tuple[bool, st
             f"(need >= {bound:+.4f}); n={sd.size}")
 
 
-def main() -> int:
+def _build_parser() -> argparse.ArgumentParser:
+    """The gate's command line. Kept whole and separate: every help string here
+    is part of the gate's published contract."""
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--scorecard", required=True)
@@ -209,7 +211,122 @@ def main() -> int:
                     help="BL-01 (BR-06): bypass the corpus NOTE-COUNT drift refusal ONLY. "
                          "Never bypasses chunk-count drift, a golden_set_sha256 mismatch, "
                          "or a mixed fingerprinted/unfingerprinted pair — those always exit 2.")
-    args = ap.parse_args()
+    return ap
+
+
+def _segment_checks(prefix: str, by_seg: dict, ids: list, pq: dict,
+                    key_map: dict, args, skip_note: str,
+                    segment_pvals: list) -> list[tuple[str, bool, str]]:
+    """Non-inferiority checks for every `lang:`/`class:` segment.
+
+    Gate-power segments are tested; the rest record a SKIPPED check that
+    always passes. Appends each tested segment's permutation p-value to
+    ``segment_pvals`` for the family-wise FDR correction."""
+    checks: list[tuple[str, bool, str]] = []
+    for seg, d in by_seg.items():
+        if not seg.startswith(prefix):
+            continue
+        key = seg.split(":", 1)[1]
+        if d.get("power") != "gate":
+            checks.append((f"non-inferiority {seg}", True,
+                           f"SKIPPED (power={d.get('power')}, n={d.get('n')}) — {skip_note}"))
+            continue
+        seg_ids = sorted(q for q in ids if key_map.get(q) == key)
+        sd = np.array([pq["new"][q] - pq["current"][q] for q in seg_ids], dtype=float)
+        if sd.size == 0:
+            checks.append((f"non-inferiority {seg}", True, "SKIPPED — no paired queries"))
+            continue
+        slb = bootstrap_ci_lower(sd, args.bootstrap, args.seed)
+        ok, detail = _stratum_verdict(sd, slb, args.bound, args.stratum_test)
+        checks.append((f"non-inferiority {seg}", ok, detail))
+        seg_perm = paired_permutation_test(sd, b=args.bootstrap, seed=args.seed,
+                                            fold_context=args.fold_context)
+        segment_pvals.append((seg, sd.size, seg_perm.p_two_sided))
+    return checks
+
+
+def _reported_only_pvals(by_seg: dict, ids: list, pq: dict, qlang: dict,
+                         qstr: dict, gated: set, args) -> list[tuple[str, int, float]]:
+    """EF-04 (H20): permutation p-values for the *reported-only* (SKIPPED /
+    smoke-power) lang:/class: segments with >=2 paired queries, so the FDR
+    family genuinely covers "ALL language x class slice tests" (H20:
+    ">=10-15 of them"), not just the subset large enough to gate."""
+    out: list[tuple[str, int, float]] = []
+    for seg, d in by_seg.items():
+        if not (seg.startswith("lang:") or seg.startswith("class:")):
+            continue
+        if seg in gated:
+            continue
+        key_map = qlang if seg.startswith("lang:") else qstr
+        key = seg.split(":", 1)[1]
+        seg_ids = sorted(q for q in ids if key_map.get(q) == key)
+        if len(seg_ids) < 2:
+            continue
+        sd = np.array([pq["new"][q] - pq["current"][q] for q in seg_ids], dtype=float)
+        seg_perm = paired_permutation_test(sd, b=args.bootstrap, seed=args.seed,
+                                            fold_context=args.fold_context)
+        out.append((seg, sd.size, seg_perm.p_two_sided))
+    return out
+
+
+def _print_fdr_block(segment_pvals: list, args) -> None:
+    """The Benjamini-Hochberg family-wise correction across every slice test."""
+    if not segment_pvals:
+        print("  Benjamini-Hochberg FDR correction: SKIPPED — no per-segment "
+              "paired data to correct across.")
+        return
+    seg_names = [s for s, _, _ in segment_pvals]
+    seg_ns = [n for _, n, _ in segment_pvals]
+    seg_raw_p = [p for _, _, p in segment_pvals]
+    rejected, adj_p = benjamini_hochberg(seg_raw_p, alpha=args.fdr_alpha)
+    print(f"  Benjamini-Hochberg FDR correction across {len(segment_pvals)} "
+          f"language x class slice tests (H20, alpha={args.fdr_alpha}):")
+    for name, n, raw_p, adj, rej in zip(seg_names, seg_ns, seg_raw_p, adj_p, rejected):
+        flag = "SURVIVES" if rej else "does not survive"
+        print(f"    {name:<28} n={n:<3} raw_p={raw_p:.4f}  "
+              f"BH-adjusted_q={adj:.4f}  [{flag} FDR correction]")
+    naive_wins = sum(1 for p in seg_raw_p if p <= args.fdr_alpha)
+    print(f"    naive uncorrected count (p<={args.fdr_alpha}): {naive_wins}  "
+          f"| FDR-corrected count: {sum(rejected)}")
+
+
+def _print_extended_stats(deltas, overall_ci, overall_perm,
+                          segment_pvals: list, args) -> None:
+    """EF-04 (S03) extended statistics block.
+
+    Purely informational: PASS/FAIL is decided ONLY by `checks` / `all_pass`.
+    Nothing printed here changes the exit code."""
+    print()
+    print("=" * 72)
+    print("EXTENDED STATISTICS (EF-04) — informational, does not change PASS/FAIL")
+    print("=" * 72)
+    print("  Bootstrap CI (DESCRIPTIVE effect-size interval, H19 — not a "
+          "significance test):")
+    print(f"    mean Δ={overall_ci.mean:+.4f}  95% CI=[{overall_ci.ci_lower:+.4f}, "
+          f"{overall_ci.ci_upper:+.4f}]  n={overall_ci.n}  B={overall_ci.b}  "
+          f"seed={overall_ci.seed}")
+    print(f"  Paired permutation test OVERALL ({overall_perm.kind}):")
+    print(f"    p_two_sided={overall_perm.p_two_sided:.4f}  "
+          f"p_one_sided(new>=current)={overall_perm.p_greater:.4f}  "
+          f"exact={overall_perm.exact}  n={overall_perm.n}")
+    print(f"    {overall_perm.caveat()}")
+    _print_fdr_block(segment_pvals, args)
+
+    obs_sd = float(np.std(deltas, ddof=1)) if deltas.size > 1 else 0.0
+    mde = minimum_detectable_effect(deltas.size, obs_sd, alpha=args.fdr_alpha,
+                                     power=args.target_power)
+    pw = achieved_power(deltas.size, obs_sd, float(deltas.mean()), alpha=args.fdr_alpha)
+    print("  Pre-registered minimum detectable effect (H20 — the success gate "
+          "is an effect-size")
+    print("  threshold, not a bare 'CI lower bound > 0'):")
+    print(f"    n={deltas.size}  observed_sd={obs_sd:.4f}  alpha={args.fdr_alpha}  "
+          f"target_power={args.target_power} -> MDE={mde:+.4f}")
+    print(f"    achieved power for the OBSERVED overall effect "
+          f"(mean Δ={deltas.mean():+.4f}): {pw:.4f}")
+
+
+def main() -> int:
+    args = _build_parser().parse_args()
 
     sc = json.loads(Path(args.scorecard).read_text(encoding="utf-8"))
 
@@ -257,73 +374,20 @@ def main() -> int:
                                             fold_context=args.fold_context)
     overall_ci = bootstrap_ci(deltas, b=args.bootstrap, seed=args.seed)
 
-    # 2. per-language non-inferiority for gate-power language segments only
+    # 2 + 2b. per-language and per-CLASS non-inferiority, gate-power segments
+    # only (NO-STRATUM-GATE, S05 review). Segments below the power floor
+    # (marginal/smoke, e.g. multi_hop & temporal at n=10) are reported but do
+    # NOT gate — too few queries to bound.
     qlang = sc.get("_qlang", {})
-    for seg, d in by_seg.items():
-        if not seg.startswith("lang:"):
-            continue
-        lng = seg.split(":", 1)[1]
-        if d.get("power") != "gate":
-            checks.append((f"non-inferiority {seg}", True,
-                           f"SKIPPED (power={d.get('power')}, n={d.get('n')}) — smoke, not gating"))
-            continue
-        seg_ids = sorted(q for q in ids if qlang.get(q) == lng)
-        sd = np.array([pq["new"][q] - pq["current"][q] for q in seg_ids], dtype=float)
-        if sd.size == 0:
-            checks.append((f"non-inferiority {seg}", True, "SKIPPED — no paired queries"))
-            continue
-        slb = bootstrap_ci_lower(sd, args.bootstrap, args.seed)
-        ok, detail = _stratum_verdict(sd, slb, args.bound, args.stratum_test)
-        checks.append((f"non-inferiority {seg}", ok, detail))
-        seg_perm = paired_permutation_test(sd, b=args.bootstrap, seed=args.seed,
-                                            fold_context=args.fold_context)
-        segment_pvals.append((seg, sd.size, seg_perm.p_two_sided))
-
-    # 2b. per-CLASS non-inferiority for gate-power strata only (NO-STRATUM-GATE,
-    # S05 review). Strata below the power floor (marginal/smoke, e.g. multi_hop &
-    # temporal at n=10) are reported but do NOT gate — too few queries to bound.
     qstr = sc.get("_qstratum", {})
-    for seg, d in by_seg.items():
-        if not seg.startswith("class:"):
-            continue
-        st = seg.split(":", 1)[1]
-        if d.get("power") != "gate":
-            checks.append((f"non-inferiority {seg}", True,
-                           f"SKIPPED (power={d.get('power')}, n={d.get('n')}) — not gating"))
-            continue
-        seg_ids = sorted(q for q in ids if qstr.get(q) == st)
-        sd = np.array([pq["new"][q] - pq["current"][q] for q in seg_ids], dtype=float)
-        if sd.size == 0:
-            checks.append((f"non-inferiority {seg}", True, "SKIPPED — no paired queries"))
-            continue
-        slb = bootstrap_ci_lower(sd, args.bootstrap, args.seed)
-        ok, detail = _stratum_verdict(sd, slb, args.bound, args.stratum_test)
-        checks.append((f"non-inferiority {seg}", ok, detail))
-        seg_perm = paired_permutation_test(sd, b=args.bootstrap, seed=args.seed,
-                                            fold_context=args.fold_context)
-        segment_pvals.append((seg, sd.size, seg_perm.p_two_sided))
+    checks.extend(_segment_checks("lang:", by_seg, ids, pq, qlang, args,
+                                  "smoke, not gating", segment_pvals))
+    checks.extend(_segment_checks("class:", by_seg, ids, pq, qstr, args,
+                                  "not gating", segment_pvals))
 
-    # EF-04 (H20): also collect permutation p-values for *reported-only*
-    # (SKIPPED / smoke-power) lang:/class: segments with >=2 paired queries,
-    # so the FDR family genuinely covers "ALL language x class slice tests"
-    # (H20: ">=10-15 of them"), not just the subset large enough to gate.
-    gated_segment_names = {name for name, _, _ in segment_pvals}
-    for seg, d in by_seg.items():
-        if not (seg.startswith("lang:") or seg.startswith("class:")):
-            continue
-        if seg in gated_segment_names:
-            continue
-        if seg.startswith("lang:"):
-            key_map, key = qlang, seg.split(":", 1)[1]
-        else:
-            key_map, key = qstr, seg.split(":", 1)[1]
-        seg_ids = sorted(q for q in ids if key_map.get(q) == key)
-        if len(seg_ids) < 2:
-            continue
-        sd = np.array([pq["new"][q] - pq["current"][q] for q in seg_ids], dtype=float)
-        seg_perm = paired_permutation_test(sd, b=args.bootstrap, seed=args.seed,
-                                            fold_context=args.fold_context)
-        segment_pvals.append((seg, sd.size, seg_perm.p_two_sided))
+    segment_pvals.extend(_reported_only_pvals(
+        by_seg, ids, pq, qlang, qstr,
+        {name for name, _, _ in segment_pvals}, args))
 
     # 3. latency p95(new) <= p95(current)
     lat = sc.get("latency_ms", {})
@@ -343,53 +407,7 @@ def main() -> int:
         flag = "PASS" if ok else ("SKIP" if detail.startswith("SKIPPED") else "FAIL")
         print(f"  [{flag}] {name}\n         {detail}")
 
-    # --- EF-04 (S03) extended statistics block --------------------------
-    # Purely informational: PASS/FAIL above is decided ONLY by `checks` /
-    # `all_pass`. Nothing below changes the exit code.
-    print()
-    print("=" * 72)
-    print("EXTENDED STATISTICS (EF-04) — informational, does not change PASS/FAIL")
-    print("=" * 72)
-    print("  Bootstrap CI (DESCRIPTIVE effect-size interval, H19 — not a "
-          "significance test):")
-    print(f"    mean Δ={overall_ci.mean:+.4f}  95% CI=[{overall_ci.ci_lower:+.4f}, "
-          f"{overall_ci.ci_upper:+.4f}]  n={overall_ci.n}  B={overall_ci.b}  "
-          f"seed={overall_ci.seed}")
-    print(f"  Paired permutation test OVERALL ({overall_perm.kind}):")
-    print(f"    p_two_sided={overall_perm.p_two_sided:.4f}  "
-          f"p_one_sided(new>=current)={overall_perm.p_greater:.4f}  "
-          f"exact={overall_perm.exact}  n={overall_perm.n}")
-    print(f"    {overall_perm.caveat()}")
-
-    if segment_pvals:
-        seg_names = [s for s, _, _ in segment_pvals]
-        seg_ns = [n for _, n, _ in segment_pvals]
-        seg_raw_p = [p for _, _, p in segment_pvals]
-        rejected, adj_p = benjamini_hochberg(seg_raw_p, alpha=args.fdr_alpha)
-        print(f"  Benjamini-Hochberg FDR correction across {len(segment_pvals)} "
-              f"language x class slice tests (H20, alpha={args.fdr_alpha}):")
-        for name, n, raw_p, adj, rej in zip(seg_names, seg_ns, seg_raw_p, adj_p, rejected):
-            flag = "SURVIVES" if rej else "does not survive"
-            print(f"    {name:<28} n={n:<3} raw_p={raw_p:.4f}  "
-                  f"BH-adjusted_q={adj:.4f}  [{flag} FDR correction]")
-        naive_wins = sum(1 for p in seg_raw_p if p <= args.fdr_alpha)
-        print(f"    naive uncorrected count (p<={args.fdr_alpha}): {naive_wins}  "
-              f"| FDR-corrected count: {sum(rejected)}")
-    else:
-        print("  Benjamini-Hochberg FDR correction: SKIPPED — no per-segment "
-              "paired data to correct across.")
-
-    obs_sd = float(np.std(deltas, ddof=1)) if deltas.size > 1 else 0.0
-    mde = minimum_detectable_effect(deltas.size, obs_sd, alpha=args.fdr_alpha,
-                                     power=args.target_power)
-    pw = achieved_power(deltas.size, obs_sd, float(deltas.mean()), alpha=args.fdr_alpha)
-    print("  Pre-registered minimum detectable effect (H20 — the success gate "
-          "is an effect-size")
-    print("  threshold, not a bare 'CI lower bound > 0'):")
-    print(f"    n={deltas.size}  observed_sd={obs_sd:.4f}  alpha={args.fdr_alpha}  "
-          f"target_power={args.target_power} -> MDE={mde:+.4f}")
-    print(f"    achieved power for the OBSERVED overall effect "
-          f"(mean Δ={deltas.mean():+.4f}): {pw:.4f}")
+    _print_extended_stats(deltas, overall_ci, overall_perm, segment_pvals, args)
 
     print()
     print("-" * 72)

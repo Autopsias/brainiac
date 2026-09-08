@@ -16,6 +16,35 @@ from pathlib import Path
 from typing import Any, Callable
 
 
+def _bound_gate(
+        vault: Path, convs: list[dict[str, Any]],
+        categories: dict[str, str] | None,
+        prior_enumeration: list[dict[str, Any]] | None, *,
+        bind_categories: Callable[..., dict[str, Any]],
+        resolve_never: Callable[..., dict[str, Any]],
+        driver_stop: type[Exception]
+        ) -> tuple[dict[str, Any], dict[str, Any], list[str], set[str]]:
+    """Bind category stamps to their enumeration and resolve exclusions."""
+    gate: dict[str, Any] = {}
+    binding: dict[str, Any] = {}
+    gate_scope = [c["convId"] for c in convs]
+    category_excluded: set[str] = set()
+    if categories is None:
+        return gate, binding, gate_scope, category_excluded
+    if prior_enumeration is None:
+        raise driver_stop(
+            "a category answer was supplied with no enumeration to bind it "
+            "to. The stamps were judged on the `--enumerate-only` snapshot "
+            "and this pass re-enumerates, so without that file a stamp "
+            "would be applied by id to a mailbox the model never saw — an "
+            "arrival would draw ungated and a changed thread would be "
+            "excluded on obsolete data, with nothing to notice either")
+    binding = bind_categories(categories, prior_enumeration, convs)
+    gate_scope = binding["scope"]
+    gate = resolve_never(vault, binding["honored"])
+    return gate, binding, gate_scope, set(gate["excluded"])
+
+
 def gate_scope_and_exclusions(
         vault: Path, convs: list[dict[str, Any]], cap: int,
         categories: dict[str, str] | None,
@@ -29,7 +58,7 @@ def gate_scope_and_exclusions(
         driver_stop: type[Exception]) -> dict[str, Any]:
     """THE GATE, FED: bind the stamps, exclude the owner's `never` rows, and
     evaluate the interlock both globally and over the asked-about scope."""
-    gate: dict[str, Any] = {}
+    caller_excluded = set(exclude_convids or ())
     # THE STAMPS WERE JUDGED ON ANOTHER ENUMERATION, AND ARE BOUND TO IT
     # (review 2026-08-13, round 1, HIGH). `prior_enumeration` is the
     # `--enumerate-only` output the category batch was asked about; anything
@@ -37,26 +66,17 @@ def gate_scope_and_exclusions(
     # state changed — is resolved by `bind_categories` before a stamp can
     # exclude a body. Without it, this pass applied stamps by id to a snapshot
     # the model never saw.
-    binding: dict[str, Any] = {}
-    gate_scope: list[str] = [c["convId"] for c in convs]
-    if categories is not None:
-        if prior_enumeration is None:
-            raise driver_stop(
-                "a category answer was supplied with no enumeration to bind it "
-                "to. The stamps were judged on the `--enumerate-only` snapshot "
-                "and this pass re-enumerates, so without that file a stamp "
-                "would be applied by id to a mailbox the model never saw — an "
-                "arrival would draw ungated and a changed thread would be "
-                "excluded on obsolete data, with nothing to notice either")
-        binding = bind_categories(categories, prior_enumeration, convs)
-        gate_scope = binding["scope"]
-        gate = resolve_never(vault, binding["honored"])
-        exclude_convids = set(exclude_convids or ()) | gate["excluded"]
-    excluded = frozenset(exclude_convids or ())
+    gate, binding, gate_scope, category_excluded = _bound_gate(
+        vault, convs, categories, prior_enumeration,
+        bind_categories=bind_categories, resolve_never=resolve_never,
+        driver_stop=driver_stop)
+    excluded = frozenset(caller_excluded | category_excluded)
     # An id we were handed for a conversation this enumeration does not carry
     # excludes nothing; counting it would inflate the metric that proves the
     # gate works, which is the one number that must stay honest.
-    in_scope_excluded = {c["convId"] for c in convs if c["convId"] in excluded}
+    in_scope_excluded = {
+        c["convId"] for c in convs if c["convId"] in category_excluded
+    }
     # THE DEGENERATE CASE, AND IT NEEDS NO THRESHOLD (review 2026-08-13, round
     # 1, HIGH). A category pass that stamped everything `never` would blind the
     # night, and the cited backstop — `_CATEGORY_DOMINANCE_MAX_SHARE`, 0.75 —
@@ -71,8 +91,13 @@ def gate_scope_and_exclusions(
     # Compared against the SAME `body_draw` with no exclusions, so the two
     # differ in exactly one input: any zero it reports is the gate's doing and
     # not an all-unread mailbox, which draws zero either way and is left alone.
-    ungated_draw = body_draw(convs, cap)
-    starved = starvation_stop(convs, cap, excluded)
+    # The caller's batch-cap exclusions are a MODEL POPULATION boundary, not
+    # rule 1¾. Measure and police category starvation only inside that bounded
+    # population; otherwise a selected slice containing only unread rows would
+    # be misreported as a taxonomy that blinded a healthy mailbox.
+    batch_scope = [c for c in convs if c["convId"] not in caller_excluded]
+    ungated_draw = body_draw(batch_scope, cap)
+    starved = starvation_stop(batch_scope, cap, category_excluded)
     # AND WHAT THE INTERLOCK WOULD HAVE SAID ABOUT THE SCOPE IT WAS ASKED ABOUT
     # (review 2026-08-13, round 5 — the one place the two review lanes
     # disagreed, settled by probe in `_evidence/s09/arrivals-probe.txt`).
@@ -94,8 +119,10 @@ def gate_scope_and_exclusions(
     # nothing changes what the night does.
     scope_ids = set(gate_scope)
     starved_in_scope = starvation_stop(
-        [c for c in convs if c["convId"] in scope_ids], cap, excluded)
-    draw = body_draw(convs, cap, exclude=excluded)
+        [c for c in batch_scope if c["convId"] in scope_ids], cap,
+        category_excluded)
+    lever, excluded, in_scope_excluded, never_ids = _apply_read_never(
+        vault, ungated_draw, cap, caller_excluded, excluded, in_scope_excluded)
     # WAT-01: the gate ships with the number that reveals it was never armed.
     # `state` comes from the ONE shared predicate the judge also calls, so the
     # two legs cannot disagree about the same run — and an empty answer reads
@@ -111,10 +138,54 @@ def gate_scope_and_exclusions(
     # honest shape: the gate ran, over the threads it was asked about.
     gate_state = category_gate_state(binding["honored"] if binding else categories,
                                      gate_scope, gate.get("defined_ids"))
-    return {"excluded": excluded, "in_scope_excluded": in_scope_excluded,
-            "draw": draw, "ungated_draw": ungated_draw, "starved": starved,
+    return {"excluded": frozenset() if lever else frozenset(category_excluded),
+            "read_never_categories": lever, "never_category_ids": never_ids,
+            "draw": body_draw(convs, cap, exclude=excluded),
+            "in_scope_excluded": in_scope_excluded,
+            "ungated_draw": ungated_draw, "starved": starved,
             "starved_in_scope": starved_in_scope, "binding": binding,
             "gate": gate, "gate_state": gate_state}
+
+
+def _read_never_lever(vault: Path, ungated_draw: list[dict[str, Any]],
+                      cap: int) -> bool:
+    """Is tonight reading `never`-category bodies, and can it afford to?
+
+    Two conditions, both required. The owner set `read_never_categories: true`
+    in `overlay/cos/auto-archive.md`, AND the draw that ignores the category
+    exclusions came in UNDER the cap — so no `never` body displaces a body the
+    cap owed to actionable material, which is the standing rule's own stated
+    reason for excluding them. An unreadable or unparseable overlay reads OFF,
+    like every other lever `kill_switch` carries.
+    """
+    from cos_mutate_gates import kill_switch                    # noqa: PLC0415
+    if not kill_switch(vault).get("read_never_categories"):
+        return False
+    return len(ungated_draw) < cap
+
+
+def _apply_read_never(vault: Path, ungated_draw: list[dict[str, Any]], cap: int,
+                      caller_excluded: set[str], excluded: frozenset[str],
+                      in_scope_excluded: set[str]
+                      ) -> tuple[bool, frozenset[str], set[str], set[str]]:
+    """Split "never INGEST" from "never READ" (owner ruling 2026-09-02).
+
+    Rule 1¾ fused the two, and the fusion made a `never`-category thread
+    permanently unarchivable: the draw skipped its body, an unread body is an
+    unrun action screen, and the aged-read lane may not claim "no action" over
+    screens that did not run. 40 of the 74 threads left after runs 244/245 were
+    held by exactly that.
+
+    `never_category_ids` is what the owner's TAXONOMY says and never changes;
+    `in_scope_excluded` is what the DRAW did about it, and that is all the
+    lever touches. Ingestion is not in this path at all — the bridge's own
+    `_never_category` refusal is what keeps `never` at zero candidates.
+    """
+    lever = _read_never_lever(vault, ungated_draw, cap)
+    never_category_ids = set(in_scope_excluded)
+    if lever:
+        return lever, frozenset(caller_excluded), set(), never_category_ids
+    return lever, excluded, in_scope_excluded, never_category_ids
 
 
 def gate_evidence_block(convs: list[dict[str, Any]],

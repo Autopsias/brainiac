@@ -1,11 +1,13 @@
 """Corpus-join, body-open-count, and artifact-naming checks."""
 from __future__ import annotations
 
+import json
 import re
 import datetime as _dt
 from typing import Any
 
 from . import cos
+from .cos_chips import p0_floor_refuses
 
 def check_body_open_count(run_id: str, rows: list[dict[str, Any]],
                           row: dict[str, Any] | None) -> dict[str, Any]:
@@ -76,17 +78,73 @@ _AGED_READ_SIGNAL = "aged-read-no-action"
 _AGED_READ_MIN_DAYS = 0
 
 
-def _aged_read_bad(rows: list[dict[str, Any]], today) -> list[str]:
-    """Every aged-read archive the ledger's OWN facts refuse."""
+def _applied_archive_cids(vault, run_id: str) -> set[str] | None:
+    """The conversations this run ACTUALLY archived, off its undo ledger.
+
+    `None` when the undo ledger cannot be read (no vault, missing file) — the
+    caller then falls back to the judge's `auto_archive` flag, the STRICTER
+    reading, so a run whose apply record is absent is judged as if every
+    proposal landed.
+    """
+    if vault is None:
+        return None
+    try:
+        from .cos.feedback_cli import applied_mutations         # noqa: PLC0415
+        path = cos.run_ops_dir(vault) / f"_cos_undo_ledger_{run_id}.jsonl"
+        rows = [json.loads(x) for x in
+                path.read_text(encoding="utf-8").splitlines() if x.strip()]
+    except Exception:                                           # noqa: BLE001
+        return None
+    landed = applied_mutations(rows, verbs=("archive",))
+    return {cid for (cid, _verb) in landed}
+
+
+def _aged_read_bad(rows: list[dict[str, Any]], today,
+                   signed_ingested: frozenset[str] | set[str] = frozenset(),
+                   archived: set[str] | None = None
+                   ) -> list[str]:
+    """Every aged-read archive the ledger's OWN facts refuse.
+
+    `signed_ingested` is the same substance-gate escape belt 2 takes (RULE 1):
+    a thread whose substance the vault has already SIGNED has satisfied
+    "ingested back" and may archive even when its disposition is not
+    `no-substance`. The two belts carry the identical rule so they never
+    disagree — a signed thread belt 2 archived must not read as `bad` here.
+
+    `archived` is the set of conversations this run ACTUALLY archived on the
+    mailbox. Belt 3 scores what LANDED — exactly as its docstring says, and as
+    E3 already does off the undo ledger — never the judge's `auto_archive`
+    PROPOSAL. That distinction is load-bearing: the two-run signed-ingest drain
+    deliberately carries a held, not-yet-signed thread with `auto_archive: True`
+    in run N while belt 2 HOLDS it, then archives it in run N+1 once its
+    candidate is signed — so scoring the proposal fails every first drain pass.
+    `None` means no dispatch record was available, so `auto_archive` is the
+    fallback (the stricter reading).
+    """
     bad = []
     for r in rows:
-        if r.get("noise_signal") != _AGED_READ_SIGNAL or not r.get("auto_archive"):
+        cid_full = str(r.get("conversation_id") or "")
+        landed = (r.get("auto_archive") if archived is None
+                  else cid_full in archived)
+        if r.get("noise_signal") != _AGED_READ_SIGNAL or not landed:
             continue
         cid = str(r.get("conversation_id"))[:16]
-        if r.get("read_state") != "read":
+        # (RULE 1) THE SUBSTANCE-GATE BACKSTOP. Belt 2
+        # (`cos_mutate_plan_aged.aged_read_refusal`) drops a held thread from
+        # the plan; this soundness belt FAILS the night if one was archived
+        # anyway, so the gate cannot silently regress. A read thread archives
+        # ONLY after its substance is vaulted — either the ingest pass cleared
+        # it as `no-substance`, OR the vault holds a SIGNED copy of it.
+        disp = str(r.get("disposition") or "").strip().lower()
+        if disp != "no-substance" and str(r.get("conversation_id") or "") not in signed_ingested:
+            bad.append(f"{cid}: disposition {disp or 'unset'!r} — Rule 1 archives "
+                       "a read thread only after its substance is vaulted; a "
+                       "held or vault-worthy thread waits, never archived blind")
+        elif r.get("read_state") != "read":
             bad.append(f"{cid}: read_state {r.get('read_state')!r}")
-        elif r.get("judged_tier") in ("P0", "P1"):
-            bad.append(f"{cid}: tier {r.get('judged_tier')}")
+        elif p0_floor_refuses(r.get("verdict"), r.get("judged_tier")):
+            bad.append(f"{cid}: tier {r.get('judged_tier')} on a "
+                       f"`{r.get('verdict')}` verdict")
         elif not r.get("body_opened"):
             bad.append(f"{cid}: the body never opened, so the action screens "
                        "could not run")
@@ -103,7 +161,7 @@ def _aged_read_bad(rows: list[dict[str, Any]], today) -> list[str]:
 
 
 def check_aged_read_lane(run_id: str, rows: list[dict[str, Any]],
-                         *, today=None) -> dict[str, Any]:
+                         *, vault=None, today=None) -> dict[str, Any]:
     """(c8) The aged-read lane archived only what the owner's ruling allows.
 
     THE THIRD BELT, and it exists because the two before it see different
@@ -121,14 +179,43 @@ def check_aged_read_lane(run_id: str, rows: list[dict[str, Any]],
     a handful of an obviously larger population is a finding, and a verdict
     line that says `0 aged-read archive(s)` is what makes it one instead of a
     silence.
+
+    WHAT COUNTS AS AN ARCHIVE IS WHAT LANDED, not what the judge proposed. The
+    substance gate scores the conversations the undo ledger records as actually
+    archived (via `applied_mutations`), because the two-run signed-ingest drain
+    leaves a held, not-yet-signed thread carrying `auto_archive: True` in run N
+    while belt 2 holds it — scoring the proposal would fail the drain's every
+    first pass. With no undo ledger to read (unit tests, or an apply record
+    that never landed) the proposal flag is the stricter fallback.
     """
     today = today or _dt.datetime.now(_dt.timezone.utc).date()
+    archived_cids = _applied_archive_cids(vault, run_id)
     claimed = [r for r in rows if r.get("noise_signal") == _AGED_READ_SIGNAL]
-    archived = [r for r in claimed if r.get("auto_archive")]
-    bad = _aged_read_bad(rows, today)
+    archived = [r for r in claimed
+                if (r.get("auto_archive") if archived_cids is None
+                    else str(r.get("conversation_id") or "") in archived_cids)]
+    # The signed-ingest escape (RULE 1), recomputed off the vault so this belt
+    # sees the same signed set belt 2 did. No vault (unit tests) ⇒ empty set,
+    # which is the stricter direction: only `no-substance` passes.
+    signed = (cos.signed_ingested_catching_up(vault, run_id, rows)
+              if vault is not None else set())
+    bad = _aged_read_bad(rows, today, signed, archived_cids)
+    # WHAT THE COUNT IS COUNTING (2026-09-04). With no undo ledger to read,
+    # `archived` above holds the judge's PROPOSAL flag, not a dispatch — so a
+    # run that dispatched nothing reported "N aged-read archive(s)" and read as
+    # an exercised lane. The fallback is right (it is the stricter reading for
+    # the refusals below); the SENTENCE was wrong, because it claimed more than
+    # the evidence behind the number. No count changes here — only the word for
+    # what it counts, and it is set ONCE for all three verdicts below, because
+    # a second spelling is how two of them come to disagree.
+    confirmed = archived_cids is not None
+    noun = "archive(s)" if confirmed else "PROPOSED archive(s)"
+    caveat = "" if confirmed else (
+        " — and not one of them is confirmed dispatched: this run left no undo "
+        "ledger to read, so the count above is the judge's proposal")
     if bad:
         return _row("aged_read_lane", FAIL,
-                    f"{len(bad)} of {len(archived)} aged-read archive(s) the "
+                    f"{len(bad)} of {len(archived)} aged-read {noun} the "
                     "ledger's own facts refuse: " + "; ".join(bad[:4])
                     + " — the owner's 2026-07-26 ruling archives mail he has "
                       "READ, whose action screens actually RAN and found "
@@ -145,11 +232,11 @@ def check_aged_read_lane(run_id: str, rows: list[dict[str, Any]],
                     "backlog that qualifies is itself the finding (AGED-01)",
                     reexecuted=True)
     return _row("aged_read_lane", PASS,
-                f"{len(archived)} aged-read archive(s) from {len(claimed)} "
+                f"{len(archived)} aged-read {noun} from {len(claimed)} "
                 f"claim(s) over {len(rows)} ledger row(s); every one is read, "
                 f"at or past the owner's floor of {_AGED_READ_MIN_DAYS} day(s), "
                 "above P1, and had its body opened so the action screens could "
-                "run",
+                f"run{caveat}",
                 reexecuted=True)
 
 

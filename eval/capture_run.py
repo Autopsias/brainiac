@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 import json
 import os
 import statistics
@@ -80,7 +81,8 @@ def _fingerprint(index_stats: dict, golden_path: str) -> dict:
     }
 
 
-def main() -> int:
+def _build_parser() -> argparse.ArgumentParser:
+    """The capture command line. Every help string here is contract."""
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--golden", required=True)
@@ -128,7 +130,11 @@ def main() -> int:
     ap.add_argument("--rebuild", action="store_true",
                     help="rebuild the index before capture (needed once if the "
                          "vault's index predates vector support)")
-    args = ap.parse_args()
+    return ap
+
+
+def _validate_args(ap: argparse.ArgumentParser, args) -> None:
+    """Refuse an argument set that would capture something other than it claims."""
     if args.warmup < 0:
         ap.error("--warmup must be >= 0")
     if args.samples < 1:
@@ -149,46 +155,55 @@ def main() -> int:
         ap.error("--rerank is not supported here (it would discard the rerank "
                  "ordering); use eval/rebaseline_rerank_capture.py")
 
-    source_root = Path(args.source_root).resolve() if args.source_root else REPO / "src"
-    sys.path.insert(0, str(source_root))
+
+def _preflight_backend(ap: argparse.ArgumentParser, args) -> None:
+    """Fail BEFORE any capture work if the chosen backend cannot be imported,
+    or if a named prebuilt index is not there.
+
+    Evaluation corpora can be intentionally mounted read-only. BrainCore
+    correctly takes a host writer lock before a production rebuild, but that
+    lock belongs under the canonical vault and is neither needed nor permitted
+    for a disposable benchmark index. The derived-index lane builds the cache
+    directly instead: input notes remain read-only and BRAIN_INDEX_DIR remains
+    the sole write target."""
     if args.derived_index_only:
         if args.index_db and not Path(args.index_db).is_file():
             ap.error(f"--index-db does not exist: {args.index_db}")
-        # Evaluation corpora can be intentionally mounted read-only.  BrainCore
-        # correctly takes a host writer lock before a production rebuild, but
-        # that lock belongs under the canonical vault and is neither needed nor
-        # permitted for a disposable benchmark index.  Build the derived cache
-        # directly instead: input notes remain read-only and BRAIN_INDEX_DIR
-        # remains the sole write target.
+        modules = ("brain.config", "brain.embed", "brain.index", "brain.vectors")
+    else:
+        modules = ("brain.core",)
+    for name in modules:
+        importlib.import_module(name)
+
+
+def _load_mapping(ap: argparse.ArgumentParser, map_path: str | None) -> dict[str, str] | None:
+    """The optional {brain_rel_path: canonical_source_path} projection.
+
+    S02's owner-vault mapping is deliberately evidence-bearing: alongside the
+    actual projection it records its resolution/coverage proof. The original
+    bare map form is still accepted so ordinary captures stay
+    backward-compatible."""
+    if not map_path:
+        return None
+    mapping_document = json.loads(Path(map_path).read_text(encoding="utf-8"))
+    candidate = mapping_document.get("mapping") if isinstance(mapping_document, dict) else None
+    if candidate is None:
+        candidate = mapping_document
+    if not isinstance(candidate, dict) or not all(
+        isinstance(key, str) and isinstance(value, str)
+        for key, value in candidate.items()
+    ):
+        ap.error("--map must be a JSON string-to-string map or contain a string-to-string 'mapping' object")
+    return candidate
+
+
+def _open_search(args, vault_root: str):
+    """The search callable and the index_state block describing what produced it."""
+    if args.derived_index_only:
         from brain import config
         from brain.embed import get_embedder
         from brain.index import BrainIndex
         from brain.vectors import get_backend
-    else:
-        from brain.core import BrainCore
-
-    golden = json.loads(Path(args.golden).read_text(encoding="utf-8"))
-    qmeta = {q["id"]: q for q in golden["queries"]}
-    mapping: dict[str, str] | None = None
-    if args.map:
-        mapping_document = json.loads(Path(args.map).read_text(encoding="utf-8"))
-        # S02's owner-vault mapping is deliberately evidence-bearing: alongside
-        # the actual {migrated path -> canonical qrel path} projection it
-        # records its resolution/coverage proof.  Continue accepting the
-        # original bare map form so ordinary captures stay backward-compatible.
-        candidate = mapping_document.get("mapping") if isinstance(mapping_document, dict) else None
-        if candidate is None:
-            candidate = mapping_document
-        if not isinstance(candidate, dict) or not all(
-            isinstance(key, str) and isinstance(value, str)
-            for key, value in candidate.items()
-        ):
-            ap.error("--map must be a JSON string-to-string map or contain a string-to-string 'mapping' object")
-        mapping = candidate
-
-    vault_root = str(Path(args.vault).resolve())
-    index = None
-    if args.derived_index_only:
         db_path = (Path(args.index_db).resolve()
                    if args.index_db else config.index_path(vault_root))
         index = BrainIndex(
@@ -201,27 +216,77 @@ def main() -> int:
             info = index.rebuild(Path(vault_root))
             print(f"rebuilt: {info.get('indexed')} notes, backend={info.get('backend')}, "
                   f"model={info.get('embed_model')}")
-        search = index.hybrid_search
         index_stats = index.stats()
-        index_state = {
+        return index.hybrid_search, {
             "index": index_stats,
             "prebuilt_index": str(db_path) if args.index_db else None,
             "read_only_index": args.read_only_index,
-        }
-    else:
-        core = BrainCore(vault=vault_root)
-        if args.rebuild:
-            info = core.rebuild()
-            print(f"rebuilt: {info.get('indexed')} notes, backend={info.get('backend')}, "
-                  f"model={info.get('embed_model')}")
-        search = core.hybrid_search
-        index_stats = {}
-        try:
-            status = core.status()
-            index_stats = status.get("index") or {}
-            index_state = {"index": index_stats}
-        except Exception:
-            index_state = {}
+        }, index_stats
+
+    from brain.core import BrainCore
+    core = BrainCore(vault=vault_root)
+    if args.rebuild:
+        info = core.rebuild()
+        print(f"rebuilt: {info.get('indexed')} notes, backend={info.get('backend')}, "
+              f"model={info.get('embed_model')}")
+    index_stats = {}
+    try:
+        status = core.status()
+        index_stats = status.get("index") or {}
+        index_state = {"index": index_stats}
+    except Exception:
+        index_state = {}
+    return core.hybrid_search, index_state, index_stats
+
+
+def _capture_one(search, q: dict, args, vault_root: str,
+                 mapping: dict[str, str] | None) -> tuple[float, dict[str, float]]:
+    """One query's median latency and its best score per canonical doc key."""
+    for _ in range(args.warmup):
+        search(q["text"], k=args.k, rerank=args.rerank,
+               rerank_top=args.rerank_top, rrf_k=args.rrf_k,
+               rerank_gate=args.rerank_gate)
+    samples: list[float] = []
+    hits = []
+    for _ in range(args.samples):
+        t0 = time.perf_counter()
+        hits = search(q["text"], k=args.k, rerank=args.rerank,
+                      rerank_top=args.rerank_top, rrf_k=args.rrf_k,
+                      rerank_gate=args.rerank_gate)
+        samples.append((time.perf_counter() - t0) * 1000.0)
+
+    doc_scores: dict[str, float] = {}
+    for h in hits:
+        rel = os.path.relpath(h.path, vault_root) if os.path.isabs(h.path) else h.path
+        # ``src`` is the frozen canonical key, often a pre-migration path
+        # that no longer exists on disk.  Temporal state belongs to the
+        # *physical migrated note* (``rel``), then the result is emitted
+        # under its canonical qrel key.  Resolving after mapping made every
+        # migrated temporal note fall through to a path-date guess.
+        src = pn.normalize(rel, mapping)
+        if q.get("stratum") == "temporal":
+            vstate, _ = pn.resolve_version(rel, vault_root)
+            src = f"{src}#{vstate}"
+        if src not in doc_scores or h.score > doc_scores[src]:
+            doc_scores[src] = h.score
+    return round(statistics.median(samples), 2), doc_scores
+
+
+def main() -> int:
+    ap = _build_parser()
+    args = ap.parse_args()
+    _validate_args(ap, args)
+
+    source_root = Path(args.source_root).resolve() if args.source_root else REPO / "src"
+    sys.path.insert(0, str(source_root))
+    _preflight_backend(ap, args)
+
+    golden = json.loads(Path(args.golden).read_text(encoding="utf-8"))
+    qmeta = {q["id"]: q for q in golden["queries"]}
+    mapping = _load_mapping(ap, args.map)
+
+    vault_root = str(Path(args.vault).resolve())
+    search, index_state, index_stats = _open_search(args, vault_root)
 
     index_state["fingerprint"] = _fingerprint(index_stats, args.golden)
     from brain.index import rerank_gate_enabled
@@ -232,37 +297,8 @@ def main() -> int:
 
     runs: dict[str, dict[str, float]] = {}
     latency: dict[str, float] = {}
-
     for qid, q in qmeta.items():
-        for _ in range(args.warmup):
-            search(q["text"], k=args.k, rerank=args.rerank,
-                   rerank_top=args.rerank_top, rrf_k=args.rrf_k,
-                   rerank_gate=args.rerank_gate)
-        samples: list[float] = []
-        hits = []
-        for _ in range(args.samples):
-            t0 = time.perf_counter()
-            hits = search(q["text"], k=args.k, rerank=args.rerank,
-                          rerank_top=args.rerank_top, rrf_k=args.rrf_k,
-                   rerank_gate=args.rerank_gate)
-            samples.append((time.perf_counter() - t0) * 1000.0)
-        latency[qid] = round(statistics.median(samples), 2)
-
-        doc_scores: dict[str, float] = {}
-        for h in hits:
-            rel = os.path.relpath(h.path, vault_root) if os.path.isabs(h.path) else h.path
-            # ``src`` is the frozen canonical key, often a pre-migration path
-            # that no longer exists on disk.  Temporal state belongs to the
-            # *physical migrated note* (``rel``), then the result is emitted
-            # under its canonical qrel key.  Resolving after mapping made every
-            # migrated temporal note fall through to a path-date guess.
-            src = pn.normalize(rel, mapping)
-            if q.get("stratum") == "temporal":
-                vstate, _ = pn.resolve_version(rel, vault_root)
-                src = f"{src}#{vstate}"
-            if src not in doc_scores or h.score > doc_scores[src]:
-                doc_scores[src] = h.score
-        runs[qid] = doc_scores
+        latency[qid], runs[qid] = _capture_one(search, q, args, vault_root, mapping)
 
     out = {
         "system": args.system,

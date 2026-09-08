@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cos_driver as drv  # noqa: E402
 import cos_mutate_shapes as shape_stages  # noqa: E402
 from cos_mutate_bridge import (  # noqa: E402
-    PAGE_JS, Bridge, WRONG_WORLD, verify_capture_world)
+    PAGE_JS, Bridge, EgoBridge, WRONG_WORLD, verify_capture_world)
 from cos_mutate_gates import (  # noqa: E402
     MUTATION_LANE, MutationStop, _ts, assert_vault)
 from cos_mutate_ledger import _write_text_atomic  # noqa: E402
@@ -74,7 +74,8 @@ def _fingerprints(shapes: dict[str, Any]) -> dict[str, Any]:
 
 
 
-def capture_shapes(vault: Path, tab_id: int) -> dict[str, Any]:
+def capture_shapes(vault: Path, tab_id: int | None, *,
+                   use_ego: bool = False) -> dict[str, Any]:
     """Read the approved request shapes out of the page's capture buffer.
 
     The owner performs each action ONCE in the UI (archive a message, set a
@@ -86,22 +87,43 @@ def capture_shapes(vault: Path, tab_id: int) -> dict[str, Any]:
     """
     from brain import cos                                        # noqa: PLC0415
     root = assert_vault(vault)
-    # The buffer it reads lives in the page's world, so prove the hook is there
-    # first. A late install is legal here — the three mutation shapes are fired
-    # by owner actions AFTER load — but a hook in the WRONG world would hand
-    # back an empty capture that reads exactly like "the owner did nothing".
-    world = verify_capture_world(tab_id, require_boot=False)
-    bridge = Bridge(drv.ChromeTab(tab_id))
-    bridge.stage()
-    if bridge.tab.js("String(typeof window.__cosMut)") != "undefined":
-        raise MutationStop("the page driver is in the host's ISOLATED world. "
-                           + WRONG_WORLD)
+    if use_ego:
+        # ego evaluates in MAIN, the same world where its document_start arm
+        # installed `__cosCap`. Read only stats across the host boundary; the
+        # bearer and captured bodies remain in-page exactly as on Chrome.
+        bridge = EgoBridge()
+        bridge.stage()
+        stats = bridge.tab.json(
+            "(function(){return JSON.stringify(window.__cosCap"
+            "?window.__cosCap.stats():null);})()")
+        if not isinstance(stats, dict) or int(stats.get("captured") or 0) < 1:
+            raise MutationStop(
+                "ego's MAIN world holds no verified capture buffer; arm the "
+                "task space, delete one disposable draft in the UI, then retry")
+        world = {"world": "main", "transport": "ego", **stats}
+        capture_point = "ego-main-world-buffer"
+    else:
+        # The Chrome buffer lives in MAIN while AppleScript lives in an isolated
+        # world, so both halves of the old verification remain unchanged.
+        world = verify_capture_world(tab_id, require_boot=False)
+        bridge = Bridge(drv.ChromeTab(tab_id))
+        bridge.stage()
+        if bridge.tab.js("String(typeof window.__cosMut)") != "undefined":
+            raise MutationStop("the page driver is in the host's ISOLATED world. "
+                               + WRONG_WORLD)
+        capture_point = "chrome-main-world-buffer"
     got = bridge.call("shapes")["out"]
+    if use_ego and not (got.get("shapes") or {}).get("DiscardDraft"):
+        raise MutationStop(
+            "ego capture contains no fresh DiscardDraft shape; this command "
+            "never promotes the pre-existing store as a new capture")
     path = cos.run_ops_dir(vault) / "_cos_mutation_shapes.json"
     existing = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     shapes = _merge_shapes(existing.get("shapes"), got.get("shapes"))
     _write_text_atomic(path,
                        json.dumps({"captured_at": _ts(), "lane": MUTATION_LANE,
+                                   "capture_point": capture_point,
+                                   "capture_world": world,
                                    "shapes": shapes},
                                   indent=2, ensure_ascii=False) + "\n",
                        mode=_OPS_MODE)

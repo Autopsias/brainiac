@@ -49,37 +49,21 @@ leg, and they receive the category as an INPUT rather than re-deciding it.
 from __future__ import annotations
 
 import argparse
+import collections
 import json
-import os
-import re
-import subprocess
 import sys
-from dataclasses import dataclass
-from html import escape
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import cos_judge_apply                                      # noqa: E402
-import cos_judge_batches                                    # noqa: E402
 import cos_judge_cli                                        # noqa: E402
 import cos_judge_runfacts                                   # noqa: E402
 import cos_judge_verdicts                                   # noqa: E402
-import cos_signals                             # noqa: E402  the five facts' producer
-from brain.cos_runverify import (              # noqa: E402  the ONE definition
-    _DEDUP_CHECKS as DEDUP_CHECKS,
-    _HELD_REASONS as HELD_REASONS,
-    _LEDGER_DISPOSITIONS as LEDGER_DISPOSITIONS,
-    _PLACEHOLDER_CATEGORIES as PLACEHOLDER_CATEGORIES,
-)
 import cos_judge_brief                                        # noqa: E402
 import cos_judge_grounding                                     # noqa: E402
-import cos_judge_night                                         # noqa: E402
-import cos_judge_prompts                                       # noqa: E402
-import cos_judge_rules                                         # noqa: E402
-import cos_judge_rules_2                                       # noqa: E402
+import cos_voice                                               # noqa: E402
 from cos_judge_apply import (  # noqa: E402,F401  batch-2 drain
     JUDGMENT_SLOTS, apply_judgment, archive_eligibility)
 from cos_judge_batches import (  # noqa: E402,F401
@@ -92,7 +76,7 @@ from cos_judge_grounding import (  # noqa: E402,F401
     _answer_mod, _used_block_vocab, grounding_facts, load_categories,
     mark_candidates, mechanical_disposition)
 from cos_judge_night import (  # noqa: E402,F401
-    _ledger, _now_iso, _short, load_night)
+    _ledger, _now_iso, _short, load_night, load_selection)
 from cos_judge_prompts import (  # noqa: E402,F401
     CATEGORY_PROMPT, DRAFT_PROMPT, HOLD_PROMPT, STAGING_PROMPT, TRIAGE_PROMPT,
     _VOCAB_BLOCK)
@@ -100,6 +84,7 @@ from cos_judge_rules import (  # noqa: E402,F401
     BRIEF_ORDER, BUCKETS, DRAFT_CAP, FIREWALL_CLOSE, FIREWALL_OPEN,
     HOLD_CATEGORIES, HOLD_SCREENS, HOLD_VERDICTS, JudgeStop, NOISE_SIGNALS,
     NOVELTY_WORDS, READ_NOISE_SIGNAL, RESOLUTIONS, RULES, SECRET_RE,
+    STALE_ACT_SIGNAL,
     SUBSTANCE_KINDS, TIERS, TIER_ORDER, Rule, _age_days, _disposition_of, _draft, _footer_notes,
     _g, _r_always, _r_bucket, _r_draft_protected, _r_drafted, _r_evidence,
     _r_first_screen, _r_floor, _r_hold_cat, _r_hold_vocab, _r_never,
@@ -129,22 +114,29 @@ def write_night(vault: Path, run_id: str, judged: dict[str, Any], *,
 
     day = run_id[:10]
     n = run_id.rsplit("run", 1)[-1]
-    html_path = ops / f"_briefing_morning_{day}-run{n}.html"
+    html_path = cos_judge_brief.morning_brief_path(ops, run_id)
     png_path = html_path.with_suffix(".png")
     html_path.write_text(judged["brief_html"], encoding="utf-8")
-    # ~26px per rendered line, floored at the viewport default and capped so a
-    # pathological night cannot ask Chrome for a 100k-pixel window.
-    lines = judged["brief_html"].count("<li>") + judged["brief_html"].count("<p>")
     render = render_png(html_path, png_path,
-                        height=max(1600, min(12000, 900 + 46 * lines)))
+                        height=cos_judge_brief.brief_png_height(
+                            judged["brief_html"]))
 
     # The draft texts are the product of the drafting leg, and until s04 places
     # them in the mailbox they exist nowhere else. `_pending_` rather than
     # `_ledger_`: nothing was created in the mailbox, and a name that says
     # otherwise is how a run comes to believe it did.
     pending = ops / f"_cos_drafts_pending_{run_id}.jsonl"
+    # EVERY DRAFT CARRIES WHAT IT WAS DRAFTED UNDER (VOICE-01). Without this a
+    # draft written on a night with no voice profile is indistinguishable, in
+    # the ledger, from one written against it — and the score
+    # `tools/cos_voice_cli.py --fold` adds later would then be read as grounded
+    # whatever it was measuring.
+    voice = cos_voice.ledger_fields(
+        (judged.get("night") or {}).get("voice_profile")
+        or cos_voice.profile_state(None))
     pending.write_text("".join(
         json.dumps({"run": run_id, "conversation_id": d["conversation_id"],
+                    "voice_profile": voice, "voice_check": None,
                     "recipient_scope": (d.get("draft") or {}).get(
                         "recipients_scope"),
                     "form": (d.get("draft") or {}).get("form"),
@@ -187,19 +179,80 @@ def write_night(vault: Path, run_id: str, judged: dict[str, Any], *,
     return out
 
 
+def _run_facts(*, taxo: dict[str, Any] | None, categories: dict[str, str] | None,
+               rows: list[dict[str, Any]], undefined_stamps: Any,
+               applied: dict[str, Any], accepted: dict[str, Any],
+               duplicate_reemissions: Any, duplicate_conflicts: Any,
+               drafts: list[dict[str, Any]], malformed_drafts: Any,
+               model_answered: int, total: int, coverage: float,
+               ctx_by_id: dict[str, Any], grounding: Path | None,
+               chunks_dir: Path | None, by_id: dict[str, Any],
+               voice_profile: dict[str, Any] | None = None,
+               read_never_categories: bool = False
+               ) -> dict[str, Any]:
+    """The run-level facts block `judge_night` hands to `compose_brief` and
+    `validate_run` — pulled out verbatim so the caller reads as one pass."""
+    import cos_driver                                            # noqa: PLC0415
+
+    return {
+        "category_gate": cos_judge_runfacts.category_gate_block(
+            cos_driver.category_gate_state, categories, rows, taxo,
+            undefined_stamps),
+        "drafts": len(drafts),
+        # H5: a non-mapping draft is dropped (not crashed, not rejected) but made
+        # visible beside the drafts count.
+        "malformed_drafts": malformed_drafts,
+        # THE THIRD OUTCOME, COUNTED PER WORD (owner ruling 2026-08-28). A run
+        # whose act bucket is large and whose drafts and `needs_owner` are both
+        # near zero is the silence the ruling forbids, and this is the number
+        # that makes it visible without opening the sheet.
+        "needs_owner": dict(collections.Counter(
+            v["needs_owner"] for v in accepted.values()
+            if v.get("needs_owner"))),
+        "act_first": all(v.get("bucket") == "act" for v in accepted.values()
+                         if _draft(v)),
+        "never_category_opens": cos_judge_runfacts.never_category_opens(
+            taxo, applied["rows"]),
+        # WHY THOSE OPENS ARE OR ARE NOT A FAULT. The count above is the same
+        # number it always was; this is the owner's lever beside it, so the run
+        # rule judges the opens against what the owner asked for on THIS night
+        # rather than against a standing prohibition he has since scoped.
+        "read_never_categories": read_never_categories,
+        # H3: benign re-emissions vs conflicting duplicates dropped to PENDING.
+        "duplicate_reemissions": duplicate_reemissions,
+        "duplicate_conflicts": duplicate_conflicts,
+        # H4: always-logged model coverage of the enumerated set.
+        "model_coverage": {"answered": model_answered, "enumerated": total,
+                           "fraction": coverage},
+        # GRD-03: what each leg was actually grounded with, and what the closed
+        # schema refused on the way in. E10 derives from these counts.
+        "grounding": grounding_facts(rows, ctx_by_id, grounding, chunks_dir,
+                                     by_id),
+        # VOICE-01: whether the draft leg had the owner's profile in front of
+        # it, WITHOUT the profile's own text — the digest joins it and the
+        # writing stays on the host. `degradation` is non-null exactly when the
+        # drafts this run produced were written ungrounded.
+        "voice_profile": cos_voice.ledger_fields(
+            voice_profile or cos_voice.profile_state(None)),
+    }
+
+
 def judge_night(vault: Path, run_id: str, verdicts: list[dict[str, Any]], *,
                 out_dir: Path, contract: str = "PASS",
                 categories: dict[str, str] | None = None,
+                selection: set[str] | None = None,
                 grounding: Path | None = None,
                 chunks_dir: Path | None = None) -> dict[str, Any]:
-    """Validate, apply, and render. A rejected verdict is never coerced.
+    """Validate, apply, and render; rejected verdicts are never coerced.
 
-    The owner-facing footer notes are derived HERE, from the accepted verdicts
-    (H2), not passed in over raw parser output.
+    Owner-facing footer notes derive here from accepted verdicts (H2).
     """
-    import cos_driver                                            # noqa: PLC0415
-
-    night = load_night(vault, run_id, categories)
+    # Preserve the long-standing three-argument seam for tests and callers
+    # that do not opt into chaining. The fourth argument exists only when the
+    # host supplied an actual bounded selection.
+    night = (load_night(vault, run_id, categories)
+             if selection is None
+             else load_night(vault, run_id, categories, selection))
     rows, ctx_by_id = night["rows"], night["ctx_by_id"]
     # THE VERDICT ADJUDICATION lives in `cos_judge_verdicts` (the s17
     # extraction): the H3 duplicate grouping (canonical-JSON comparison,
@@ -240,39 +293,42 @@ def judge_night(vault: Path, run_id: str, verdicts: list[dict[str, Any]], *,
     model_answered, coverage = cos_judge_runfacts.model_coverage(
         rows, by_id, total)
 
-    taxo = night["taxonomy"]
-    run_facts = {
-        "category_gate": cos_judge_runfacts.category_gate_block(
-            cos_driver.category_gate_state, categories, rows, taxo,
-            undefined_stamps),
-        "drafts": len(drafts),
-        # H5: a non-mapping draft is dropped (not crashed, not rejected) but made
-        # visible beside the drafts count.
-        "malformed_drafts": malformed_drafts,
-        "act_first": all(v.get("bucket") == "act" for v in accepted.values()
-                         if _draft(v)),
-        "never_category_opens": cos_judge_runfacts.never_category_opens(
-            taxo, applied["rows"]),
-        # H3: benign re-emissions vs conflicting duplicates dropped to PENDING.
-        "duplicate_reemissions": duplicate_reemissions,
-        "duplicate_conflicts": duplicate_conflicts,
-        # H4: always-logged model coverage of the enumerated set.
-        "model_coverage": {"answered": model_answered, "enumerated": total,
-                           "fraction": coverage},
-        # GRD-03: what each leg was actually grounded with, and what the closed
-        # schema refused on the way in. E10 derives from these counts.
-        "grounding": grounding_facts(rows, ctx_by_id, grounding, chunks_dir,
-                                     by_id),
-    }
+    run_facts = _run_facts(
+        taxo=night["taxonomy"], categories=categories, rows=rows,
+        undefined_stamps=undefined_stamps, applied=applied, accepted=accepted,
+        duplicate_reemissions=duplicate_reemissions,
+        duplicate_conflicts=duplicate_conflicts, drafts=drafts,
+        malformed_drafts=malformed_drafts, model_answered=model_answered,
+        total=total, coverage=coverage, ctx_by_id=ctx_by_id,
+        grounding=grounding, chunks_dir=chunks_dir, by_id=by_id,
+        voice_profile=night.get("voice_profile"),
+        read_never_categories=bool(night.get("read_never_categories")))
     html = compose_brief(
         run_id=run_id, contract=contract, counters=applied["counters"],
         triage=triage, staged=staged, drafts=drafts, holds=holds,
+        # THE SHEET'S ATTACHMENT LINE IS NOT THIS LEG'S TO WRITE (review
+        # 2026-08-25). Its two producers both run LATER in
+        # `tools/cos_nightly.sh` — the ingest bridge writes the manifest and
+        # the attachment fetch writes the report, in that order, well after
+        # this call — so reading them here reads an empty directory and prints
+        # a zero that looks like a measurement. `compose_brief` therefore emits
+        # the anchored PENDING line, and `cos_driver_night_records
+        # .stamp_attachment_brief` (called by the fetch leg that moves the
+        # bytes) fills in the counts, exactly as `stamp_attachment_lane`
+        # supersedes the metrics row.
         metrics={"inbox_count": total,
                  "body_open_actual": sum(1 for r in rows if r.get("body_opened"))},
         notes=[f"{applied['judgment_pending']} row(s) carry no verdict: this run "
                "persisted no sender or subject for them, and Phase 1.5 judges "
                "from typed fields only."] if applied["judgment_pending"] else [],
-        spans=spans, footer_notes=footer_notes)
+        spans=spans, footer_notes=footer_notes,
+        # (STALE-01) THE HOST'S OWN DECISION, read back off the ledger rows
+        # `apply_judgment` just stamped — not the model's `stale` claim, which
+        # `archive_eligibility` may decline (unread, P0/P1, unjudged). This is
+        # what makes the ruling's second half true: the sheet NAMES the threads
+        # the porter took, instead of listing them as needing the owner.
+        stale_archived={r["conversation_id"] for r in applied["rows"]
+                        if r.get("noise_signal") == STALE_ACT_SIGNAL})
     out_dir.mkdir(parents=True, exist_ok=True)
     return {"night": night, "accepted": accepted, "rejected": rejected,
             "rejection_rate": rejection_rate, "applied": applied, "holds": holds,
@@ -312,6 +368,9 @@ def main(argv: list[str]) -> int:
                         "The SAME file the driver drew against — the category is "
                         "decided once, before the draw, and every later leg "
                         "reads it rather than re-deciding it")
+    p.add_argument("--selection", type=Path, default=None,
+                   help="with --batches/--judge: host-selected enumeration "
+                        "that bounds both model legs to the per-batch cap")
     p.add_argument("--vault", type=Path, default=None)
     p.add_argument("--run-id", default=None)
     p.add_argument("--grounding", type=Path, default=None,
@@ -330,7 +389,8 @@ def main(argv: list[str]) -> int:
         return selfcheck()
     if args.judge:
         return cos_judge_cli.run_judge(
-            args, load_categories=load_categories, judge_night=judge_night,
+            args, load_categories=load_categories,
+            load_selection=load_selection, judge_night=judge_night,
             write_night=write_night, short_id=_short)
     if args.category_batch:
         return cos_judge_cli.run_category_batch(
@@ -338,6 +398,7 @@ def main(argv: list[str]) -> int:
     if args.batches:
         return cos_judge_cli.run_batches(
             args, load_night=load_night, load_categories=load_categories,
+            load_selection=load_selection,
             batch_prompts=batch_prompts)
     if args.golden:
         return cos_judge_cli.run_golden(args, evaluate_golden=evaluate_golden)

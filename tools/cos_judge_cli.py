@@ -11,13 +11,37 @@ patches `cos_judge.load_night` or `cos_judge.write_night` is still honoured.
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import sys
 from typing import Any, Callable
 
 
-def run_judge(args: argparse.Namespace, *, load_categories, judge_night,
-              write_night, short_id: Callable[[str], str]) -> int:
+def rejection_causes(rejected: list[dict[str, Any]]) -> str:
+    """`rule_id ×N`, worst first — WHAT actually refused these verdicts.
+
+    (JUDGE-03, 2026-08-27) The abort line called the cause "the closed
+    vocabulary" for every stop. On run 2026-08-26-run189 that was wrong for all
+    ten refusals: none was an out-of-vocabulary word, every one was a doctrine
+    RULE violation (`triage.p3_act_needs_direct_ask` ×5,
+    `triage.noise_signal_required` ×4, `triage.stale_evidence` ×1), and the
+    reader of the stop line went hunting for a missing word. `rejected[]`
+    already carries `rule_id` and `detail` per row; this reads them.
+
+    A row may carry SEVERAL violations, so these counts sum to at least the
+    number of refused rows and the caller states both numbers.
+    """
+    counts = collections.Counter(
+        str(v.get("rule_id") or "<unnamed rule>")
+        for row in rejected for v in (row.get("violations") or []))
+    if not counts:
+        return "no rule was named"
+    return ", ".join(f"{rid} ×{n}" for rid, n in
+                     sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
+def run_judge(args: argparse.Namespace, *, load_categories, load_selection,
+              judge_night, write_night, short_id: Callable[[str], str]) -> int:
     """`--judge`: validate a verdicts file, apply it, render the brief."""
     if not (args.vault and args.run_id and args.verdicts and args.out):
         print("--judge needs --vault, --run-id, --verdicts and --out",
@@ -30,7 +54,8 @@ def run_judge(args: argparse.Namespace, *, load_categories, judge_night,
                          grounding=args.grounding,
                          chunks_dir=args.chunks_dir,
                          out_dir=args.out.parent,
-                         categories=load_categories(args.categories))
+                         categories=load_categories(args.categories),
+                         selection=load_selection(getattr(args, "selection", None)))
     report: dict[str, Any] = {
         "run_id": args.run_id,
         "verdicts_returned": len(verdicts),
@@ -71,14 +96,22 @@ def run_judge(args: argparse.Namespace, *, load_categories, judge_night,
     coverage_short = cov["fraction"] < min_coverage
     if judged["rejection_rate"] > args.reject_abort or unaccounted \
             or coverage_short:
+        # NAME THE RULES THAT FIRED, NOT A CAUSE NOBODY CHECKED (JUDGE-03).
+        # A refusal comes from a doctrine RULE — an out-of-vocabulary word is
+        # only one of the ~40 that can fire — so the line prints the tally the
+        # report already holds instead of guessing at the vocabulary.
+        report["rejection_causes"] = rejection_causes(judged["rejected"])
         report["stopped"] = (
-            f"{judged['rejection_rate']:.1%} of verdicts were refused by the "
-            f"closed vocabulary (abort threshold {args.reject_abort:.0%}) and "
+            f"{judged['rejection_rate']:.1%} of verdicts "
+            f"({len(judged['rejected'])} of {len(judged['applied']['rows'])}) "
+            "were REFUSED by the doctrine rules — "
+            f"{report['rejection_causes']} — against an abort threshold of "
+            f"{args.reject_abort:.0%}, and "
             f"{unaccounted} row(s) are accounted NOWHERE. Nothing was "
             "written: a refused verdict leaves its row unjudged, and a night "
             "whose counters do not close is the run-106 shape (15 rows in no "
-            "total, and nothing said so). Correct the refused verdicts and "
-            "re-run.")
+            "total, and nothing said so). Each refusal's `detail` is in this "
+            "report's `rejected[]`. Correct the refused verdicts and re-run.")
         if coverage_short:
             report["stopped"] += (
                 f" READ-ONLY: the model answered only {cov['answered']} of "
@@ -170,26 +203,72 @@ def run_category_batch(args: argparse.Namespace, *, category_batch) -> int:
 
 
 def run_batches(args: argparse.Namespace, *, load_night, load_categories,
-                batch_prompts) -> int:
+                load_selection=lambda _path: None, batch_prompts) -> int:
     """`--batches`: render the four judgment batch prompts for a run."""
     if not (args.vault and args.run_id and args.out):
         print("--batches needs --vault, --run-id and --out", file=sys.stderr)
         return 2
-    night = load_night(args.vault, args.run_id,
-                       load_categories(args.categories))
+    selection = load_selection(getattr(args, "selection", None))
+    night = (load_night(args.vault, args.run_id,
+                        load_categories(args.categories))
+             if selection is None
+             else load_night(args.vault, args.run_id,
+                             load_categories(args.categories), selection))
     prompts = batch_prompts(night["rows"], night["ctx_by_id"],
-                            night["taxonomy"], redact=args.redact)
+                            night["taxonomy"], redact=args.redact,
+                            voice_profile=night.get("voice_profile"),
+                            rulings=night.get("rulings"))
     args.out.mkdir(parents=True, exist_ok=True)
     for name, text in prompts.items():
         (args.out / f"batch-{name}.md").write_text(text, encoding="utf-8")
     judgeable = sum(1 for c in night["ctx_by_id"].values()
                     if c["typed_fields_available"])
+    voice = night.get("voice_profile") or {}
     print(json.dumps({"run_id": args.run_id, "rows": len(night["rows"]),
+                      # THE RULINGS THE CEILING LEFT OUT, NAMED (FB-03). The
+                      # prompt carries the COUNT — printing 281 conversation
+                      # digests into a model message is the ~250-row overflow
+                      # the ceiling exists to prevent. This is where they cost
+                      # nothing, so this is where they are named. A ruling above
+                      # the ceiling is stored, counted and named, never dropped;
+                      # and the mutation lane refuses every do-not-touch thread
+                      # off the FULL record whether it was rendered or not.
+                      **_rulings_report(night.get("rulings")),
                       "typed_fields_available": judgeable,
+                      # LOUD ON THE WAY OUT. The nightly logs this line, so a
+                      # vault with no overlay voice profile says so in the run
+                      # log at the moment the draft prompt is written.
+                      "voice_profile_present": bool(voice.get("present")),
+                      "voice_profile_degradation": voice.get("degradation"),
                       "bodies_captured": sum(1 for r in night["rows"]
                                              if r.get("body_opened")),
                       "batches": sorted(prompts)}, indent=2))
     return 0
+
+
+def _rulings_report(budget: dict | None) -> dict:
+    """What `--batches` prints about the owner-feedback record, per kind."""
+    if budget is None:
+        return {"rulings": {"state": "not-read"}}
+    rules, threads = budget["rules"], budget["thread_rulings"]
+    return {"rulings": {
+        "state": "read", "record": budget["path"],
+        "unreadable_lines": budget["unreadable"],
+        "rules_live": rules["live"], "rules_rendered": len(rules["rendered"]),
+        "rules_excluded": rules["excluded"],
+        "rules_excluded_keys": rules["excluded_keys"],
+        "thread_rulings_stored": threads["stored"],
+        "thread_rulings_active": threads["active"],
+        "thread_rulings_rendered": len(threads["rendered"]),
+        "thread_rulings_excluded": threads["excluded"],
+        "thread_rulings_excluded_digests": threads["excluded_digests"],
+        # The `missed` side of the same projection. Counted and NAMED here for
+        # the same reason as the do-not-touch side: the prompt shows what fits
+        # under the ceiling, the report says what did not.
+        "wanted_more_active": threads["wanted_more_active"],
+        "wanted_more_rendered": len(threads["wanted_more"]),
+        "wanted_more_excluded": threads["wanted_more_excluded"],
+        "wanted_more_excluded_digests": threads["wanted_more_digests"]}}
 
 
 def run_golden(args: argparse.Namespace, *, evaluate_golden) -> int:

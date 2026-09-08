@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 from . import cos
-from . import cos_runverify_stamps as stamps
 
 #: "## 🧪 Run-integrity — E-checks (16/30 passed, 1 repair round)".
 _REPAIR_HEADER_RE = re.compile(r"(\d+)\s+repair\s+rounds?\b", re.IGNORECASE)

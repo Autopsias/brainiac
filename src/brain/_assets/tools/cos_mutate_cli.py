@@ -16,9 +16,11 @@ def build_parser(description: str, *, since_days_default: int,
                  draft_resume_policy: str) -> argparse.ArgumentParser:
     """The mutation module's argument parser, unchanged in shape and order."""
     p = argparse.ArgumentParser(description=description)
-    p.add_argument("command", choices=("plan", "dry-run", "rehearsal-gate",
+    p.add_argument("command", choices=("plan",
+                                       "dry-run", "rehearsal-gate",
                                        "apply", "undo",
-                                       "unchip", "canary",
+                                       "unchip", "discard-draft-manifest",
+                                       "discard-drafts", "canary",
                                        "hook-stage", "hook-verify",
                                        "shapes-from-capture",
                                        "capture-shapes", "evidence", "selfcheck"))
@@ -39,7 +41,10 @@ def build_parser(description: str, *, since_days_default: int,
     p.add_argument("--canary-convid", default=None)
     p.add_argument("--undo-limit", type=int, default=None,
                    help="undo/unchip: reverse at most N of this run's archives "
-                        "or chips")
+                        "or chips; draft discard uses an exact manifest instead")
+    p.add_argument("--discard-manifest", type=Path, default=None,
+                   help="discard-drafts: exact duplicate-safe manifest produced "
+                        "by discard-draft-manifest")
     # Caps default to UNLIMITED (owner ruling: content, not a number, bounds a
     # night). A value <= 0 is read as unlimited too, so `--cap-archive 0` and an
     # absent flag mean the same thing. The scope is the recency window below.
@@ -82,6 +87,17 @@ def build_parser(description: str, *, since_days_default: int,
     return p
 
 
+# THE `Brainiac · Ingested` MARK HAS NO SEPARATE COMMAND, and that is the fix
+# rather than an omission (review 2026-08-25). FIX-03 added an `ingest-marks`
+# pass because the nightly plan runs minutes after the bridge drops its
+# candidates and nothing is signed by then — but nothing ever called it: no
+# nightly step, no scheduled task, no doc, no test. A command with no caller
+# is a producer that does not produce. The mark is planned by the ordinary
+# `plan` command below, which every night already runs through dry-run and
+# apply; `cos.catching_up_ingest_runs` is what lets tonight's plan mark the
+# earlier runs whose candidates the vault has since signed.
+
+
 class AttendedCapRefused(Exception):
     """The plan exceeded the attended abort cap: dispatch NOTHING, exit 4."""
 
@@ -113,58 +129,129 @@ def plan_command(args: argparse.Namespace, vault, caps: dict[str, Any],
     return out
 
 
+def _dispatch_dry_run(args: argparse.Namespace, vault, caps: dict[str, Any],
+                      since_days: int | None, *, lane) -> dict[str, Any]:
+    return lane.dry_run(vault, args.run_id, args.tab_id, caps=caps,
+                        since_days=since_days, plan_path=args.plan,
+                        use_cdp=args.cdp, use_ego=args.ego)
+
+
+def _dispatch_apply(args: argparse.Namespace, vault, caps: dict[str, Any],
+                    since_days: int | None, *, lane) -> dict[str, Any]:
+    # THE CLI HAS NO UNREHEARSED APPLY (K1). Every production caller —
+    # the nightly, and any hand-run resuming it — already has a
+    # `plan.json` and a `dry-run.json` in the run's evidence directory,
+    # so requiring them costs nothing legitimate and closes the one
+    # door through which an unrehearsed payload could reach the
+    # mailbox. There is deliberately NO override flag: a knob that
+    # turns this off is the hole with a longer name.
+    if args.plan is None or args.rehearsal is None:
+        raise lane.MutationStop(
+            "apply needs --plan and --rehearsal: the frozen plan and "
+            "the rehearsal that validated it. An apply that plans for "
+            "itself dispatches a payload nothing rehearsed — a P1/add "
+            "plan behind a P3/remove rehearsal used to return ok. Run "
+            "`plan` then `dry-run --plan …`, then apply against both")
+    return lane.apply_pass(vault, args.run_id, args.tab_id, caps=caps,
+                           since_days=since_days,
+                           allow_draft_resume=args.allow_draft_resume,
+                           plan_path=args.plan, rehearsal_path=args.rehearsal,
+                           use_cdp=args.cdp, use_ego=args.ego)
+
+
+def _dispatch_undo(args: argparse.Namespace, vault, caps: dict[str, Any],
+                   since_days: int | None, *, lane) -> dict[str, Any]:
+    return lane.undo_pass(vault, args.run_id, args.tab_id, use_cdp=args.cdp,
+                          use_ego=args.ego, limit=args.undo_limit)
+
+
+def _dispatch_unchip(args: argparse.Namespace, vault, caps: dict[str, Any],
+                     since_days: int | None, *, lane) -> dict[str, Any]:
+    return lane.unchip_pass(vault, args.run_id, args.tab_id, use_cdp=args.cdp,
+                            use_ego=args.ego, limit=args.undo_limit)
+
+
+def _dispatch_discard_drafts(args: argparse.Namespace, vault,
+                             caps: dict[str, Any], since_days: int | None, *,
+                             lane) -> dict[str, Any]:
+    return lane.discard_drafts_pass(
+        vault, args.run_id, args.tab_id, use_cdp=args.cdp,
+        use_ego=args.ego, manifest_path=args.discard_manifest,
+        limit=args.undo_limit)
+
+
+def _dispatch_discard_manifest(args: argparse.Namespace, vault,
+                               caps: dict[str, Any], since_days: int | None, *,
+                               lane) -> dict[str, Any]:
+    if args.out is None:
+        raise lane.MutationStop(
+            "discard-draft-manifest requires --out so discard consumes the "
+            "same durable exact item set the owner reviewed")
+    return lane.build_discard_manifest(vault, args.run_id)
+
+
+def _dispatch_canary(args: argparse.Namespace, vault, caps: dict[str, Any],
+                     since_days: int | None, *, lane) -> dict[str, Any]:
+    return lane.canary_drill(vault, args.run_id, args.tab_id,
+                             args.canary_convid, use_cdp=args.cdp,
+                             use_ego=args.ego)
+
+
+def _dispatch_shapes_from_capture(args: argparse.Namespace, vault,
+                                  caps: dict[str, Any],
+                                  since_days: int | None, *, lane
+                                  ) -> dict[str, Any]:
+    return lane.shapes_from_capture(vault, args.capture)
+
+
+def _dispatch_hook_stage(args: argparse.Namespace, vault, caps: dict[str, Any],
+                         since_days: int | None, *, lane) -> dict[str, Any]:
+    return lane.stage_hook(args.tab_id)
+
+
+def _dispatch_hook_verify(args: argparse.Namespace, vault, caps: dict[str, Any],
+                          since_days: int | None, *, lane) -> dict[str, Any]:
+    return lane.verify_capture_world(args.tab_id,
+                                     require_boot=not args.no_require_boot)
+
+
+def _dispatch_capture_shapes(args: argparse.Namespace, vault, caps: dict[str, Any],
+                             since_days: int | None, *, lane) -> dict[str, Any]:
+    return lane.capture_shapes(vault, args.tab_id, use_ego=args.ego)
+
+
+def _dispatch_evidence(args: argparse.Namespace, vault, caps: dict[str, Any],
+                       since_days: int | None, *, lane) -> dict[str, Any]:
+    return lane.build_evidence(vault if vault and vault.is_dir() else None,
+                               args.run_id)
+
+
+#: One handler per `command` choice, all called the same way — `(args, vault,
+#: caps, since_days, lane=lane)` — so adding a command never grows this
+#: dispatcher's branching, only the table. `evidence` and `selfcheck` carry
+#: no entry and share `_dispatch_evidence` as the default, exactly as the
+#: `else` branch this replaces did.
+_COMMANDS: dict[str, Callable[..., dict[str, Any]]] = {
+    "plan": plan_command,
+    "dry-run": _dispatch_dry_run,
+    "apply": _dispatch_apply,
+    "undo": _dispatch_undo,
+    "unchip": _dispatch_unchip,
+    "discard-draft-manifest": _dispatch_discard_manifest,
+    "discard-drafts": _dispatch_discard_drafts,
+    "canary": _dispatch_canary,
+    "shapes-from-capture": _dispatch_shapes_from_capture,
+    "hook-stage": _dispatch_hook_stage,
+    "hook-verify": _dispatch_hook_verify,
+    "capture-shapes": _dispatch_capture_shapes,
+}
+
+
 def dispatch_command(args: argparse.Namespace, vault, caps: dict[str, Any],
                      since_days: int | None, *, lane) -> dict[str, Any]:
     """Run the parsed command through the lane module's own functions."""
-    if args.command == "plan":
-        out = plan_command(args, vault, caps, since_days, lane=lane)
-    elif args.command == "dry-run":
-        out = lane.dry_run(vault, args.run_id, args.tab_id, caps=caps,
-                           since_days=since_days, plan_path=args.plan,
-                           use_cdp=args.cdp, use_ego=args.ego)
-    elif args.command == "apply":
-        # THE CLI HAS NO UNREHEARSED APPLY (K1). Every production caller —
-        # the nightly, and any hand-run resuming it — already has a
-        # `plan.json` and a `dry-run.json` in the run's evidence directory,
-        # so requiring them costs nothing legitimate and closes the one
-        # door through which an unrehearsed payload could reach the
-        # mailbox. There is deliberately NO override flag: a knob that
-        # turns this off is the hole with a longer name.
-        if args.plan is None or args.rehearsal is None:
-            raise lane.MutationStop(
-                "apply needs --plan and --rehearsal: the frozen plan and "
-                "the rehearsal that validated it. An apply that plans for "
-                "itself dispatches a payload nothing rehearsed — a P1/add "
-                "plan behind a P3/remove rehearsal used to return ok. Run "
-                "`plan` then `dry-run --plan …`, then apply against both")
-        out = lane.apply_pass(vault, args.run_id, args.tab_id, caps=caps,
-                              since_days=since_days,
-                              allow_draft_resume=args.allow_draft_resume,
-                              plan_path=args.plan, rehearsal_path=args.rehearsal,
-                              use_cdp=args.cdp, use_ego=args.ego)
-    elif args.command == "undo":
-        out = lane.undo_pass(vault, args.run_id, args.tab_id, use_cdp=args.cdp,
-                             use_ego=args.ego, limit=args.undo_limit)
-    elif args.command == "unchip":
-        out = lane.unchip_pass(vault, args.run_id, args.tab_id, use_cdp=args.cdp,
-                               use_ego=args.ego, limit=args.undo_limit)
-    elif args.command == "canary":
-        out = lane.canary_drill(vault, args.run_id, args.tab_id,
-                                args.canary_convid, use_cdp=args.cdp,
-                                use_ego=args.ego)
-    elif args.command == "shapes-from-capture":
-        out = lane.shapes_from_capture(vault, args.capture)
-    elif args.command == "hook-stage":
-        out = lane.stage_hook(args.tab_id)
-    elif args.command == "hook-verify":
-        out = lane.verify_capture_world(args.tab_id,
-                                        require_boot=not args.no_require_boot)
-    elif args.command == "capture-shapes":
-        out = lane.capture_shapes(vault, args.tab_id)
-    else:
-        out = lane.build_evidence(vault if vault and vault.is_dir() else None,
-                                  args.run_id)
-    return out
+    handler = _COMMANDS.get(args.command, _dispatch_evidence)
+    return handler(args, vault, caps, since_days, lane=lane)
 
 
 def write_stop_report(args: argparse.Namespace, exc: Exception, *,

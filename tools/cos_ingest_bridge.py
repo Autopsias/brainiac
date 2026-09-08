@@ -110,6 +110,13 @@ if __name__ == "__main__":  # tools/ bootstrap, same as every cos_* tool
 from brain import config, cos, cos_corpus, provenance  # noqa: E402,F401
 from brain.lock import WriterLockBusy                 # noqa: E402
 
+# (INGEST-01) `ingest_relevant` — the ONE candidate predicate — lives with the
+# judge that produces the field. Imported BARE, on `tools/`, because that is
+# the path every `cos_judge_*` module already binds it under; a `tools.`
+# import here would bind a SECOND module object for the same file.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import cos_judge_ingest  # noqa: E402
+
 # -- the ratchet split (2026-08-20): four descriptive siblings, moved VERBATIM
 # and re-imported so every name below keeps its `tools.cos_ingest_bridge`
 # module path. The suite imports ~20 of these privates off this module, the
@@ -134,8 +141,35 @@ from tools.cos_ingest_bridge_report import (  # noqa: E402,F401
     DEFAULT_QUARANTINE_MAX, EXIT_BACKPRESSURE, EXIT_OK, EXIT_REFUSED,
     EXIT_WRITER_BUSY, QUARANTINE_MAX_ENV, _finish_report, _observed_dropped,
     _quarantine_max, _recon, _update_metrics)
+from tools.cos_bridge_skip import record_skip  # noqa: E402
 
 SCHEMA = "cos_ingest_bridge/v2"
+
+
+def _record_no_drop(vault, run_id: str, reason: str, report: dict, *,
+                    dry_run: bool) -> None:
+    """ATT-02 rule 2 — a pass that carried NOTHING still leaves a file.
+
+    Every non-drop path below used to `return` before the first
+    `cos.append_jsonl(bridge_ledger_path(...))`, so the per-run bridge file was
+    never created at all and the staged candidates went unreachable with
+    nothing on disk saying so — 596 rows over 15 runs, measured as of run
+    2026-09-05-run260. A MISSING file and a file recording zero are different
+    facts, and keeping them different is the whole point.
+
+    NEVER ON A DRY RUN: `--dry-run` decides every candidate and writes
+    nothing, and a rehearsal that mutated persistent state broke that promise
+    once already (attempt 10, finding 4). A FAILED recording is reported into
+    this pass's own report rather than raised — the recorder is the loudness
+    mechanism, and one that killed the night it is describing would send the
+    morning to the wrong place.
+    """
+    if dry_run:
+        return
+    try:
+        report["no_drop_record"] = record_skip(vault, run_id, reason)
+    except Exception as exc:                                     # noqa: BLE001
+        report["no_drop_record_error"] = f"{type(exc).__name__}: {exc}"[:300]
 
 
 class BridgeRefused(RuntimeError):
@@ -205,14 +239,27 @@ def bridge_run(vault, run_id: str, *, now: _dt.datetime | None = None,
     try:
         rows = _read_ledger(vault, run_id)
     except BridgeRefused as exc:
-        return ({"schema": SCHEMA, "run": run_id, "status": "refused",
-                 "vault": str(vault), "candidates": 0, "dropped": 0,
-                 "manifest_lines": 0, "never": 0, "already_dropped": 0,
-                 "quarantined": 0, "quarantines": [],
-                 "refused": [{"conversation_id": None, "detail": str(exc),
-                              "reason": exc.reason}],
-                 "error": str(exc)}, EXIT_REFUSED)
-    candidates = [r for r in rows if r.get("disposition") == "candidate"]
+        refused_report = {
+            "schema": SCHEMA, "run": run_id, "status": "refused",
+            "vault": str(vault), "candidates": 0, "dropped": 0,
+            "manifest_lines": 0, "never": 0, "already_dropped": 0,
+            "quarantined": 0, "quarantines": [],
+            "refused": [{"conversation_id": None, "detail": str(exc),
+                         "reason": exc.reason}],
+            "error": str(exc)}
+        _record_no_drop(vault, run_id, "refused", refused_report,
+                        dry_run=dry_run)
+        return refused_report, EXIT_REFUSED
+    # (INGEST-01) THE BRIDGE READS THE EXPLICIT `ingest` FIELD AND NOTHING
+    # ELSE. It used to read `disposition == "candidate"` here, which is
+    # the staging pass's bookkeeping word and not a statement about
+    # ingestion — so "is this worth remembering" and "what did the porter
+    # do with it" shared one vocabulary. `ingest_relevant` is the one
+    # predicate; it falls back to the old word only for a ledger written
+    # before this field existed (a replay), and a FRESH run that carries
+    # no `ingest` fails `check_ingest_independence` rather than ingesting
+    # quietly on the old rule.
+    candidates = [r for r in rows if cos_judge_ingest.ingest_relevant(r)]
 
     report: dict = {"schema": SCHEMA, "run": run_id,
                     "dry_run": dry_run, "candidates": len(candidates),
@@ -242,6 +289,8 @@ def bridge_run(vault, run_id: str, *, now: _dt.datetime | None = None,
                                     "reason": "receipts-root-unsafe",
                                     "detail": str(exc)}],
                        "error": str(exc)})
+        _record_no_drop(vault, run_id, "receipts-root-unsafe", report,
+                        dry_run=dry_run)
         return report, EXIT_REFUSED
     except WriterLockBusy as exc:
         # NOT a refusal: the hourly `brain-nightly` rebuild legitimately holds
@@ -257,7 +306,26 @@ def bridge_run(vault, run_id: str, *, now: _dt.datetime | None = None,
                        "reason": f"the vault writer lock is held ({exc}) — "
                        "NOTHING was dropped and nothing is wrong with the "
                        "candidates; re-run once the holder finishes"})
+        _record_no_drop(vault, run_id, "writer-busy", report, dry_run=dry_run)
         return report, EXIT_WRITER_BUSY
+
+
+def _backpressure_abort(vault: Path, run_id: str, candidates: list[dict],
+                        report: dict, open_batches: list[dict], *,
+                        dry_run: bool) -> tuple[dict, int]:
+    """The E3/B4 abort — an open batch stops the pass before any drop."""
+    ids = ", ".join(str(b.get("batch_id")) for b in open_batches)
+    report.update({
+        "status": "backpressure-abort", "candidates_not_dropped": len(candidates),
+        "open_batches": [b.get("batch_id") for b in open_batches],
+        "dropped": 0, "manifest_lines": 0, "never": 0, "already_dropped": 0,
+        "quarantined": 0, "quarantines": [],
+        "reason": (f"a proposal batch is already open ({ids}) — the bridge "
+                   f"ABORTED all {len(candidates)} candidate(s) rather than "
+                   "queue behind it. Answer or expire the open batch, then "
+                   "re-run; drops are never silently held back")})
+    _record_no_drop(vault, run_id, "backpressure-abort", report, dry_run=dry_run)
+    return report, EXIT_BACKPRESSURE
 
 
 def _bridge_locked(vault: Path, run_id: str, rows: list[dict],
@@ -266,17 +334,8 @@ def _bridge_locked(vault: Path, run_id: str, rows: list[dict],
     # -- 1. BACKPRESSURE FIRST — before a single drop is written (E3/B4) ----
     open_batches = cos.open_batches(vault)
     if open_batches:
-        ids = ", ".join(str(b.get("batch_id")) for b in open_batches)
-        report.update({
-            "status": "backpressure-abort", "candidates_not_dropped": len(candidates),
-            "open_batches": [b.get("batch_id") for b in open_batches],
-            "dropped": 0, "manifest_lines": 0, "never": 0, "already_dropped": 0,
-            "quarantined": 0, "quarantines": [],
-            "reason": (f"a proposal batch is already open ({ids}) — the bridge "
-                       f"ABORTED all {len(candidates)} candidate(s) rather than "
-                       "queue behind it. Answer or expire the open batch, then "
-                       "re-run; drops are never silently held back")})
-        return report, EXIT_BACKPRESSURE
+        return _backpressure_abort(vault, run_id, candidates, report,
+                                   open_batches, dry_run=dry_run)
 
     # -- 2. taxonomy + corpus (the join the ledger cannot do alone) ----------
     # `log=` gated on the pass being real (attempt 10, finding 4): with a
@@ -334,6 +393,13 @@ def _bridge_locked(vault: Path, run_id: str, rows: list[dict],
             if json.dumps(row, sort_keys=True) != before:
                 pending["dirty"] = True
     flush()
+    if not candidates:
+        # The loop above appends one bridge row per candidate, so a pass with
+        # NO candidate wrote no file either — the same absence, reached the
+        # ordinary way. It is a legitimate zero and stays exit 0; it just says
+        # so on disk now.
+        _record_no_drop(vault, run_id, "no-candidates", report,
+                        dry_run=dry_run)
 
     # -- 3. persist the metrics row ------------------------------------------
     if not dry_run:

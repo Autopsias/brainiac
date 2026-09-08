@@ -41,6 +41,9 @@ the whole thing against the live mailbox read-only and stops one line before
     python3 tools/cos_mutate.py plan     --vault <v> --run-id <r>
     python3 tools/cos_mutate.py dry-run  --vault <v> --run-id <r> --tab-id <id>
     python3 tools/cos_mutate.py apply    --vault <v> --run-id <r> --tab-id <id>
+    python3 tools/cos_mutate.py discard-draft-manifest --vault <v> --out <manifest>
+    python3 tools/cos_mutate.py discard-drafts --vault <v> --run-id <r> \
+        --discard-manifest <manifest> --ego
     python3 tools/cos_mutate.py canary   --vault <v> --run-id <r> --tab-id <id> \\
                                          --canary-convid <id>
     python3 tools/cos_mutate.py capture-shapes --vault <v> --tab-id <id>
@@ -48,28 +51,29 @@ the whole thing against the live mailbox read-only and stops one line before
 """
 from __future__ import annotations
 
-import datetime as _dt
-import hashlib
+import datetime as _dt  # noqa: F401
+import hashlib as hashlib
 import json
 import os
-import re
-import subprocess
+import re as re
+import subprocess as subprocess
 import sys
-import time
-import unicodedata
+import time as time
+import unicodedata as unicodedata
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import cos_driver as drv                                          # noqa: E402
-import cos_mutate_apply as apply_stages                           # noqa: E402
-import cos_mutate_plan as plan_stages                             # noqa: E402
-import cos_mutate_canary as canary_stages                          # noqa: E402
+import cos_driver as drv                                          # noqa: E402,F401
+import cos_mutate_apply as apply_stages                           # noqa: E402,F401
+import cos_mutate_plan as plan_stages                             # noqa: E402,F401
+import cos_mutate_canary as canary_stages                          # noqa: E402,F401
 import cos_mutate_cli as cli_stages                               # noqa: E402
-import cos_mutate_evidence as evidence_stages                       # noqa: E402
-import cos_mutate_shapes as shape_stages                          # noqa: E402
+import cos_mutate_evidence as evidence_stages                       # noqa: E402,F401
+import cos_mutate_discard as discard_stages                         # noqa: E402
+import cos_mutate_shapes as shape_stages                          # noqa: E402,F401
 from brain import cos_chips as chips                              # noqa: E402
 # The undo ledger's counting definition. It MOVED to `cos_reconcile_metrics`
 # (s10, 2026-08-16) and is imported back here under its original names, so every
@@ -81,7 +85,7 @@ from brain import cos_chips as chips                              # noqa: E402
 # and a missing counter must stop the apply, never silently count zero.
 from cos_reconcile_metrics import (                                # noqa: E402
     APPLIED_STATES as APPLIED_STATES,  # noqa: F401  deliberate re-export
-    MUTATION_VERBS, VERB_COUNTER, applied_counts,
+    MUTATION_VERBS as MUTATION_VERBS, VERB_COUNTER as VERB_COUNTER, applied_counts as applied_counts,
 )
 
 
@@ -149,7 +153,8 @@ BANNED_DISPOSITIONS = ("SendOnly", "SendAndSaveCopy", "SendToNone",
 from cos_mutate_policy import (  # noqa: E402,F401
     CHIP_RANK, DEFAULT_CAPS, DEFAULT_SINCE_DAYS, MANAGED_CHIPS, RECEIPT_KEYS,
     STATES, TERMINAL,
-    DRAFT_FOLDER, DRAFT_RESUME_POLICY, PENDING,
+    DRAFT_FOLDER, DRAFT_DISCARD_DESTINATION, DRAFT_DISCARD_SHAPE,
+    DRAFT_RESUME_POLICY, PENDING,
     PERMITTED_ACTIONS, PERMITTED_CONVERSATION_ACTIONS, PERMITTED_FOLDERS,
     REFUSED_CONVERSATION_ACTIONS, SAVE_ONLY)
 from cos_mutate_passes import (  # noqa: E402,F401
@@ -166,6 +171,11 @@ from cos_mutate_shapestore import (  # noqa: E402,F401
     capture_shapes, load_shapes, shapes_from_capture, _fingerprints,
     _merge_shapes)
 import cos_mutate_passes  # noqa: E402
+from cos_mutate_discard import (  # noqa: E402,F401
+    DISCARD_CLOSED_STATE, DISCARD_CLOSED_VERIFICATION, DISCARD_MANIFEST_SCHEMA,
+    DISCARD_REFUSAL_LIMIT, DISCARD_VERB, DISCARD_VERIFICATION,
+    FORWARD_VERIFICATION, close_backlog, discard_candidates,
+    standing_refusal)
 
 
 
@@ -365,6 +375,24 @@ def unchip_pass(vault: Path, run_id: str, tab_id: int | None, *,
     return cos_mutate_passes.unchip_pass(
         vault, run_id, tab_id, use_cdp=use_cdp, use_ego=use_ego, limit=limit,
         lane=sys.modules[__name__])
+
+
+def build_discard_manifest(vault: Path, source_run: str) -> dict[str, Any]:
+    """Project one run onto an exact set with cross-ledger survivors."""
+    return discard_stages.build_discard_manifest(
+        vault, source_run, lane=sys.modules[__name__])
+
+
+def discard_drafts_pass(vault: Path, run_id: str, tab_id: int | None, *,
+                        use_cdp: bool = False, use_ego: bool = False,
+                        manifest_path: Path | None = None,
+                        limit: int | None = None) -> dict[str, Any]:
+    """Discard this run's exact verified signed drafts under the lane lock."""
+    with _mutation_lane_lock(vault, run_id):
+        return discard_stages.discard_drafts_pass(
+            vault, run_id, tab_id, use_cdp=use_cdp, use_ego=use_ego,
+            manifest_path=manifest_path, limit=limit,
+            lane=sys.modules[__name__])
 
 
 def canary_drill(vault: Path, run_id: str, tab_id: int, conv_id: str,

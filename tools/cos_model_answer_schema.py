@@ -17,7 +17,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
+from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cos_judge_rules_stale import STALE_REASONS  # noqa: E402  the ONE vocabulary
 
 #: TWO SCHEMAS, AND THE CATEGORY LEG IS THE OTHER ONE. It runs PRE-DRAW, before
 #: `cos_ground.py` has run at all (which is the whole ordering argument for sink
@@ -40,10 +45,37 @@ ALLOWED_KEYS: frozenset[str] = frozenset({
     "hold_verdict", "resolution_evidence",
     # draft
     "draft",
+    # (RULE3-01, 2026-08-28) the drafting leg's OTHER answer. Until this key
+    # existed, a candidate row the leg chose not to draft was returned as
+    # SILENCE, and the prompt said in so many words that omitting a row "costs
+    # nothing". Measured on run195: ~50 rows offered, 4 drafted, 46 omitted
+    # with no reason recorded anywhere — indistinguishable from rows the porter
+    # never looked at. It is ONE WORD from a closed vocabulary on purpose: the
+    # row already carries `summary`, so a free-prose field here would add a
+    # vault-prose surface for nothing.
+    "needs_owner",
+    # (STALE-01) the stale-act lane's claim: {is_stale, reason}
+    "stale",
+})
+#: RULE3-01. Why a candidate row got no draft. Closed, like `stale.reason`:
+#: a word the model invents is refused before any other check sees it.
+NEEDS_OWNER_VOCAB: frozenset[str] = frozenset({
+    "owner-decision",   # the next move is a judgment only he can make
+    "facts-missing",    # a reply needs facts the vault does not carry
+    "not-his-move",     # someone else holds the next move; no reply warranted
+    "unreadable",       # the body never opened, so nothing can be judged
+    "unclear",          # cannot tell what is being asked
 })
 DRAFT_KEYS: frozenset[str] = frozenset(
     {"text", "recipients_scope", "placeholders", "form", "voice"})
 SPAN_KEYS: frozenset[str] = frozenset({"start", "end"})
+#: (STALE-01) `stale`'s sub-object. `reason` is a CLOSED VOCABULARY, not prose,
+#: and `project_stale_value` refuses a word outside it outright — which is why
+#: it is NOT added to `ADMITTED_FIELDS` beside `draft.*`: the overlap rule
+#: exists to keep vault prose off disk, and a field that can only ever hold one
+#: of two host-defined words cannot carry any. A `reason` the model invents is
+#: refused by the vocabulary before the overlap rule would ever see it.
+STALE_KEYS: frozenset[str] = frozenset({"is_stale", "reason"})
 
 #: THE DECLARED TYPE OF EVERY ALLOWED KEY. A key-closed projection is NOT a
 #: closed projection, and the adversarial review proved it: a DICT in a string
@@ -64,6 +96,7 @@ KEY_TYPES: dict[str, str] = {
     "held_reason": _STR, "dedup_check": _STR, "dedup_kind": _STR,
     "merge_candidate": _STR,
     "hold_verdict": _STR, "resolution_evidence": _STR,
+    "needs_owner": _STR,
     # THE CATEGORY SCHEMA'S ONE FIELD, declared here rather than left to
     # `KEY_TYPES.get(key, _STR)`'s default. It was the measured hole in the
     # "enumerating" tests: `set(CATEGORY_KEYS) - set(KEY_TYPES) == {'category'}`,
@@ -81,12 +114,20 @@ DRAFT_TYPES: dict[str, str] = {
 #: list of scalars and must carry a declared type; `test_every_admitted_key_
 #: carries_a_declared_type` asserts exactly that closure, over the UNION of both
 #: schemas, so neither table can gain a member the other's tests never see.
-STRUCTURED_KEYS: frozenset[str] = frozenset({"draft", "evidence_span"})
+STRUCTURED_KEYS: frozenset[str] = frozenset({"draft", "evidence_span", "stale"})
+#: CLOSED-VOCABULARY KEYS — admitted, typed, and NOT part of the prose surface.
+#: Same reasoning `stale.reason` is kept off `ADMITTED_FIELDS` (see STALE_KEYS
+#: above): the projection refuses any value outside the vocabulary before the
+#: overlap rule would ever look at it, so such a field cannot carry vault prose
+#: to disk and there is nothing for the overlap canary to blank. The difference
+#: from `stale.reason` is only depth — this one is a top-level key, so it has to
+#: be subtracted by name rather than falling out of `STRUCTURED_KEYS`.
+CLOSED_VOCAB_KEYS: frozenset[str] = frozenset({"needs_owner"})
 #: Every string-bearing field name the projection can retain, on either schema,
 #: nested names included. The enumerating tests generate their fields from THIS
 #: rather than from one type table.
 ADMITTED_FIELDS: frozenset[str] = frozenset(
-    ((ALLOWED_KEYS | CATEGORY_KEYS) - STRUCTURED_KEYS)
+    ((ALLOWED_KEYS | CATEGORY_KEYS) - STRUCTURED_KEYS - CLOSED_VOCAB_KEYS)
     | {f"draft.{k}" for k in DRAFT_KEYS})
 
 #: THE OUTPUT-BEARING BOUND, and it is a DIFFERENT control from the input budget
@@ -95,15 +136,32 @@ ADMITTED_FIELDS: frozenset[str] = frozenset(
 #: per-row INPUT character budget cannot bound that. These are the per-field
 #: ceilings the batch prompts state and this projection enforces, in characters:
 #:
-#:   non-draft row   2 x 600 (summary) + 600 + 600 + 200  ~= 2,800 chars
-#:   x 50 rows                                            ~= 140,000 chars
-#:   draft row       4,000 + 10 x 200 + 200               ~=  6,200 chars
-#:   x DRAFT_CAP 10                                       ~=  62,000 chars
-#:   chunk total                                          ~= 202,000 chars
-#:                                                        ~=  50,500 tokens
+#: THE TWO LEGS ARE TWO MESSAGES, so they are two budgets (corrected 2026-09-04
+#: against run 257's own artifacts, which carry a separate `prompt-draft.txt`,
+#: `verdicts-draft.json` and `draft-leg.stderr` per chunk — `write_chunks`
+#: composes the draft prompt as its own call). Charging both to one message was
+#: what made a draft cap above ~12 look impossible; each leg has the whole cap.
 #:
-#: — 79 % of the single-message cap at the shipped chunk size of 50, so a chunk
-#: that obeys these bounds cannot reach the cap that killed run 131.
+#:   judgment leg (triage + staging + hold, one message)
+#:     non-draft row 2 x 600 (summary) + 600 + 600 + 200  ~=   2,800 chars
+#:     x 50 rows (COS_JUDGE_CHUNK_SIZE)                   ~= 140,000 chars
+#:                                                        ~=  35,000 tokens
+#:   draft leg (its own message)
+#:     draft row     4,000 + 10 x 200 + 200               ~=   6,200 chars
+#:     x DRAFT_CAP 30                                     ~= 186,000 chars
+#:                                                        ~=  46,500 tokens
+#:
+#: — 55 % and 73 % of the single-message cap, so neither leg can reach the cap
+#: that killed run 131 even with every field at its refusal limit. 50 is the
+#: AUTHORED chunk size; `fit` halves a chunk that blows the INPUT budget, so a
+#: real night runs at or below it (run 257: 25/25/25/25/17). Budgeting the
+#: authored size is the conservative side of that.
+#:
+#: The draft cap is `cos_judge_rules.DRAFT_CAP`, imported by the test that
+#: asserts this, never restated: a second copy of the number is how the bound
+#: and the budget come to disagree — and did, until 2026-09-04 the test typed
+#: `10` where it meant the cap, so it could not have failed on the one edit it
+#: exists to bound. The budget's own ceiling for that cap is 35.
 #:
 #: WHAT IT IS NOT: this cannot stop the model EMITTING more — nothing host-side
 #: can. It bounds what reaches disk, and it makes over-emission a counted number
@@ -296,19 +354,11 @@ def project_keys(row: dict[str, Any], allowed: frozenset[str],
         if key not in allowed:
             _count(stats["dropped_unknown_keys"], key)
             continue
-        if key == "draft":
-            sub = project_draft_value(value, stats)
-            if sub is None:
+        if key in STRUCTURED_KEYS:
+            ok, sub = project_structured(key, value, stats)
+            if not ok:
                 return None
             out[key] = sub
-        elif key == "evidence_span":
-            if value is None:
-                out[key] = None
-                continue
-            span = project_span_value(value, stats)
-            if span is None:
-                return None
-            out[key] = span
         else:
             # TYPE FIRST, THEN LENGTH. A value of the wrong type is refused
             # rather than coerced — the review's dict-in-a-string-field case
@@ -322,8 +372,41 @@ def project_keys(row: dict[str, Any], allowed: frozenset[str],
                 stats["refused_oversize_field"][key] = \
                     stats["refused_oversize_field"].get(key, 0) + 1
                 return None
+            # RULE3-01. A CLOSED VOCABULARY, checked here for the same reason
+            # `stale.reason` is: a word the model invented is refused before the
+            # overlap rule would ever look at it, so this field can never become
+            # a prose channel. DROPPED, not row-refusing — an invented word must
+            # not cost the row its triage and summary the way a bad draft does.
+            if (key == "needs_owner" and value is not None
+                    and value not in NEEDS_OWNER_VOCAB):
+                _count(stats["dropped_unknown_keys"], "needs_owner")
+                continue
             out[key] = value
     return out
+
+
+def project_structured(key: str, value: Any, stats: dict[str, Any]
+                       ) -> tuple[bool, Any]:
+    """One STRUCTURED key's sub-object. `(False, None)` refuses the row.
+
+    The three of them share one dispatch rather than three branches inside
+    `project_keys`: the key set and the projector table are the same fact
+    (`STRUCTURED_KEYS`), and holding it twice is how a fourth structured key
+    gets admitted by the key walk and dropped by the value walk.
+
+    `draft` refuses an explicit `None` (a draft object is either present or the
+    key is absent); the other two accept it, because "not stale" and "no span"
+    are legitimate answers a row states rather than omits.
+    """
+    if key == "draft":
+        sub = project_draft_value(value, stats)
+        return (sub is not None), sub
+    if value is None:
+        return True, None
+    projector = (project_span_value if key == "evidence_span"
+                 else project_stale_value)
+    sub = projector(value, stats)
+    return (sub is not None), sub
 
 
 def project_draft_value(value: Any, stats: dict[str, Any]) -> dict[str, Any] | None:
@@ -364,3 +447,32 @@ def project_span_value(value: Any, stats: dict[str, Any]) -> dict[str, Any] | No
             return None
         span[k] = v
     return span
+
+
+def project_stale_value(value: Any, stats: dict[str, Any]) -> dict[str, Any] | None:
+    """The `stale` key's `{is_stale, reason}` pair. `None` refuses the row.
+
+    `reason` is projected against the CLOSED VOCABULARY itself, not against a
+    length cap. That is stricter than every other string field here and it is
+    the point: this field's only job is to name which of two host-defined
+    rulings archives an ACT thread, so a word the vocabulary does not define
+    is a refused row rather than a truncated one — and no vault prose can
+    survive in a field that admits exactly two literals.
+    """
+    if not isinstance(value, dict):
+        stats["refused_shape"] += 1
+        return None
+    out: dict[str, Any] = {}
+    for k, v in value.items():
+        if k not in STALE_KEYS:
+            _count(stats["dropped_unknown_keys"], k, "stale.")
+            continue
+        if k == "is_stale":
+            if not isinstance(v, bool):
+                stats["refused_shape"] += 1
+                return None
+        elif v is not None and v not in STALE_REASONS:
+            stats["refused_shape"] += 1
+            return None
+        out[k] = v
+    return out

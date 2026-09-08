@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template rendered by install-cos-jobs.sh. Every input this job consumes is
+  declared here; it never inherits BRAIN_COS_DOWNLOADS_DIR or transport state
+  from a sibling launchd job. Loading is a separate, attended S08 action.
+
+  NO BRAIN_INDEX_DIR here, on purpose (2026-08-31). The pin pointed at the
+  per-user app-data base, which shadows every per-vault `vaults/<slug>/`
+  index with one shared index.sqlite at the base — the nightly then read a
+  stale July index while every unpinned context maintained the live one, and
+  three chains died on the schema drift. Unset, the engine resolves the same
+  per-vault index every other context uses. The engine now refuses that pin
+  value outright (config.index_dir).
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.brainiac.cos-nightly</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/caffeinate</string>
+    <string>-dimsu</string>
+    <string>/bin/bash</string>
+    <string>__COS_REPO__/tools/cos_nightly.sh</string>
+    <string>--batches</string>
+    <string>1</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>2</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>BRAIN_VAULT</key>
+    <string>__BRAIN_VAULT__</string>
+    <key>BRAIN_LOG_DIR</key>
+    <string>__LOG_DIR__</string>
+    <key>BRAIN_REQUIRE_REAL_EMBEDDER</key>
+    <string>1</string>
+    <key>BRAIN_COS_DOWNLOADS_DIR</key>
+    <string>__DOWNLOADS_DIR__</string>
+    <key>BRAIN_ROLE</key>
+    <string>host</string>
+    <key>COS_INGEST_BRIDGE</key>
+    <string>1</string>
+    <key>COS_PYTHON</key>
+    <string>__PYTHON__</string>
+    <key>COS_TRANSPORT</key>
+    <string>ego</string>
+    <key>COS_BODY_CAP</key>
+    <string>200</string>
+    <key>COS_SINCE_DAYS</key>
+    <string>90</string>
+    <key>PATH</key>
+    <string>__HOME__/.local/bin:__HOME__/.brainiac/venv/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>__LOG_DIR__/cos-nightly-launchd.out</string>
+  <key>StandardErrorPath</key>
+  <string>__LOG_DIR__/cos-nightly-launchd.err</string>
+  <key>ExitTimeOut</key>
+  <integer>120</integer>
+</dict>
+</plist>

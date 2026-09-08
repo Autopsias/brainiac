@@ -61,3 +61,23 @@ def fan_out(ground_one: Callable[..., dict[str, Any]], brain: Any,
                     with_content.append(res["cid"])
 
     return covered, with_content, failed, exhausted
+
+
+def failure_reasons(payload: dict[str, Any],
+                    failed: list[str]) -> dict[str, int]:
+    """`{reason: count}` over the failed ids — reason WORDS only, never content.
+
+    A COUNT WITHOUT ITS REASON IS NOT A FINDING. Run 249 reported "24
+    lookup-failed" and stopped there; the reason lived one level down in each
+    block and took a separate probe the next day to read (all 24 were
+    `timeout`, which is what named the fix). It is counted HERE, beside the
+    tallies, rather than read by the nightly's log line: SINK 14 forbids that
+    script from opening a grounding block at all, and the bluntness of that
+    rule is the point — a block also carries vault text.
+    """
+    blocks = payload.get("blocks") or {}
+    out: dict[str, int] = {}
+    for cid in failed:
+        word = str((blocks.get(cid) or {}).get("reason") or "unrecorded")
+        out[word] = out.get(word, 0) + 1
+    return dict(sorted(out.items(), key=lambda kv: (-kv[1], kv[0])))

@@ -1,12 +1,11 @@
 """Private-replay evaluation over captured query-log months (host-only)."""
 from __future__ import annotations
 
-import datetime as _dt
 import json
 import os
 import time
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from . import classification as cls
 from . import config, egress

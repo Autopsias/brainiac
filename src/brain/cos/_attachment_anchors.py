@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from ._shared import *  # noqa: F401,F403
 from ._facade import public
-from ._approval import _host_private_base, _identity_binds, _proven_off_mount, approved_vault_identity, approved_verify_key
+from ._approval import _host_private_base, _identity_binds, _proven_off_mount, approved_vault_identity
 from ._guards import _safe_basename
-from ._io import _read_nofollow, _write_atomic
+from ._io import _read_nofollow
 from ._layout import _env_days, _parse_ts, _ts, _utcnow
 
 def attachment_anchor_dir(vault=None) -> Path:

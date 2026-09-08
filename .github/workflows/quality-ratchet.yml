@@ -42,7 +42,7 @@ jobs:
       - name: Install ruff (complexity checker backend)
         # Pinned so CI and the commit hook can never disagree about a score;
         # bump deliberately, alongside a local ruff bump.
-        run: python -m pip install ruff==0.14.10
+        run: python -m pip install ruff==0.16.6
 
       - name: Prove the checkers can still fail
         # A gate that returns "clean" because its input was empty is worse

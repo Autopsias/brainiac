@@ -1,31 +1,43 @@
 """Core dependency definitions."""
 from __future__ import annotations
 
-import os
+import os as os
 from pathlib import Path
 from typing import Any
 
-from .. import classification, config, frontmatter
-from ..audit import AuditChain, KeyUnavailable
-from ..draft_drain import DraftDrainMixin
+from .. import classification as classification, config as config, frontmatter
+from ..audit import AuditChain as AuditChain, KeyUnavailable as KeyUnavailable
+from ..draft_drain import DraftDrainMixin as DraftDrainMixin
 from ..folds import (
-    CosFoldsMixin, DailyFoldsMixin, DeliverablesFoldsMixin, GraphFoldsMixin,
-    GoldenFoldsMixin,
-    IntakeFoldsMixin, InvariantFoldsMixin, MaintenanceOrchestratorMixin,
-    OrganizationFoldsMixin, PreflightFoldsMixin, PublishFoldsMixin,
-    RemediationFoldsMixin, ReportingFoldsMixin, RetentionFoldsMixin,
-    WatchdogFoldsMixin, WeeklyFoldsMixin,
+    CosFoldsMixin as CosFoldsMixin,
+    DailyFoldsMixin as DailyFoldsMixin,
+    DeliverablesFoldsMixin as DeliverablesFoldsMixin,
+    GraphFoldsMixin as GraphFoldsMixin,
+    GoldenFoldsMixin as GoldenFoldsMixin,
+    IntakeFoldsMixin as IntakeFoldsMixin,
+    InvariantFoldsMixin as InvariantFoldsMixin,
+    MaintenanceOrchestratorMixin as MaintenanceOrchestratorMixin,
+    OrganizationFoldsMixin as OrganizationFoldsMixin,
+    PreflightFoldsMixin as PreflightFoldsMixin,
+    PublishFoldsMixin as PublishFoldsMixin,
+    RemediationFoldsMixin as RemediationFoldsMixin,
+    ReportingFoldsMixin as ReportingFoldsMixin,
+    RetentionFoldsMixin as RetentionFoldsMixin,
+    WatchdogFoldsMixin as WatchdogFoldsMixin, WeeklyFoldsMixin as WeeklyFoldsMixin,
 )
-from ..graph_ops import GraphOpsMixin
-from ..golden_ops import GoldenOpsMixin
-from ..index import BrainIndex, Hit
-from ..lock import WriterLockBusy, vault_writer_lock
-from ..notes import safe_slug, sha256_text
+from ..graph_ops import GraphOpsMixin as GraphOpsMixin
+from ..golden_ops import GoldenOpsMixin as GoldenOpsMixin
+from ..index import BrainIndex as BrainIndex, Hit as Hit
+from ..lock import WriterLockBusy as WriterLockBusy, vault_writer_lock as vault_writer_lock
+from ..notes import safe_slug as safe_slug, sha256_text as sha256_text
 from ..retrieval_ops import (
-    MULTI_GUARD_STRONG_RANK, MULTI_MAX_VARIANTS, MULTI_RRF_K, RetrievalOpsMixin,
+    MULTI_GUARD_STRONG_RANK as MULTI_GUARD_STRONG_RANK,
+    MULTI_MAX_VARIANTS as MULTI_MAX_VARIANTS,
+    MULTI_RRF_K as MULTI_RRF_K,
+    RetrievalOpsMixin as RetrievalOpsMixin,
 )
-from ..status_ops import StatusOpsMixin
-from ..update_ops import UpdateOpsMixin
+from ..status_ops import StatusOpsMixin as StatusOpsMixin
+from ..update_ops import UpdateOpsMixin as UpdateOpsMixin
 
 def source_repo_root(start: Path | None = None) -> Path | None:
     """Depth-independent source-checkout root for repo-relative dev artifacts.

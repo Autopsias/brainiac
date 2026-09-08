@@ -4,7 +4,6 @@ from __future__ import annotations
 from ._shared import *  # noqa: F401,F403
 from ._facade import public
 from ._criteria import auto_capture_eligible, category_eligible
-from ._io import _write_atomic
 from ._layout import _ts, proposals_dir
 
 def _route_stats_path(vault=None) -> Path:

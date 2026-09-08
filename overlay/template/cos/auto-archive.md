@@ -48,8 +48,10 @@ and widening a roster stay separate decisions.
 
 ## Guards this file cannot switch off
 
-The keys above tune scope. They never disable the structural guards: P0/P1 is
-excluded from auto-archive under every lane and every scope, a low-confidence
+The keys above tune scope. They never disable the structural guards: P0 is
+excluded from auto-archive under every lane and every scope (the 2026-09-01
+ruling stopped the floor there — an actionless P1/P2/P3 archives), a
+low-confidence
 verdict is held rather than archived, an uncertain row is held, a
 draft-protected thread is kept, every archived row carries a full
 undo-capable ledger entry written BEFORE the move, and a stale or absent

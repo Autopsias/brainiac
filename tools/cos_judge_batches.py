@@ -12,6 +12,66 @@ from __future__ import annotations
 
 from typing import Any
 
+#: (JUDGE-03, 2026-08-27) THE HOST FACTS THE TRIAGE RULES GRADE, in the order
+#: the prompt names them. `cos_signals` / `cos_signals_stale` compute every one
+#: from the run's own ledger and captured text, `cos_judge_night._row_ctx`
+#: merges them into the per-row context, and `triage.p3_act_needs_direct_ask`,
+#: `triage.noise_signal_required` (via the aged-read and stale-act lane
+#: refusals) and `triage.stale_evidence` score the model's answer against them.
+#: Until this constant they reached the VALIDATOR and not the PROMPT: measured
+#: on run 2026-08-26-run189, zero of these names appear in
+#: `batches/batch-triage.md` and the row carried eight fields, so the model was
+#: graded on booleans it was never shown. 10 of 120 verdicts refused (8.3%)
+#: against a 5% abort threshold, and the first attended night judged no rows.
+#:
+#: ONE TUPLE, TWO USES — the shaper below and `REDACT_PASSTHROUGH` — because a
+#: signal carried into the row and forgotten by the masker is a signal the
+#: evidence artifact cannot show.
+HOST_SIGNALS = ("unanswered_direct_ask", "live_deadline",
+                "stale_deadline_passed", "open_spine_commitment",
+                "body_unreadable", "screens_ran_unresolved",
+                "thread_carries_draft")
+
+#: The `..._leg` companion of each content fact that has one. A POSITIVE names
+#: the side it was found on; a NEGATIVE is `None`, which is why
+#: :func:`host_signal_scan` exists beside it.
+HOST_SIGNAL_LEGS = ("unanswered_direct_ask_leg", "live_deadline_leg",
+                    "stale_deadline_passed_leg")
+
+
+def host_signal_scan(c: dict[str, Any]) -> str:
+    """What the host's content detectors could actually READ on this row.
+
+    A CONSERVATIVE NEGATIVE MUST SAY SO. `cos_signals` is a closed marker list
+    over the newest message's own words AND the subject line, and on a row whose
+    body never opened — 100% of the rows `triage.p3_act_needs_direct_ask`
+    actually refuses, per that module's own docstring — only the subject was
+    ever scanned. `unanswered_direct_ask: false` then means "the host did not
+    look at the body", not "the host looked and found nothing", and a model
+    shown the bare boolean cannot tell the two apart. The `body_unreadable`
+    branch is the same silence for a different reason: the body opened and
+    `readable_newest_text` handed every detector an EMPTY string.
+    """
+    if not c.get("body_opened"):
+        return "subject-only (the body was never opened tonight)"
+    if c.get("body_unreadable"):
+        return "subject-only (the body opened UNREADABLE)"
+    return "subject+body"
+
+
+def _host_facts(c: dict[str, Any], *names: str) -> dict[str, Any]:
+    """The named host facts, their legs, and the scan that produced them.
+
+    GIVEN, NEVER ASKED FOR BACK — the same rule `staging_rows` states for
+    `category`. The model may not certify its own input, so these travel one
+    way: into the batch, never back out of the answer.
+    """
+    out: dict[str, Any] = {n: bool(c.get(n)) for n in names}
+    out.update({leg: c.get(leg) for leg in HOST_SIGNAL_LEGS
+                if leg[:-len("_leg")] in names})
+    out["host_signal_scan"] = host_signal_scan(c)
+    return out
+
 
 def triage_rows(rows: list[dict[str, Any]],
                 ctx_by_id: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -27,7 +87,8 @@ def triage_rows(rows: list[dict[str, Any]],
              "chip": r.get("tier"),
              "priority_map_tier": (c.get("priority_map") or {}).get(
                  c.get("sender")),
-             "rows_from_sender_tonight": c.get("sender_rows_this_run")})
+             "rows_from_sender_tonight": c.get("sender_rows_this_run"),
+             **_host_facts(c, *HOST_SIGNALS)})
     return out
 
 
@@ -38,6 +99,15 @@ def staging_rows(rows: list[dict[str, Any]],
     The STAGING batch carries the TEXT. Rule 2 judges substance out of a
     message body and quotes a span of it; a batch that names the text and
     ships none asks for a verdict the model cannot reach.
+
+    NO HOST SIGNAL IS CARRIED HERE, AND THAT IS THE CHECKED ANSWER, NOT AN
+    OVERSIGHT (JUDGE-03). Every `staging.*` rule was read: they score
+    `text_len`, `overlay_keyword_tier`, `taxonomy`/`category` and `brain_near_dup`
+    — all of which this row already carries or the prompt already renders — and
+    not one reads any of `HOST_SIGNALS`. `staging.scope` grades the MERGED
+    verdict's `bucket`/`tier`, which are the triage leg's answer, not a host
+    fact this leg could be shown. Widening a batch with a fact no rule reads
+    buys prompt bytes and no verdict.
     """
     out: list[dict[str, Any]] = []
     for r in rows:
@@ -60,7 +130,14 @@ def staging_rows(rows: list[dict[str, Any]],
 def hold_rows(rows: list[dict[str, Any]],
               ctx_by_id: dict[str, dict[str, Any]],
               resolutions: dict[str, str]) -> list[dict[str, Any]]:
-    """One shaped row per chipped thread the HOLD leg re-evaluates."""
+    """One shaped row per chipped thread the HOLD leg re-evaluates.
+
+    ONE host signal, and only one, because only one hold rule reads one
+    (JUDGE-03): `hold.p0p1_archive_explicit_resolution` refuses RESOLVED on
+    any row where `unanswered_direct_ask` is True, and the prompt already
+    promises the model that "a genuinely unanswered direct ask is NEVER
+    resolved" without ever showing it the boolean that decides.
+    """
     out: list[dict[str, Any]] = []
     for r in rows:
         c = ctx_by_id.get(r["conversation_id"], {})
@@ -69,6 +146,7 @@ def hold_rows(rows: list[dict[str, Any]],
              "received": r.get("received"), "read_state": r.get("read_state"),
              "subject": c.get("subject"),
              "chip": r.get("tier"),
+             **_host_facts(c, "unanswered_direct_ask"),
              # THE FLAGS, SHOWN. `RESOLVED` is admissible only on a flag this
              # run actually observed, and a driver that observes none makes
              # it unreachable — so a batch that hides them asks for a verdict
@@ -87,6 +165,17 @@ def draft_rows(rows: list[dict[str, Any]],
     The DRAFT batch carries the TEXT for the same reason staging does: a
     reply is written FROM the message, and a batch that names the thread
     and ships none asks for prose the model would have to invent.
+
+    AND THE TWO HOST FACTS ITS SCOPE RULE IS SCORED ON (JUDGE-03).
+    `draft.response_warranted_scope` accepts a non-`act` row only when its
+    `hold_category` is `Held · ask` or `Held · deadline` — and that category is
+    not the model's to send: `cos_judge_rules.first_failed_screen` COMPUTES it,
+    from `unanswered_direct_ask` and `live_deadline`. So "response-warranted",
+    the rule the prompt says refuses most drafts, is decided by two host
+    booleans the draft row has never carried; that dead second clause is one of
+    the three defects `cos_signals`' own header records. `ask_age_days` joins
+    them because `draft.stale_ask_form` keys the acknowledge-late form on the
+    host's number, not on the model's own arithmetic over `received`.
     """
     out: list[dict[str, Any]] = []
     for r in rows:
@@ -96,6 +185,8 @@ def draft_rows(rows: list[dict[str, Any]],
              "sender": c.get("sender"),
              "subject": c.get("subject"),
              "received": r.get("received"), "read_state": r.get("read_state"),
+             "ask_age_days": c.get("ask_age_days"),
+             **_host_facts(c, "unanswered_direct_ask", "live_deadline"),
              "text": c.get("text")})
     return out
 
@@ -124,10 +215,21 @@ _draft_shaper = draft_rows
 from cos_judge_prompts import (  # noqa: E402
     CATEGORY_PROMPT, DRAFT_PROMPT, HOLD_PROMPT, STAGING_PROMPT,
     TRIAGE_PROMPT, _VOCAB_BLOCK)
+import cos_voice                                              # noqa: E402
 
 
 REDACT_PASSTHROUGH = frozenset({
-    "received", "read_state", "chip", "tier", "priority_map_tier"})
+    "received", "read_state", "chip", "tier", "priority_map_tier",
+    # THE HOST SIGNALS PASS, AND MASKING THEM WOULD BE THEATRE (JUDGE-03).
+    # Every one is a boolean, a closed-set leg word (`body`/`subject`/null), a
+    # closed-set scan phrase, or an integer age — no sender, subject or body
+    # text can travel in any of them. And `redact_row` renders a value as its
+    # LENGTH, so a masked boolean comes out `<redacted:4 chars>` for True and
+    # `<redacted:5 chars>` for False: the mask publishes the value it hides.
+    # Passing them through instead makes a redacted batch REVIEWABLE — which
+    # is the only way an evidence artifact can prove the facts reached the
+    # prompt at all, the exact measurement run 189 had to make by hand.
+    *HOST_SIGNALS, *HOST_SIGNAL_LEGS, "host_signal_scan", "ask_age_days"})
 
 
 def redact_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -229,8 +331,9 @@ def grounding_required(rows: list[dict[str, Any]],
 
 
 def batch_prompts(rows: list[dict[str, Any]], ctx_by_id: dict[str, dict[str, Any]],
-                  taxonomy: dict[str, Any], *, redact: bool = False
-                  ) -> dict[str, str]:
+                  taxonomy: dict[str, Any], *, redact: bool = False,
+                  voice_profile: dict[str, Any] | None = None,
+                  rulings: dict[str, Any] | None = None) -> dict[str, str]:
     """The four prompts, rendered over the driver's own JSON.
 
     `redact` exists because these files are USEFUL AS EVIDENCE and DANGEROUS AS
@@ -238,6 +341,20 @@ def batch_prompts(rows: list[dict[str, Any]], ctx_by_id: dict[str, dict[str, Any
     a live mailbox, and this repository is a public-export source. Redacted, the
     prompt and its shape are intact and every payload value is a length. The
     nightly never redacts; anything written where git can reach it always does.
+
+    `voice_profile` is `cos_voice.profile_state(vault)` — the OWNER's profile,
+    read VAULT-relative, and the draft batch is the only one that gets it. It
+    is optional here and its DEFAULT IS NOT SILENT: `None` renders the named
+    degradation `voice profile absent, drafts ungrounded` into the prompt,
+    exactly as an unreadable profile does, so no caller can quietly drop it and
+    have the drafts still read as grounded.
+
+    `rulings` is `cos_judge_grounding.owner_rulings(vault)` — the owner's own
+    standing corrections, under the per-kind render caps. Its default is not
+    silent either, and for the same reason: `None` renders the named
+    degradation `owner-feedback record not read this run` into both prompts
+    that carry it, so a caller cannot quietly drop the owner's rulings and have
+    the night read as one on which he had never corrected anything.
     """
     # THE MASKER IS AN ALLOWLIST (D10). Rows are built with their REAL values and
     # every one of them is masked on the way out unless `REDACT_PASSTHROUGH` says
@@ -247,6 +364,10 @@ def batch_prompts(rows: list[dict[str, Any]], ctx_by_id: dict[str, dict[str, Any
     # (D13). `cos_ground.py` calls the same `batch_membership` to compute which
     # threads must be grounded, so the fetcher and the batches cannot disagree
     # about the population — the drift test asserts exactly that.
+    # AT CALL TIME: `cos_judge_grounding` imports this module for
+    # `batch_membership`, so a module-level import here is a cycle.
+    from cos_judge_grounding import rulings_block                # noqa: PLC0415
+
     _membership = batch_membership(rows, ctx_by_id)
     _by_id = {r["conversation_id"]: r for r in rows}
     triage_rows = [_by_id[c] for c in _membership["triage"]]
@@ -279,6 +400,7 @@ def batch_prompts(rows: list[dict[str, Any]], ctx_by_id: dict[str, dict[str, Any
     return {
         "triage": TRIAGE_PROMPT.format(
             n=len(triage_rows), vocab=_VOCAB_BLOCK,
+            rulings=rulings_block(rulings, redact=redact),
             batch=_batch_json(_triage_shaper(
                 triage_rows, ctx_by_id), redact=redact)),
         "staging": STAGING_PROMPT.format(
@@ -291,6 +413,9 @@ def batch_prompts(rows: list[dict[str, Any]], ctx_by_id: dict[str, dict[str, Any
                 hold_rows, ctx_by_id, RESOLUTIONS), redact=redact)),
         "draft": DRAFT_PROMPT.format(
             n=len(draft_rows), cap=DRAFT_CAP,
+            rulings=rulings_block(rulings, redact=redact),
+            voice=cos_voice.prompt_block(
+                voice_profile or cos_voice.profile_state(None), redact=redact),
             batch=_batch_json(_draft_shaper(
                 draft_rows, ctx_by_id), redact=redact)),
     }

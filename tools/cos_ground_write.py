@@ -49,3 +49,32 @@ def write_map(path: Path, payload: dict[str, Any]) -> Path:
     """Owner-only and atomic. Never a partially written map a leg could be
     handed, and never a world-readable one."""
     return write_text_0600(path, map_text(payload))
+
+
+def selected_ids(ev: Path | None) -> set[str] | None:
+    """The conversations THIS batch judges, from the selected enumeration.
+
+    On a chained run `$EV/enumeration.json` is the per-batch SELECTION (the
+    thread-cap slice), while the full census lives in `enumeration-full.json`.
+    `required` must be scored over what this run actually judges and renders,
+    not the whole read population: the chunker renders the selection alone, so
+    a `required` frozen over the full census leaves every deferred thread as a
+    permanent `required_not_in_batches` orphan and E10 can never pass on a
+    backlog wider than one thread cap. `None` (no ev, no file, or a file
+    without a selection cap) means "no per-batch selection" — the whole
+    population is the batch, and the caller applies no filter, exactly as
+    before this scoping existed.
+    """
+    if ev is None:
+        return None
+    try:
+        data = json.loads((ev / "enumeration.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    # A full (unselected) enumeration carries no `batch_thread_cap`; only
+    # `cos_batch_session.select` writes one. Absent it, apply no filter.
+    if not isinstance(data, dict) or data.get("batch_thread_cap") is None:
+        return None
+    ids = {str(r.get("conversation_id")) for r in (data.get("rows") or [])
+           if isinstance(r, dict) and r.get("conversation_id")}
+    return ids or None

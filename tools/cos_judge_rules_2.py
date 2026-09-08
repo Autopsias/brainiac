@@ -19,12 +19,14 @@ from brain.cos_runverify import (              # noqa: E402  the ONE definition
     _LEDGER_DISPOSITIONS as LEDGER_DISPOSITIONS,
     _PLACEHOLDER_CATEGORIES as PLACEHOLDER_CATEGORIES,
 )
+import cos_judge_ingest  # noqa: E402
+from cos_judge_rules_stale import (  # noqa: E402
+    STALE_REASONS, stale_field_refusal)
 from cos_judge_rules import (  # noqa: E402
-    BRIEF_ORDER, BUCKETS, DRAFT_CAP, FIREWALL_CLOSE, FIREWALL_OPEN,
-    HOLD_CATEGORIES, HOLD_SCREENS, HOLD_VERDICTS, JudgeStop, NOISE_SIGNALS,
-    NOVELTY_WORDS, READ_NOISE_SIGNAL, RESOLUTIONS, RULES, SECRET_RE,
-    SUBSTANCE_KINDS, TIERS, TIER_ORDER, Rule, _disposition_of, _draft,
-    _footer_notes, _g, _taxo, first_failed_screen, rule)
+    BRIEF_ORDER, DRAFT_CAP, FIREWALL_CLOSE, FIREWALL_OPEN,
+    NOVELTY_WORDS, RULES, SECRET_RE,
+    TIER_ORDER, _draft,
+    _g, _taxo, rule)
 
 
 @rule("staging.evidence_required", "row",
@@ -156,6 +158,93 @@ def _r_category(v, ctx):
     return None
 
 
+@rule("triage.stale_vocabulary", "row",
+      "STALE-01 — `stale` is {is_stale, reason}, `act` only, reason from the closed set")
+def _r_stale(v, ctx):
+    """The FIELD's SHAPE, checked for every row. Its EVIDENCE is
+    `triage.stale_evidence` below, and the SIGNAL's is
+    `triage.noise_signal_required`. Three rules because they fail differently:
+    a malformed `stale` is a broken answer, a stale claim the facts refuse is a
+    wrong one, a signal with no field behind it is a word with no producer —
+    and a run that cannot tell them apart cannot be calibrated.
+    """
+    st = v.get("stale")
+    if st is None:
+        return None
+    if not isinstance(st, dict):
+        return f"stale {st!r} is not a mapping of `is_stale` + `reason`"
+    if not isinstance(st.get("is_stale"), bool):
+        return (f"stale.is_stale {st.get('is_stale')!r} is not a boolean — "
+                "the counters key on the value, so an absent one reads as false")
+    if not st.get("is_stale"):
+        return None
+    if st.get("reason") not in STALE_REASONS:
+        return (f"stale.reason {st.get('reason')!r} is outside "
+                f"{list(STALE_REASONS)} — the checks key on the WORD")
+    if v.get("bucket") != "act":
+        return (f"stale claimed on a `{v.get('bucket')}` verdict — the lane "
+                "archives ACTIONABLE threads the world moved past; a `read` or "
+                "`noise` thread has its own lanes and its own evidence")
+    return None
+
+
+@rule("triage.stale_evidence", "row",
+      "STALE-01 — a `stale` FIELD that claims staleness faces the host's own "
+      "facts, whatever the verdict says about archiving")
+def _r_stale_evidence(v, ctx):
+    """THE FIELD IS WHAT ARCHIVES THE THREAD, so the field is what is checked.
+    `archive_eligibility` promotes an `act` row off `stale` alone, while the
+    only caller of the evidence refusal was `triage.noise_signal_required`,
+    which returns early on `not v.get("auto_archive")` — so the shape the
+    prompt's own template prints (`"auto_archive": false` beside a populated
+    `stale`) validated clean against a context carrying a standing ask, a live
+    deadline, an open commitment AND an unsent draft, and was archived anyway
+    (review 2026-08-25, finding 1). The signal rule keeps its dispatch for the
+    one thing this cannot say: a signal with no field behind it.
+    """
+    return stale_field_refusal(v, ctx)
+
+
+@rule("staging.ingest_independent", "row",
+      "INGEST-01 belt 1 — every in-scope row carries an explicit `ingest`, "
+      "decided from substance and never from the bucket, the archive or the draft")
+def _r_ingest(v, ctx):
+    """RECOMPUTED, not read. `_prepared_verdict` derives the field; this
+    derives it AGAIN from the same verdict and refuses a disagreement, so a
+    producer that starts reading the bucket, `auto_archive` or the draft is
+    caught by a check that never learned to.
+
+    THE ABSENT FIELD IS THE FAILURE THIS RULE IS NAMED FOR. Commit f270700
+    records the near-identical predecessor: a single-vocabulary design let 110
+    read-but-unowed threads fall through with NO LANE AT ALL — no word said
+    what happened to them, so nothing could count them. An `ingest` that is
+    missing, or is not a mapping, is refused here rather than defaulted.
+    """
+    got = v.get("ingest")
+    if not isinstance(got, dict):
+        return (f"the row carries ingest {got!r} — every in-scope row states "
+                "its ingest relevance explicitly, because a row with no lane "
+                "at all is counted by nothing (f270700: 110 such rows)")
+    want = cos_judge_ingest.ingest_field(v, ctx)
+    if got.get("relevant") is not want["relevant"]:
+        return (f"ingest.relevant is {got.get('relevant')!r} on a "
+                f"`{v.get('disposition')}` row — relevance is the staging "
+                "pass's substance answer and nothing else; the bucket, the "
+                "archive claim and the draft never move it")
+    if got.get("relevant") and got.get("content") not in cos_judge_ingest.CONTENT_LANES:
+        return (f"ingest.content {got.get('content')!r} is outside "
+                f"{list(cos_judge_ingest.CONTENT_LANES)} — a relevant thread "
+                "whose lane is unnamed is a thread the bridge cannot build "
+                "content from")
+    if got.get("relevant") and got.get("content") != want["content"]:
+        return (f"ingest.content {got.get('content')!r} disagrees with the "
+                f"taxonomy lane {want['content']!r} for category "
+                f"{v.get('category')!r} — one rule, not one rumour")
+    if not got.get("relevant") and got.get("content") is not None:
+        return (f"a non-relevant row names content lane {got.get('content')!r}")
+    return None
+
+
 @rule("staging.candidate_stamps", "row",
       "Phase 1.6 rule 8 / STA-03 — a candidate carries its proposal id and digest")
 def _r_stamps(v, ctx):
@@ -251,8 +340,7 @@ def _r_stale(v, ctx):
 
 
 @rule("draft.voice_or_declared_neutral", "row",
-      "Phase 1 step 5 — the voice skill (the owner's own bundle if installed, else "
-      "the `overlay-style` kernel skill) in DRAFT then CHECK, or a DECLARED fallback")
+      "Phase 1 step 5 — the voice skill (the owner's own bundle if installed, else the `overlay-style` kernel skill) in DRAFT then CHECK, or a DECLARED fallback")
 def _r_voice(v, ctx):
     d = _draft(v)
     if not d:
@@ -273,14 +361,14 @@ def _r_draft_unread(v, ctx):
 
 
 # -- run-level ---------------------------------------------------------------
-@rule("draft.cap_10", "run", "Phase 1 step 5 — cap 10 for the leg as a whole, ACT first")
+@rule("draft.cap", "run", "Phase 1 step 5 — one cap for the leg as a whole, ACT first")
 def _r_cap(run, _ctx=None):
     n = int(run.get("drafts", 0))
     if n > DRAFT_CAP:
         return f"{n} drafts against a cap of {DRAFT_CAP} for the leg as a whole"
     if run.get("act_first") is False:
         return ("READ rows took slots ahead of ACT rows — they compete for the "
-                "SAME ten, ACT first")
+                f"SAME {DRAFT_CAP}, ACT first")
     return None
 
 

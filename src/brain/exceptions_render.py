@@ -403,7 +403,11 @@ def render_page(
     else:
         q_html = '<p class="ok">No decision is waiting.</p>'
 
-    count = len(questions) + len(dead) + len(untriaged) + len(other)
+    # A broken feed counts as one thing needing the owner, so the
+    # headline can never say "Nothing needs you" above a warning that
+    # says the cards below are UNKNOWN. Same rule as `exception_keys`.
+    count = (len(questions) + len(dead) + len(untriaged) + len(other)
+             + (1 if feed_issue else 0))
     body = (
         _header(data, full=full, ceiling=ceiling, count=count)
         + _feed_warning(findings)

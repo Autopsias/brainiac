@@ -14,10 +14,9 @@ import shutil
 import subprocess  # noqa: F401  (Runner's annotation, and the injected fake's type)
 import sys
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 from .doctor import (
-    CHANNEL_EDITABLE,
     detect_install_channel,
     marketplace_install_location,
 )

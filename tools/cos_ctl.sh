@@ -16,11 +16,17 @@
 #   tools/cos_ctl.sh resume      re-arm after a stop (schedule back on)
 #   tools/cos_ctl.sh undo [ID]   put a run's archives back (default: last run)
 #   tools/cos_ctl.sh unchip [ID] take a run's priority chips back off (ditto)
-#   tools/cos_ctl.sh install     PRINT the two commands that install the schedule
+#   tools/cos_ctl.sh discard-drafts [ID]
+#                                discard only that run's verified signed drafts
+#   tools/cos_ctl.sh install     WRITE the rendered plist(s) to
+#                                ~/Library/LaunchAgents, then PRINT the
+#                                `launchctl load` command to run yourself
 #   tools/cos_ctl.sh uninstall   PRINT the two commands that remove it
 #
-# `install`/`uninstall` PRINT and never execute: loading persistent automation
-# is the owner's action, always. Everything else here acts.
+# `install` WRITES the plist file(s) (refusing first if run from a plan
+# worktree — see the `install)` case) but never calls `launchctl`; `uninstall`
+# only prints. Loading/unloading persistent automation is the owner's action,
+# always.
 set -u
 
 # Derived from this file's own location, never from a worktree literal — the
@@ -47,7 +53,17 @@ fi
 export BRAIN_VAULT="${BRAIN_VAULT:-$HOME/DeveloperFolder/Brainiac/vault}"
 export PYTHONPATH="$REPO/src"
 PY="${COS_PYTHON:-python3}"
-PLIST_SRC="$REPO/tools/com.brainiac.cos-nightly.plist"
+# ONE template, rendered by ONE script (`tools/launchd/install-cos-jobs.sh`).
+# Until 2026-09-04 `install` carried its OWN copy at
+# `tools/com.brainiac.cos-nightly.plist` plus its own sed-based render — a
+# second renderer of the same job is exactly the "two templates that can
+# disagree" failure this line exists to close: that copy had drifted (no
+# caffeinate, no --batches, none of COS_BODY_CAP/COS_SINCE_DAYS/
+# COS_INGEST_BRIDGE/BRAIN_REQUIRE_REAL_EMBEDDER, a 06:30 schedule nobody
+# runs) from what is actually installed. `PLIST_SRC` now names the SAME
+# template `install-cos-jobs.sh` renders, so `install` delegates instead of
+# re-implementing.
+PLIST_SRC="$REPO/tools/launchd/com.brainiac.cos-nightly.plist"
 PLIST_DST="$HOME/Library/LaunchAgents/com.brainiac.cos-nightly.plist"
 LABEL="com.brainiac.cos-nightly"
 LOG_DIR="${BRAIN_LOG_DIR:-$HOME/.brain/logs}"
@@ -144,12 +160,47 @@ p.unlink(missing_ok=True); print(f'stop file lifted for {\"$RUN\"}')"
     $PY tools/cos_mutate.py unchip --run-id "$RUN" --cdp
     ;;
 
+  discard-drafts)
+    # THE NIGHTLY RUNS THIS ITSELF now, after its apply (owner ruling
+    # 2026-08-28: one draft per thread, and it is the newest). This entry point
+    # remains the ATTENDED REPAIR for the night that could not — the log names
+    # it when the discard fails. The page half re-reads each exact ledgered item
+    # in Drafts immediately before its draft-only captured DeleteItem replay.
+    # The source run SELECTS THE THREADS while every run ledger is scanned for
+    # both the survivor and the losers; there is no prefix/limit approximation.
+    RUN="${2:-$(current_run)}"
+    [ -n "$RUN" ] || { echo "no run id — pass one: cos_ctl.sh discard-drafts 2026-08-11-run122" >&2; exit 2; }
+    MANIFEST="$BRAIN_VAULT/cos-ops/_cos_draft_discard_manifest.json"
+    $PY tools/cos_mutate.py discard-draft-manifest --run-id "$RUN" \
+      --out "$MANIFEST" || exit $?
+    $PY tools/cos_ego_arm.py >/dev/null || {
+      echo "the ego mail task space is not armed — sign in and retry" >&2; exit 4; }
+    $PY tools/cos_mutate.py discard-drafts --run-id "$RUN" \
+      --discard-manifest "$MANIFEST" --ego
+    ;;
+
   install)
-    # The tracked plist is a TEMPLATE (`__HOME__`, `__COS_REPO__`): a tracked
-    # file may not bake in the operator's home path, or it reaches the public
-    # export — tests/test_export_cleanroom.py. So step 1 RENDERS instead of
-    # copying. Lint the source here so a malformed template is caught before the
-    # owner pastes anything.
+    # REFUSE from a plan worktree (2026-09-04 review finding). `REPO` is
+    # derived from where THIS script lives (top of file); a plan worktree
+    # disappears the moment its branch merges, so an install run from one
+    # bakes ProgramArguments pointing at a path that is about to vanish —
+    # exactly the bug cos_nightly_schedule_check.py exists to catch, caught
+    # here BEFORE it ever reaches a rendered plist. Run install from the
+    # stable deploy worktree instead (see cos_deploy_promote.py).
+    case "$REPO" in
+      */.plan-worktrees/*)
+        echo "REFUSING: cos_ctl.sh install would render a plist pointing at" >&2
+        echo "  $REPO" >&2
+        echo "which is a PLAN WORKTREE — it disappears when its branch merges," >&2
+        echo "silencing the job with no error anywhere. Run 'install' from the" >&2
+        echo "stable deploy worktree instead (advance it with" >&2
+        echo "tools/cos_deploy_promote.py, see that script's docstring)." >&2
+        exit 1 ;;
+    esac
+    # The tracked plist is a TEMPLATE (`__HOME__`, `__COS_REPO__`, …): a
+    # tracked file may not bake in the operator's home path, or it reaches
+    # the public export — tests/test_export_cleanroom.py. Lint the source
+    # here so a malformed template is caught before anything renders.
     plutil -lint "$PLIST_SRC" >/dev/null || {
       echo "REFUSING: $PLIST_SRC is not a well-formed plist" >&2; exit 1; }
     # `plutil -lint` IS NOT ENOUGH. It accepted a template whose XML comment
@@ -181,13 +232,22 @@ PLCHK
       echo "  $PY_ABS -m pip install websockets" >&2
       echo "or point COS_PYTHON at an interpreter that has it, then re-run." >&2
       exit 1; }
-    echo "Run these two commands yourself (loading a schedule is an owner action):"
+    # DELEGATE to the ONE renderer (`tools/launchd/install-cos-jobs.sh`) —
+    # this used to carry its own sed one-liner against the SECOND, staler
+    # template `install` renamed away from above. It writes rendered files
+    # only; it never calls launchctl.
+    export COS_PYTHON="$PY_ABS"
+    export BRAIN_COS_DOWNLOADS_DIR="${BRAIN_COS_DOWNLOADS_DIR:-$HOME/.brain/cos-downloads}"
+    bash "$REPO/tools/launchd/install-cos-jobs.sh" || exit 1
     echo
-    echo "  sed -e 's|__COS_REPO__|$REPO|g' -e 's|__HOME__|$HOME|g' -e 's|__PYTHON__|$PY_ABS|g' '$PLIST_SRC' > '$PLIST_DST'"
+    echo "Run this command yourself (loading a schedule is an owner action):"
+    echo
     echo "  launchctl load '$PLIST_DST'"
     echo
-    echo "It fires at 06:30 daily; loading it does NOT start a run."
-    echo "The first command RENDERS the template (it carries no machine paths)."
+    echo "Read the schedule back with 'launchctl print', NEVER from the file —"
+    echo "the file is what was just rendered and proves nothing about what"
+    echo "launchd actually loaded:"
+    echo "  launchctl print gui/\$(id -u)/$LABEL"
     ;;
 
   uninstall)
@@ -198,5 +258,5 @@ PLCHK
     ;;
 
   *)
-    sed -n '2,21p' "$0"; exit 2 ;;
+    sed -n '2,29p' "$0"; exit 2 ;;
 esac

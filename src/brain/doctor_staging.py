@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import json
-import os
-import re
+import os as os
+import re as re
 import subprocess
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any as Any, Callable, Optional
 
 # knowing which of two surfaces to look at. Getting that wrong produced two
 # false freeze alarms (runs 37 and 55): a pin ahead of the deployment silently

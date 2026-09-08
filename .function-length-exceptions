@@ -12,18 +12,6 @@
       "name": "main",
       "lines": 249
     },
-    "eval/gate.py:main": {
-      "file": "eval/gate.py",
-      "lineno": 173,
-      "name": "main",
-      "lines": 234
-    },
-    "eval/capture_run.py:main": {
-      "file": "eval/capture_run.py",
-      "lineno": 83,
-      "name": "main",
-      "lines": 206
-    },
     "eval/s06_fusion_residual.py:main": {
       "file": "eval/s06_fusion_residual.py",
       "lineno": 321,
@@ -54,12 +42,6 @@
       "name": "main",
       "lines": 193
     },
-    "eval/ne_upgrade_gate.py:main": {
-      "file": "eval/ne_upgrade_gate.py",
-      "lineno": 344,
-      "name": "main",
-      "lines": 192
-    },
     "eval/bulk_link_control.py:main": {
       "file": "eval/bulk_link_control.py",
       "lineno": 254,
@@ -71,18 +53,6 @@
       "lineno": 112,
       "name": "main",
       "lines": 170
-    },
-    "eval/harness_direct.py:main": {
-      "file": "eval/harness_direct.py",
-      "lineno": 193,
-      "name": "main",
-      "lines": 165
-    },
-    "eval/ne_upgrade_gate.py:_invariants": {
-      "file": "eval/ne_upgrade_gate.py",
-      "lineno": 80,
-      "name": "_invariants",
-      "lines": 159
     },
     "eval/s08_expand_split.py:stage_split": {
       "file": "eval/s08_expand_split.py",
@@ -108,29 +78,11 @@
       "name": "main",
       "lines": 131
     },
-    "src/brain/cos_runverify_selfeval.py:check_self_eval": {
-      "file": "src/brain/cos_runverify_selfeval.py",
-      "lineno": 8,
-      "name": "check_self_eval",
-      "lines": 130
-    },
     "tests/fixtures/generate_sample_corpus.py:build": {
       "file": "tests/fixtures/generate_sample_corpus.py",
       "lineno": 56,
       "name": "build",
       "lines": 129
-    },
-    "tests/_pathguard_helpers.py:_tainted_path_uses": {
-      "file": "tests/_pathguard_helpers.py",
-      "lineno": 75,
-      "name": "_tainted_path_uses",
-      "lines": 121
-    },
-    "eval/harness.py:main": {
-      "file": "eval/harness.py",
-      "lineno": 85,
-      "name": "main",
-      "lines": 120
     },
     "eval/pt_leg_attribution.py:main": {
       "file": "eval/pt_leg_attribution.py",
@@ -161,12 +113,6 @@
       "lineno": 239,
       "name": "test_only_a_validated_category_answer_arms_the_gate",
       "lines": 104
-    },
-    "eval/s06_addendum.py:main": {
-      "file": "eval/s06_addendum.py",
-      "lineno": 37,
-      "name": "main",
-      "lines": 103
     }
   }
 }

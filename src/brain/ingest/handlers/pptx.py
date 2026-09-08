@@ -68,6 +68,34 @@ def _open_presentation(path: Path) -> "Presentation | ExtractResult":
         )
 
 
+def _slide_lines(slide: object, i: int, admitted: "concealment.Admitted",
+                 admit, can_ocr: bool) -> tuple[list[str], bool]:
+    """The Markdown lines for one slide, and whether OCR of its pictures
+    supplied them. Admission order is the reading order: the header, then
+    every shape as the deck holds it, then picture OCR only when no shape
+    carried native text."""
+    lines = [admitted.chrome(f"## Slide {i}\n")]
+    native = False
+    for shape in slide.shapes:  # type: ignore[attr-defined]
+        if shape.has_table:
+            rows = [[c.text for c in row.cells] for row in shape.table.rows]
+            lines.append(rows_to_markdown(rows, admit=admit))
+            native = True
+        elif shape.has_text_frame:
+            text = shape.text_frame.text.strip()
+            if text:
+                lines.append(admitted.add("pptx:native", text + "\n"))
+                native = True
+    if native or not can_ocr:
+        return lines, False
+    # No native text on this slide — read its pictures.
+    picture_text = _ocr_pictures(slide)
+    if not picture_text:
+        return lines, False
+    lines.append(admitted.add("pptx:picture_ocr", picture_text + "\n"))
+    return lines, True
+
+
 class PptxHandler(Handler):
     extensions = (".pptx",)
     dependency_name = "python-pptx"
@@ -112,26 +140,9 @@ class PptxHandler(Handler):
         try:
             for i, slide in enumerate(prs.slides, start=1):
                 slide_count = i
-                lines = [admitted.chrome(f"## Slide {i}\n")]
-                native = False
-                for shape in slide.shapes:
-                    if shape.has_table:
-                        tbl = shape.table
-                        rows = [[c.text for c in row.cells] for row in tbl.rows]
-                        lines.append(rows_to_markdown(rows, admit=admit))
-                        native = True
-                    elif shape.has_text_frame:
-                        text = shape.text_frame.text.strip()
-                        if text:
-                            lines.append(admitted.add("pptx:native", text + "\n"))
-                            native = True
-                if not native and can_ocr:
-                    # No native text on this slide — read its pictures.
-                    picture_text = _ocr_pictures(slide)
-                    if picture_text:
-                        ocr_slides.append(i)
-                        lines.append(admitted.add(
-                            "pptx:picture_ocr", picture_text + "\n"))
+                lines, used_ocr = _slide_lines(slide, i, admitted, admit, can_ocr)
+                if used_ocr:
+                    ocr_slides.append(i)
                 sections.append("\n".join(lines))
         except Exception as exc:  # coverage-audit: quarantines; no text is admitted, so none is claimed
             return ExtractResult.quarantine(

@@ -1,4 +1,6 @@
-"""The self-eval check (moved VERBATIM, never reorganized in place)."""
+"""The self-eval check. Moved verbatim in 2026-08; on 2026-09-05 the result
+parser and the N/A corroboration branch were lifted into their own helpers to
+bring `check_self_eval` under the 100-line ratchet — same rows, same order."""
 from __future__ import annotations
 
 from typing import Any
@@ -22,18 +24,7 @@ def check_self_eval(vault, run_id: str, manifest: dict[str, Any]) -> dict[str, A
                     f"the run report {report.name} is unreadable ({exc}) — the "
                     "host cannot tell whether the self-eval ran",
                     reexecuted=False)
-    # AN OUTCOME DECIDES, NOT A PRINTED ID (DOCTRINE v7 §8.1 rule 3). This line
-    # read `for n, _ in ...findall` until 2026-08-14 — it CAPTURED the verdict
-    # token and threw it away — so a report whose every E-check said FAIL
-    # produced the id set {1..10} and scored this control PASS. Probed, not
-    # assumed (`_evidence/cosv7/s01-echeck-probe.txt`): that is exactly what
-    # today's shipped verifier does. A checker that reads ids instead of
-    # answers is the same defect one level up as a run that grades its own
-    # homework.
-    results: dict[int, set[str]] = {}
-    for n, verdict in _REPORT_ECHECK_RE.findall(text):
-        token = verdict.upper().replace("/", "")
-        results.setdefault(int(n), set()).add("NA" if token == "NA" else token)
+    results = _echeck_results(text)
     found = set(results)
 
     expected, why = expected_check_count(manifest)
@@ -97,37 +88,9 @@ def check_self_eval(vault, run_id: str, manifest: dict[str, Any]) -> dict[str, A
     # than reading the number the report printed beside its own claim.
     na = sorted(i for i, r in results.items() if "NA" in r)
     if na:
-        try:
-            from . import cos_echecks                      # noqa: PLC0415
-            host = cos_echecks.denominators(vault, run_id)
-        except Exception as exc:                           # noqa: BLE001
-            return _row("self_eval", FAIL,
-                        f"{report.name} answers E"
-                        f"{', E'.join(str(i) for i in na[:8])} `N/A`, and the "
-                        f"host could not re-derive their denominators to "
-                        f"corroborate it ({type(exc).__name__}: "
-                        f"{str(exc)[:120]}). An uncorroborated N/A is a check "
-                        "that scored itself",
-                        reexecuted=True)
-        uncorroborated = {i: host.get(i) for i in na if host.get(i)}
-        never = [i for i in na if i in cos_echecks.NEVER_NA]
-        if never:
-            return _row("self_eval", FAIL,
-                        f"{report.name} answers E"
-                        f"{', E'.join(str(i) for i in never)} `N/A`, which "
-                        "those checks may never be — their denominators (the "
-                        "sent baseline, the frozen capability digest) exist on "
-                        "every run",
-                        reexecuted=True)
-        if uncorroborated:
-            return _row("self_eval", FAIL,
-                        f"{report.name} answers "
-                        + ", ".join(f"E{i} `N/A` over a host-derived "
-                                    f"denominator of {n}"
-                                    for i, n in sorted(uncorroborated.items()))
-                        + ". N/A is legal only against a MACHINE-DERIVED ZERO "
-                          "denominator; on a non-zero one it is a FAIL",
-                        reexecuted=True)
+        failed_na = _uncorroborated_na(vault, run_id, report.name, na)
+        if failed_na is not None:
+            return failed_na
     return _row("self_eval", PASS,
                 f"{len(found)} self-eval check result(s) reported and DECIDED, "
                 f"against {why} — never against whatever SKILL.md is deployed "
@@ -135,6 +98,63 @@ def check_self_eval(vault, run_id: str, manifest: dict[str, Any]) -> dict[str, A
                 + (f", and {len(na)} N/A corroborated against a host-derived "
                    "zero denominator" if na else ""),
                 reexecuted=bool(na))
+
+
+def _echeck_results(text: str) -> dict[int, set[str]]:
+    """Every E-check id in a run report -> the set of verdict tokens it printed.
+
+    AN OUTCOME DECIDES, NOT A PRINTED ID (DOCTRINE v7 §8.1 rule 3). This loop
+    read `for n, _ in ...findall` until 2026-08-14 — it CAPTURED the verdict
+    token and threw it away — so a report whose every E-check said FAIL
+    produced the id set {1..10} and scored this control PASS. Probed, not
+    assumed (`_evidence/cosv7/s01-echeck-probe.txt`): that is exactly what
+    today's shipped verifier does. A checker that reads ids instead of
+    answers is the same defect one level up as a run that grades its own
+    homework.
+    """
+    results: dict[int, set[str]] = {}
+    for n, verdict in _REPORT_ECHECK_RE.findall(text):
+        token = verdict.upper().replace("/", "")
+        results.setdefault(int(n), set()).add("NA" if token == "NA" else token)
+    return results
+
+
+def _uncorroborated_na(vault, run_id: str, report_name: str,
+                       na: list[int]) -> dict[str, Any] | None:
+    """The FAIL row when any `N/A` answer in ``na`` is not corroborated by a
+    host-derived zero denominator; None when every one of them is."""
+    try:
+        from . import cos_echecks                      # noqa: PLC0415
+        host = cos_echecks.denominators(vault, run_id)
+    except Exception as exc:                           # noqa: BLE001
+        return _row("self_eval", FAIL,
+                    f"{report_name} answers E"
+                    f"{', E'.join(str(i) for i in na[:8])} `N/A`, and the "
+                    f"host could not re-derive their denominators to "
+                    f"corroborate it ({type(exc).__name__}: "
+                    f"{str(exc)[:120]}). An uncorroborated N/A is a check "
+                    "that scored itself",
+                    reexecuted=True)
+    uncorroborated = {i: host.get(i) for i in na if host.get(i)}
+    never = [i for i in na if i in cos_echecks.NEVER_NA]
+    if never:
+        return _row("self_eval", FAIL,
+                    f"{report_name} answers E"
+                    f"{', E'.join(str(i) for i in never)} `N/A`, which "
+                    "those checks may never be — their denominators (the "
+                    "sent baseline, the frozen capability digest) exist on "
+                    "every run",
+                    reexecuted=True)
+    if uncorroborated:
+        return _row("self_eval", FAIL,
+                    f"{report_name} answers "
+                    + ", ".join(f"E{i} `N/A` over a host-derived "
+                                f"denominator of {n}"
+                                for i, n in sorted(uncorroborated.items()))
+                    + ". N/A is legal only against a MACHINE-DERIVED ZERO "
+                      "denominator; on a non-zero one it is a FAIL",
+                    reexecuted=True)
+    return None
 
 
 #: The self-eval header every run report carries, e.g.

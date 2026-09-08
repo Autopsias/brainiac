@@ -3,19 +3,10 @@ from __future__ import annotations
 
 from ._shared import *  # noqa: F401,F403
 from ._facade import public
-from ._approval import approved_staged, stage_approved
-from ._attachment_acceptance import _accept_attachment
-from ._attachment_store import _discard_attachment, attachment_metas
 from ._batches import _batches_path, _write_batches, batch_digest, parse_batch_answer
-from ._claims_state import _bound_meta
-from ._corrections import record_correction
-from ._guards import _safe_meta_id
-from ._io import _fsync_dir, _read_jsonl, _write_atomic
-from ._layout import _parse_ts, _ts, _utcnow, host_dir, proposals_dir
-from ._learning_ledger import _record_verdict, log_defect
-from ._spine import _spine_ingest_commitment
-from ._version_apply import _apply_version_link
-from ._version_links import version_link_metas
+from ._io import _fsync_dir, _read_jsonl
+from ._layout import _parse_ts, _ts, _utcnow, proposals_dir
+from ._learning_ledger import log_defect
 from ._batch_apply import _apply_batch_decision
 from ._answer_consume import _consume_batch_answers, _consume_corrections
 

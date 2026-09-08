@@ -328,3 +328,21 @@ was actually established.
 the run's own three inputs; the *host validator* (`brain.cos_runverify`, INS-01) scores
 the run VALID/DEGRADED/INCONCLUSIVE from host-derived stamps. A run needs **both** — the
 contract can pass on a run the validator cannot vouch for at all.
+
+**Mark** vs **rule** — the two things the owner's morning sheet produces, and they are
+different kinds of record. A *mark* is one owner correction on one thread (this archive was
+wrong; this label should be X; this draft is too long): it is evidence about a specific
+past judgment, it never expires and it is never deduplicated. A *rule* is a general sentence
+the owner endorses (`"once ingested and with no draft, archive it"`): it is injected into
+the judge's prompt, it expires, and marking the same rule twice yields **one** rule with two
+confirmations. `docs/cos-feedback-record.md` freezes this as the record's two row kinds, and
+the split is load-bearing in both directions — a mark deduplicated would silently turn one
+human act into two confirmations, and a rule with no expiry would go on shaping the judge's
+verdicts long after the owner stopped meaning it. An *unset* control is neither: absence of a mark is
+not agreement, and only an explicit mark is ever filed.
+
+**Lane**, the third sense — CONTEXT.md defines *lane* as the mutation transport paired with a
+toolset (above), and `docs/` also uses it for a pipeline stage (the read lane, the bridge lane,
+the file lane). A path a file travels on the owner's own Mac — his Downloads folder — is
+**not** a lane in either sense, and calling it one imports an unattended-execution guarantee it
+does not carry. Say "the Downloads path" and name who writes it.

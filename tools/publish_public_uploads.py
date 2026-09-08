@@ -13,13 +13,10 @@ import os
 import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
 import time
 import urllib.parse
-import zipfile
 from pathlib import Path
-import re as _re
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools import publish_public as _pp  # noqa: E402

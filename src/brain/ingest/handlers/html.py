@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import html as _html_stdlib
 import html.parser
+import json
 import re
 from pathlib import Path
 
@@ -128,6 +129,33 @@ def _extract_text(raw_html: str, seen: object = None) -> tuple[str, list[str], l
         return re.sub(r"\s+", " ", text).strip(), warnings, concealed
 
 
+#: A Claude-artifact "Bundled Page" export. The outer file is a LOADER: its
+#: only readable text is "This page requires JavaScript to display", and the
+#: real document sits JSON-encoded in this block.
+_BUNDLER_TEMPLATE = re.compile(
+    r'<script type="__bundler/template">(.*?)</script>', re.DOTALL)
+
+
+def _bundled_document(raw_html: str) -> str | None:
+    """The inner HTML of a bundled artifact page, or ``None`` for any other
+    document.
+
+    Nothing here decompresses or executes anything: the block must parse as
+    JSON and BE a string of HTML, which the sibling ``__bundler/manifest``
+    block (an object of gzipped JavaScript assets) never is. The inner string
+    then goes through the same reader, the same concealment walk and the same
+    coverage ledger as an ordinary document.
+    """
+    match = _BUNDLER_TEMPLATE.search(raw_html)
+    if not match:
+        return None
+    try:
+        inner = json.loads(match.group(1))
+    except ValueError:  # coverage-audit: not JSON, so not a bundle; the caller reads the outer document, whose own text IS walked
+        return None
+    return inner if isinstance(inner, str) and inner.strip() else None
+
+
 class HtmlHandler(Handler):
     extensions = (".html", ".htm")
     dependency_name = "stdlib"
@@ -167,8 +195,19 @@ class HtmlHandler(Handler):
         # of the same tree the walk covered, so it rides on `html:text`.
         admitted = concealment.Admitted()
         title = _extract_title(text_raw)
+        source = "html:text"
+        inner = _bundled_document(text_raw)
+        if inner is not None:
+            # Read the bundled document instead of its loader. Measured
+            # 2026-09-07 on the live vault: 70 characters -> 31,945, on a file
+            # quarantined `empty_or_low_text_density` three nights running.
+            # The title goes with the loader: the outer <title> is the generic
+            # "Bundled Page", and an inner one is as often a fragment of the
+            # page's own JavaScript as a name. The note is named from its
+            # filename either way.
+            text_raw, source, title = inner, "html:bundled", None
         body, warnings, concealed = _extract_text(
-            text_raw, admitted.watch("html:text"))
+            text_raw, admitted.watch(source))
         if not body:
             return ExtractResult.quarantine("empty_or_low_text_density", warnings=warnings)
 
@@ -185,8 +224,8 @@ class HtmlHandler(Handler):
             # the occurrence-aware coverage check must not demand a second
             # sighting. Saying so here is what lets that check stay strict
             # everywhere else (round 7, 2026-09-04).
-            admitted.repeat("html:text", title)
-        admitted.add("html:text", body)
+            admitted.repeat(source, title)
+        admitted.add(source, body)
         return ExtractResult(markdown=markdown, warnings=warnings,
                              metadata={"title": title, "concealed": concealed,
                                        **concealment.attest(

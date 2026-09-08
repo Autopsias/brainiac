@@ -3,10 +3,10 @@ from __future__ import annotations
 
 from ._shared import *  # noqa: F401,F403
 from ._facade import public
-from ._attachment_anchors import clear_attachment_hold_authz, stage_attachment_anchor
-from ._attachment_store import _attachment_meta_path, _write_attachment_lifecycle, attachment_lifecycle_dir
+from ._attachment_anchors import clear_attachment_hold_authz
+from ._attachment_store import _attachment_meta_path, attachment_lifecycle_dir
 from ._guards import _safe_basename, _unique_dest
-from ._io import _read_nofollow, _write_atomic
+from ._io import _read_nofollow
 from ._layout import _ts, _utcnow
 
 def _accepted_attachment_bytes(vault, meta: dict[str, Any], *, expected_sha: str | None,
@@ -45,9 +45,14 @@ def _attachment_lifecycle(meta: dict[str, Any], *, source: Path, destination: Pa
         if value:
             claim[key] = provenance.sanitize_value(value)
     lifecycle = {
+        # `manifest_line_key` is the payload's binding to the ONE manifest line
+        # it was claimed for. `_joined_row` requires it to close the confused
+        # deputy: without it, the mount's claims row alone decided which
+        # payload a line reached. Written here because this is the last moment
+        # the host holds the sidecar, and it lands in a 0700 host record.
         **{key: meta.get(key) for key in (
             "id", "sha256", "filename", "category", "lane", "tier", "rules_version", "pattern",
-            "bundle_version", "evidence_unit", "evidence_lineage")},
+            "bundle_version", "evidence_unit", "evidence_lineage", "manifest_line_key")},
         "src": str(source), "dest": str(destination), "released": _ts(now),
         "filename": name, "sha256": sha,
     }

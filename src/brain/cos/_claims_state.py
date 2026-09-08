@@ -5,7 +5,6 @@ from ._shared import *  # noqa: F401,F403
 from ._facade import public
 from ._attachment_store import _attachment_meta_path
 from ._guards import _read_receipt_pairs
-from ._io import _write_atomic
 from ._layout import _ts, proposals_dir
 from ._learning_ledger import log_defect
 from ._runs import run_validity

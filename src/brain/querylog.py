@@ -28,10 +28,10 @@ import stat
 import threading
 import time
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable as Iterable
 
-from . import classification as cls
-from . import config, egress
+from . import classification as cls  # noqa: F401
+from . import config, egress as egress
 from . import querylog_status as _querylog_status
 
 

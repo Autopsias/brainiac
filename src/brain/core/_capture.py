@@ -8,16 +8,12 @@ from ._shared import (
     Path,
     _contained_in,
     _stamp_draft_frontmatter,
-    classification,
     config,
     frontmatter,
     os,
     safe_slug,
     sha256_text,
     vault_writer_lock,
-)
-from ._durability import (
-    _write_note_durable,
 )
 
 

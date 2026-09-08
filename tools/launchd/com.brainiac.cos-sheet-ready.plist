@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The morning nudge. Template rendered the same way as the other COS jobs (see
+  install-cos-jobs.sh); this file is copied but never loaded by any script —
+  loading is an attended action, by the owner, with launchctl.
+
+  08:00, an hour after the read-back at 07:00, so a marks file saved last night
+  has already been filed and the count it reports is current.
+
+  It NEVER goes silent: a morning with no sheet means last night's run did not
+  finish, and saying so is the point. Read-only — no mailbox, no signing, no
+  vault write.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.brainiac.cos-sheet-ready</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__PYTHON__</string>
+    <string>__COS_REPO__/tools/cos_sheet_notify.py</string>
+    <string>--vault</string>
+    <string>__BRAIN_VAULT__</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>8</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>__LOG_DIR__/cos-sheet-ready-launchd.out</string>
+  <key>StandardErrorPath</key>
+  <string>__LOG_DIR__/cos-sheet-ready-launchd.err</string>
+</dict>
+</plist>

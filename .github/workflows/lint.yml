@@ -43,7 +43,7 @@ jobs:
         # Pinned to the same version as the pre-commit hook's `rev:`, so a
         # finding can never appear in one place and not the other. Bump both
         # together.
-        run: python -m pip install ruff==0.16.3
+        run: python -m pip install ruff==0.16.6
 
       - name: Prove the check can still fail
         # A gate that returns "clean" because its input was empty is worse than

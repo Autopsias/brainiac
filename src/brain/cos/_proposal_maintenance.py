@@ -3,11 +3,10 @@ from __future__ import annotations
 
 from ._shared import *  # noqa: F401,F403
 from ._facade import public
-from ._attachment_store import _attachment_meta_path, attachment_expired_dir, attachment_lifecycle_dir, attachment_metas
+from ._attachment_store import _discard_attachment, attachment_expired_dir, attachment_lifecycle_dir, attachment_metas
 from ._batches import _batches_path
 from ._claims_state import _pending_metas
-from ._guards import _move_dirent, _unique_dest
-from ._io import _read_jsonl, _write_atomic
+from ._io import _read_jsonl
 from ._layout import _env_days, _parse_ts, _utcnow, hold_dir, proposals_dir
 from ._version_links import _expire_version_links, _version_link_expired
 
@@ -34,18 +33,17 @@ def expire_proposals(vault, now: _dt.datetime | None = None) -> list[str]:
                 expired.append(m["id"])
         # Same for quarantined attachments — moved aside (recoverable until
         # the GC window closes), never auto-accepted, never a verdict.
-        adir = attachment_expired_dir(vault)
+        # ONE DEFINITION OF "OUT OF THE FUNNEL" (review 2026-09-05). This
+        # repeated `_discard_attachment`'s body instead of calling it, so the
+        # TTL path moved the payload aside but left the lifecycle record and
+        # wrote NO discard witness. `_line_state` then read the line as
+        # `in-funnel` for ever — a permanent hold on a thread whose file the
+        # TTL had already given up on. The copy is the bug; the call is the fix.
         for m in attachment_metas(vault):
             exp = _parse_ts(m.get("ttl_expires", ""))
             if not (exp and exp <= now):
                 continue
-            adir.mkdir(parents=True, exist_ok=True)
-            src = Path(m["path"])
-            if src.is_symlink() or src.exists():
-                _move_dirent(src, _unique_dest(adir, src.name))
-            meta_path = _attachment_meta_path(vault, m["id"])
-            if meta_path.exists():
-                _move_dirent(meta_path, _unique_dest(adir, meta_path.name))
+            _discard_attachment(vault, m)
             expired.append(m["id"])
         expired.extend(_expire_version_links(vault, now))
         return expired

@@ -59,6 +59,12 @@ def night_argparser(description: str, default_cap: int) -> argparse.ArgumentPars
                         "pass re-enumerates, so the stamps are bound to the "
                         "snapshot they were judged on) and with "
                         "--validate-categories")
+    p.add_argument("--exclude-conversation-ids", type=Path, default=None,
+                   help="JSON list of conversation ids excluded from this "
+                        "batch's body draw. The full census remains in the "
+                        "parent's enumeration-full.json artifact; cos_judge's "
+                        "--selection is the matching bounded run-ledger and "
+                        "model-population boundary")
     p.add_argument("--validate-categories", action="store_true",
                    help="check --categories against --enumeration and exit 0 "
                         "only if it is a usable answer to THIS run's batch. "

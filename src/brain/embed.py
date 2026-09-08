@@ -33,7 +33,7 @@ import math
 import os
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass as dataclass
 from typing import Protocol, Sequence, runtime_checkable
 
 from .embed_backends import select_embedder

@@ -17,27 +17,83 @@ from cos_reconcile_metrics import MUTATION_VERBS  # noqa: E402
 
 #: (v7.3, AGED-01) Belt 2 lives in its own module (the 500-LOC bound).
 from cos_mutate_plan_aged import aged_read_refusal  # noqa: E402
+#: (STALE-01) Belt 2 of the stale-act lane, same bound, same shape.
+from cos_mutate_plan_stale import stale_act_refusal  # noqa: E402
+#: (FB-02) The OWNER's own standing thread rulings, and the whole-plan screen
+#: that honours them. Same 500-LOC bound, same shape as the belts above; both
+#: names are re-imported here so `plan_stages.screen_owner_rulings` keeps the
+#: module path `build_plan` and the tests reach it by.
+from cos_mutate_plan_rulings import (  # noqa: E402,F401
+    _drop_ruled, owner_rulings_state, screen_owner_rulings)
+#: The PER-THREAD BUDGET — the chip a row earns, and what may ride an archive.
+#: Same bound, same shape; re-imported here so `plan_stages` keeps both names.
+from cos_mutate_plan_budget import (  # noqa: E402,F401
+    _plan_chip, order_companions_before_archive, p0_excluded,
+    screen_archiving_companions)
+
+
+#: (RULE 1) Belt 2 of the read-noise lane, in its own module for the same
+#: 500-LOC bound as the two belts above. Re-imported so callers and tests keep
+#: reaching it at this module path.
+from cos_mutate_plan_noise import noise_read_refusal  # noqa: E402,F401
+
+
+def lane_refusal(row: dict[str, Any],
+                 signed_ingested: frozenset[str] | set[str] = frozenset(),
+                 *, archive_over_draft: bool = False
+                 ) -> str | None:
+    """BELT 2 OF EVERY AUTO-ARCHIVE LANE, in one call.
+
+    Each lane's belt re-screens what the LEDGER ROW itself can prove and is
+    silent on every other lane's signal, so asking all of them costs one pass
+    and adds no branch here — which is the point: a third lane is a row in this
+    tuple, never another `elif` in the screen. The judge-side halves saw the
+    batch context (the ask detector, the spine, the drafts inventory); nothing
+    here does, and that is what makes the two belts independent. `signed_ingested`
+    is the substance-gate escape (RULE 1) every belt takes; stale-act ignores it.
+
+    `archive_over_draft` (owner ruling 2026-09-02) reaches the AGED-READ belt
+    ALONE, which is why that belt is called by name and the other two keep the
+    tuple. The stale-act lane is the one that carries threads still owing an
+    action; widening it over a draft would archive exactly the mail the ruling
+    says stays in the inbox.
+    """
+    why = aged_read_refusal(row, signed_ingested,
+                            archive_over_draft=archive_over_draft)
+    if why:
+        return why
+    for refuse in (stale_act_refusal, noise_read_refusal):
+        why = refuse(row, signed_ingested)
+        if why:
+            return why
+    return None
 
 
 def screen_ledger_rows(rows: list[dict[str, Any]], exclude: Callable,
                        *, short: Callable, chip_for: Callable,
-                       managed_chips: tuple[str, ...]) -> list[dict[str, Any]]:
+                       managed_chips: tuple[str, ...],
+                       signed_ingested: frozenset[str] | set[str] = frozenset(),
+                       archive_over_draft: bool = False
+                       ) -> list[dict[str, Any]]:
     """Plan the archive and chip mutations the JUDGED ledger rows justify."""
     planned: list[dict[str, Any]] = []
     for row in rows:
         cid = row["conversation_id"]
+        archiving = False
         if row.get("auto_archive") is True:
             if row.get("read_state") != "read":
                 exclude(cid, "archive", "read_state is not `read` — an unread "
                                         "row is untouchable by any lane")
-            elif row.get("tier") in ("P0", "P1"):
-                exclude(cid, "archive", f"tier {row.get('tier')} is hard-excluded "
-                                        "from auto-archive under every lane")
+            elif (p0 := p0_excluded(row)):
+                exclude(cid, "archive", p0)
             elif row.get("judgment_pending"):
                 exclude(cid, "archive", "the row carries no verdict")
-            elif aged_read_refusal(row):
-                exclude(cid, "archive", aged_read_refusal(row))
+            elif (why := lane_refusal(
+                    row, signed_ingested,
+                    archive_over_draft=archive_over_draft)):
+                exclude(cid, "archive", why)
             else:
+                archiving = True
                 planned.append({
                     "verb": "archive", "conversation_id": cid,
                     "reason": f"auto-archive: {row.get('verdict')}/"
@@ -46,132 +102,8 @@ def screen_ledger_rows(rows: list[dict[str, Any]], exclude: Callable,
                     "tier": row.get("tier"), "read_state": row.get("read_state"),
                     "received": row.get("received"),
                 })
-        # THE CHIP COMES FROM THE (bucket, tier) MATRIX, not from `hold_category`
-        # (which is the judge's hold-REASON vocabulary — `Held · ask` and its
-        # siblings — and could never match a managed chip name; wired to it, the
-        # lane was unfireable by construction), and not from the tier ALONE
-        # (DOCTRINE v7 §4.1: `read`/P2 → `P3 · Read` while `act`/P2 →
-        # `P2 · This week`, same tier, different chip). `verdict` is the bucket
-        # `apply_judgment` wrote; `judged_tier` is the tier. The lane is
-        # ADD-ONLY: it puts a missing chip on, and never touches a thread that
-        # already carries one, because clearing a chip is a shape this build has
-        # not accepted from us.
-        chip = chip_for(row.get("verdict"), row.get("judged_tier"))
-        if chip:
-            if chip not in managed_chips:
-                exclude(cid, "categorize", f"{chip!r} is not a managed priority "
-                                           "chip; only the four may be written")
-            elif row.get("judgment_pending"):
-                exclude(cid, "categorize", "the row carries no verdict")
-            elif row.get("read_state") != "read":
-                # THE SHIELD IS NOT ARCHIVE-ONLY. The archive branch above says
-                # an unread row is "untouchable by any lane", and the plan's own
-                # census rule says an unread row can be neither archived NOR
-                # categorized — but this branch never read `read_state`, so the
-                # shield only ever covered half of what it claimed. Run188
-                # (2026-08-24) chipped one unread thread `P3 · Read`; e-check E2
-                # caught it after the mutation had already landed on the
-                # mailbox. A post-apply check is a report, not a shield.
-                exclude(cid, "categorize", "read_state is not `read` — an "
-                                           "unread row is untouchable by any "
-                                           "lane, the chip lane included")
-            elif row.get("tier"):
-                exclude(cid, "categorize",
-                        f"the thread already carries a {row.get('tier')} chip and "
-                        "this lane is ADD-ONLY — it cannot clear or replace one")
-            else:
-                planned.append({"verb": "categorize", "conversation_id": cid,
-                                "chip": chip, "mode": "add",
-                                "received": row.get("received"),
-                                "reason": f"chip: judged "
-                                          f"{row.get('verdict')}/"
-                                          f"{row.get('judged_tier')} on a "
-                                          "thread carrying none"})
-    return planned
-
-
-def ingested_conversations(run_id: str,
-                           rows: list[dict[str, Any]]) -> set[str]:
-    """The conversation ids THIS RUN dropped a proposal for — TEXT LANE AND
-    FILE LANE ALIKE.
-
-    THE DROP STAMP IS THE INGESTION RECORD. The bridge stamps
-    `proposals_dropped` and `proposal_id` onto the ledger row of every
-    candidate it takes delivery of, whatever its `content_choice`, and those
-    stamps stay. Two other records were tried and both answer a different
-    question: the ingest MANIFEST carries one line per ATTACHMENT, so it marked
-    nothing on run168's three text-only drops; and the DROP FILE is transient —
-    the hourly claim sweep empties the drop directory behind it (measured
-    2026-08-23, run169's three drops gone within the hour), so a join on it
-    reports how fast the sweep ran.
-
-    The engine owns the rule (`cos.bridge_dropped_row`), because E4 verifies
-    the mark against the same one.
-    """
-    from brain import cos  # noqa: PLC0415
-    return {str(r.get("conversation_id") or "") for r in rows
-            if r.get("conversation_id") and cos.bridge_dropped_row(r, run_id)}
-
-
-def screen_ingest_marks(rows: list[dict[str, Any]], ingested: set[str],
-                        exclude: Callable,
-                        *, already_planned: list[dict[str, Any]]
-                        ) -> list[dict[str, Any]]:
-    """Plan the `Brainiac · Ingested` mark for every row the vault really took.
-
-    A SECOND AXIS, so this is a SEPARATE screen rather than a branch inside
-    `screen_ledger_rows`. Every gate there answers "how urgent is this and may
-    we act on it" — the verdict, the tier, the ADD-ONLY rule that skips a
-    thread already carrying a chip. NONE of them applies here. The mark answers
-    "did the vault take this", the drop stamp already answered it, and a
-    that carries `P1 · Today` is exactly as ingested as one that carries
-    nothing. Routing this through that screen is what excluded 178 of 210 rows
-    on run164 for "already carries a chip".
-
-    It skips three rows, and the third is a MEASURED CONSTRAINT rather than a
-    policy. The undo ledger's idempotency key is `conversation_id|verb`
-    (`cos_mutate_ledger`), so two `categorize` mutations on ONE thread collide:
-    `latest()` keeps one row per key, and the undo record for the priority chip
-    would be overwritten by the mark's. Losing an undo row is the one failure
-    this whole lane exists to prevent. So a thread taking a priority chip
-    TONIGHT does not also take the mark tonight — it takes it on the next
-    night, when the chip is already on and only the mark is planned.
-
-    STATED LIMIT: the mark is therefore up to ONE NIGHT late on a thread that
-    was chipped the same night, and it is late exactly once, because the chip
-    lane is ADD-ONLY and never re-chips. It is the delay that depends on
-    urgency, never whether the mark arrives. Making it same-night means giving
-    the mark its own verb, its own cap and its own metrics counter — a wider
-    change than the deferral is worth, and a counter with no producer is its
-    own defect.
-    """
-    from brain import cos_chips  # noqa: PLC0415
-
-    chipping = {m["conversation_id"] for m in already_planned
-                if m.get("verb") == "categorize"}
-    planned: list[dict[str, Any]] = []
-    for row in rows:
-        cid = row["conversation_id"]
-        if cid not in ingested:
-            continue  # not ingested — silent, this is most of the mailbox
-        if row.get("carries_ingest_mark"):
-            exclude(cid, "categorize", "the thread already carries the "
-                                       "ingestion mark; re-writing it is a "
-                                       "no-op the page half refuses")
-            continue
-        if cid in chipping:
-            exclude(cid, "categorize",
-                    "this thread takes a priority chip tonight, and both "
-                    "mutations would share the undo key `<cid>|categorize` — "
-                    "the mark waits for the next night rather than overwrite "
-                    "the chip's undo row")
-            continue
-        planned.append({"verb": "categorize", "conversation_id": cid,
-                        "chip": cos_chips.CHIP_INGESTED, "mode": "add",
-                        "received": row.get("received"),
-                        "reason": "ingest mark: this run's ledger row carries "
-                                  "the bridge's drop stamp, so the vault took "
-                                  "this thread's text or its files"})
+        _plan_chip(row, cid, planned, exclude, archiving=archiving,
+                   chip_for=chip_for, managed_chips=managed_chips)
     return planned
 
 
@@ -179,8 +111,26 @@ def screen_drafts(drafts: list[dict[str, Any]], ledger_ids: set[str],
                   received_by_cid: dict[str, Any], run_id: str,
                   exclude: Callable, *, short: Callable,
                   draft_signature: Callable,
-                  draft_form: Callable) -> list[dict[str, Any]]:
-    """Plan the reply drafts the pending-drafts ledger carries."""
+                  draft_form: Callable,
+                  drafted_ids: set[str] | frozenset = frozenset(),
+                  replaceable_ids: set[str] | frozenset = frozenset()
+                  ) -> list[dict[str, Any]]:
+    """Plan the reply drafts the pending-drafts ledger carries.
+
+    ONE DRAFT PER THREAD, THE NEWEST ONE (FIX-01, owner ruling 2026-08-28).
+    Measured 2026-08-25: 15 runs wrote 59 drafts over 15 threads while every
+    layer believed it had skipped them. Refusing every thread already carrying
+    a draft froze it at weeks-old context; the ruling is to write a fresh draft
+    and discard the outdated ones. The two belts become two answers:
+
+    `replaceable_ids` — threads THIS LANE drafted (belt 2, the undo ledgers).
+    The new draft is planned and the discard lane deletes the superseded ones
+    after the apply. Nothing here deletes; a re-draft never saved leaves the
+    old draft standing, the safe direction.
+
+    `drafted_ids` — a draft this lane never wrote (belt 1, the read pass's
+    `isDraft` census minus belt 2): the OWNER'S OWN WRITING, refused outright.
+    """
     planned: list[dict[str, Any]] = []
     for d in drafts:
         cid = d.get("conversation_id")
@@ -191,6 +141,10 @@ def screen_drafts(drafts: list[dict[str, Any]], ledger_ids: set[str],
                                        "never enumerated")
         elif not str(d.get("text") or "").strip():
             exclude(cid, "draft", "the draft carries no text")
+        elif cid in drafted_ids:
+            exclude(cid, "draft", "the thread carries a draft this lane never "
+                                  "wrote — the owner's own draft is never "
+                                  "replaced")
         else:
             # PLACEHOLDERS ARE REQUIRED, NOT A DEFECT. `draft.placeholder_honesty`
             # (cos_judge) refuses an UNGROUNDED draft that carries NO
@@ -213,7 +167,10 @@ def screen_drafts(drafts: list[dict[str, Any]], ledger_ids: set[str],
                             # closed field set argues that no value on the row
                             # is free text — an f-string over an unprojected
                             # model string would falsify that in one line.
-                            "reason": f"reply draft ({draft_form(d.get('form'))})"})
+                            "reason": f"reply draft ({draft_form(d.get('form'))})"
+                                      + (" — supersedes this thread's previous "
+                                         "draft" if cid in replaceable_ids
+                                         else "")})
     return planned
 
 
@@ -294,10 +251,18 @@ from brain import cos_chips  # noqa: E402
 chip_for = cos_chips.chip_for  # noqa: E401
 import os                                                      # noqa: E402
 from cos_mutate_gates import (  # noqa: E402
-    absent_skip_cap, draft_form, draft_signature, short, _ledger_path,
-    _read_jsonl, _within_window, kill_switch, stop_file, stopped)
+    absent_skip_cap as absent_skip_cap, draft_form, draft_signature, short, _ledger_path,
+    _read_jsonl, _within_window, kill_switch, stop_file as stop_file, stopped as stopped)
+from cos_mutate_ledger import (  # noqa: E402,F401
+    split_the_draft_belts, threads_already_drafted)
+#: (FIX-03) The INGEST-MARK screen lives in its own module, same reason and
+#: same shape as the aged-read belt above: the 500-LOC bound. Re-imported
+#: here so `plan_stages.screen_ingest_marks` keeps its name for the CLI.
+from cos_mutate_plan_marks import (  # noqa: E402,F401
+    ingested_conversations, mark_lane_disposition_blindness,
+    screen_ingest_marks)
 from cos_mutate_policy import (  # noqa: E402
-    DEFAULT_CAPS, MANAGED_CHIPS, STATES)
+    DEFAULT_CAPS, MANAGED_CHIPS, STATES as STATES)
 #: The recency window default, read once at import exactly as the parent does
 #: (a default argument cannot wait for a namespace).
 DEFAULT_SINCE_DAYS = int(os.environ.get("BRAIN_COS_SINCE_DAYS", "14") or "14")
@@ -334,21 +299,48 @@ def build_plan(vault: Path, run_id: str, *, caps: dict[str, int] | None = None,
     # The screening stages themselves live in cos_mutate_plan (s18): each is
     # handed this module's own callables, so a monkeypatch on cos_mutate keeps
     # governing them and the definitions stay single.
+    # The signed-ingest set (SIGNED vault copies) is both the archive belts'
+    # substance-gate escape (RULE 1) and the ingestion mark's driver.
+    ingested = ingested_conversations(run_id, rows, vault,
+                                      since_days=since_days)
+    # THE OWNER'S SECOND LEVER, read from the SAME overlay file as the kill
+    # switch and in the same call, so a night can never honour one and miss the
+    # other. `.get` with a False default: an absent or unreadable overlay is
+    # already the disabled shape, and a stale caller sees the pre-ruling rule.
+    archive_over_draft = bool(kill_switch(vault).get("archive_over_draft"))
     planned = screen_ledger_rows(
-        rows, exclude, short=short, chip_for=chip_for, managed_chips=MANAGED_CHIPS)
+        rows, exclude, short=short, chip_for=chip_for, managed_chips=MANAGED_CHIPS,
+        signed_ingested=ingested, archive_over_draft=archive_over_draft)
     # The ingestion mark is planned from the MANIFEST, not the judgment, and
-    # sorts last under `CHIP_RANK` (no entry, so 9): a night short on categorize
-    # slots spends them on priority chips first and marks what is left. The
-    # mark is idempotent and the next night re-plans anything it dropped, which
-    # a priority chip on a thread whose tier has moved on is not.
-    planned += screen_ingest_marks(
-        rows, ingested_conversations(run_id, rows), exclude,
-        already_planned=planned)
+    # sorts last under `CHIP_RANK` (no entry, so 9): a night short on slots
+    # spends them on priority chips first and marks the rest. The mark is
+    # idempotent — the next night re-plans anything it dropped.
+    # (INGEST-01 belt 2) BEFORE the marks are planned, prove the lane that
+    # plans them cannot see what the porter did with the thread. Pure, cheap
+    # (one extra pass over tonight's rows) and it fails the plan rather than
+    # recording a reason: a mark lane that has learned to read `auto_archive`
+    # is the "ingestion follows disposition" defect this item exists to close,
+    # and a plan built on it must not be dispatched.
+    blind = mark_lane_disposition_blindness(rows, ingested,
+                                            already_planned=planned)
+    if blind:
+        raise MutationStop(blind)
+    planned += screen_ingest_marks(rows, ingested, exclude,
+                                   already_planned=planned)
     ledger_ids = {r["conversation_id"] for r in rows}
     received_by_cid = {r["conversation_id"]: r.get("received") for r in rows}
+    owner_drafted, porter_drafted = split_the_draft_belts(vault, rows)
     planned += screen_drafts(
         drafts, ledger_ids, received_by_cid, run_id, exclude,
-        short=short, draft_signature=draft_signature, draft_form=draft_form)
+        short=short, draft_signature=draft_signature, draft_form=draft_form,
+        drafted_ids=owner_drafted, replaceable_ids=porter_drafted)
+
+    planned, ruling_report = screen_owner_rulings(planned, vault, exclude)
+    # THE PER-THREAD BUDGET, over the ASSEMBLED plan and after every lane has
+    # spoken — the one point in this file that can see all three of them at
+    # once. It runs BEFORE the window and the caps so a refused companion is
+    # recorded with its own reason and never counted through a cap first.
+    planned = screen_archiving_companions(planned, exclude)
 
     # WORST-FIRST INSIDE EACH VERB, then the cap. A cap that spends its five
     # chip slots on P2 threads while P1 threads sit unchipped is the same defect
@@ -363,8 +355,16 @@ def build_plan(vault: Path, run_id: str, *, caps: dict[str, int] | None = None,
         planned = drop_already_applied(planned, skip_keys, exclude)
     kept = apply_caps(planned, caps, applied, exclude,
                                   verbs=MUTATION_VERBS)
+    # AND THE ARCHIVE GOES LAST ON ITS OWN THREAD. The allow-list above says
+    # WHAT may ride a leaving thread; this says WHEN, and without it the
+    # permission is empty — the apply walks the plan in order and a mark
+    # dispatched after the archive resolves against an Inbox the thread has
+    # already left. It runs HERE, after the caps and the window, because a
+    # companion they dropped means the archive is no longer carrying one.
+    kept = order_companions_before_archive(kept)
 
     return {"run_id": run_id, "mutations": kept, "excluded": excluded,
+            "owner_rulings": ruling_report,
             "caps": caps, "applied_before": applied, "since_days": since_days,
             "plan_digest": plan_digest(kept, run_id),
             "planned_by_verb": {v: sum(1 for m in kept if m["verb"] == v)

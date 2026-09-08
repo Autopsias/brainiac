@@ -76,15 +76,15 @@ _HELD_REASONS = {
     "unread-read-state-invariant", "no-body-access-on-lane",
     "preview-insufficient", "over-cap", "no-substance", "browser-not-visible",
     "target-identity-mismatch", "target-identity-unconfirmed",
-    "never-category", "over-candidate-cap",
-    # (v7.2) THE REST LANE'S OWN WORD FOR A SHELL-LENGTH BODY.
+    "never-category", "over-candidate-cap", "rights-protected-message",
+    # (v7.2) The rest lane's own word for a shell-length body.
     # `navigation-refused-row-unreachable` is defined by four PAGE facts a
     # NAVIGATING open produces (`_is_refusal`). The v7 read lane is
     # `read_lane: "rest"` — bodies come off a `GetItem` call and nothing
     # navigates, so `open_method` and `url_has_id` have no producer and never
     # can. Run 178 wrote the navigation word from a REST read and scored
     # INVALID on the first production use of that word in 14,874 ledger rows.
-    "rest-read-returned-shell",
+    "rest-read-returned-shell", "server-returned-no-body",  # why: cos_judge_body_facts
     "pass-ended-by-identity-stop", "host-eval-timeout",
     # (v5.62) OWA refused the navigation — the bare shell, no conversation
     # opened, the pane never moved — AND the click fallback could not scroll the
@@ -275,7 +275,14 @@ def _vocabulary_problems(bad_disp: dict[str, int], bad_reason: dict[str, int],
 def _category_stamp_counts(stamped: list[dict[str, Any]],
                            scored: list[dict[str, Any]], rules: dict[str, Any],
                            never: set[str]) -> tuple[dict[str, int], int, int]:
-    """Recount the rule-1¾ stamp: undefined ids, unexcluded `never`, both ways."""
+    """Recount the rule-1¾ stamp: undefined ids, unexcluded `never`, both ways.
+
+    The exclusion half is waived per row by `read_never_categories` (ruling
+    2026-09-02) — that night opened `never` bodies on purpose. It reads the
+    lever the DRIVER recorded, never a shape inferred from the other fields: an
+    unarmed gate (run 103's 11 leaked opens) produces identical rows. The
+    zero-candidate half is unwaivable.
+    """
     undefined: dict[str, int] = {}
     not_excluded = 0
     wrong_reason = 0
@@ -287,6 +294,8 @@ def _category_stamp_counts(stamped: list[dict[str, Any]],
         excluded = (str(r.get("held_reason") or "") == "never-category"
                     and r.get("disposition") == "no-substance"
                     and not r.get("body_opened"))
+        if cid in never and r.get("read_never_categories"):
+            continue
         if cid in never and not excluded:
             not_excluded += 1
     for r in scored:
@@ -354,8 +363,12 @@ def _category_dominance_problem(top: str, top_n: int, share: float,
 
 def _never_opened_problem(rows: list[dict[str, Any]]) -> str | None:
     """(v5.60) coherence rule 1: a `never` category costs ZERO opens."""
+    # The owner's lever (ruling 2026-09-02), recorded by the driver that acted
+    # on it and spent only with cap headroom, so the cost this rule protects
+    # cannot have been incurred. Run 103's 11 leaks carry none and still fail.
     never_opened = [r for r in rows
                     if r.get("body_opened")
+                    and not r.get("read_never_categories")
                     and str(r.get("held_reason") or "") == "never-category"]
     if not never_opened:
         return None

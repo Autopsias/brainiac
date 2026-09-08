@@ -24,7 +24,10 @@ import unicodedata
 MUTATION_LANE = "rest"
 PRIMITIVE = {"archive": "rest-conversation-move",
              "categorize": "rest-categorize",
-             "draft": "rest-create-draft"}
+             "draft": "rest-create-draft",
+             # Not admitted by the ordinary mutation planner or page
+             # allowlist. The dedicated draft-only reversal is the sole caller.
+             "discard-draft": "rest-discard-signed-draft"}
 
 
 
@@ -136,28 +139,63 @@ def kill_switch(vault: Path) -> dict[str, Any]:
     """`overlay/cos/auto-archive.md`. Absent ⇒ enabled; unparseable ⇒ DISABLED.
 
     The overlay is the owner's lever and it is read literally, never inferred.
+
+    `archive_over_draft` (owner ruling 2026-09-02) is a SECOND, independent
+    lever and it defaults OFF on every path this function can take, including
+    the two that never reach the parser. It lets the AGED-READ lane archive a
+    thread the judge cleared even though an unsent draft sits on it — measured
+    that day: 22 of the 44 drafted threads in the inbox owed the owner nothing
+    and the draft was the only thing holding them. Archiving moves INBOX items
+    only (`cos_mutate_page.js` `resolveTarget(convId, "inbox")`), so the draft
+    itself survives untouched in Drafts. It never widens the stale-act lane —
+    a thread that still owes an action keeps its draft AND its inbox place.
+
+    `read_never_categories` (owner ruling 2026-09-02, option 1) is a THIRD
+    independent lever, and it too defaults OFF on every path here. It separates
+    two things rule 1¾ had fused: "never INGEST this category" and "never READ
+    it". With it on, a `never`-category thread still produces ZERO candidates —
+    the ingest bridge's own `_never_category` refusal is untouched — but its
+    body IS opened, so the aged-read lane's action screens can actually run on
+    it. Without it those threads are permanently unarchivable: no body means
+    `screens_ran_unresolved`, and the doctrine forbids claiming "no action"
+    over screens that never ran. Measured 2026-09-02: 40 of the 74 threads left
+    in the inbox after runs 244/245 were held by exactly that (19
+    `scheduling-logistics`, 17 `system-notification`, 4 `market-digest`).
     """
     path = vault / "overlay" / "cos" / "auto-archive.md"
     if not path.exists():
-        return {"enabled": True, "source": str(path), "state": "absent-defaults-on"}
+        return {"enabled": True, "archive_over_draft": False,
+                "read_never_categories": False,
+                "source": str(path), "state": "absent-defaults-on"}
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
-        return {"enabled": False, "source": str(path),
+        return {"enabled": False, "archive_over_draft": False,
+                "read_never_categories": False,
+                "source": str(path),
                 "state": f"unreadable ({exc}) — a kill switch that cannot be "
                          "read is OFF"}
     enabled = True
     cap = None
+    archive_over_draft = False
+    read_never_categories = False
     for line in text.splitlines():
         s = line.strip()
         if s.startswith("enabled:"):
             enabled = s.split(":", 1)[1].strip().lower() == "true"
+        elif s.startswith("archive_over_draft:"):
+            archive_over_draft = s.split(":", 1)[1].strip().lower() == "true"
+        elif s.startswith("read_never_categories:"):
+            read_never_categories = s.split(":", 1)[1].strip().lower() == "true"
         elif s.startswith("cap:"):
             try:
                 cap = int(s.split(":", 1)[1].strip())
             except ValueError:
                 cap = None
-    return {"enabled": enabled, "cap": cap, "source": str(path), "state": "read"}
+    return {"enabled": enabled, "cap": cap,
+            "archive_over_draft": archive_over_draft,
+            "read_never_categories": read_never_categories,
+            "source": str(path), "state": "read"}
 
 
 def stop_file(vault: Path, run_id: str) -> Path:

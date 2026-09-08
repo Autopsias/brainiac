@@ -235,6 +235,37 @@ DEFAULT_INGEST_SWEEP_MAX_BYTES = 200 * 1024 * 1024
 
 INGEST_SWEEP_DOWNLOADS_ENV = "BRAIN_COS_DOWNLOADS_DIR"
 
+#: WHERE THE FETCH LANE ACTUALLY PUTS FILES WHEN NOBODY SAYS OTHERWISE.
+#: `tools/cos_ctl.sh:240` defaults `$BRAIN_COS_DOWNLOADS_DIR` to this path, so
+#: on a host that never set the variable the fetch writes here — and until this
+#: constant existed the sweep had no idea where "here" was and reported itself
+#: disabled.
+#:
+#: IT IS NOT WHAT WAS WRONG ON THE REFERENCE HOST, and the first version of
+#: this comment said it was. Re-measured 2026-09-05 by reading every live plist
+#: and both directories: TWO jobs set the variable, to TWO paths.
+#: `com.brainiac.cos-nightly.plist` — the job that FETCHES — sets
+#: `~/.brain/cos-downloads`, which held 79 files (newest 02:50 that morning).
+#: `com.brainiac.nightly.<id>.plist` — the maintain job, and therefore the
+#: job that SWEEPS — sets a SECOND, unrelated staging directory outside the
+#: engine default (`.../<some-workspace>/_cos_downloads`), which held 0 with
+#: an mtime of 2026-09-01. Neither is unset, so `cos_nightly.sh`'s
+#: recover-when-absent block could not see it: a recovery that fires on
+#: ABSENCE cannot see a DISAGREEMENT. So the sweep was reading a real,
+#: configured, EMPTY directory: a divergence between the two halves of the
+#: lane, not a missing variable. A configured value still
+#: wins here unconditionally; what the sweep gained is the ability to SAY SO
+#: (`report["misconfigured"]`, `_misconfigured_staging`) instead of reporting a
+#: quiet zero. The repoint of that plist is the owner's — the engine may not
+#: write a launchd job.
+#:
+#: This is a DEFAULT, not a widening: `ingest_sweep` still refuses a shared or
+#: symlinked `~/Downloads`, still only moves files an ingest-manifest line
+#: names, and still applies every freshness and size check. And it is used only
+#: when the directory EXISTS — on a host with no attachment lane there is
+#: nothing here and the sweep stays the no-op it was.
+DEFAULT_INGEST_SWEEP_DOWNLOADS_DIR = "~/.brain/cos-downloads"
+
 INGEST_SWEEP_SKEW_SECONDS = 300          # manifest ts vs file mtime clock skew
 
 INGEST_SWEEP_SIZE_TOLERANCE = 0.10       # when the manifest carries a size
@@ -258,9 +289,41 @@ INGEST_SWEEP_RECENCY_ENV = "BRAIN_COS_SWEEP_RECENCY_SECONDS"
 
 DEFAULT_INGEST_SWEEP_RECENCY_SECONDS = 6 * 3600
 
+#: The CATCH-UP WINDOW both ingestion lanes read. It lives here rather than in
+#: `_learning_ledger` because `_attachment_join.record_attachment_joins` and
+#: `signed_ingested_catching_up` answer the same question ("which nights may
+#: have been signed by now") and a lazy cross-module import to share one
+#: definition is how a circle starts.
+CATCH_UP_DAYS_ENV = "BRAIN_COS_SINCE_DAYS"
+DEFAULT_CATCH_UP_DAYS = 14
+
 BATCH_STALE_HOURS_ENV = "BRAIN_COS_BATCH_STALE_HOURS"
 
 DEFAULT_BATCH_STALE_HOURS = 48
 
 
-__all__ = ['PROPOSAL_TTL_DAYS_ENV', 'DEFAULT_PROPOSAL_TTL_DAYS', 'BATCH_TTL_DAYS_ENV', 'DEFAULT_BATCH_TTL_DAYS', 'GC_DAYS_ENV', 'DEFAULT_GC_DAYS', 'BATCH_SCHEMA', 'EVIDENCE_SCHEMA', 'BROKER_KEY_PREFIX', 'CORRECT_KEY_PREFIX', '_ACCEPT_ALL', '_REJECT_ALL', '_ACCEPT_PARTIAL_RE', 'SECRET_PATTERNS', 'secret_findings', 'scrub', '_PERMS', 'APPROVED_ANCHOR_SCHEMA', '_APPROVED_DIRNAME', 'ATTACHMENT_ANCHOR_SCHEMA', '_ATTACHMENT_ANCHOR_DIRNAME', 'ApprovedQueueUnsafe', 'ApprovedRefused', 'ReleaseRecordsUnreadable', 'ApprovedTooLarge', 'ApprovedKeyUnavailable', 'vm_visible_roots', 'MODE_HOST_PRIVATE', 'MODE_VM_READABLE', 'MODE_VM_WRITABLE', '_APPEND_LOCK_SECONDS', 'ATTACHMENT_HOLD_SCHEMA', 'RUN_MANIFEST_SCHEMA', 'RUN_ID_RE', '_RUN_NUMBER_RE', 'RUN_VALID', 'RUN_VALID_DEGRADED', 'RUN_INVALID', 'RUN_INCONCLUSIVE', 'RUN_VERDICTS', 'CLAIMABLE_VERDICTS', 'RUNS_MIGRATION_MARKER', 'MAX_RUN_DIGITS', '_LEDGER_GLOB', '_LEDGER_RUN_RE', '_LEDGER_ID_KEYS', '_LEDGER_DIGEST_KEYS', '_SHA256_RE', 'QUARANTINE_NO_LEDGER', 'QUARANTINE_NO_MANIFEST', 'PRODUCER_STAMP_KEYS', '_STRIPPED_CLAIM_KEYS', 'KIND_SUPERSEDE', 'VERSION_LINK_RUN_EVENT', 'BATCH_CAP_TOTAL', 'BATCH_SUBCAP_INGESTION', 'BATCH_SUBCAP_SUPERSEDE', '_MARKER_RANK_LABEL', '_CONSUME_JOURNAL', '_SIG_FAILED', '_NO_ANSWER', 'BEHAVIOUR_OBSERVATIONS', 'LEGACY_REJOIN_PREFIX', '_OVERRIDE_LINE_RE', 'HOLD_RECORD_SCHEMA', 'AUTOCAP_MIN_VOLUME_ENV', 'DEFAULT_AUTOCAP_MIN_VOLUME', 'AUTOCAP_MIN_LOWER_BOUND_ENV', 'DEFAULT_AUTOCAP_MIN_LOWER_BOUND', 'AUTOCAP_UNDO_HOURS_ENV', 'DEFAULT_AUTOCAP_UNDO_HOURS', '_UNPATTERNED', 'AUTOCAP_EXPLORATION_K_ENV', 'DEFAULT_AUTOCAP_EXPLORATION_K', 'AUTOCAP_WINDOW_DAYS_ENV', 'DEFAULT_AUTOCAP_WINDOW_DAYS', 'AUTOCAP_WINDOW_VERDICTS_ENV', 'DEFAULT_AUTOCAP_WINDOW_VERDICTS', 'AUTOCAP_BULK_MAX_BATCH_ENV', 'DEFAULT_AUTOCAP_BULK_MAX_BATCH', 'CATEGORY_UNCLASSIFIED', 'LANE_TEXT', 'LANE_ATTACHMENT', 'LANES', 'DISPOSITION_NEVER', 'DISPOSITION_PROPOSE', '_FORWARD_WRAPPER_RE', 'PATTERN_AUTOCAPTURE_STATUS', 'KEEPER_HORIZON_DAYS_ENV', 'DEFAULT_KEEPER_HORIZON_DAYS', 'INGEST_SWEEP_MAX_BYTES_ENV', 'DEFAULT_INGEST_SWEEP_MAX_BYTES', 'INGEST_SWEEP_DOWNLOADS_ENV', 'INGEST_SWEEP_SKEW_SECONDS', 'INGEST_SWEEP_SIZE_TOLERANCE', 'INGEST_SWEEP_SIZE_FLOOR', 'INGEST_SWEEP_RECENCY_ENV', 'DEFAULT_INGEST_SWEEP_RECENCY_SECONDS', 'BATCH_STALE_HOURS_ENV', 'DEFAULT_BATCH_STALE_HOURS']
+#: What one manifest line's file ended up as. Only ``joined`` means the bytes
+#: are in the vault; the other three are all "the vault is not waiting on this
+#: file any more", which is what stops a declined or withdrawn attachment from
+#: holding its thread open for good.
+LINE_JOINED = "joined"          # bytes -> signed note, by content hash
+LINE_DECLINED = "declined"      # the sweep refused the line (never-category,
+                                # over the cap, a symlink) or called it a
+                                # duplicate of another line's bytes. NOT an
+                                # unsafe filename: that refusal writes nothing,
+                                # because it is decided from the manifest alone
+                                # (adversarial review, 2026-09-05)
+LINE_WITHDRAWN = "withdrawn"    # claimed, then left the funnel — the owner
+                                # rejected it, or its TTL expired
+LINE_IN_FUNNEL = "in-funnel"    # quarantined, awaiting the owner's verdict
+LINE_UNCLAIMED = "unclaimed"    # a line the sweep never claimed at all
+#: The states that mean the vault has stopped waiting.
+LINE_SETTLED = (LINE_JOINED, LINE_DECLINED, LINE_WITHDRAWN)
+
+#: The settled states a HOST RECORD can carry. ``joined`` is deliberately NOT
+#: one of them: it is COMPUTED from the content-hash chain and nobody writes it
+#: down, so there is nothing for a forged row to claim.
+RECORDABLE_SETTLEMENTS = (LINE_DECLINED, LINE_WITHDRAWN)
+
+
+__all__ = ['PROPOSAL_TTL_DAYS_ENV', 'DEFAULT_PROPOSAL_TTL_DAYS', 'BATCH_TTL_DAYS_ENV', 'DEFAULT_BATCH_TTL_DAYS', 'GC_DAYS_ENV', 'DEFAULT_GC_DAYS', 'BATCH_SCHEMA', 'EVIDENCE_SCHEMA', 'BROKER_KEY_PREFIX', 'CORRECT_KEY_PREFIX', '_ACCEPT_ALL', '_REJECT_ALL', '_ACCEPT_PARTIAL_RE', 'SECRET_PATTERNS', 'secret_findings', 'scrub', '_PERMS', 'APPROVED_ANCHOR_SCHEMA', '_APPROVED_DIRNAME', 'ATTACHMENT_ANCHOR_SCHEMA', '_ATTACHMENT_ANCHOR_DIRNAME', 'ApprovedQueueUnsafe', 'ApprovedRefused', 'ReleaseRecordsUnreadable', 'ApprovedTooLarge', 'ApprovedKeyUnavailable', 'vm_visible_roots', 'MODE_HOST_PRIVATE', 'MODE_VM_READABLE', 'MODE_VM_WRITABLE', '_APPEND_LOCK_SECONDS', 'ATTACHMENT_HOLD_SCHEMA', 'RUN_MANIFEST_SCHEMA', 'RUN_ID_RE', '_RUN_NUMBER_RE', 'RUN_VALID', 'RUN_VALID_DEGRADED', 'RUN_INVALID', 'RUN_INCONCLUSIVE', 'RUN_VERDICTS', 'CLAIMABLE_VERDICTS', 'RUNS_MIGRATION_MARKER', 'MAX_RUN_DIGITS', '_LEDGER_GLOB', '_LEDGER_RUN_RE', '_LEDGER_ID_KEYS', '_LEDGER_DIGEST_KEYS', '_SHA256_RE', 'QUARANTINE_NO_LEDGER', 'QUARANTINE_NO_MANIFEST', 'PRODUCER_STAMP_KEYS', '_STRIPPED_CLAIM_KEYS', 'KIND_SUPERSEDE', 'VERSION_LINK_RUN_EVENT', 'BATCH_CAP_TOTAL', 'BATCH_SUBCAP_INGESTION', 'BATCH_SUBCAP_SUPERSEDE', '_MARKER_RANK_LABEL', '_CONSUME_JOURNAL', '_SIG_FAILED', '_NO_ANSWER', 'BEHAVIOUR_OBSERVATIONS', 'LEGACY_REJOIN_PREFIX', '_OVERRIDE_LINE_RE', 'HOLD_RECORD_SCHEMA', 'AUTOCAP_MIN_VOLUME_ENV', 'DEFAULT_AUTOCAP_MIN_VOLUME', 'AUTOCAP_MIN_LOWER_BOUND_ENV', 'DEFAULT_AUTOCAP_MIN_LOWER_BOUND', 'AUTOCAP_UNDO_HOURS_ENV', 'DEFAULT_AUTOCAP_UNDO_HOURS', '_UNPATTERNED', 'AUTOCAP_EXPLORATION_K_ENV', 'DEFAULT_AUTOCAP_EXPLORATION_K', 'AUTOCAP_WINDOW_DAYS_ENV', 'DEFAULT_AUTOCAP_WINDOW_DAYS', 'AUTOCAP_WINDOW_VERDICTS_ENV', 'DEFAULT_AUTOCAP_WINDOW_VERDICTS', 'AUTOCAP_BULK_MAX_BATCH_ENV', 'DEFAULT_AUTOCAP_BULK_MAX_BATCH', 'CATEGORY_UNCLASSIFIED', 'LANE_TEXT', 'LANE_ATTACHMENT', 'LANES', 'DISPOSITION_NEVER', 'DISPOSITION_PROPOSE', '_FORWARD_WRAPPER_RE', 'PATTERN_AUTOCAPTURE_STATUS', 'KEEPER_HORIZON_DAYS_ENV', 'DEFAULT_KEEPER_HORIZON_DAYS', 'INGEST_SWEEP_MAX_BYTES_ENV', 'DEFAULT_INGEST_SWEEP_MAX_BYTES', 'INGEST_SWEEP_DOWNLOADS_ENV', 'DEFAULT_INGEST_SWEEP_DOWNLOADS_DIR', 'INGEST_SWEEP_SKEW_SECONDS', 'INGEST_SWEEP_SIZE_TOLERANCE', 'INGEST_SWEEP_SIZE_FLOOR', 'INGEST_SWEEP_RECENCY_ENV', 'DEFAULT_INGEST_SWEEP_RECENCY_SECONDS', 'BATCH_STALE_HOURS_ENV', 'DEFAULT_BATCH_STALE_HOURS', 'CATCH_UP_DAYS_ENV', 'DEFAULT_CATCH_UP_DAYS', 'LINE_JOINED', 'LINE_DECLINED', 'LINE_WITHDRAWN', 'LINE_IN_FUNNEL', 'LINE_UNCLAIMED', 'LINE_SETTLED', 'RECORDABLE_SETTLEMENTS']

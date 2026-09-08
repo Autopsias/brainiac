@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import datetime
-import itertools
-import json
-import logging
-import re
-import shlex
+import itertools as itertools
+import json as json
+import logging as logging
+import re as re
+import shlex as shlex
 from pathlib import Path
 from typing import Any
 import os

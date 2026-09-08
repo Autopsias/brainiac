@@ -90,17 +90,13 @@ without slicing the shell script is a parser nothing can prove.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
-import re
 import sys
-import unicodedata
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import cos_model_answer_parse                                    # noqa: E402
 import cos_model_answer_write                                    # noqa: E402
 # batch-2 drain: the overlap detector, the envelope readers and the two
 # untrusted-boundary parsers moved to siblings; every name is re-imported or
@@ -109,6 +105,7 @@ import cos_model_answer_write                                    # noqa: E402
 # test rebinds on it (`MAX_PARSED_ROWS`, `MAX_ROW_BYTES`) still steer them.
 import cos_model_answer_envelope                                   # noqa: E402
 import cos_model_answer_extract                                    # noqa: E402
+import cos_model_answer_project                                    # noqa: E402
 from cos_model_answer_envelope import (  # noqa: E402,F401
     ENVELOPE_METADATA, ENVELOPE_VOCAB, MAX_REPORTED_TURNS, RESULT_SUBTYPES,
     STOP_REASONS, UNRECOGNISED, _answer_from_single_envelope,
@@ -124,12 +121,14 @@ from cos_model_answer_overlap import (  # noqa: E402,F401
 # so the enumerating tests keep reading it off THIS module — the schema's
 # closure tests walk `cma.KEY_TYPES` and friends, not a second table.
 from cos_model_answer_schema import (                            # noqa: E402,F401
-    ADMITTED_FIELDS, ALLOWED_KEYS, CATEGORY_KEYS, DEFAULT_FIELD_MAX,
+    ADMITTED_FIELDS, ALLOWED_KEYS, CATEGORY_KEYS, CLOSED_VOCAB_KEYS,
+    DEFAULT_FIELD_MAX,
     DEFAULT_LIST_MAX, DRAFT_KEYS, DRAFT_TYPES, FIELD_BYTE_FACTOR, FIELD_MAX,
-    KEY_TYPES, LIST_MAX, PLACEHOLDER_CAP, SPAN_KEYS, STRUCTURED_KEYS,
+    KEY_TYPES, LIST_MAX, NEEDS_OWNER_VOCAB, PLACEHOLDER_CAP, SPAN_KEYS,
+    STALE_KEYS, STRUCTURED_KEYS,
     _BOOL, _STR, _STRLIST, _count, _key_bucket, _strings, _too_long, blank_field,
     _too_many, _typed, field_bytes, project_draft_value, project_keys,
-    project_span_value,
+    project_span_value, project_stale_value,
 )
 
 # ---------------------------------------------------------------------------
@@ -291,139 +290,26 @@ def answer_from_envelope(envelope_path: str | Path) -> tuple[list[Any], str]:
 def project_row(row: dict[str, Any], block_text: str | None,
                 own_row_text: str, stats: dict[str, Any],
                 allowed: frozenset[str] = ALLOWED_KEYS) -> dict[str, Any] | None:
-    """One row, projected onto the closed schema. `None` means REFUSED.
-
-    Never truncated. Refused for a bad shape, an unenumerated id or an oversize
-    row; the OVERLAP rule BLANKS its field and keeps the verdict instead, bar
-    `conversation_id` (a forged join key) — why in `blank_field`.
-
-    The per-key walk (unknown-key counting, the `draft`/`evidence_span`
-    sub-objects, the declared-type and per-field ceilings) lives in
-    `cos_model_answer_schema.project_keys`; the aggregate row bound stays HERE,
-    read off this module's own `MAX_ROW_BYTES` at call time, so a test that
-    rebinds it sees the projection honour the new ceiling.
-    """
-    out = project_keys(row, allowed, stats)
-    if out is None:
-        return None
-
-    # THE OVERLAP TEST, on the projected row and against THIS conversation's own
-    # block only (rule 3). Cross-conversation matching would fire on boilerplate
-    # and says less.
-    if block_text:
-        uniq = block_shingles(block_text, own_row_text)
-        for label, text in _strings(out):
-            if not overlap_hit(text, uniq):
-                continue
-            hit = stats["refused_grounding_overlap" if label == "conversation_id"
-                        else "blanked_grounding_overlap"]
-            hit[label] = hit.get(label, 0) + 1
-            if label == "conversation_id":
-                return None
-            blank_field(out, label)
-    # THE ROW'S OWN SERIALIZED SIZE, last, on exactly the bytes that would be
-    # written. Per-field ceilings bound no row: ~16 string fields at their caps
-    # is still tens of kilobytes per row, and the row is what `--out` serializes.
-    if len(json.dumps(out, ensure_ascii=False).encode("utf-8")) > MAX_ROW_BYTES:
-        stats["refused_oversize_row"] += 1
-        return None
-    return out
+    """One row, projected onto the closed schema. `None` means REFUSED
+    (implementation: `cos_model_answer_project`, same signature plus namespace)."""
+    return cos_model_answer_project.project_row(
+        row, block_text, own_row_text, stats, allowed, _self())
 
 
 def project(rows: list[Any], blocks: dict[str, Any],
             own_row_text: dict[str, str],
             allowed: frozenset[str] = ALLOWED_KEYS,
             *, enumerated: set[str]) -> tuple[list[Any], dict[str, Any]]:
-    """The whole answer, projected. Counts everything it drops or refuses.
-
-    `enumerated` is the HOST's own id set, read off the rendered batch files. A
-    row whose `conversation_id` is not in it is REFUSED before projection: an id
-    the host did not enumerate is not an id, it is model-authored text sitting in
-    a field whose declared type happens to be `str`. `judge_night` already binds
-    verdicts to the enumerated set, but that is two files downstream of
-    `verdicts.json` — the leak the review measured was at the WRITE, not at the
-    judgment.
-
-    IT IS MANDATORY, AND KEYWORD-ONLY (review 2026-08-15, HIGH). The round that
-    added it made it `enumerated: set[str] | None = None` with enforcement under
-    `if enumerated is not None`, so the CRITICAL fix was INERT on every call that
-    omitted it — both nightly legs happened to pass `--batches-dir`, which made
-    it a latent fail-open rather than a live leak, and "a guard that is a no-op
-    by default" is the exact shape this delta exists to remove. There is no
-    accepted mode with no enumeration: an empty or missing set is a REFUSAL,
-    because a chunk whose batches enumerate nothing has nothing to judge, and
-    projecting its answer against an empty binding would admit every
-    model-authored id instead of none.
-    """
-    if not enumerated:
-        raise ValueError(
-            "the host supplied no enumerated conversation id set — a projection "
-            "with nothing to bind `conversation_id` against would keep whatever "
-            "id the model wrote, which is the fail-open the binding exists to "
-            "close")
-    stats: dict[str, Any] = {"rows_in": len(rows), "rows_out": 0,
-                             "dropped_unknown_keys": {},
-                             "refused_grounding_overlap": {},
-                             "blanked_grounding_overlap": {},
-                             "refused_oversize_field": {},
-                             "refused_oversize_row": 0,
-                             "refused_unenumerated_id": 0,
-                             "refused_shape": 0,
-                             "refused_ids": []}  # why: projection_refused_ids
-    out: list[Any] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        cid = str(row.get("conversation_id") or "")
-        if cid not in enumerated:
-            stats["refused_unenumerated_id"] += 1
-            continue
-        entry = blocks.get(cid) or {}
-        block_text = entry.get("text") if isinstance(entry, dict) else None
-        projected = project_row(row, block_text, own_row_text.get(cid, ""), stats,
-                                allowed)
-        if projected is not None:
-            out.append(projected)
-        else:
-            stats["refused_ids"].append(cid)
-    stats["rows_out"] = len(out)
-    return out, stats
+    """The whole answer, projected. Counts everything it drops or refuses
+    (implementation: `cos_model_answer_project`, same signature plus namespace)."""
+    return cos_model_answer_project.project(
+        rows, blocks, own_row_text, allowed, _self(), enumerated=enumerated)
 
 
 def own_row_texts(chunk_dir: Path) -> dict[str, str]:
-    """Per conversation, the text of its OWN batch row — what step 4 subtracts.
-
-    `subject`, `sender` and (staging/draft) `text`: the values a verdict may
-    legitimately echo, and which appear on BOTH sides of the comparison.
-
-    ITS KEY SET IS ALSO THE HOST ENUMERATION `project` binds ids against, which
-    is why it globs `batch-*.md` rather than iterating `BATCH_TYPES`: the
-    CATEGORY leg's chunk holds one `batch-category.md` and no judgment batch, so
-    a `BATCH_TYPES` loop enumerated nothing there and the binding would have been
-    silently inert on half the calls.
-    """
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import cos_batch_chunk as cbc                                # noqa: PLC0415
-    out: dict[str, list[str]] = {}
-    for path in sorted(chunk_dir.glob("batch-*.md")):
-        try:
-            _h, rows = cbc.split_batch(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError, json.JSONDecodeError):
-            continue
-        for r in rows:
-            if not isinstance(r, dict):
-                continue
-            cid = str(r.get("conversation_id") or "")
-            if not cid:
-                # An id-less batch row cannot enumerate anything, and admitting
-                # `""` would let a row with no `conversation_id` bind.
-                continue
-            bucket = out.setdefault(cid, [])
-            for key in ("subject", "sender", "text"):
-                v = r.get(key)
-                if isinstance(v, str):
-                    bucket.append(v)
-    return {cid: "\n".join(parts) for cid, parts in out.items()}
+    """Per conversation, the text of its OWN batch row, and the host's id
+    enumeration (implementation: `cos_model_answer_project`)."""
+    return cos_model_answer_project.own_row_texts(chunk_dir)
 
 
 def main(argv: list[str]) -> int:
@@ -444,6 +330,11 @@ def main(argv: list[str]) -> int:
     p.add_argument("--schema", choices=("judgment", "category"),
                    default="judgment",
                    help="which batch's closed key table to project onto")
+    p.add_argument("--allow-empty", action="store_true",
+                   help="treat a literal `[]` answer as an EMPTY answer rather "
+                        "than a parse failure — the draft leg's common correct "
+                        "outcome (DRAFT-01); never passed by the judgment leg, "
+                        "where zero rows for a whole chunk is a failed call")
     p.add_argument("--projection-out", type=Path, default=None,
                    help="where the projection's counts are written (default: "
                         "`projection.json` beside --out)")
@@ -459,7 +350,15 @@ def main(argv: list[str]) -> int:
     try:
         rows, note = answer_from_text(text, str(args.envelope))
     except ValueError as exc:
-        return _refuse(str(exc), text)
+        # DRAFT-01: an EMPTY answer is not a failed one, on a leg that says so.
+        # Measured 2026-08-27: two of run193's four draft chunks answered `[]` —
+        # "no thread here needs a reply" — and the refusal recorded them as
+        # produced-no-usable-answer, which is the very confusion between a
+        # dropped job and a declined one that the second leg exists to end.
+        if args.allow_empty and cos_model_answer_extract.empty_array_answer(text):
+            rows, note = [], "the leg answered `[]` — no rows, and it said so"
+        else:
+            return _refuse(str(exc), text)
 
     # THE PROJECTION RUNS BEFORE THE FILE IS WRITTEN, and it runs whether or not
     # a grounding map exists: the closed schema is what stops an unenumerated key
@@ -478,8 +377,9 @@ def main(argv: list[str]) -> int:
     # rather than treating "nothing to bind against" as an accepted mode — a
     # chunk whose batch files enumerate no id has nothing to judge, and the
     # previous round's `None`-means-inert default made the whole binding a no-op
-    # on any call that omitted the flag. Both nightly call sites pass it, pinned
-    # by `test_both_nightly_legs_hand_the_parser_its_host_enumeration`.
+    # on any call that omitted the flag. EVERY nightly call site passes it —
+    # the category, judgment and draft legs — pinned by
+    # `test_every_nightly_leg_hands_the_parser_its_host_enumeration`.
     try:
         rows, stats = project(rows, blocks, own,
                               CATEGORY_KEYS if args.schema == "category"

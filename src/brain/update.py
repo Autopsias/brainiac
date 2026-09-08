@@ -24,8 +24,8 @@ import os
 import re
 import shutil
 import subprocess
-import sys
-import tempfile
+import sys as sys
+import tempfile as tempfile
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -43,13 +43,13 @@ from .doctor import (
     check_installed_cli_plugins,
     detect_install_channel,
     fetch_pypi_latest_version,
-    marketplace_install_location,
+    marketplace_install_location as marketplace_install_location,
     render_human,
     run_doctor,
 )
 from .update_channels import (
     WorkspaceStageCallbacks,
-    refresh_engine_channel,
+    refresh_engine_channel as refresh_engine_channel,
     stage_engine_and_skills as stage_engine_and_skills_impl,
     restage_workspaces as restage_workspaces_impl,
 )

@@ -1,10 +1,10 @@
 {
   "manifest_version": "0.4",
   "name": "brainiac",
-  "display_name": "Brainiac (read-only)",
+  "display_name": "Brainiac",
   "version": "0.20.11",
-  "description": "Read-only search over your Brainiac vault for the Claude Desktop Chat tab. Requires the `brain` engine already installed on this machine (npx brainiac-install) \u2014 this bundle never installs or vendors the engine itself, it only spawns it.",
-  "long_description": "Brainiac is a local, any-LLM second brain (plain Markdown + YAML). This extension is a thin Node.js stdio shim: it locates your HOST-installed `brain-mcp` engine (the same one `pip install brainiac-cli[mcp]` / `uv tool install brainiac-cli[mcp]` puts on PATH) and spawns it, piping stdio through unchanged. It exposes exactly the same read-only verb set and classification egress gate as the CLI's `brain search`/`get`/`recent`/`dossier`/`bases-query` \u2014 no write, draft, or host-broker verbs. If the engine isn't installed yet, the extension fails to start with an actionable error: install it with `npx brainiac-install`, then reopen this extension.\n\nDo not also run `brain connect --client claude-desktop` for the same vault \u2014 pick ONE registration path (this extension, or the CLI-managed claude_desktop_config.json stanza), never both. `brain doctor` flags it if both are present.",
+  "description": "Search over your Brainiac vault for the Claude Desktop Chat tab, plus one draft-capture verb. Requires the `brain` engine already installed on this machine (npx brainiac-install) \u2014 this bundle never installs or vendors the engine itself, it only spawns it.",
+  "long_description": "Brainiac is a local, any-LLM second brain (plain Markdown + YAML). This extension is a thin Node.js stdio shim: it locates your HOST-installed `brain-mcp` engine (the same one `pip install brainiac-cli[mcp]` / `uv tool install brainiac-cli[mcp]` puts on PATH) and spawns it, piping stdio through unchanged. It exposes the same read verbs and classification egress gate as the CLI's `brain search`/`get`/`recent`/`dossier`/`bases-query`, plus ONE quasi-write, `capture`, which stages a draft through the host's draft lane (an existing id is refused as `duplicate-id`; the note lands marked `status: draft`, `provenance.trust: untrusted`). No other write or host-broker verb (`write`, `rebuild`, `ingest`, `sync`, `snapshot`) is exposed. If the engine isn't installed yet, the extension fails to start with an actionable error: install it with `npx brainiac-install`, then reopen this extension.\n\nDo not also run `brain connect --client claude-desktop` for the same vault \u2014 pick ONE registration path (this extension, or the CLI-managed claude_desktop_config.json stanza), never both. `brain doctor` flags it if both are present.",
   "author": {
     "name": "Brainiac",
     "url": "https://github.com/Autopsias/brainiac"
@@ -20,7 +20,7 @@
     "second-brain",
     "notes",
     "retrieval",
-    "read-only"
+    "capture"
   ],
   "server": {
     "type": "node",

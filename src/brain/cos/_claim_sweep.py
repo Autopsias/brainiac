@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from ._shared import *  # noqa: F401,F403
 from ._claim_evaluation import _bind_claim
-from ._criteria import evidence_lineage_key, evidence_unit_key
 from ._ingress import _validate_correction_payload
 from ._io import _append_jsonl
 from ._layout import _ts, proposal_drop_dir, proposals_dir, verdict_drop_dir

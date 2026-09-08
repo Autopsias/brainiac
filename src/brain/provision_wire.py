@@ -307,7 +307,6 @@ def sweep_status(vault: str | os.PathLike[str], workspace: str | os.PathLike[str
     the report can actually fire without the drain touching the launchd job it
     is itself running under.
     """
-    from . import config as _config
 
     vault, workspace = canonical(vault), canonical(workspace)
     return _safe(wire_sweep, vault, workspace / DELIVERABLES_DIRNAME,
@@ -347,7 +346,6 @@ def wire_vault(vault: str | os.PathLike[str], workspace: str | os.PathLike[str],
     A dependency is not a short-circuit --- a blocked wire is still reported,
     by name, with what blocked it.
     """
-    from . import config as _config
     from . import provision
 
     # ONE canonical spelling, resolved before any wire runs. The installer runs

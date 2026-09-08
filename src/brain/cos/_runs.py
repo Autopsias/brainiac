@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from ._shared import *  # noqa: F401,F403
 from ._facade import public
-from ._io import _write_atomic
 from ._layout import _ts, _utcnow, host_dir, shared_dir
 
 def runs_dir(vault=None) -> Path:

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from ._shared import *  # noqa: F401,F403
 from ._facade import public
-from ._io import _read_nofollow, _write_atomic
+from ._io import _read_nofollow
 from ._layout import _ts
 
 def _host_private_base() -> Path:

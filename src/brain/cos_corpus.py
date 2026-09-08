@@ -66,13 +66,13 @@ visible at rest.
 from __future__ import annotations
 
 import datetime as _dt
-import hashlib
+import hashlib as hashlib
 import json
-import os
+import os as os
 from pathlib import Path
 from typing import Any
 
-from . import config, cos, provenance
+from . import config, cos, provenance as provenance
 
 CORPUS_SCHEMA = "cos_capture_corpus/v1"
 CLOSE_SCHEMA = "cos_capture_corpus_close/v1"
@@ -105,11 +105,20 @@ PRUNE_MARKER = "_cos_corpus_prune"
 #: silently shortened row is a corpus that lies about what the judge read.
 MAX_TEXT_BYTES = 1 << 20
 
-#: Ceiling on every non-body field. All arrive from the browser leg, so they
-#: are untrusted input; none has a legitimate form near this size. Over it the
-#: row is REFUSED, not trimmed — the conversation id is the JOIN KEY, and a
+#: Ceiling on every non-body SCALAR field. All arrive from the browser leg, so
+#: they are untrusted input; none has a legitimate form near this size. Over it
+#: the row is REFUSED, not trimmed — the conversation id is the JOIN KEY, and a
 #: shortened key joins to nothing while looking like a good row.
 MAX_FIELD_CHARS = 4096
+
+#: Ceiling on the ONE structured field, `extraction` — a replay fixture holding
+#: the census facts around a row, including its `attachments` LIST. A scalar cap
+#: was the wrong size for a variable-length object: an attachment-heavy thread
+#: legitimately encodes past 4096 bytes (measured run207, 5221 bytes, ~20
+#: attachments), and the uncaught refusal killed the whole read night. This is
+#: still a hard ceiling on pathology — a runaway list is bounded by `write_corpus`
+#: past it — but it fits real mail.
+MAX_EXTRACTION_BYTES = 1 << 16
 
 #: How far ahead of the host clock a run id's date may sit. Retention is
 #: computed from that date, so a run id dated 2099 is a corpus that never

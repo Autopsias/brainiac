@@ -13,9 +13,9 @@ from urllib.parse import quote
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.modules.setdefault("cos_lane_rehearsal", sys.modules[__name__])
 from cos_hold_visible import (  # noqa: E402
-    HOST, JsUnavailable, OsaUnavailable, _assert_visible, _front_window_id,
-    _frontmost_app, _pick, _restore, assert_visible_by_id, eval_js,
-    eval_js_by_id, tab_id,
+    HOST as HOST, JsUnavailable as JsUnavailable, OsaUnavailable as OsaUnavailable, _assert_visible as _assert_visible, _front_window_id as _front_window_id,
+    _frontmost_app as _frontmost_app, _pick, _restore as _restore, assert_visible_by_id as assert_visible_by_id, eval_js,
+    eval_js_by_id, tab_id as tab_id,
 )
 
 _ROW_JS = """(() => {
@@ -218,29 +218,29 @@ def _pick_for_lane(args: argparse.Namespace) -> tuple[int, int, str, dict]:
 
 
 from cos_lane_checks import (  # noqa: E402
-    _self_check,
-    summarize,
-    verdict,
+    _self_check as _self_check,
+    summarize as summarize,
+    verdict as verdict,
 )
 from cos_lane_checks_2 import (  # noqa: E402
-    _fingerprint,
-    _navigate_once,
-    _open_once,
-    _parse_convids,
-    _reach_and_click,
-    await_ready,
+    _fingerprint as _fingerprint,
+    _navigate_once as _navigate_once,
+    _open_once as _open_once,
+    _parse_convids as _parse_convids,
+    _reach_and_click as _reach_and_click,
+    await_ready as await_ready,
     bring_into_list,
-    classify,
-    collect_eligible,
-    contract_problems,
-    recover_selection,
+    classify as classify,
+    collect_eligible as collect_eligible,
+    contract_problems as contract_problems,
+    recover_selection as recover_selection,
 )
 from cos_lane_checks_3 import (  # noqa: E402
-    _emit,
-    _score,
-    _select,
+    _emit as _emit,
+    _score as _score,
+    _select as _select,
     main,
-    rehearse,
+    rehearse as rehearse,
 )
 
 

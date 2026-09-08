@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from ._shared import *  # noqa: F401,F403
 from ._facade import public
-from ._io import _write_atomic
 from ._layout import _ts
 from ._learning_ledger import log_defect
 from ._runs import legacy_runs_dir, run_manifest_path, runs_dir

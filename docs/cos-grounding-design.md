@@ -152,7 +152,7 @@ Four measured facts follow, and they are the reason D12 was incomplete:
    authenticates by OAuth and holds no `ANTHROPIC_API_KEY`. `--bare` is therefore
    rejected on evidence, not on taste.
 
-**DECISION D12a.** The judgment and category legs run:
+**DECISION D12a.** Every model leg runs:
 
 ```
 MODEL_TOOLS=(--tools "" --setting-sources "" --strict-mcp-config
@@ -201,6 +201,35 @@ above it — the D12a array as written is a *proposal*, not the shipped line.
 | the category leg's prompt moving to stdin | **NOT shipped** | it still passes `$CATCHUNK/batch-category.md` as a path, which is why the `Read` grant is load-bearing for that leg |
 | a per-run scratch cwd outside `$REPO` | **NOT shipped** | the nightly still `cd "$REPO"` |
 | the `Edit(//**)` deny | unchanged, already shipped | `MODEL_TOOLS` |
+
+### D12a-DRAFT · the third leg (DRAFT-01, 2026-08-28)
+
+This section said "the judgment and category legs" throughout, because for its
+whole life the nightly had exactly two. It now has three: the **draft leg**,
+which fires `$CHUNK/prompt-draft.txt` as its own `claude -p` call. It exists
+because the merged four-batch prompt silenced the drafting job — the model
+answered the triage question completely and never emitted the `draft` key, with
+no error and no refusal, on 30 consecutive draft slots.
+
+Nothing in the posture above changes for it, and none of it is inherited by
+assumption:
+
+- It carries the same `MODEL_TOOLS` array, so `--setting-sources ""`,
+  `--no-session-persistence` and the `Edit(//**)` deny ride it exactly as they
+  ride the other two.
+- Its stderr is its own sink, `$CHUNK/draft-leg.stderr`, created at `0600` by
+  the shipped line and bounded at `$COS_LEG_STDERR_MAX` — the same treatment
+  row 4c gives the other two.
+- Its answer goes through the same parser, with `--allow-empty` added because a
+  literal `[]` is this leg's common CORRECT outcome: the judge was offered ten
+  threads and declined all ten. The judgment leg never passes it.
+
+Read every "both legs" phrase below as "every leg". Three guards used to hold
+the number two as a literal — two counted the parser's call sites, one sliced
+the nightly by an exact marker string — and all three passed while the draft
+lane was silent, then failed on the correct change. They now count the call
+sites and assert the property over each, with a floor so a DELETED leg is still
+caught.
 
 **The two flags ride the LEGS, not `MODEL_TOOLS`, and that placement is
 deliberate.** `MODEL_TOOLS` is the **capability grant**, and
@@ -379,9 +408,18 @@ the same data.
 
 Order is fixed and the batches are in `BATCH_TYPES` order. A missing batch file is
 **fatal for that chunk** (no verdicts written, rows go unjudged, the H4 coverage
-floor is the backstop) — never a silently short prompt. Part 2 is omitted entirely
-when the run is `ungrounded`, and the instruction block says so in one line, so an
-ungrounded night does not ship an empty header the model must interpret.
+floor is the backstop) — never a silently short prompt. Part 2 rides ANY night
+that produced a map, `ungrounded` included (2026-09-03): every block states its
+own status, so a partial map is auditable, and D3 below already required that
+"whatever was covered before the deadline still ships". Part 2 is omitted only
+when there is no map at all — an absent or unreadable grounding file — and the
+instruction block then says so in one line, so the leg never gets an empty
+header it has to interpret.
+
+*Superseded rule:* until 2026-09-03 part 2 was omitted whenever the run was
+`ungrounded`. Two failed lookups out of 120 therefore discarded the other 118
+blocks; measured across runs 248/249/250, 157 threads were judged blind while
+their fetched context sat on disk.
 
 The instruction block keeps every sentence of the current prompt **except** the
 doctrine paragraph and the "Read every batch file in `$CHUNK`" sentence. It gains:
@@ -489,8 +527,10 @@ to look for, so the assertion has no subject. s05 records it as
 (the union covers nothing), not on condition 2. That is the right outcome by the
 right route, and it is written down here so nobody later "fixes" condition 2 to
 fire on a `null` and turns a legible denominator failure into a confusing
-delivery one. An **`ungrounded`** night is unaffected — it makes
-no claim to join, and E10 passes it as before.
+delivery one. An **`ungrounded`** night still makes no claim to JOIN and E10
+passes it as before — but since 2026-09-03 it does ship its map, so the
+producer's own `ok` field dropped its `grounded` conjunct and is now a claim
+about delivery alone (`cos_batch_chunk_write.write_join`).
 
 **The known-negative that proves the join can fail** — s05 ships all three, since
 a join proven only on the happy path proves nothing: (a) run the offline pipeline
@@ -1268,7 +1308,7 @@ corrected in s05 to say exactly that.
 were open because D12/D12a was unshipped; the owner then ruled that the two
 NARROWING halves ship on their own and the tool grant stays. So:
 `--setting-sources ""` closes the hook channel and `--no-session-persistence`
-closes sink 13, both on both legs' argv, both enforced by a named test with a
+closes sink 13, both on every leg's argv, both enforced by a named test with a
 per-leg known-negative probe. **`Read,Glob` remains granted** — so "no vault
 content reached the leg" is still not what an `ungrounded` night means, because
 the leg can still go and read one. That is the residual GRD-04 leaves standing,

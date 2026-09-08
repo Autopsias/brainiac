@@ -226,7 +226,8 @@ RETIRED_CONTROLS = {
 SCORED_CONTROLS = (
     "completion", "self_eval", "repairs", "metrics_row", "ledger_vocabulary",
     "category_stamp", "ingestion_ledger", "body_pass", "body_order",
-    "body_open_count", "aged_read_lane", "open_instrumentation",
+    "body_open_count", "aged_read_lane", "ingest_independence",
+    "bridge_reach", "open_instrumentation",
     "plan_binding", "corpus_join", "candidate_stamps", "artifact_naming",
     "degrade_consistency", "contract",
 )
@@ -304,7 +305,9 @@ def verify_run(vault, run_id: str, *, now: _dt.datetime | None = None,
     checks.append(check_body_pass(run_id, rows))
     checks.append(check_body_order(run_id, rows))
     checks.append(check_body_open_count(run_id, rows, row))
-    checks.append(check_aged_read_lane(run_id, rows))
+    checks.append(check_aged_read_lane(run_id, rows, vault=vault))
+    checks.append(check_ingest_independence(run_id, rows))
+    checks.append(check_bridge_reach(run_id, rows))
     acts = action_rows(vault, run_id)
     checks.append(check_open_instrumentation(vault, run_id, rows, acts))
     checks.append(check_plan_binding(vault, run_id))
@@ -325,6 +328,7 @@ __all__ = [
     "PASS", "DEGRADED", "FAIL", "INCONCLUSIVE",
     "alert", "checkers", "completion", "expected_check_count", "hot_entry",
     "inputs_digest", "known_run_ids", "ledger_counts", "recent_verdicts",
+    "carries_unjudged_work",
     "run_artifacts", "stalled_runs", "verify_pending_runs", "verify_run",
 ]
 
@@ -393,6 +397,13 @@ from .cos_runverify_ledger import (  # noqa: E402,F401  (facade re-export)
     check_ingestion_ledger as check_ingestion_ledger,
 )
 
+from .cos_runverify_ingest import (  # noqa: E402,F401  (facade re-export)
+    check_ingest_independence as check_ingest_independence,
+)
+from .cos_runverify_bridge import (  # noqa: E402,F401  (facade re-export)
+    check_bridge_reach as check_bridge_reach,
+)
+
 from .cos_runverify_join import (  # noqa: E402,F401  (facade re-export)
     check_artifact_naming as check_artifact_naming,
     check_aged_read_lane as check_aged_read_lane,
@@ -417,6 +428,8 @@ from .cos_runverify_alerts import (  # noqa: E402,F401  (facade re-export)
     hot_entry as hot_entry,
     known_run_ids as known_run_ids,
     recent_verdicts as recent_verdicts,
+    sheet_heartbeat as sheet_heartbeat,
+    carries_unjudged_work as carries_unjudged_work,
     stalled_runs as stalled_runs,
     verify_pending_runs as verify_pending_runs,
 )
@@ -428,4 +441,3 @@ from .cos_runverify_chips import (  # noqa: E402,F401  (facade re-export)
     hold_rows as hold_rows,
     prior_reeval_stamps as prior_reeval_stamps,
 )
-

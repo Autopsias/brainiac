@@ -12,8 +12,6 @@ from ._shared import (
 )
 from ._durability import (
     _fsync_dir_strict,
-    _mkdir_durable,
-    _require_durable_replace,
     _write_atomic_durable,
 )
 

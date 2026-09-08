@@ -24,6 +24,7 @@ from __future__ import annotations
 import base64
 import datetime as _dt
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -37,6 +38,8 @@ if TYPE_CHECKING:  # cos_driver_transport re-exports from THIS module, so a
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 PAGE_JS = Path(__file__).resolve().parent / "cos_driver_page.js"
+
+from cos_signals_sent import SENT_BODY_CAP  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # capture: drive the tab
@@ -211,6 +214,63 @@ def _read_out(tab: ChromeTab, out_id: str = OUT_ID) -> dict[str, Any]:
 #: that never finishes is a defect to surface, not to spin on.
 _SCAN_ATTEMPTS = 3
 
+#: EVERY PASS NUMBER A NIGHT SENDS, IN ONE TABLE (2026-09-03). The page starts a
+#: pass only on a RISING number (`pump`: `msg.seq > lastSeq`) and `_await_run`
+#: matches the out-node on `seq`, so a re-sent number does not merely fail to
+#: start a pass -- the host's FIRST poll matches the previous pass's own
+#: terminal state and returns its payload as the new pass's. A retry then always
+#: "succeeds", by handing back the very failure it was meant to fix.
+#:
+#: That is not hypothetical. The re-scan below was added 2026-08-22 for the
+#: short-scan failure and re-sent number 1, so it never ran a second scan once.
+#: Run 255 read 74 of 125 rows and stopped the night with nothing -- no threads
+#: selected, none ingested, none archived -- after three "attempts" that were
+#: one scan and two instant re-reads of its result.
+#:
+#: The numbers live together because the failure is a COLLISION, and a collision
+#: is invisible at either end alone. The gap between the scan block and the body
+#: block is deliberate: raising `_SCAN_ATTEMPTS` must not silently reach the
+#: body pass's number.
+_SEQ_SCAN = 1                      # and _SCAN_ATTEMPTS - 1 retries above it
+_SEQ_BODIES = 10
+_SEQ_BODY_RETRY = 11
+#: attachments run at 9001+ in `cos_attachment_fetch._Seq`, after all of these.
+
+#: How far back the SENT list is read, in hours. Two things read this window
+#: and they pull in opposite directions, which is why it is one named constant
+#: and not a literal:
+#:
+#:   * the ZERO-SEND PROOF (`cos_contract_criteria._sent_zero_send`) compares
+#:     the sent list before and after the run and fails on any item that
+#:     appeared in between. A WIDER window makes that proof STRICTER, never
+#:     weaker — the only thing it can break is `complete`, because an
+#:     enumeration that truncates reads as ZS-incomplete.
+#:   * PEN 3 (FB-05) joins the owner's actual sent reply to the draft this lane
+#:     wrote. At 24 hours it had NOTHING to join: measured 2026-09-06 against
+#:     the live mailbox, the same probe found 0 candidates over 1 day, 2 over
+#:     7 days and 14 over 30. Criterion 7 of the plan's acceptance review was
+#:     NOT-YET-MEASURABLE with a denominator of zero for exactly this reason.
+#:
+#: 7 days is the smallest window that gives Pen 3 a non-zero denominator, and
+#: the enumeration completes well inside it — the 30-day probe enumerated to
+#: `boundary: list-end` with 129 of 129 items carrying a conv_id, so 7 days is
+#: not near any truncation limit. Override with COS_SENT_WINDOW_HOURS.
+SENT_WINDOW_HOURS_ENV = "COS_SENT_WINDOW_HOURS"
+DEFAULT_SENT_WINDOW_HOURS = 24 * 7
+
+
+def sent_window_hours() -> float:
+    """The sent-list window, in hours. Never zero or negative: a window that
+    does not go backwards would make the zero-send proof vacuous."""
+    raw = os.environ.get(SENT_WINDOW_HOURS_ENV, "").strip()
+    if not raw:
+        return float(DEFAULT_SENT_WINDOW_HOURS)
+    try:
+        val = float(raw)
+    except ValueError:
+        return float(DEFAULT_SENT_WINDOW_HOURS)
+    return val if val > 0 else float(DEFAULT_SENT_WINDOW_HOURS)
+
 
 def _scan_finished(scan: dict[str, Any]) -> bool:
     """Did the scanner reach the end of the virtualized list?
@@ -227,17 +287,27 @@ def _scan_finished(scan: dict[str, Any]) -> bool:
 
 
 def capture_night(tab: ChromeTab, *, cap: int, poll_seconds: float,
-                  max_wait: float, now: _dt.datetime) -> dict[str, Any]:
-    """Run the in-page driver and return its raw output. No accounting here."""
+                  max_wait: float, now: _dt.datetime,
+                  sent_body_convs: list[str] | None = None) -> dict[str, Any]:
+    """Run the in-page driver and return its raw output. No accounting here.
+
+    `sent_body_convs` arms PEN 3 (FB-05): the conversations whose SENT reply may
+    have its body read, because the undo ledger says this lane drafted on them.
+    Default `None` leaves the phase off and pass 1 byte-identical to before —
+    `enumerate_only` passes nothing and is unaffected.
+    """
     import cos_driver_transport as _t                             # noqa: PLC0415
     assert_ready(tab)
-    window_start = _t._ts(now - _dt.timedelta(hours=24))
+    window_start = _t._ts(now - _dt.timedelta(hours=sent_window_hours()))
 
     # Pass 1: scan + enumerate + sent, with an EMPTY draw. The draw cannot be
     # computed until the enumeration exists, and the enumeration is what says
     # which rows are already read.
-    opts = {"cap": 0, "budget": _t.BODY_BUDGET_CHARS, "sent_window_start": window_start}
-    first = _await_run(tab, 1, opts, poll_seconds, max_wait)
+    opts = {"cap": 0, "budget": _t.BODY_BUDGET_CHARS,
+            "sent_window_start": window_start,
+            "sent_body_convs": list(sent_body_convs or []),
+            "sent_body_cap": SENT_BODY_CAP if sent_body_convs else 0}
+    first = _await_run(tab, _SEQ_SCAN, opts, poll_seconds, max_wait)
 
     # RE-SCAN WHILE THE SCANNER SAYS IT DID NOT FINISH (2026-08-22). The mail
     # list is VIRTUALIZED — ~60 of a few hundred rows exist in the page at once
@@ -260,11 +330,12 @@ def capture_night(tab: ChromeTab, *, cap: int, poll_seconds: float,
     # pass 1 scans, enumerates, and reads the sent window. Bounded, because a
     # scanner that cannot finish in three passes is a real defect that must
     # reach `assert_complete` and stop the night, not be looped over.
-    for _ in range(_SCAN_ATTEMPTS - 1):
+    for attempt in range(1, _SCAN_ATTEMPTS):
         scan = first["out"]["scan"] or {}
         if _scan_finished(scan):
             break
-        again = _await_run(tab, 1, opts, poll_seconds, max_wait)
+        # A RISING NUMBER, or the page starts nothing -- see the pass table.
+        again = _await_run(tab, _SEQ_SCAN + attempt, opts, poll_seconds, max_wait)
         # Keep whichever pass saw MORE of the list: a later short pass must
         # never discard an earlier complete one.
         if len((again["out"]["scan"] or {}).get("ids") or []) >= len(scan.get("ids") or []):
@@ -274,20 +345,60 @@ def capture_night(tab: ChromeTab, *, cap: int, poll_seconds: float,
     scan = first["out"]["scan"] or {}
     sent = first["out"]["sent"] or {}
     return {"scan": scan, "enumeration": enumeration, "sent": sent,
+            "sent_bodies": first["out"].get("sent_bodies") or [],
             "bodies": [], "cap": cap, "window_start": window_start}
 
 
 def capture_bodies(tab: ChromeTab, draw: list[dict[str, str]], *,
                    poll_seconds: float, max_wait: float,
                    window_start: str) -> list[dict[str, Any]]:
-    """Pass 2: fetch the drawn bodies. Every element of `draw` is already read."""
+    """Pass 2: fetch the drawn bodies. Every element of `draw` is already read.
+
+    A ROW THAT DID NOT LAND IS ASKED ONCE MORE (2026-09-03). The pass was a
+    single shot, so one refused `GetItem` cost that thread the whole night —
+    and the next night re-offered it and refused it again. Measured over the
+    2026-09 ledgers: eleven threads carried a read-failure hold, ten of them on
+    five or more separate nights and eight on eleven consecutive nights. The
+    retry is honest here for the same reason the scan retry above is: the read
+    is a REST `GetItem` against a message already marked read, so it changes
+    nothing in the mailbox and can be repeated. Bounded at one extra pass — a
+    fetch that fails twice is a real defect that must reach the ledger with its
+    reason (`open_error`) rather than be looped over.
+
+    The retry runs at `_SEQ_BODY_RETRY` because the page starts a pass only on
+    a RISING `seq` (`pump`: `msg.seq > lastSeq`). Re-sending the body pass's own
+    number would not start anything; the host's first poll would read the
+    previous pass's `done: true` and hand back its payload as the retry's. The
+    scan retry above made exactly that mistake for twelve nights.
+    """
     if not draw:
         return []
     import cos_driver_transport as _t                             # noqa: PLC0415
-    opts = {"cap": len(draw), "budget": _t.BODY_BUDGET_CHARS,
-            "sent_window_start": window_start, "draw": draw, "max_scrolls": 0}
-    res = _await_run(tab, 2, opts, poll_seconds, max_wait)
-    return res["out"]["bodies"] or []
+    from cos_driver_accounting import body_open_succeeded          # noqa: PLC0415
+
+    # THE ONE DEFINITION OF THE SHELL THRESHOLD, sent to the page rather than
+    # restated in it: the page needs it to decide whether a body landed well
+    # enough to skip the fallback shape, and a second copy of the number is the
+    # defect `body_open_succeeded` exists to close.
+    from brain.cos_runverify_checks import _EMPTY_SHELL_CHARS  # noqa: PLC0415
+
+    def _pass(seq: int, rows: list[dict[str, str]]) -> list[dict[str, Any]]:
+        opts = {"cap": len(rows), "budget": _t.BODY_BUDGET_CHARS,
+                "sent_window_start": window_start, "draw": rows,
+                "shell_chars": _EMPTY_SHELL_CHARS, "max_scrolls": 0}
+        res = _await_run(tab, seq, opts, poll_seconds, max_wait)
+        return res["out"]["bodies"] or []
+
+    landed = {b.get("conv_id"): b for b in _pass(_SEQ_BODIES, draw)}
+    retry = [d for d in draw if not body_open_succeeded(landed.get(d["convId"]))]
+    if retry:
+        for again in _pass(_SEQ_BODY_RETRY, retry):
+            # ONLY A LANDED SECOND ATTEMPT REPLACES THE FIRST. A second
+            # refusal carries no more information than the first and would
+            # only overwrite the recorded reason with an identical one.
+            if body_open_succeeded(again):
+                landed[again.get("conv_id")] = again
+    return [landed[d["convId"]] for d in draw if d["convId"] in landed]
 
 
 def _await_run(tab: ChromeTab, seq: int, opts: dict[str, Any],

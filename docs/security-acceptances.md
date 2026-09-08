@@ -897,6 +897,51 @@ Round 4's reviewers both recommended that shape. It was not taken because it
 is the fifth patch in a class where three of the previous four created the
 next defect, and because the assurance it protects is one no surface prints.
 
+## A-13 · The VM egress ceiling verifies with a key the VM can rewrite
+
+**Raised as:** Codex Security finding `2daadd6f` ("VM can forge the signed
+egress ceiling via its mutable anchor"), medium, against `39e0e31` (v0.20.31).
+Re-checked 2026-09-05 on master `1f5c2e71`; owner ruling the same day.
+
+**What the finding says, and it is right.** `vm_ceiling.resolved_ceiling`
+verifies `vm-egress-tier.signed` with the public key in `pinned-verify.json`,
+and both files resolve through `cowork_staging.staging_root` or
+`$BRAIN_RUNTIME_DIR` — the staging directory on the mount, which the sandbox
+can write, or a directory the sandbox names. The `vault_id` check compares the
+two files with each other. A VM session that generates its own Ed25519 pair,
+writes both files and asks for `--max-tier MNPI` gets the clamp raised to
+`MNPI` with provenance `signed-file`. Reproduced by execution 2026-09-05 at
+the redirected path AND at the default staging root. No host key is needed.
+
+**What is accepted, stated plainly.** The signed ceiling is a preference the
+host records, not a confidentiality boundary. A control on the VM leg that
+reads its own root of trust from the mount cannot be one: every staged file
+sits where the sandbox can write, and Cowork offers no location it cannot.
+`vm_ceiling`'s docstring, the bootstrap comment and the 0.20.31 CHANGELOG
+entry said "a source the VM cannot forge"; that sentence is withdrawn, and
+`tests/test_vm_ceiling.py::test_the_anchor_is_forgeable_from_the_mount` pins
+the limit so it stays visible rather than latent (the same shape as A-12).
+
+**Why the forged ceiling reaches no data.** Since A-05 closed (2026-09-01)
+the vault and the published snapshot are OFF the Cowork mount: the installer
+refuses to publish a snapshot inside an attached workspace, and both live
+workspaces on the reference host carry no snapshot, no index and no anchor
+(`brain doctor`, the VULN-3385 leak row, 2026-09-05). The role=vm CLI
+therefore has no note body to surface at any ceiling. Cowork reads go through
+the host `brain-mcp` broker at the HOST ceiling, with no per-caller ceiling
+by the A-01 ruling. On a co-located workspace (still supported by the
+installer) the Markdown is on the mount and the CLI gate was never the
+boundary there. The one remaining consumer of the anchor is
+`brain --role vm alerts`, whose summary the sandbox could equally forge —
+that limit is already stated in `exceptions_verify.py`.
+
+**What would reopen it:** a note body, a snapshot or a derived index landing
+inside an attached Cowork workspace again (`tests/test_cowork_staging_off_the_mount.py`
+fails), or a per-caller ceiling being introduced on the broker leg that
+reads its decision from the mount.
+
+---
+
 ---
 
 ## Not accepted, and deliberately absent

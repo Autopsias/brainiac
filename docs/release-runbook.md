@@ -167,8 +167,16 @@ would reintroduce the stale-bundle bug class that v0.10.5 had to fix.
 **Verification command** (run every release, not just this one):
 ```
 git check-ignore -v eval/runs/s13-final.json   # must print a match (confirms it's excluded)
-git ls-files eval/runs/                         # must print nothing (confirms it's untracked)
+git ls-files eval/runs/                         # must print ONLY ne-family-freeze.json
 ```
+
+`eval/runs/ne-family-freeze.json` is tracked on purpose. It was force-added by
+`6eeca308` before the `eval/runs/` ignore rule existed, and it carries no
+corpus content: `synthetic_only: true`, synthetic query ids (`ne_alias_01`)
+and two paths under `eval/fixtures/`. This line read "must print nothing"
+until 0.20.37, so every release either stopped on a false leak or waved the
+whole check through. If ANY OTHER path appears, stop and read it — that is the
+unlisted leak vector this check exists to catch.
 
 ### Running the export
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from ._shared import *  # noqa: F401,F403
 from ._facade import public
-from ._io import _write_atomic
 from ._layout import _ts, _utcnow, priority_map_path
 
 def load_priority_overrides(vault) -> dict[str, str]:

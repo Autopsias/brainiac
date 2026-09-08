@@ -24,14 +24,14 @@ never duplicates a hot-queue entry (ADR-0003 Ruling 5/HARDENED:codex).
 """
 from __future__ import annotations
 
-import datetime
-import itertools
-import json
+import datetime as datetime
+import itertools as itertools
+import json as json
 import logging
-import re
-import shlex
-from pathlib import Path
-from typing import Any
+import re as re
+import shlex as shlex
+from pathlib import Path as Path
+from typing import Any as Any
 
 from .maintenance_invariant_fields import invariant_health_history_fields as invariant_health_history_fields
 

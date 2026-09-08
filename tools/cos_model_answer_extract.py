@@ -271,3 +271,33 @@ def extract_objects(text: str, cma) -> list[Any]:
             "the leg's stream carried no JSON object at all "
             f"({cma._describe(text)})")
     return out
+
+
+def empty_array_answer(text: str) -> bool:
+    """Did the leg answer with a literal empty array, and nothing else?
+
+    `[]` IS AN ANSWER on the draft leg — "none of these threads needs a reply
+    from me" is the common correct outcome, and the judgment leg's rule that
+    zero objects means a failed call is wrong there. So the caller opts in with
+    `--allow-empty` and this decides, on the model's OWN final text: the last
+    `result` event of a stream, or the whole body of a single envelope, must
+    strip to exactly `[]`.
+
+    DELIBERATELY EXACT. Anything else — prose, a partial array, a fenced block,
+    a `result` that merely CONTAINS `[]` — stays a refusal, because the failure
+    this must not absorb is a leg that produced leavings. Read the last event,
+    not the first: a stream's earlier events carry the model's working, and only
+    its final `result` is the answer.
+    """
+    last = None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(ev, dict) and ev.get("type") == "result":
+            last = ev.get("result")
+    return (last if last is not None else text).strip() == "[]"

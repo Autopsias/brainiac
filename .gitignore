@@ -296,3 +296,7 @@ _evidence/invariants/*
 .quality-v2-scope
 # /plan-execute member worktrees are runtime checkouts, never repository content.
 .plan-worktrees/
+
+# Codex run transcripts staged by plan-execute. They carry live mailbox
+# content, so they are evidence, never source.
+_codex/

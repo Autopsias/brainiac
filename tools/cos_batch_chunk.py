@@ -134,7 +134,14 @@ def _ground():
 
 def chunk_map(payload: dict, group: list[str], chunk_name: str) -> dict:
     """The per-chunk map (D6a file 2): the run map's shape, `blocks` restricted
-    to this group, plus `chunk` and `parent_run_id`."""
+    to this group, plus `chunk` and `parent_run_id`.
+
+    `not_attempted` NAMES THE ABSENCE (2026-09-03). Since the map rides an
+    ungrounded night too, a row can reach the model with no block at all — the
+    run's deadline expired before its lookup ran. An absent key reads as "the
+    vault was searched and said nothing", which is a different and wrong claim,
+    so the ids that were never looked up are listed explicitly.
+    """
     blocks = payload.get("blocks") or {}
     return {
         "chunk": chunk_name,
@@ -143,6 +150,7 @@ def chunk_map(payload: dict, group: list[str], chunk_name: str) -> dict:
         "state": payload.get("state"),
         "reason": payload.get("reason", ""),
         "blocks": {cid: blocks[cid] for cid in group if cid in blocks},
+        "not_attempted": [cid for cid in group if cid not in blocks],
     }
 
 
@@ -166,6 +174,33 @@ def compose_prompt(instruction: str, map_text: str | None,
         parts += [SEP_BATCH[t], bodies[t].rstrip("\n"), ""]
     parts += [closing.strip(), ""]
     return "\n".join(parts)
+
+
+def compose_draft_prompt(instruction: str, draft_body: str,
+                         closing: str) -> str:
+    """`$CHUNK/prompt-draft.txt` — the draft job, alone in its own call.
+
+    Instruction, the DRAFT batch, the closing. No map and no other batch.
+
+    WHY IT IS A SEPARATE CALL (DRAFT-01, measured 2026-08-27 on run193's own
+    captured mail, real binary, real flags, one variable at a time): the merged
+    four-batch prompt answers the TRIAGE question completely — 120 verdicts, 40
+    of them `act` — and never emits the `draft` key at all. Zero drafts across
+    30 slots, no error, no refusal, `malformed_drafts: 0`. This exact prompt
+    returns 3 drafts on the same rows; adding the closing to it still returns 3;
+    adding the TRIAGE batch is what takes it to 0. A second task in the same call
+    silences the first, and nothing counts a dropped one — a job that vanished
+    reads exactly like a job that correctly declined everything.
+
+    NO MAP, deliberately. The map is one block per conversation and is the
+    single largest part of the merged prompt; the two probes that returned
+    drafts did so without it, and a draft is written from the thread's own text.
+    Add it if the drafts prove to need vault context — after measuring, not
+    before.
+    """
+    return "\n".join([instruction.rstrip("\n"), "",
+                       SEP_BATCH["draft"], draft_body.rstrip("\n"), "",
+                       closing.strip(), ""])
 
 
 def join_chunk(chunk_name: str, prompt_text: str, cmap: dict | None,
@@ -285,10 +320,12 @@ def do_split(batches_dir: Path, out_dir: Path, size: int, *,
             raise FileNotFoundError(f"{path} is missing")
         parsed[t] = split_batch(path.read_text(encoding="utf-8"))
 
-    # THE GROUNDING MAP RIDES ONLY A GROUNDED NIGHT. An `ungrounded` run makes no
-    # claim to have delivered context, so it ships none and says so in one line
-    # (D2): a half-delivered map behind the word "ungrounded" is the same
-    # unauditable state the two null statuses exist to prevent.
+    # THE GROUNDING MAP RIDES ANY NIGHT THAT HAS ONE (2026-09-03, superseding
+    # D2's grounded-only rule). D2 refused to ship a map behind the word
+    # "ungrounded" because a half-delivered map is unauditable. It is not: every
+    # block renders its own status and `chunk_map` names the ids with no block
+    # at all, so nothing is silently absent. The rule it replaces cost 157
+    # threads their fetched context across runs 248/249/250.
     # A GROUNDING FAILURE IS A LABEL, NEVER A DEAD NIGHT (D5). The fetch is
     # best-effort and the nightly passes `--grounding` unconditionally, so an
     # absent or unreadable map must compose an UNGROUNDED prompt — not raise,
@@ -311,7 +348,8 @@ def do_split(batches_dir: Path, out_dir: Path, size: int, *,
                        required=required, instruction=instruction_text,
                        closing=closing_text, ground=_ground,
                        chunk_map=chunk_map, compose_prompt=compose_prompt,
-                       batch_types=BATCH_TYPES)
+                       batch_types=BATCH_TYPES,
+                       compose_draft=compose_draft_prompt)
 
     if instruction_text is None:
         placed = [(g, 0, False, False) for g in groups]

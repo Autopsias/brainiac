@@ -108,7 +108,12 @@ re-exported per session — see `cowork-windows-install.md`.
 The Chat tab is the single surface that **cannot run a shell command**, so it
 gets a thin, **optional, deletable** MCP bridge: `src/brain/mcp_adapter.py`
 (~50 lines) wraps the SAME `BrainCore` + the SAME deny-by-default
-`ClassificationFilter` and exposes only the read verbs. **MCP is never the
+`ClassificationFilter` and exposes the read verbs plus ONE quasi-write,
+`capture` (0.20.32): the broker stages the caller's content through the
+host's draft lane, so an existing id is refused (`duplicate-id`) and the
+note lands marked `status: draft`, `provenance.trust: untrusted` — never
+`write`, `rebuild`, `ingest` or any other host-broker verb
+(`docs/security-acceptances.md` A-06, "The inbound mirror"). **MCP is never the
 foundation** — delete the adapter and every other harness still works. It's
 already included in a normal PyPI install (`brainiac-cli[mcp]`, what
 `install.sh`/`install.ps1` install by default); a contributor's editable

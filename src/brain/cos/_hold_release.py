@@ -3,14 +3,13 @@ from __future__ import annotations
 
 from ._shared import *  # noqa: F401,F403
 from ._facade import public
-from ._approval import approved_verify_key, stage_approved
+from ._approval import stage_approved
 from ._attachment_acceptance import _accept_attachment
 from ._attachment_anchors import attachment_hold_authz, clear_attachment_hold_authz
 from ._attachment_store import _discard_attachment, _write_attachment_meta, attachment_metas
 from ._guards import _safe_meta_id
 from ._hold_store import verified_hold
 from ._hold_undo import _undone_before, _write_released_marker
-from ._io import _write_atomic
 from ._layout import _env_days, _parse_ts, _ts, _utcnow, hold_dir, proposals_dir
 from ._learning_ledger import log_defect
 from ._routing import route_decision

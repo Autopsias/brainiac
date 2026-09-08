@@ -53,6 +53,8 @@ REFUSED_CONVERSATION_ACTIONS = ("Delete", "SetReadState", "AlwaysDelete",
                                 "AlwaysMove")
 PERMITTED_FOLDERS = ("archive", "inbox")
 DRAFT_FOLDER = "drafts"
+DRAFT_DISCARD_SHAPE = "DiscardDraft"
+DRAFT_DISCARD_DESTINATION = "deleteditems"
 SAVE_ONLY = "SaveOnly"
 
 CANARY_MAX_AGE_DAYS = 30
@@ -140,6 +142,12 @@ ABSENT_SKIP_FLOOR = 5
 #: emits (`cos_mutate_page.js:1902` draft, `:1939` archive); nothing else.
 RECEIPT_KEYS = frozenset({
     "is_draft", "signature_present", "send_attempted",
+    # The draft-discard reversal's pre-dispatch identity proof and its
+    # post-dispatch absence proof. All are booleans except `source_folder`,
+    # which is constrained by `receipts_shape_ok` to this row's own folder.
+    "item_id_matches", "conversation_matches", "signature_matches",
+    "signature_unambiguous", "sent_evidence_absent", "request_not_send",
+    "absent_from_drafts", "drafts_enumeration_complete",
     "moved_item_resolves", "source_folder", "source_absent",
     "source_enumeration_complete", "source_enumeration_terminated",
     "source_items_seen", "source_total_in_view",

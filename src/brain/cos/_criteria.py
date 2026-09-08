@@ -5,7 +5,7 @@ from ._shared import *  # noqa: F401,F403
 from ._io import _read_jsonl
 from ._layout import _parse_ts, _utcnow
 from ._learning_config import _category_config, _pattern_config
-from ._learning_ledger import _last_demotion, _outcomes_path, defects
+from ._learning_ledger import _last_demotion, _outcomes_path
 from ._taxonomy import ingest_taxonomy
 
 def _wilson_lower_bound(successes: int, n: int, z: float = 1.96) -> float:

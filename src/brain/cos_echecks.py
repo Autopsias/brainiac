@@ -29,15 +29,15 @@ renderer, one writer.
 """
 from __future__ import annotations
 
-import hashlib
+import hashlib as hashlib
 import json
 import re
-import subprocess
+import subprocess as subprocess
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable as Callable
 
-from . import cos, cos_chips, cos_runverify
-from . import cos_echecks_delivery as delivery
+from . import cos, cos_chips as cos_chips, cos_runverify
+from . import cos_echecks_delivery as delivery  # noqa: F401
 
 PASS = "PASS"
 FAIL = "FAIL"
@@ -65,16 +65,45 @@ CAPABILITY_BLOCKS: tuple[tuple[str, str, str], ...] = (
 #: breach because it read the bucket alone.
 AGED_READ_SIGNAL = "aged-read-no-action"
 
+#: (STALE-01) The stale-act signal. E3 is the THIRD reader of it, after the
+#: judge's `stale_act_refusal` and the planner's row-level belt, and the only
+#: one that judges the archive AFTER it landed, off the artifacts alone.
+STALE_ACT_SIGNAL = "stale-act-archived"
+
 #: The signals that may JUSTIFY an auto-archive. `none` is a descriptive label
 #: and `automated-mail-marker` was retired at run 127 (no typed field validates
 #: it), so neither can carry a row into the archive lane.
 ARCHIVING_SIGNALS = frozenset({"recurring-automated-sender", "read-noise-bucket",
-                               AGED_READ_SIGNAL})
+                               AGED_READ_SIGNAL, STALE_ACT_SIGNAL})
+
+#: Which BUCKET each lane's archive may sit in. The default is `noise`; the
+#: aged-read ruling widened its own signal to `read` and STALE-01 widens ITS
+#: OWN to `act`. ADDING A ROW HERE CHANGES NOTHING ABOUT THE OTHERS — the set
+#: is looked up per row by that row's own signal, so `read-noise-bucket` and
+#: `aged-read-no-action` mean exactly what they meant before.
+ARCHIVE_BUCKETS = {AGED_READ_SIGNAL: frozenset({"noise", "read"}),
+                   STALE_ACT_SIGNAL: frozenset({"act"})}
+DEFAULT_ARCHIVE_BUCKETS = frozenset({"noise"})
+
+
+#: (owner ruling 2026-09-04) THE P0 BLAST-RADIUS FLOOR, re-exported from
+#: `cos_chips` — the module that already owns the (bucket, tier) matrix, and
+#: the one both this module and `cos_runverify_join` can import without a ring.
+from .cos_chips import p0_floor_refuses as p0_floor_refuses  # noqa: E402
 
 #: Mutation primitives this build may dispatch. Anything else in the ledger's
 #: `primitive` column is an action the zero-send boundary never admitted.
+#: `rest-discard-signed-draft` is the dedicated draft-only REVERSAL
+#: (`cos_mutate_gates.PRIMITIVE["discard-draft"]`): it moves a superseded draft
+#: this run signed to Deleted Items with `MoveToDeletedItems` — recoverable,
+#: never a hard delete — and its page-level gate (`validateDraftDiscard`)
+#: refuses any send/create payload and any banned disposition, so it is as
+#: send-free as the other three. It is dispatched OUTSIDE the frozen mutation
+#: plan (E6 recognises it there), which is why it must be named here too or E1
+#: reads the run's own draft cleanup as a primitive the boundary never admitted.
 PERMITTED_PRIMITIVES = frozenset({"rest-conversation-move", "rest-categorize",
-                                  "rest-create-draft"})
+                                  "rest-create-draft",
+                                  "rest-discard-signed-draft"})
 
 
 class EcheckError(RuntimeError):

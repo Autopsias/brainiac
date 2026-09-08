@@ -12,7 +12,6 @@ import os
 import re
 from pathlib import Path
 
-from . import classification as cls
 from . import frontmatter
 from .overlay_core import (
     KEYWORDS_GENERATED_DIR,

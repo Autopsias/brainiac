@@ -1,23 +1,29 @@
 """BrainCore public facade with stable ``brain.core`` imports."""
 from __future__ import annotations
 
-import os
+import os as os
 from pathlib import Path
 
 from ._shared import (
-    Any, AuditChain, BrainIndex, CosFoldsMixin, DailyFoldsMixin,
+    Any as Any, AuditChain, BrainIndex, CosFoldsMixin, DailyFoldsMixin,
     DeliverablesFoldsMixin, DraftDrainMixin,
-    GoldenFoldsMixin, GoldenOpsMixin, GraphFoldsMixin, GraphOpsMixin, Hit,
-    IntakeFoldsMixin, InvariantFoldsMixin, KeyUnavailable, MaintenanceOrchestratorMixin,
+    GoldenFoldsMixin, GoldenOpsMixin, GraphFoldsMixin, GraphOpsMixin, Hit as Hit,
+    IntakeFoldsMixin,
+    InvariantFoldsMixin,
+    KeyUnavailable as KeyUnavailable,
+    MaintenanceOrchestratorMixin,
     MULTI_GUARD_STRONG_RANK, MULTI_MAX_VARIANTS, MULTI_RRF_K,
     OrganizationFoldsMixin, PreflightFoldsMixin, PublishFoldsMixin,
     RemediationFoldsMixin, ReportingFoldsMixin, RetentionFoldsMixin,
     RetrievalOpsMixin, RoleError,
     StatusOpsMixin, SupersedeJournalUnreadable, SupersedePreconditionFailed,
     UpdateOpsMixin, WatchdogFoldsMixin, WeeklyFoldsMixin, WriterLockBusy,
-    classification, config,
-    frontmatter, safe_slug, sha256_text, vault_writer_lock,
-    _audit_status_summary, _contained_in, _stamp_draft_frontmatter,
+    classification as classification, config,
+    frontmatter as frontmatter,
+    safe_slug as safe_slug,
+    sha256_text as sha256_text,
+    vault_writer_lock,
+    _audit_status_summary as _audit_status_summary, _contained_in, _stamp_draft_frontmatter,
 )
 from ._durability import (
     SupersedeNotDurable, _fsync_dir_strict, _mkdir_durable,

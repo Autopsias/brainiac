@@ -37,16 +37,70 @@ def _chunk_answers(chunks_dir: Path, prefix: str,
     return arrays, skipped, len(chunk_dirs)
 
 
+def graft_drafts(chunks_dir: Path, merged: list) -> dict:
+    """DRAFT-01: copy each `draft` the SECOND leg wrote onto its triage verdict.
+
+    The draft job runs in its own model call (`prompt-draft.txt` →
+    `verdicts-draft.json`) because sharing one call with the triage job silences
+    it — measured 2026-08-27, 0 drafts across 30 slots while the triage half
+    answered in full. Everything downstream still reads ONE verdict per
+    conversation, so the two answers are joined here, on conversation_id.
+
+    A draft NEVER overwrites one the triage leg already produced, and a draft
+    whose conversation has no triage verdict is DROPPED, not invented as a bare
+    row: a conversation the judgment leg never judged has no bucket, no tier and
+    no evidence span, and a row carrying only a draft would walk into the judge
+    wearing a verdict it never received.
+
+    `needs_owner` RIDES THE SAME JOIN (owner ruling 2026-08-28). The leg's
+    answer for a row it did not draft is the WORD saying why, and until now
+    this function threw that row away on `not row.get("draft")` — so the one
+    thing the ruling asks for could never reach the sheet even once the model
+    returned it. `orphaned` now counts a row that carried EITHER, because both
+    are answers about a conversation this run did not judge.
+    """
+    by_id = {}
+    for row in merged:
+        if isinstance(row, dict) and row.get("conversation_id") is not None:
+            by_id.setdefault(str(row["conversation_id"]), row)
+    grafted, orphaned, chunks, flagged = 0, 0, 0, 0
+    for cd in sorted(chunks_dir.glob("chunk-*")):
+        try:
+            rows = json.loads((cd / "verdicts-draft.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        chunks += 1
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, dict):
+                continue
+            has_draft, has_flag = bool(row.get("draft")), bool(row.get("needs_owner"))
+            if not (has_draft or has_flag):
+                continue
+            target = by_id.get(str(row.get("conversation_id")))
+            if target is None:
+                orphaned += 1
+                continue
+            if has_draft and not target.get("draft"):
+                target["draft"] = row["draft"]
+                grafted += 1
+            if has_flag and not target.get("needs_owner"):
+                target["needs_owner"] = row["needs_owner"]
+                flagged += 1
+    return {"draft_chunks": chunks, "drafts_grafted": grafted,
+            "drafts_orphaned": orphaned, "needs_owner_flagged": flagged}
+
+
 def do_merge(chunks_dir: Path, out: Path) -> tuple[dict, int]:
     # A dropped chunk's rows go unjudged; the H4 coverage floor is the backstop.
     arrays, skipped, expected = _chunk_answers(chunks_dir, "chunk", "verdicts.json")
     merged = [r for rows in arrays for r in rows]
+    drafts = graft_drafts(chunks_dir, merged)
 
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(merged, indent=1, ensure_ascii=False), encoding="utf-8")
     summary = {"chunks_merged": len(arrays),
                "chunks_expected": expected,
-               "rows": len(merged), "skipped": skipped}
+               "rows": len(merged), "skipped": skipped, **drafts}
     # ZERO usable chunks is the leg producing nothing — exit nonzero so the caller
     # dies 9 READ-ONLY. Keyed on chunks_merged, not rows: a chunk that legitimately
     # judged an empty group returns `[]`, which IS a merged chunk (rc 0, a quiet

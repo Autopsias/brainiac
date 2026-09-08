@@ -283,19 +283,27 @@
   }
 
   /* ---------------- GetItem body ------------------------------------------ */
-  function fetchBody(itemId, isRead, budget) {
-    if (isRead !== true) {
-      return Promise.reject(new Error("refusing to fetch a message not known to be read"));
-    }
+  /* HTML -> readable text. Runs ONLY on the fallback shape below, so a message
+   * whose Text body worked is never put through it. `DOMParser` is not a script
+   * sink, so Trusted Types does not block it; on any failure keep the raw
+   * markup rather than lose the body entirely. */
+  function htmlToText(html) {
+    try {
+      var doc = new DOMParser().parseFromString(html, "text/html");
+      return (doc && doc.body && doc.body.textContent) || html;
+    } catch (e) { return html; }
+  }
+
+  function getItemOnce(itemId, budget, shape, bodyType) {
     var body = {
       __type: "GetItemJsonRequest:#Exchange",
       Header: header(),
       Body: {
         __type: "GetItemRequest:#Exchange",
-        // AllProperties + Text. No read-flag field exists on this request and
-        // none is added: read state is proven by re-enumeration, never asserted.
+        // No read-flag field exists on this request and none is added: read
+        // state is proven by re-enumeration, never asserted.
         ItemShape: {__type: "ItemResponseShape:#Exchange",
-                    BaseShape: "AllProperties", BodyType: "Text"},
+                    BaseShape: shape, BodyType: bodyType},
         ItemIds: [{__type: "ItemId:#Exchange", Id: itemId}],
       },
     };
@@ -303,11 +311,21 @@
       var msg = firstItem(r);
       var item = msg && msg.Items && msg.Items[0];
       var text = (item && item.Body && item.Body.Value) || "";
+      if (bodyType === "HTML" && text) text = htmlToText(text);
       var clipped = text.length > budget ? text.slice(0, budget) : text;
       return sha256(clipped).then(function (digest) {
         return {
           status: r.status, ms: r.ms, code: msg && msg.ResponseCode,
           ok: !!(msg && msg.ResponseCode === "NoError" && item),
+          body_shape: shape + "/" + bodyType,
+          // WHAT THE ITEM IS, not only how the fetch went (2026-09-04). Seven
+          // threads answer 500 on `AllProperties/Text` and NoError/200 with
+          // zero characters on `Default/HTML`, every night. Both answers are
+          // about the REQUEST; neither says what was requested. Their subjects
+          // all read as meeting invitations, and a calendar item's body is not
+          // where a message's body is -- but a subject is a guess and
+          // `ItemClass` is the answer, so record it rather than reason about it.
+          item_class: (item && item.ItemClass) || null,
           text: clipped,
           body_chars: clipped.length,
           raw_chars: text.length,
@@ -325,8 +343,58 @@
       });
     }).catch(function (e) {
       return {status: null, ms: null, code: null, ok: false, text: "",
+              body_shape: shape + "/" + bodyType,
               body_chars: 0, raw_chars: 0, body_sha256: null,
               is_read_after_fetch: null, error: String(e).slice(0, 200)};
+    });
+  }
+
+  /* A SECOND SHAPE FOR A BODY THE FIRST ONE DID NOT GET (2026-09-03).
+   * Run 254 named both failures for the first time, after eleven nights that
+   * recorded only the word `error`: six threads answered HTTP 500 and one
+   * answered `NoError`/200 with a 30-character body. Both are answers about
+   * the REQUEST. `AllProperties` asks the server to serialise every property
+   * the item has, which is the thing a server can fail on; `Text` is empty for
+   * an item that carries only an HTML body. `Default`/`HTML` asks for neither.
+   *
+   * It runs ONLY when the first shape produced no usable body, so a healthy
+   * read is never touched, and a failed fallback keeps the FIRST attempt's
+   * recorded reason with its own beside it — never replacing one cause with
+   * another.
+   *
+   * `shellChars` is THREADED FROM THE HOST, never restated here. The threshold
+   * has one definition (`brain.cos_runverify_checks._EMPTY_SHELL_CHARS`) and a
+   * second copy in this file would be the same defect `body_open_succeeded`
+   * was written to close. Absent, only a genuinely empty body counts as
+   * missing — a safe degradation, not a guessed number. */
+  function bodyLanded(r, shellChars) {
+    return !!(r && r.ok && r.body_chars > (shellChars == null ? 0 : shellChars));
+  }
+
+  function fetchBody(itemId, isRead, budget, shellChars) {
+    if (isRead !== true) {
+      return Promise.reject(new Error("refusing to fetch a message not known to be read"));
+    }
+    return getItemOnce(itemId, budget, "AllProperties", "Text").then(function (r) {
+      if (bodyLanded(r, shellChars)) return r;
+      return getItemOnce(itemId, budget, "Default", "HTML").then(function (r2) {
+        if (bodyLanded(r2, shellChars)) return r2;
+        r.retry_status = r2.status;
+        r.retry_code = r2.code;
+        r.retry_error = r2.error || null;
+        r.retry_shape = r2.body_shape;
+        // AND HOW MUCH IT RETURNED. Run 256 recorded that the fallback
+        // answered `NoError`/200 on six threads whose first shape answered
+        // 500 -- but not whether it came back with nothing or with a stub, and
+        // those are different diagnoses. Recording the status without the size
+        // is the same half-answer the ledger gave for eleven nights.
+        r.retry_chars = r2.body_chars;
+        // The fallback is the shape that ANSWERS on these rows, so it is the
+        // one whose `ItemClass` is worth keeping; the first shape 500s and
+        // returns no item at all.
+        r.retry_item_class = r2.item_class;
+        return r;
+      });
     });
   }
 
@@ -523,11 +591,34 @@
         return {ok: false, status: r.status, code: msg && msg.ResponseCode,
                 bytes: bytes, content: null, error: "over-max-bytes"};
       }
+      /* A SUCCESSFUL CALL THAT CARRIES NO BYTES MUST SAY SO BY NAME
+       * (2026-09-06). `ok` was already false in this case, but the only thing
+       * travelling back was `code: "NoError"` — which reads as SUCCESS to
+       * every reader downstream. The backfill's report showed two files as
+       * `written: false, reason: "NoError"`, and nothing in that sentence says
+       * whether the fetch should be retried, waited on, or never attempted
+       * again.
+       *
+       * It is the last of those. EWS returns an ItemAttachment — an email
+       * attached to another email — with an `Item`, never a `Content`, so
+       * there are no bytes to write and there never will be. Measured on the
+       * reference host that day: both files the backfill called "still
+       * fetchable" were attached MESSAGES whose filename is a subject line
+       * ("RE: ...", "[Draft] ..."), each reported with an empty ContentType.
+       * Retrying them forever is the failure mode this names away. */
+      var attType = (att && att.__type) || "";
+      var noBytes = !b64 && msg && msg.ResponseCode === "NoError" && att;
+      var itemAttachment = attType.indexOf("ItemAttachment") === 0
+                           || (noBytes && !!att.Item);
       return {
         ok: !!(msg && msg.ResponseCode === "NoError" && att && b64),
         status: r.status, ms: r.ms, code: msg && msg.ResponseCode,
         name: (att && att.Name) || "", content_type: (att && att.ContentType) || null,
+        attachment_type: attType || null,
         bytes: bytes, content: b64 || null,
+        error: noBytes ? (itemAttachment ? "item-attachment-has-no-bytes"
+                                         : "no-content-despite-noerror")
+                       : undefined,
       };
     }).catch(function (e) {
       return {ok: false, status: null, code: null, bytes: 0, content: null,
@@ -573,6 +664,11 @@
     var pageSize = o.page_size || 100;
     var maxPages = o.max_pages || 60;
     var sentWindowStart = o.sent_window_start;   // ISO string
+    /* Pass-1 sent items, kept in the CLOSURE and never on `state.out`: the
+     * mirrored state reaches the host and the evidence file, and these rows
+     * carry the subjects and recipients of the owner's own sent mail. Pen 3
+     * needs only the ids, and only long enough to pick which bodies to fetch. */
+    var sentRaw = [];
 
     state.phase = "seed"; state.done = false; state.error = null;
     try {
@@ -605,18 +701,102 @@
       })
       .then(function (en) {
         state.out.enumeration = Object.assign({seed_kind: seedKind}, en);
+        /* THE DRAFTS CENSUS (FIX-01, one draft per thread). The mutation
+         * planner refuses to draft a thread carrying a draft THE OWNER wrote
+         * (a porter draft is replaced instead — owner ruling 2026-08-28), but
+         * the fact it refuses ON must come from somewhere: the drafts live in
+         * the Drafts folder, which the inbox enumeration never sees, so the
+         * ledger row had no field to carry and the promise was vacuous — six
+         * drafts stacked on each of four threads across runs 124-188 before
+         * anyone could tell. This enumerates the SAME shape on the drafts
+         * distinguished folder (one extra FindItem, the sentitems window above
+         * is the precedent) and stamps `isDraft` on every inbox item whose
+         * conversation carries one. FAIL-SOFT on purpose: a census that cannot
+         * run records why and leaves the flag off rather than stopping the
+         * night — the planner's second belt (the lane's own prior undo rows)
+         * still names the threads the automation itself drafted, which it
+         * replaces. What is lost when this census fails is the OWNER'S draft,
+         * so the failure direction is: his draft may be re-drafted beside,
+         * never deleted. The discard lane admits only this lane's own signed
+         * saves, so it cannot reach his. */
+        state.phase = "drafts-census";
+        return enumFolder("drafts", 100, 4).then(function (dr) {
+          var drafted = {};
+          (dr.items || []).forEach(function (it) {
+            if (it.convId) drafted[it.convId] = true;
+          });
+          (state.out.enumeration.items || []).forEach(function (it) {
+            if (it.convId && drafted[it.convId]) it.isDraft = true;
+          });
+          state.out.enumeration.drafts_census = {
+            folder_total: dr.folder_total, terminated: dr.terminated,
+            drafted_conversations: Object.keys(drafted).length};
+        }, function (e) {
+          state.out.enumeration.drafts_census = {
+            failed: String(e).slice(0, 200)};
+        });
+      })
+      .then(function () {
         state.phase = "sent";
         return enumFolder("sentitems", 50, 4).then(function (s) {
           var items = s.items.filter(function (it) {
             return it.received && new Date(it.received) >= new Date(sentWindowStart);
           }).map(function (it) {
-            return {item_id: it.itemId, timestamp: new Date(it.received).toISOString()};
+            /* `conv_id` IS THE WHOLE OF FB-05 (PEN 3). This projection kept
+             * `{item_id, timestamp}` because its consumer is the zero-send
+             * proof, which only ever compares id SETS — so the one field that
+             * joins a sent reply to the thread the porter drafted on was read
+             * every night and dropped. `cos_signals`' docstring named it as
+             * "the one change that would close it". The zero-send criteria
+             * validate `item_id` and `timestamp` and tolerate extra keys, so
+             * this adds a field and changes no proof. */
+            return {item_id: it.itemId, conv_id: it.convId || null,
+                    timestamp: new Date(it.received).toISOString()};
           });
           state.out.sent = {items: items, folder_total: s.folder_total,
                             terminated: s.terminated,
                             boundary: s.terminated ? "list-end" : "older-than-window",
                             captured_at: new Date().toISOString()};
+          sentRaw = s.items;
         });
+      })
+      .then(function () {
+        /* PEN 3's BODIES — OPT-IN, SIZE-BOUNDED, AND OFF UNLESS ASKED. The host
+         * hands `sent_body_convs` (only conversations its undo ledger says this
+         * lane drafted on) and `sent_body_cap`; with neither, this phase does
+         * nothing and the night is byte-identical to before. A fetch that fails
+         * records its error and NOTHING else: the classifier refuses to call an
+         * unreadable body `sent-as-is`, and it can only refuse what it is told
+         * about. */
+        var want = o.sent_body_convs || [];
+        var bodyCap = o.sent_body_cap || 0;
+        state.out.sent_bodies = [];
+        if (!want.length || bodyCap <= 0) return;
+        state.phase = "sent-bodies";
+        var wanted = {};
+        want.forEach(function (c) { wanted[c] = true; });
+        var picks = sentRaw.filter(function (it) {
+          return it.convId && wanted[it.convId]
+                 && it.received
+                 && new Date(it.received) >= new Date(sentWindowStart);
+        }).slice(0, bodyCap);
+        function nextSent(i) {
+          if (i >= picks.length) return Promise.resolve();
+          var it = picks[i];
+          return fetchBody(it.itemId, true, budget, o.shell_chars).then(
+            function (r) {
+              state.out.sent_bodies.push(Object.assign(
+                {conv_id: it.convId, item_id: it.itemId}, r));
+              return nextSent(i + 1);
+            },
+            function (e) {
+              state.out.sent_bodies.push({conv_id: it.convId,
+                                          item_id: it.itemId,
+                                          error: String(e).slice(0, 200)});
+              return nextSent(i + 1);
+            });
+        }
+        return nextSent(0);
       })
       .then(function () {
         state.phase = "bodies";
@@ -625,7 +805,7 @@
         function next(i) {
           if (i >= draw.length) return Promise.resolve();
           var d = draw[i];
-          return fetchBody(d.itemId, true, budget).then(function (r) {
+          return fetchBody(d.itemId, true, budget, o.shell_chars).then(function (r) {
             out.push(Object.assign({conv_id: d.convId, item_id: d.itemId, seq: i + 1}, r));
             state.out.bodies = out;
             return next(i + 1);

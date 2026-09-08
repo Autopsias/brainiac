@@ -18,7 +18,7 @@ Resolution precedence (first hit wins, all yield identical PEM bytes):
 """
 from __future__ import annotations
 
-import base64
+import base64 as base64
 import contextlib
 import hashlib
 import json
@@ -27,7 +27,7 @@ import re
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime as datetime, timezone as timezone
 from pathlib import Path
 from typing import Iterator, Optional
 

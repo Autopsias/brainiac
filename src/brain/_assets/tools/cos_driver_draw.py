@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from cos_driver_transport import DriverStop  # noqa: E402
 
 
 #: The three managed priority chips, read off the SERVER's own category list.

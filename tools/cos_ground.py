@@ -46,12 +46,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shlex
-import subprocess
 import sys
-import threading
 import time
-import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -59,7 +55,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "src"))
 
-import cos_ground_domain                                    # noqa: E402
 import cos_ground_fanout                                    # noqa: E402
 import cos_judge  # noqa: E402
 # batch-2 drain: the three extracted sub-steps, moved verbatim and re-imported
@@ -71,14 +66,22 @@ from cos_ground_brain import (  # noqa: E402,F401
 from cos_ground_tenants import (  # noqa: E402,F401
     GroundingRefused, classify_sender, extract_address, extract_domain,
     list_lines, load_tenant_domains, normalize_tenant_entry)
-from cos_ground_write import map_text, write_map, write_text_0600  # noqa: E402,F401
+from cos_ground_write import (  # noqa: E402,F401
+    map_text, write_map, write_text_0600,
+    selected_ids as _selected_ids)
 
 # --- D3, the budgets. Every one of these is an ALLOCATION with its reason in
 # the design record; none is derived from the others. The caller's own two
 # (CALL_TIMEOUT_S, CALL_RETRIES) moved WITH the caller into
 # `cos_ground_brain` and are re-imported below. -------------------------------
 WORKERS = 8               # `brain` READ paths never take the writer lock (§6)
-DEADLINE_S = 360.0        # 6 min out of the OWA bearer's life, allocated
+DEADLINE_S = 720.0        # 12 min. Raised from 360 (2026-08-30): 8 workers x
+#                           2 embed threads = 16 threads oversubscribe a 12-core
+#                           host under daytime load, so a cold-subprocess embed
+#                           load balloons and the fan-out runs near-serial (~0.43
+#                           rows/s measured, run214/run215). 247 rows need ~575s;
+#                           720 covers it. A quiet 02:00 run still finishes early
+#                           (247/247 in 267s, run213) — this is a ceiling, not a cost.
 
 # --- D9.2, the per-row character budget, split per leg so one fat leg cannot
 # starve the others: sender 500 / matter 600 / decided 400 = 1500 exactly. -----
@@ -306,7 +309,10 @@ class TrackedMatters:
 # ---------------------------------------------------------------------------
 # the run
 # ---------------------------------------------------------------------------
+
+
 def fetch(vault: Path, run_id: str, *,
+          ev: Path | None = None,
           categories: Path | None = None, workers: int = WORKERS,
           deadline: float = DEADLINE_S,
           timeout: float = CALL_TIMEOUT_S) -> dict[str, Any]:
@@ -317,7 +323,8 @@ def fetch(vault: Path, run_id: str, *,
         "state": "ungrounded", "reason": "",
         "classes": {"internal": 0, "counterparty": 0, "external": 0},
         "required": [], "covered": [], "covered_with_content": [],
-        "lookup_failed": [], "warnings": [], "blocks": {},
+        "lookup_failed": [], "lookup_failed_reasons": {},
+        "warnings": [], "blocks": {},
     }
 
     def ungrounded(reason: str) -> dict[str, Any]:
@@ -333,7 +340,8 @@ def fetch(vault: Path, run_id: str, *,
     payload["tenant_domains"] = len(tenant_domains)
 
     night = cos_judge.load_night(vault, run_id,
-                                 cos_judge.load_categories(categories))
+                                 cos_judge.load_categories(categories),
+                                 selection=_selected_ids(ev))
     membership = cos_judge.batch_membership(night["rows"], night["ctx_by_id"])
     required = cos_judge.grounding_required(night["rows"], night["ctx_by_id"])
     payload["required"] = sorted(required)
@@ -368,6 +376,8 @@ def fetch(vault: Path, run_id: str, *,
     payload["covered"] = sorted(covered)
     payload["covered_with_content"] = sorted(with_content)
     payload["lookup_failed"] = sorted(failed)
+    payload["lookup_failed_reasons"] = cos_ground_fanout.failure_reasons(
+        payload, failed)
     payload["elapsed_s"] = round(time.monotonic() - started, 3)
     payload["brain_calls"] = brain.calls
     if exhausted:
@@ -455,7 +465,7 @@ def main(argv: list[str]) -> int:
     from brain import cos_echecks                                # noqa: PLC0415
 
     try:
-        payload = fetch(args.vault, args.run_id,
+        payload = fetch(args.vault, args.run_id, ev=args.ev,
                         categories=args.categories, workers=args.workers,
                         deadline=args.deadline, timeout=args.call_timeout)
     except Exception as exc:                                     # noqa: BLE001

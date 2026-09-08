@@ -42,6 +42,16 @@ from cos_driver_transport import DriverStop, open_tab  # noqa: E402
 #: oversized part costs one response, not one download.
 MAX_BYTES = int(os.environ.get("BRAIN_COS_ATTACHMENT_MAX_BYTES") or 25_000_000)
 
+#: Upper bound on the summed APPROXIMATE size of one `_await_run` batch. The
+#: readout cost is per call, not per byte (see READ_CHUNK in
+#: cos_driver_capture), but one call's base64 buffer must stay small enough
+#: that its last substr slice cannot time the renderer out — run 238's single
+#: 92 MB buffer did exactly that. 16 MB binary is ~22 MB of base64, ~22 slices.
+#: A single file larger than this still travels alone in its own batch;
+#: MAX_BYTES above is what actually refuses it.
+BATCH_BYTES = int(os.environ.get("BRAIN_COS_ATTACHMENT_BATCH_BYTES")
+                  or 16_000_000)
+
 
 def staging_dir() -> Path:
     """The sweep's own directory, resolved the sweep's own way — never
@@ -111,7 +121,48 @@ def write_one(dest: Path, name: str, content_b64: str) -> dict[str, Any]:
             "path": str(path)}
 
 
-def fetch(requests: list[dict[str, str]], *, use_ego: bool = True,
+class _Seq:
+    """A rising pass number. The page starts a pass only on `msg.seq > lastSeq`
+    (`pump` in `cos_driver_page.js`), so a re-sent number starts nothing and the
+    host's first poll reads the PREVIOUS pass's `done: true` -- a retry that
+    always "succeeds" by handing back the failure it meant to fix."""
+
+    def __init__(self, start: int) -> None:
+        self._n = start - 1
+
+    def next(self) -> int:
+        self._n += 1
+        return self._n
+
+
+def _landed(a: dict[str, Any] | None) -> bool:
+    """Did this file actually arrive? ONE definition, used by the retry and by
+    the report below, so neither can drift from the other."""
+    return bool(a and a.get("ok") and a.get("content"))
+
+
+def _size_bounded(requests: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Split into calls under `BATCH_BYTES`.
+
+    ONE CALL PER SIZE-BOUNDED BATCH, never one call for the night. The whole
+    result JSON rides back through one in-page base64 buffer, and at run 238's
+    volume (46 files, 65 MB binary ≈ 92 MB base64) the readout's last substr
+    timed out three times and killed the lane. `approx_size_bytes` comes from
+    the manifest line; a request without one is budgeted at 5 MB.
+    """
+    batches: list[list[dict[str, Any]]] = [[]]
+    load = 0
+    for r in requests:
+        approx = int(r.get("approx_size_bytes") or 0) or 5_000_000
+        if batches[-1] and load + approx > BATCH_BYTES:
+            batches.append([])
+            load = 0
+        batches[-1].append(r)
+        load += approx
+    return batches
+
+
+def fetch(requests: list[dict[str, Any]], *, use_ego: bool = True,
           tab_id: int | None = None, max_bytes: int = MAX_BYTES,
           poll_seconds: float = 1.0, max_wait: float = 300.0,
           dest: Path | None = None) -> dict[str, Any]:
@@ -128,10 +179,34 @@ def fetch(requests: list[dict[str, str]], *, use_ego: bool = True,
                 "files": [{"filename": r.get("filename") or "", "written": False,
                            "reason": "attachment-id-unknown"} for r in unknown]}
     tab, transport = open_tab(tab_id, use_ego=use_ego)
-    res = _await_run(tab, 9001, {"ids": ids, "max_bytes": max_bytes},
-                     poll_seconds, max_wait, action="attachments")
-    got = res["out"].get("attachments") or []
-    by_id = {str(a.get("attachment_id")): a for a in got}
+    seq = _Seq(9001)
+
+    def _run(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for batch in _size_bounded(rows):
+            res = _await_run(tab, seq.next(),
+                             {"ids": [str(r["attachment_id"]) for r in batch],
+                              "max_bytes": max_bytes},
+                             poll_seconds, max_wait, action="attachments")
+            out.extend(res["out"].get("attachments") or [])
+        return out
+
+    by_id = {str(a.get("attachment_id")): a for a in _run(requests)}
+    # ONE MORE ASK FOR THE FILES THAT DID NOT ARRIVE (2026-09-03). A night that
+    # cannot preserve an attachment refuses to archive the mail carrying it --
+    # correctly -- so a SINGLE flaky fetch cancels the whole archive pass. Run
+    # 254 wrote 48 of 49 and lost the night to one `TypeError: Failed to fetch`,
+    # a transient browser error, with 71 threads already ingested and waiting to
+    # be filed. Bounded at one extra attempt, re-batched under the same byte
+    # bound, and only the files that did not land are re-sent.
+    missing = [r for r in requests if not _landed(by_id.get(str(r["attachment_id"])))]
+    if missing:
+        for a in _run(missing):
+            # ONLY A LANDED SECOND ATTEMPT REPLACES THE FIRST: a second refusal
+            # carries no more information and would overwrite the recorded
+            # reason with an identical one.
+            if _landed(a):
+                by_id[str(a.get("attachment_id"))] = a
 
     files: list[dict[str, Any]] = []
     for req in requests:
@@ -139,7 +214,7 @@ def fetch(requests: list[dict[str, str]], *, use_ego: bool = True,
         # The page's own name is preferred: it is what the mail server calls
         # the part. The requested name is the fallback, never an override.
         name = a.get("name") or req.get("filename") or ""
-        if not a.get("ok") or not a.get("content"):
+        if not _landed(a):
             files.append({"filename": name, "written": False,
                           "reason": a.get("error") or a.get("code")
                           or "no-content"})
@@ -152,7 +227,7 @@ def fetch(requests: list[dict[str, str]], *, use_ego: bool = True,
             "dest": str(dest), "transport": transport, "files": files}
 
 
-def requests_for_run(vault: Path, run_id: str) -> list[dict[str, str]]:
+def requests_for_run(vault: Path, run_id: str) -> list[dict[str, Any]]:
     """The files THIS RUN'S MANIFEST LINES CLAIM — never every part it saw.
 
     The selection belongs to the bridge, which already applied the owner's
@@ -182,7 +257,7 @@ def requests_for_run(vault: Path, run_id: str) -> list[dict[str, str]]:
             if name and a.get("attachment_id"):
                 by_key[f"{key}/{name}"] = str(a["attachment_id"])
 
-    out: list[dict[str, str]] = []
+    out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for mf in sorted(cos.ingest_manifest_dir(vault).glob("manifest-*.jsonl")):
         for line in mf.read_text(encoding="utf-8").splitlines():
@@ -197,7 +272,9 @@ def requests_for_run(vault: Path, run_id: str) -> list[dict[str, str]]:
                 continue
             seen.add(join)
             out.append({"attachment_id": by_key.get(join, ""),
-                        "filename": name})
+                        "filename": name,
+                        "approx_size_bytes":
+                            int(entry.get("approx_size_bytes") or 0)})
     return out
 
 
@@ -229,16 +306,58 @@ def main(argv: list[str] | None = None) -> int:
     # file-lane candidate at all, and exiting non-zero there would kill every
     # such night on a lane that had nothing to do.
     if not reqs:
-        print(json.dumps({"requested": 0, "written": 0, "files": [],
-                          "status": "nothing-claimed"}, indent=2))
-        return 0
-    try:
-        report = fetch(reqs, use_ego=args.ego, tab_id=args.tab_id,
-                       max_bytes=args.max_bytes,
-                       dest=Path(args.dest).expanduser() if args.dest else None)
-    except DriverStop as exc:
-        print(json.dumps({"stopped": str(exc)}, indent=2))
-        return 2
+        # NOTHING CLAIMED STILL STAMPS. A text-only night is the common case,
+        # and "0 dropped, 0 fetched, lane not-exercised" is a READ of this
+        # run's own artifacts — which is the whole difference between this and
+        # the constant FIX-02 removed. Falling through to the stamp block is
+        # what lets the morning sheet say it.
+        report = {"requested": 0, "written": 0, "files": [],
+                  "status": "nothing-claimed"}
+    else:
+        try:
+            report = fetch(reqs, use_ego=args.ego, tab_id=args.tab_id,
+                           max_bytes=args.max_bytes,
+                           dest=(Path(args.dest).expanduser()
+                                 if args.dest else None))
+        except DriverStop as exc:
+            print(json.dumps({"stopped": str(exc)}, indent=2))
+            return 2
+    # THE REPORT LANDS ON DISK and the run's metrics row is SUPERSEDED with
+    # the real counts (FIX-02): the driver wrote `attachment_lane` hours
+    # before this lane existed, and until this stamp nothing ever corrected
+    # it — run188 fetched 32 files and its row of record still said the lane
+    # never ran. The stamp is reported, never fatal: a row that stays
+    # unstamped is a reporting gap, not a reason to unwind delivered files.
+    if args.run and args.vault:
+        stamp = {"appended": "not-attempted"}
+        # THE MORNING SHEET IS STAMPED HERE TOO, and for the same reason as the
+        # metrics row: the judgment leg composes the sheet before this lane has
+        # written anything, so its attachment line is an anchored PENDING
+        # sentence until this call fills in the counts (review 2026-08-25).
+        brief = {"stamped": "not-attempted"}
+        try:
+            from cos_driver_night_records import (      # noqa: PLC0415
+                attachment_fetch_report_path, stamp_attachment_lane)
+            from brain import cos                        # noqa: PLC0415
+            vault = Path(args.vault).expanduser()
+            ops = cos.run_ops_dir(vault)
+            rpath = attachment_fetch_report_path(ops, args.run)
+            rpath.write_text(json.dumps(report, indent=2) + "\n",
+                             encoding="utf-8")
+            stamp = stamp_attachment_lane(vault, args.run, report=report)
+        except Exception as exc:                          # noqa: BLE001
+            stamp = {"appended": "failed", "error": str(exc)[:300]}
+        try:
+            # SEPARATE, because they correct two different artifacts: a sheet
+            # this cannot rewrite must not make the metrics row read as
+            # unstamped, and vice versa.
+            from cos_judge_brief import (               # noqa: PLC0415
+                stamp_attachment_brief)
+            brief = stamp_attachment_brief(Path(args.vault).expanduser(),
+                                           args.run, report=report)
+        except Exception as exc:                          # noqa: BLE001
+            brief = {"stamped": "failed", "error": str(exc)[:300]}
+        report = {**report, "metrics_stamp": stamp, "brief_stamp": brief}
     print(json.dumps(report, indent=2))
     return 0 if report["written"] == report["requested"] else 1
 

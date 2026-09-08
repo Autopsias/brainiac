@@ -119,8 +119,22 @@ for e in json.load(open(sys.argv[1])).get("entries", []):
     seen.add(v)
     print(f"{v}\t{w or v}")
 PY
+  # The registry's host row names the COWORK workspace -- `brain
+  # provision-local` writes ONE --workspace into both the host and the
+  # cowork-vm row, and a Cowork workspace never holds an unpacked
+  # `.claude/skills/` directory (its skills go through Cowork's own Save-skill
+  # flow). The host session's skill lives beside the VAULT instead. Measured
+  # 2026-09-07: this SKIP fired on every vault from 2026-08-31 on, which is
+  # what stalled BAK-04's linking lane for two weeks. Try the registered
+  # workspace first, then the vault's parent, before skipping.
+  for CAND in "$WS" "$(dirname "$VAULT")"; do
+    if [ -d "$CAND/.claude/skills/kb-curator" ] || [ -d "$CAND/.agents/skills/kb-curator" ]; then
+      WS="$CAND"
+      break
+    fi
+  done
   if [ ! -d "$WS/.claude/skills/kb-curator" ] && [ ! -d "$WS/.agents/skills/kb-curator" ]; then
-    log "SKIP $VAULT: no kb-curator skill in $WS"
+    log "SKIP $VAULT: no kb-curator skill in $WS or $(dirname "$VAULT")"
     continue
   fi
   log "START synthesis: vault=$VAULT workspace=$WS"

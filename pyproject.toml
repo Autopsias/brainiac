@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 # check. The IMPORT package stays `brain` and the console script stays
 # `brain` — only the distribution/project name changes.
 name = "brainiac-cli"
-version = "0.20.36"
+version = "0.20.37"
 description = "Brainiac — local any-LLM second-brain core engine + brain CLI (Markdown truth, derived SQLite index)."
 readme = "README.md"
 license = "Apache-2.0"
@@ -150,6 +150,45 @@ where = ["src"]
 # originals (lockstep-validated in --validate-only).
 brain = ["_assets/**"]
 
+[tool.deptry]
+# hyg.dep-unused (2026-09-04): 757 raw findings were almost all CONFIGURATION
+# noise, not real debt — measured before touching a single dependency.
+# extend_exclude: sibling flat-script directories (tools/, eval/, scripts/,
+# the two skill mirrors, plugins/) import each other by bare module name via
+# runtime sys.path tricks, not as a package — deptry has no way to resolve
+# that without either listing every bare name or excluding the directory.
+# src/brain/_assets is a byte-for-byte packaging mirror of tools/ (synced by
+# tools/package_clients.py, already excluded the same way in
+# [tool.claude-quality] above).
+extend_exclude = [
+    "tools/",
+    "src/brain/_assets/",
+    "eval/",
+    "scripts/",
+    "\\.claude/skills/",
+    "\\.agents/skills/",
+    "plugins/",
+]
+# known_first_party: real local modules loaded the same sys.path way from
+# INSIDE src/brain/ (doctor_context.py, update_channels.py, vmstaging.py,
+# core/_health.py, rerank.py, embed_qwen.py) — not third-party packages.
+known_first_party = ["brain", "workspace_registry", "framework_sync", "qwen3_embed", "vendor_semantic_deps"]
+# package_module_name_map: the 4 real import-name mismatches (distribution
+# name vs. the name actually imported).
+package_module_name_map = { PyYAML = "yaml", "python-docx" = "docx", "python-pptx" = "pptx", Pillow = "PIL" }
+per_rule_ignores = { DEP001 = ["llama_cpp", "lxml"], DEP002 = ["pytest", "pytest-xdist", "pytest-timeout", "ruff", "build", "onnx", "ranx"] }
+# DEP001 llama_cpp/lxml: both are optional accelerants guarded by
+# try/except ImportError (src/brain/context.py, src/brain/ingest/handlers/html.py)
+# — the code degrades gracefully absent either, same pattern as the existing
+# pytesseract/fastembed optional extras, so declaring them as hard deps would
+# be wrong; deptry can't see a guarded import is deliberate.
+# DEP002: pytest/pytest-xdist/pytest-timeout/ruff/build/onnx are dev/
+# quant-tools extras invoked as CLI tools or only imported from tests/
+# (deptry excludes tests/ by default) — never imported from the shipped
+# src/brain package. ranx is a real [eval] runtime import, but its only
+# import site is eval/, which extend_exclude drops above for the DEP001
+# noise reason — excluding it flips ranx to a false DEP002.
+
 [tool.claude-quality]
 # Trees the size gates skip: frozen plan/archive/evidence dirs and the
 # generated _assets mirror of tools/ + scripts/ (re-synced by
@@ -195,10 +234,21 @@ select = ["F", "E9", "E722"]
 # defects this lint exists to catch (F821 undefined names, F811 shadowed
 # definitions, F841 dead locals) were all found WITHOUT it.
 #
-# Re-enabling is a real piece of work, not a config change: give every
-# deliberate re-export an explicit `X as X` alias (which ruff does accept, and
-# which parts of `cos_runverify.py` already use), and then turn this back on.
-ignore = ["F401", "F403", "F405"]
+# F401 IS BACK ON, 2026-09-05, by doing the work the paragraph above called
+# for rather than by tuning the rule. Every deliberate re-export now carries
+# an explicit `X as X` alias — 421 of them across 111 files. `X as X` binds
+# exactly the name `X` does, so nothing moved; it only tells ruff the import
+# is the interface. 32 further sites could not take that form, because they
+# already carry a DIFFERENT alias (`import cos_driver as drv`) or are a dotted
+# import whose binding is the root package (`import importlib.util`); those
+# carry an explicit `# noqa: F401` on the line instead. Automatic fixing is
+# still forbidden here — `ruff --fix --select F401` deletes the interface, as
+# 2026-08-19 and again 2026-09-04 both measured.
+#
+# F403/F405 stay off: they are the star-import half of the same facade
+# architecture (58 modules do `from ._shared import *`), and no per-name alias
+# exists to express that.
+ignore = ["F403", "F405"]
 
 [tool.ruff.lint.per-file-ignores]
 # F811 cannot see pytest. A module-level `@pytest.fixture def text()` and a test
@@ -206,6 +256,23 @@ ignore = ["F401", "F403", "F405"]
 # reads all 602 of ours as redefinitions. Every one is a false positive; the 44
 # real F811s all live outside tests/.
 "tests/**" = ["F811"]
+
+# THE COS CARVE-OUT — TEMPORARY, and it lifts when The Porter Finishes lands.
+# These two paths are under active edit on plan/porter-finishes-2026-09-04.
+# Aliasing their re-exports on master would collide with that branch on every
+# merge, so the 2026-09-05 alias pass skipped them by agreement with the
+# session running that plan. 81 F401 findings live here and nowhere else:
+# 46 in cos_runverify.py, 35 under cos/. When the plan merges, run the same
+# alias pass over both and delete this block; nothing else about the rule
+# changes.
+#
+# It listed NINE paths for one day. Seven were dead on arrival — five named
+# files that exist only on the plan branch, and two named files with no F401
+# at all. The list was the peer session's set of files under edit, not a
+# measurement of what the rule reported. tests/test_ruff_per_file_ignores_are_live.py
+# now re-measures every entry here and fails naming any that suppresses nothing.
+"src/brain/cos/**" = ["F401"]
+"src/brain/cos_runverify.py" = ["F401"]
 
 [tool.pytest.ini_options]
 # Scope collection to tests/ so pytest never descends into a local model venv

@@ -1,11 +1,11 @@
 """The E1-E10 run-integrity checks and their shared helpers."""
 from __future__ import annotations
 
-import re
+import re as re
 from typing import Any, Callable
 
-from . import cos, cos_chips
-from . import cos_echecks_delivery as delivery
+from . import cos as cos, cos_chips
+from . import cos_echecks_delivery as delivery  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # the ten checks
@@ -36,7 +36,7 @@ def _e1(run: dict[str, Any]) -> dict[str, Any]:
     bad = sorted({str(r.get("primitive")) for r in disp
                   if str(r.get("primitive")) not in PERMITTED_PRIMITIVES})
     if bad:
-        problems.append(f"primitive(s) outside the permitted three: {bad}")
+        problems.append(f"primitive(s) outside the permitted set: {bad}")
     sends = [r for r in run["undo"]
              if ((r.get("receipts") or {}).get("send_attempted") is True
                  or r.get("send_attempted") is True)]
@@ -54,7 +54,7 @@ def _e1(run: dict[str, Any]) -> dict[str, Any]:
     elif now != frozen:
         problems.append(f"the capability set CHANGED during the run "
                         f"({frozen[:12]}… → {now[:12]}…)")
-    detail = (f"{len(disp)} dispatched mutation(s), all on the three permitted "
+    detail = (f"{len(disp)} dispatched mutation(s), all on the permitted "
               f"primitives; no send attempted; sent baseline present "
               f"({items} item(s) in its window); capability set byte-identical "
               f"to the digest the manifest froze")
@@ -94,18 +94,20 @@ def _e3(run: dict[str, Any], vault, run_id: str) -> dict[str, Any]:
         return _answer(3, NA, 0, of, "this run archived nothing")
     bad = []
     for r in rows:
-        # (v7.3, AGED-01) `read` is legal for the AGED-READ lane and nothing
-        # else — the same widening `cos_judge_rules._r_floor` applies, kept in
-        # the same shape so the two cannot drift apart silently.
-        aged = r["noise_signal"] == AGED_READ_SIGNAL
-        legal = {"noise", "read"} if aged else {"noise"}
+        # (AGED-01, STALE-01) The legal BUCKET is looked up by the row's OWN
+        # signal — `read` for the aged-read lane, `act` for the stale-act one,
+        # `noise` for everything else — the same widening
+        # `cos_judge_rules._r_floor` applies, kept in the same shape so the two
+        # cannot drift apart silently. Per-row lookup is why adding a lane
+        # cannot change what an existing signal means to this check.
+        legal = ARCHIVE_BUCKETS.get(r["noise_signal"], DEFAULT_ARCHIVE_BUCKETS)
         if not r["in_ledger"]:
             bad.append(f"{r['digest']}:not-enumerated")
         elif r["verdict"] not in legal:
             bad.append(f"{r['digest']}:verdict={r['verdict']}")
         elif r["read_state"] != "read":
             bad.append(f"{r['digest']}:read_state={r['read_state']}")
-        elif r["judged_tier"] in ("P0", "P1"):
+        elif p0_floor_refuses(r["verdict"], r["judged_tier"]):
             bad.append(f"{r['digest']}:tier={r['judged_tier']}")
         elif r["noise_signal"] not in ARCHIVING_SIGNALS:
             bad.append(f"{r['digest']}:signal={r['noise_signal']}")
@@ -117,19 +119,29 @@ def _e3(run: dict[str, Any], vault, run_id: str) -> dict[str, Any]:
     for r in rows:
         sig[str(r["noise_signal"])] = sig.get(str(r["noise_signal"]), 0) + 1
     return _answer(3, PASS, len(rows), of,
-                   f"all {len(rows)} archived thread(s) were READ, sit in "
-                   f"bucket `noise` (or `read` on the aged-read lane), are not "
-                   f"P0/P1 and cite a recognized typed signal ({sig})")
+                   f"all {len(rows)} archived thread(s) were READ, sit in the "
+                   "bucket their own signal admits (`noise`, `read` on the "
+                   "aged-read lane, `act` on the stale-act lane), clear the P0 "
+                   f"blast floor and cite a recognized typed signal ({sig})")
 
 
 def _e4_mark(r: dict[str, Any]) -> str | None:
     """The INGESTION MARK's own rule. It is a second axis, so the four-chip
     (bucket, tier) matrix does not apply to it — but "does not apply" must not
-    mean "is not checked". A mark is legitimate when this run's own ledger row
-    carries the bridge's drop stamp, and when the thread did not already carry
-    the mark (re-writing it is a no-op that spends a slot and an undo key)."""
-    if not r["dropped"]:
-        return f"{r['digest']}:the-ingestion-mark-with-no-drop-stamp-this-run"
+    mean "is not checked". A mark is legitimate when the vault SIGNED a note
+    for this thread's own candidate (FIX-03: the content-hash join, not the
+    bridge's old drop stamp — a stamp said "offered", and the chip claimed
+    "ingested"), and when the thread did not already carry the mark
+    (re-writing it is a no-op that spends a slot and an undo key).
+
+    THE CANDIDATE NEED NOT BE TONIGHT'S (review 2026-08-25). Signing happens
+    in a maintenance drain AFTER the night that offered the candidate, so a
+    correct mark is nearly always catching up on an earlier run. `chip_join`
+    answers `signed` with `cos.signed_ingested_catching_up`, the same call the
+    planner chooses the mark with; asking the same-night question here would
+    fail every legitimate mark this lane can produce."""
+    if not r.get("signed"):
+        return f"{r['digest']}:the-ingestion-mark-without-a-signed-note"
     if cos_chips.CHIP_INGESTED in r["before_image"]:
         return f"{r['digest']}:the-thread-already-carried-the-ingestion-mark"
     return None
@@ -168,8 +180,9 @@ def _e4(run: dict[str, Any], vault, run_id: str) -> dict[str, Any]:
         return _answer(4, FAIL, len(rows), of,
                        f"{len(bad)} of {len(rows)} categorize write(s) breach "
                        f"their axis's rule — priority chips the four-chip "
-                       f"(bucket, tier) matrix, the ingestion mark this run's "
-                       f"drop stamp: {bad[:8]}")
+                       f"(bucket, tier) matrix, the ingestion mark a SIGNED "
+                       f"note for the thread's own candidate from any run "
+                       f"still inside the catch-up window: {bad[:8]}")
     per: dict[str, int] = {}
     for r in rows:
         per[str(r["chip"])] = per.get(str(r["chip"]), 0) + 1
@@ -178,7 +191,9 @@ def _e4(run: dict[str, Any], vault, run_id: str) -> dict[str, Any]:
                    f"all {len(rows) - marks} priority chip(s) are one of the "
                    f"four managed names, match the (bucket, tier) matrix and "
                    f"landed on a bare thread; all {marks} ingestion mark(s) "
-                   f"carry this run's drop stamp ({per})")
+                   f"back a signed note for their own thread's candidate, "
+                   f"from this run or one still inside the catch-up window "
+                   f"({per})")
 
 
 def _e5(run: dict[str, Any]) -> dict[str, Any]:
@@ -227,13 +242,17 @@ CHECKS: dict[int, Callable[..., dict[str, Any]]] = {
 # where they did before — the parent re-exports these very objects).
 from .cos_echecks import (  # noqa: E402
     AGED_READ_SIGNAL as AGED_READ_SIGNAL,
+    ARCHIVE_BUCKETS as ARCHIVE_BUCKETS,
     ARCHIVING_SIGNALS as ARCHIVING_SIGNALS,
+    DEFAULT_ARCHIVE_BUCKETS as DEFAULT_ARCHIVE_BUCKETS,
+    STALE_ACT_SIGNAL as STALE_ACT_SIGNAL,
     EcheckError as EcheckError,
     FAIL as FAIL,
     NA as NA,
     NEVER_NA as NEVER_NA,
     PASS as PASS,
     PERMITTED_PRIMITIVES as PERMITTED_PRIMITIVES,
+    p0_floor_refuses as p0_floor_refuses,
     _cos_driver as _cos_driver,
     vault_of as vault_of,
 )

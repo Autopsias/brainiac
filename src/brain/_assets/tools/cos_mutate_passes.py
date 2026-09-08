@@ -9,8 +9,6 @@ keeps governing this code exactly as before.
 """
 from __future__ import annotations
 
-import json
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -22,7 +20,6 @@ from cos_mutate_policy import MANAGED_CHIPS, _OPS_MODE  # noqa: E402
 import cos_mutate_apply as apply_stages                       # noqa: E402
 from cos_mutate_gates import MUTATION_LANE, PRIMITIVE   # noqa: E402
 import cos_mutate_canary as canary_stages                     # noqa: E402
-import cos_mutate_plan as plan_stages                         # noqa: E402
 
 #: The canary drill (E17) — the undo path, exercised on ONE disposable row.
 CANARY_STEPS = ("chip_roundtrip", "archive", "undo", "replay")

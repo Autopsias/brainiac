@@ -181,7 +181,29 @@ def index_dir(vault: str | os.PathLike[str] | None = None) -> Path:
     """
     override = os.environ.get("BRAIN_INDEX_DIR")
     if override:
-        return Path(override).expanduser()
+        d = Path(override).expanduser()
+        # ONE value can never be right: the app-data base itself. That pin
+        # shadows every vault's `vaults/<slug>/index.sqlite` with a single
+        # shared index at the base, while every unpinned context keeps
+        # maintaining the per-vault one — two indexes for one vault, and only
+        # the unpinned one stays fresh. On 2026-08-31 exactly this pin (in
+        # the COS nightly's launchd job) served a stale July index to three
+        # runs; their broker drains died on the schema drift and the nights
+        # lost their remaining batches. Refuse it loudly here, where the
+        # wrong index would otherwise be resolved.
+        try:
+            is_base = d.resolve() == _app_data_base().resolve()
+        except OSError:
+            is_base = False
+        if is_base:
+            from .config_hostpaths import HostPathUnsafe
+            raise HostPathUnsafe(
+                f"BRAIN_INDEX_DIR ({d}) is the per-user app-data base; that "
+                "shadows every per-vault index under vaults/ with one shared "
+                "index.sqlite. Unset BRAIN_INDEX_DIR (the engine resolves "
+                "the per-vault dir itself) or point it at a dedicated "
+                "directory.")
+        return d
     v = vault_root(vault)
     vid = vault_id(v)
     slug = f"{v.name}-{vid[:8]}" if vid else _legacy_index_slug(v)

@@ -7,8 +7,8 @@ monkeypatches one on `cos_driver` still steers the callers.
 """
 from __future__ import annotations
 
-import datetime as _dt
-import hashlib
+import datetime as _dt  # noqa: F401
+import hashlib as hashlib
 import json
 import subprocess
 import sys
@@ -18,9 +18,9 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from brain import cos_chips  # noqa: E402
 from cos_driver_draw import (  # noqa: E402
-    CHIP_TIER, _tier, _tier_source, conversations)
+    CHIP_TIER as CHIP_TIER, _tier, _tier_source as _tier_source, conversations)
 from cos_driver_transport import (  # noqa: E402
-    BODY_BUDGET, BODY_OPEN_CAP, READ_LANE, short)
+    BODY_BUDGET, BODY_OPEN_CAP, READ_LANE, short as short)
 
 CONTRACT = Path(__file__).resolve().parent / "cos_contract.py"
 
@@ -92,10 +92,79 @@ def open_outcome(b: dict[str, Any] | None, opened: bool) -> str | None:
     return "shell" if b.get("ok") else "error"
 
 
+def open_error(b: dict[str, Any] | None,
+               opened: bool) -> dict[str, Any] | None:
+    """WHAT the refused open answered — not merely THAT it was refused.
+
+    `open_outcome` above records the WORD (`error` or `shell`), and the page
+    has carried the cause beside it all along: the Exchange `ResponseCode`, the
+    HTTP `status`, and the caught exception text (`fetchBody`'s reject path in
+    `cos_driver_page.js`). Nothing ever read them. So eleven nights of ledgers
+    say `error` and not one of them says why, and the ledgers cannot tell a
+    transient refusal from a permanent one — which is exactly what a retry
+    needs to know. Measured 2026-09-03: seven threads held
+    `no-body-access-on-lane`, five of them for eleven consecutive nights, with
+    no recorded cause on any of the rows.
+
+    `None` when the open landed, so a healthy row grows no field.
+    """
+    if opened or not b:
+        return None
+    # `item_class`/`retry_item_class` say WHAT the row is (2026-09-04). The
+    # eight fields above describe the fetch; none of them distinguishes a
+    # message whose body the lane cannot reach from an item that has no message
+    # body to reach. Without it the seven standing rows can only be guessed at
+    # from their subjects.
+    out = {k: b.get(k) for k in ("code", "status", "error", "item_class",
+                                 "retry_status", "retry_code", "retry_error",
+                                 "retry_shape", "retry_chars",
+                                 "retry_item_class")
+           if b.get(k) not in (None, "")}
+    return out or None
+
+
+def body_open_fields(b: dict[str, Any] | None, opened: bool,
+                     seq: int | None) -> dict[str, Any]:
+    """The four facts about THIS row's body open, as one group.
+
+    Grouped when `body_open_error` joined them (2026-09-03): they are read
+    together, they are meaningless apart, and `_ledger_row` is a flat literal
+    that had no room for a fourth. `body_chars` is what landed, `seq` the order
+    it landed in, `outcome` the word for a refusal, `error` what the server
+    actually answered.
+    """
+    return {
+        "body_chars": int(b.get("body_chars") or 0) if b else 0,
+        "body_open_seq": seq,
+        "body_open_outcome": open_outcome(b, opened),
+        "body_open_error": open_error(b, opened),
+    }
+
+
+def _opened_sequence(capture: dict[str, Any],
+                     bodies: dict[str, Any]) -> dict[str, int]:
+    """Draw order of the bodies that actually landed (see `body_open_succeeded`)."""
+    opened_seq: dict[str, int] = {}
+    seq = 0
+    for d in capture.get("draw", []):
+        b = bodies.get(d["convId"])
+        if body_open_succeeded(b):
+            seq += 1
+            opened_seq[d["convId"]] = seq
+    return opened_seq
+
+
+#: The row builder, in its own module for the parent's 500-LOC bound.
+#: Re-imported so callers and tests keep reaching it at this module path.
+from cos_driver_ledger_row import _ledger_row  # noqa: E402,F401
+
+
 def build_accounting(capture: dict[str, Any], *, run_id: str,
                      bundle_version: str, rules_version: str,
                      enumerated_at: str,
-                     gate_excluded: set[str] | frozenset[str] = frozenset()
+                     gate_excluded: set[str] | frozenset[str] = frozenset(),
+                     cap: int | None = None, read_never: bool = False,
+                     never_ids: set[str] | frozenset[str] = frozenset()
                      ) -> dict[str, Any]:
     """Ledger rows + counters, computed from the capture and nothing else.
 
@@ -109,77 +178,15 @@ def build_accounting(capture: dict[str, Any], *, run_id: str,
     """
     convs = conversations(capture["enumeration"].get("items", []))
     bodies = {b["conv_id"]: b for b in capture.get("bodies", [])}
-    opened_seq: dict[str, int] = {}
-    seq = 0
-    for d in capture.get("draw", []):
-        b = bodies.get(d["convId"])
-        if body_open_succeeded(b):
-            seq += 1
-            opened_seq[d["convId"]] = seq
+    opened_seq = _opened_sequence(capture, bodies)
 
-    rows: list[dict[str, Any]] = []
-    for c in convs:
-        cid = c["convId"]
-        b = bodies.get(cid)
-        opened = cid in opened_seq
-        row: dict[str, Any] = {
-            "run": run_id,
-            "run_profile": "full",
-            "conversation_id": cid,
-            "message_id": c.get("itemId"),
-            "received": c.get("received"),
-            "read_state": "read" if c.get("isRead") else "unread",
-            "read_lane": READ_LANE,
-            "tier": _tier(c.get("categories")),
-            "tier_source": _tier_source(c.get("categories")),
-            "carries_ingest_mark": carries_ingest_mark(c.get("categories")),
-            "body_opened": opened,
-            # A FACT ABOUT THE PASS, not a judgment about the mail: this row was
-            # held out of the rule-1½ draw because the category batch stamped it
-            # with an id the owner's taxonomy dispositions `never`. The judgment
-            # is the CATEGORY, and it is the model's; what the driver records is
-            # that the body was consequently never opened. `cos_judge`'s
-            # `mechanical_disposition` reads this to write rule 1¾'s pairing
-            # (`no-substance` / `never-category`) without asking the model to
-            # re-decide something already on disk.
-            "category_gate_excluded": cid in gate_excluded,
-            "body_chars": int(b.get("body_chars") or 0) if b else 0,
-            "body_open_seq": opened_seq.get(cid),
-            "body_open_outcome": open_outcome(b, opened),
-            "body_budget": BODY_BUDGET,
-            "staging_cap": BODY_OPEN_CAP,
-            "attachment_lane": "not-exercised",
-            # THE MISSING PRODUCER. `cos_ingest_bridge_content._attachment_names`
-            # has read `row["attachments"]` since the file lane shipped and
-            # NOTHING has ever written it, so every candidate the live taxonomy
-            # routes to a file-carrying lane (`regulatory-filing` -> attachment,
-            # `market-digest` / `system-notification` -> both) quarantines
-            # `attachment-names-missing`. The names come off the SAME
-            # `AllProperties` GetItem the body pass already pays for — see
-            # `attachmentsOf` in `cos_driver_page.js`. Empty on a row whose body
-            # did not open: a refused open is not evidence of no attachment.
-            "attachments": list((b or {}).get("attachments") or []) if opened else [],
-            # An ABSENT list under `HasAttachments: true` is a different fact
-            # from an empty one, and the ledger must not spell them the same
-            # way. `item_keys` is the page's own witness of which properties the
-            # build actually returned.
-            "attachments_withheld": bool(opened and (b or {}).get("item_keys")),
-            "send_attempted": False,
-            "extraction_rules_version": rules_version,
-            "bundle_version": bundle_version,
-            "ts": enumerated_at,
-            # --- judgment slots, owned by s03 and left EMPTY on purpose -------
-            "verdict": None,
-            "category": None,
-            "disposition": None,
-            "held_reason": None,
-            "dedup_check": None,
-            "candidate_count": 0,
-            "proposal_id": None,
-            "content_sha256": None,
-            "judgment_pending": True,
-        }
-        rows.append(row)
+    rows = [_ledger_row(c, bodies=bodies, opened_seq=opened_seq, run_id=run_id,
+                        bundle_version=bundle_version,
+                        rules_version=rules_version,
+                        enumerated_at=enumerated_at,
+                        gate_excluded=gate_excluded, cap=cap,
+                        read_never=read_never, never_ids=never_ids)
+           for c in convs]
 
     in_scope = len(rows)
     return {
@@ -190,6 +197,8 @@ def build_accounting(capture: dict[str, Any], *, run_id: str,
             "ingestion_held": in_scope,
         },
         "body_open_actual": len(opened_seq),
+        # The run's OWN cap, for `write_report` and the metrics row (FIX-02).
+        "body_open_cap": BODY_OPEN_CAP if cap is None else int(cap),
     }
 
 
@@ -295,10 +304,27 @@ def corpus_extraction(row: dict[str, Any]) -> dict[str, Any]:
     out = {k: row[k] for k in ("received", "read_state", "tier", "tier_source",
                                "body_opened", "body_chars", "body_open_seq",
                                "message_id")}
-    # `.get`, and only for this one: every row THIS builder emits carries it,
-    # but a row from a night that predates the category gate does not, and a
-    # replay of one must rebuild rather than crash.
+    # `.get`, and only for these: every row THIS builder emits carries them,
+    # but a row from a night predating the category gate, the FIX-01 drafts
+    # census or the FIX-02 cap/attachment fields does not, and a replay of one
+    # must rebuild rather than crash.
     out["category_gate_excluded"] = bool(row.get("category_gate_excluded"))
+    out["read_never_categories"] = bool(row.get("read_never_categories"))
+    # Pre-ruling nights recorded no `never_category` because the two fields WERE
+    # one, so fall back to the draw fact — False would replay an old ledger as
+    # though its taxonomy had been empty.
+    out["never_category"] = bool(row.get("never_category")
+                                 or row.get("category_gate_excluded"))
+    out["isDraft"] = bool(row.get("isDraft"))
+    out["staging_cap"] = row.get("staging_cap", BODY_OPEN_CAP)
+    # THE ATTACHMENT NAMES TRAVEL TOO, and they had to before `attachment_lane`
+    # could stop being a constant: the replay rebuilds its `bodies` from this
+    # corpus, so a field derived from the attachment parts is reproducible only
+    # if the parts are here. They were not, and `attachments` itself has been
+    # inside the determinism diff and absent from the replay since the file
+    # lane shipped — a diff waiting for the first night that carried one.
+    out["attachments"] = list(row.get("attachments") or [])
+    out["attachments_withheld"] = bool(row.get("attachments_withheld"))
     return out
 
 
@@ -323,11 +349,11 @@ def write_corpus(vault: Path, run_id: str, accounting: dict[str, Any],
     enumerated = {i.get("convId"): i
                   for i in capture.get("enumeration", {}).get("items", [])}
     appended = 0
+    bounded = 0
     for row in accounting["rows"]:
         cid = row["conversation_id"]
         b = bodies.get(cid) if row["body_opened"] else None
-        cos_corpus.append_thread(
-            vault, run_id,
+        kw = dict(
             conversation_id=cid,
             text=(b or {}).get("text", "") if b else "",
             sender=((b or {}).get("sender")
@@ -336,58 +362,28 @@ def write_corpus(vault: Path, run_id: str, accounting: dict[str, Any],
             subject=((b or {}).get("subject")
                      or (enumerated.get(cid) or {}).get("subject") or None),
             read_lane=READ_LANE,
-            body_opened=bool(row["body_opened"]),
-            extraction=corpus_extraction(row))
+            body_opened=bool(row["body_opened"]))
+        ext = corpus_extraction(row)
+        try:
+            cos_corpus.append_thread(vault, run_id, extraction=ext, **kw)
+        except cos_corpus.CorpusRefused:
+            # ONE oversized thread must never crash the whole read night
+            # (measured run207: a ~20-attachment thread's extraction hit 5221
+            # bytes and the uncaught refusal killed the leg with nothing
+            # written). The only unbounded field is the `attachments` LIST, so
+            # this only recovers a refusal we can actually fix by collapsing it:
+            # with no attachments to drop the row is malformed for some OTHER
+            # reason (a bad join key, oversized text) and MUST still fail loudly,
+            # not be silently dropped from a corpus the ledger will be joined to.
+            if not ext.get("attachments"):
+                raise
+            ext["attachments_dropped"] = len(ext["attachments"])
+            ext["attachments"] = []
+            cos_corpus.append_thread(vault, run_id, extraction=ext, **kw)
+            bounded += 1
         appended += 1
     cos_corpus.close_run(vault, run_id)
-    return {"appended": appended, "run": run_id}
-
-
-def accounting_from_corpus(vault: Path, run_id: str, *, bundle_version: str,
-                           rules_version: str, enumerated_at: str) -> dict[str, Any]:
-    """Rebuild the ledger rows from the CORPUS alone — the replay path.
-
-    Deliberately a different entry point over the same builder: re-hashing an
-    output file proves the file did not change, which is not what "byte-identical
-    from the same captured inputs" means.
-    """
-    from brain import cos_corpus                                 # noqa: PLC0415
-
-    items = []
-    bodies = []
-    draw: list[dict[str, str]] = []
-    gate_excluded: set[str] = set()
-    for r in cos_corpus.read_corpus(vault, run_id):
-        ext = r.get("extraction") or {}
-        cid = r["conversation_id"]
-        items.append({
-            "convId": cid,
-            "itemId": ext.get("message_id"),
-            "isRead": ext.get("read_state") == "read",
-            "categories": [k for k, v in CHIP_TIER.items() if v == ext.get("tier")],
-            "received": ext.get("received"),
-            "subject": (r.get("provenance") or {}).get("subject") or "",
-        })
-        if ext.get("category_gate_excluded"):
-            # PERSISTED, NOT RE-DERIVED. The replay has no taxonomy lookup and
-            # no category batch; re-deciding the exclusion here would make the
-            # determinism check a test of two lookups agreeing rather than of
-            # the accounting being a pure function of the capture.
-            gate_excluded.add(cid)
-        if ext.get("body_opened"):
-            bodies.append({"conv_id": cid, "ok": True,
-                           "body_chars": int(ext.get("body_chars") or 0),
-                           "text": r.get("text", ""),
-                           "seq": ext.get("body_open_seq")})
-    bodies.sort(key=lambda b: int(b.get("seq") or 0))
-    draw = [{"convId": b["conv_id"], "itemId": None} for b in bodies]
-    capture = {"enumeration": {"items": items}, "bodies": bodies, "draw": draw,
-               "scan": {}, "sent": {}}
-    return build_accounting(capture, run_id=run_id, bundle_version=bundle_version,
-                            rules_version=rules_version, enumerated_at=enumerated_at,
-                            gate_excluded=gate_excluded)
-
-
+    return {"appended": appended, "bounded": bounded, "run": run_id}
 # ---------------------------------------------------------------------------
 # artifacts
 # ---------------------------------------------------------------------------
@@ -415,7 +411,7 @@ def write_report(path: Path, run_id: str, accounting: dict[str, Any],
         f"against a server folder total of "
         f"{completeness_report['folder_total_reported']}\n"
         f"- bodies opened: {accounting['body_open_actual']} of a cap of "
-        f"{BODY_OPEN_CAP}, budget {BODY_BUDGET}\n"
+        f"{accounting.get('body_open_cap', BODY_OPEN_CAP)}, budget {BODY_BUDGET}\n"
         f"- ingestion in scope {c['ingestion_in_scope']}, candidates "
         f"{c['ingestion_candidates']}, held {c['ingestion_held']}\n\n"
         f"## Judgment\n\n"
@@ -442,8 +438,23 @@ def run_host_checks(vault: Path, run_id: str) -> dict[str, Any]:
 
     `--quiesce-seconds 0` is safe HERE and only here: the quiesce window exists
     so a validator does not score a run that is still writing, and this call is
-    made by the writer itself, after its last write. It does NOT pass
+    made by the writer itself, after ITS last write. It does NOT pass
     `--record` — scoring for the evidence file is not claiming the run.
+
+    THE WRITER IS ONE LANE, NOT THE NIGHT (2026-09-04). This runs at the end of
+    the READ lane; judgment, the ingest bridge, attachment fetch, the mutation
+    plan and apply, the e-checks and the sheet all write run-named artifacts
+    afterwards. `completion()` cannot see that, because the launch-frozen
+    `expected_artifacts` names only the four files the read lane writes, so it
+    declares the night finished at step one and every later-lane check scores
+    "not yet". Measured on run 258: `verdict: INVALID`, 5 of 19 checks failed
+    (`self_eval`, `ledger_vocabulary`, `category_stamp`, `ingestion_ledger`,
+    `ingest_independence`) on a night that ended 10/10 PASS.
+
+    Widening the manifest is NOT the fix: it is immutable, the VM reads it, and
+    a read-only night legitimately writes no mutation artifacts — it would then
+    never complete at all. So the block STATES ITS SCOPE instead of claiming
+    the run: `scope: "read-lane"` and `read_lane_verdict`, never `verdict`.
     """
     proc = subprocess.run(
         [sys.executable, str(Path(__file__).resolve().parent / "cos_run_verify.py"),
@@ -452,11 +463,12 @@ def run_host_checks(vault: Path, run_id: str) -> dict[str, Any]:
     try:
         report = json.loads(proc.stdout)[0]
     except (ValueError, IndexError, KeyError):
-        return {"verdict": "not-scored", "returncode": proc.returncode,
-                "stderr": proc.stderr[-800:]}
+        return {"scope": "read-lane", "read_lane_verdict": "not-scored",
+                "returncode": proc.returncode, "stderr": proc.stderr[-800:]}
     checks = report.get("checks") or []
     return {
-        "verdict": report.get("verdict"),
+        "scope": "read-lane",
+        "read_lane_verdict": report.get("verdict"),
         "executed": [c["check"] for c in checks],
         "executed_count": len(checks),
         "passed": [c["check"] for c in checks if c.get("status") == "pass"],

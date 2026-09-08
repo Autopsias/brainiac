@@ -267,6 +267,7 @@ def record_outcome(m: dict[str, Any], intent: dict[str, Any],
                        or res.get("outcome"),
                        verification=res.get("verification"),
                        new_item_id=res.get("new_item_id"),
+                       signature=res.get("signature") or m.get("signature"),
                        # WHETHER ANYTHING LEFT THE MACHINE, on the row. The
                        # reversals (`undo`, `unchip`) may only touch what
                        # this run actually sent, and the ledger was the one

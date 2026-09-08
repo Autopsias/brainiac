@@ -42,9 +42,13 @@ def zero_send_block(live: dict[str, Any] | None, *, pending: str,
         "permitted_folders": list(permitted_folders) + [draft_folder],
         "rejected_payloads": ((live or {}).get("runtime") or {})
         .get("rejected", []),
-        "enforcement_point": ("tools/cos_mutate_page.js `send()` — the line "
-                              "before `fetch`, in the page's own world, over "
-                              "the payload that is actually about to leave"),
+        "enforcement_point": (
+            "tools/cos_mutate_page.js `send()` for the ordinary allowlist and "
+            "the separate `sendDraftDiscard()` for the one signed-draft "
+            "reversal — both run immediately before `fetch`, in the page's "
+            "own world, over the payload that is actually about to leave; "
+            "DeleteItem remains banned from `send()`"),
+        "draft_discard_is_not_a_general_action": True,
         "source_grep_is_the_second_belt_only": (
             "a source audit greps PYTHON; this engine replays CAPTURED "
             "payloads, so a fixture could carry a sending disposition with "
@@ -97,14 +101,21 @@ def runbook_steps() -> list[str]:
         "export BRAIN_VAULT=$HOME/DeveloperFolder/Brainiac/vault",
         "install tools/cos_capture_hook.js at document_start, reload the "
         "mail tab, and confirm stats().boot_finditem is true",
-        "owner performs ONE archive, ONE chip set and ONE draft-save in the "
-        "UI, then: python3 tools/cos_mutate.py capture-shapes --tab-id <id>",
+        "owner performs ONE archive, ONE chip set, ONE draft-save and deletes "
+        "ONE disposable draft in the UI (the last action captures the narrow "
+        "draft-discard shape), then: python3 tools/cos_mutate.py "
+        "capture-shapes --ego (Chrome remains: --tab-id <id>)",
         "python3 tools/cos_mutate.py canary --run-id <run> --tab-id <id> "
         "--canary-convid <a disposable thread>   # the fresh E17 drill",
         "python3 tools/cos_mutate.py dry-run --run-id <run> --tab-id <id> "
         "   # read-only; inspect every payload before anything is sent",
         "python3 tools/cos_mutate.py apply --run-id <run> --tab-id <id> "
         "--cap-archive 3 --cap-categorize 5 --cap-draft 2",
+        "python3 tools/cos_mutate.py discard-draft-manifest --out "
+        "<vault>/cos-ops/_cos_draft_discard_manifest.json",
+        "python3 tools/cos_mutate.py discard-drafts --run-id <run> --ego "
+        "--discard-manifest <vault>/cos-ops/_cos_draft_discard_manifest.json "
+        "# attended; exact manifest items only",
         "re-run `evidence` with the live pass output to fill the null fields",
     ]
 
@@ -196,7 +207,7 @@ from pathlib import Path                                      # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cos_mutate_gates import (  # noqa: E402
     MutationStop, _ts, assert_vault, canary_status, kill_switch)
-from cos_mutate_ledger import UndoLedger, _write_text_atomic  # noqa: E402
+from cos_mutate_ledger import UndoLedger  # noqa: E402
 from cos_mutate_plan import build_plan  # noqa: E402
 from cos_mutate_policy import (  # noqa: E402
     DEFAULT_CAPS, DEFAULT_SINCE_DAYS, STATES)

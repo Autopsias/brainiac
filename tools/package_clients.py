@@ -188,18 +188,28 @@ ENGINE_ASSET_FILES = [
     # scored INCONCLUSIVE and quarantined its own proposals (101 on this host,
     # measured 2026-08-23 on 0.20.26). The driver family cannot be pruned:
     # `cos_mutate_gates` declares `class MutationStop(drv.DriverStop)`, and a
-    # base class cannot be imported lazily. Guarded by test_release.py.
+    # base class cannot be imported lazily, nor a `cos_mutate_plan_*` belt.
     "tools/cos_mutate.py", "tools/cos_mutate_apply.py", "tools/cos_mutate_bridge.py",
     "tools/cos_mutate_canary.py", "tools/cos_mutate_cli.py", "tools/cos_mutate_evidence.py",
+    "tools/cos_mutate_discard.py", "tools/cos_mutate_discard_closure.py",
+    "tools/cos_mutate_discard_manifest.py",
+    "tools/cos_mutate_page.js", "tools/cos_capture_hook.js",
     "tools/cos_mutate_gates.py", "tools/cos_mutate_ledger.py", "tools/cos_mutate_passes.py",
-    "tools/cos_mutate_plan.py", "tools/cos_mutate_plan_aged.py", "tools/cos_mutate_policy.py", "tools/cos_mutate_rehearsal.py",
+    "tools/cos_mutate_plan.py", "tools/cos_mutate_plan_aged.py", "tools/cos_mutate_plan_budget.py", "tools/cos_mutate_plan_marks.py", "tools/cos_mutate_plan_noise.py", "tools/cos_mutate_plan_rulings.py", "tools/cos_mutate_plan_stale.py", "tools/cos_mutate_policy.py", "tools/cos_mutate_rehearsal.py",
     "tools/cos_mutate_selfcheck.py", "tools/cos_mutate_shapes.py", "tools/cos_mutate_shapestore.py",
     "tools/cos_cdp_capture.py", "tools/cos_driver.py", "tools/cos_driver_accounting.py",
+    "tools/cos_driver_ledger_row.py",
     "tools/cos_driver_capture.py", "tools/cos_driver_categories.py", "tools/cos_driver_cli.py",
     "tools/cos_driver_completeness.py", "tools/cos_driver_draw.py",
     "tools/cos_driver_enumeration.py", "tools/cos_driver_gate.py",
     "tools/cos_driver_night_records.py", "tools/cos_driver_selfcheck.py",
     "tools/cos_driver_transport.py",
+    # Pen 3's sent-reply join. `cos_driver` imports `sent_body_convs` /
+    # `sent_draft_feedback` at MODULE LOAD (and `cos_driver_capture` imports
+    # `SENT_BODY_CAP`), so it is closure of the driver family exactly like the
+    # `cos_mutate_*` siblings above — an installed engine has no `tools/` dir
+    # of its own and would score every mutating night INCONCLUSIVE without it.
+    "tools/cos_signals_sent.py",
     # `brain graph-report` HTML shell — the payload <script type="application/
     # json"> block is spliced in at render time by src/brain/graphreport.py;
     # everything else here is static (CSS/JS/WebGL viewer).
@@ -209,6 +219,23 @@ ENGINE_ASSET_DIRS = [
     "templates",
     "overlay/template",
 ]
+
+# Package-native assets have no repo-root counterpart: they are consumed via
+# ``importlib.resources`` by an installed engine.  The mirror sync must still
+# know about them or its stale-file pruning silently deletes them (S11 found
+# this with the S07 morning-sheet template).
+ENGINE_NATIVE_ASSET_FILES = [
+    "cos/sheet-template.html",
+]
+
+
+def _require_native_assets() -> set[Path]:
+    """Every package-native asset, hard-failing on the first one missing."""
+    paths = {ENGINE_ASSETS_DIR / rel for rel in ENGINE_NATIVE_ASSET_FILES}
+    for path in sorted(paths):
+        if not path.is_file():
+            raise ValidationError(f"native engine asset missing: {path}")
+    return paths
 
 
 def _engine_asset_pairs() -> list[tuple[Path, Path]]:
@@ -226,7 +253,7 @@ def _engine_asset_pairs() -> list[tuple[Path, Path]]:
 
 def sync_engine_assets() -> list[Path]:
     written: list[Path] = []
-    expected: set[Path] = set()
+    expected: set[Path] = _require_native_assets()
     for src, dst in _engine_asset_pairs():
         if not src.is_file():
             raise ValidationError(f"engine asset source missing: {src}")
@@ -247,6 +274,7 @@ def sync_engine_assets() -> list[Path]:
 
 def validate_engine_assets() -> None:
     """Hard error if src/brain/_assets/ drifts from the repo-root originals."""
+    _require_native_assets()
     for src, dst in _engine_asset_pairs():
         if not src.is_file():
             raise ValidationError(f"engine asset source missing: {src}")

@@ -166,7 +166,6 @@ cannot arrive silently.
 from __future__ import annotations
 
 import re
-from typing import Any, Callable
 
 # Re-exported, not re-implemented: handlers and `injection_fold` import these
 # from HERE, and the split is a file-size measure, not a second module in the

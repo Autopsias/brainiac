@@ -4,7 +4,6 @@ from __future__ import annotations
 import os
 from typing import Sequence
 
-from .embed_backends import select_embedder
 
 class CatalogEmbedder:
     """Any fastembed-CATALOGUED model via ONNX — a real-semantic embedder.

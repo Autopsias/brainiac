@@ -21,16 +21,8 @@
       "loc": 629
     },
     {
-      "file": "eval/cos_replay.py",
-      "loc": 607
-    },
-    {
       "file": "eval/zone_prior_calibration.py",
       "loc": 590
-    },
-    {
-      "file": "eval/ne_upgrade_gate.py",
-      "loc": 539
     },
     {
       "file": "eval/s06_fusion_residual.py",

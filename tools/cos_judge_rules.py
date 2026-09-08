@@ -15,11 +15,12 @@ from typing import Any, Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from brain.cos_echecks import p0_floor_refuses  # noqa: E402  the ONE floor
 from brain.cos_runverify import (              # noqa: E402  the ONE definition
-    _DEDUP_CHECKS as DEDUP_CHECKS,
-    _HELD_REASONS as HELD_REASONS,
-    _LEDGER_DISPOSITIONS as LEDGER_DISPOSITIONS,
-    _PLACEHOLDER_CATEGORIES as PLACEHOLDER_CATEGORIES,
+    _DEDUP_CHECKS as DEDUP_CHECKS,  # noqa: F401
+    _HELD_REASONS as HELD_REASONS,  # noqa: F401
+    _LEDGER_DISPOSITIONS as LEDGER_DISPOSITIONS,  # noqa: F401
+    _PLACEHOLDER_CATEGORIES as PLACEHOLDER_CATEGORIES,  # noqa: F401
 )
 
 BUCKETS = {"act", "read", "noise"}
@@ -43,15 +44,18 @@ SUBSTANCE_KINDS = {"decision", "commitment", "counterparty-position", "key-numbe
 #: no producer is a coin-flip night).
 READ_NOISE_SIGNAL = "read-noise-bucket"
 #: (v7.3, AGED-01) The aged-read lane is its own module (the 500-LOC bound).
-from cos_judge_rules_aged import AGED_READ_SIGNAL, aged_read_refusal  # noqa: E402
+from cos_judge_rules_aged import AGED_READ_SIGNAL, aged_read_refusal as aged_read_refusal  # noqa: E402
+#: (STALE-01) The stale-act lane is its own module, same bound, same shape.
+from cos_judge_rules_stale import (LANE_REFUSALS, STALE_ACT_SIGNAL,  # noqa: E402
+                                   archive_buckets)
 NOISE_SIGNALS = {"recurring-automated-sender", "automated-mail-marker", "none",
-                 READ_NOISE_SIGNAL, AGED_READ_SIGNAL}
+                 READ_NOISE_SIGNAL, AGED_READ_SIGNAL, STALE_ACT_SIGNAL}
 RESOLUTIONS = {"owner-reply-latest": "owner_reply_is_latest",
                "deadline-passed": "deadline_passed",
                "approval-granted": "approval_granted",
                "superseding-thread": "superseding_thread"}
 TIER_ORDER = ["Public", "Internal", "Confidential", "Restricted", "MNPI"]
-DRAFT_CAP = 10
+DRAFT_CAP = 30  # per NIGHT; owner ruling, DOCTRINE.md 3.4
 
 #: Words a run reaches for when it replaces rule 2's SUBSTANCE test with a
 #: NOVELTY test. None of them appears in the doctrine; all of them were written
@@ -231,20 +235,19 @@ def _r_evidence(v, ctx):
 
 
 @rule("triage.autoarchive_blast_floor", "row",
-      "Phase 1.5 BLAST-RADIUS FLOOR — P0/P1 noise is never auto-archived")
+      "Phase 1.5 BLAST-RADIUS FLOOR — a P0 verdict auto-archives ONLY from the "
+      "`read` bucket (owner ruling 2026-09-04; the stale lane keeps it in full)")
 def _r_floor(v, ctx):
     if not v.get("auto_archive"):
         return None
-    # (v7.3, AGED-01) `read` is legal for the AGED-READ lane and nothing else:
-    # the ruling is about mail he HAS read, so forcing it through `noise` would
-    # make the verdict lie about the thread — and `noise` is what the drift
-    # monitor watches. The lane's own conditions live in `cos_judge_rules_aged`.
-    aged = v.get("noise_signal") == AGED_READ_SIGNAL
-    if v.get("bucket") not in ({"noise", "read"} if aged else {"noise"}):
+    # WHICH BUCKETS A SIGNAL MAY RIDE lives in ONE table (AGED-01, STALE-01):
+    # `noise` standing, `read` for aged-read, `act` for stale-act. Forcing
+    # either through `noise` would make the verdict lie about the thread.
+    if v.get("bucket") not in archive_buckets(v.get("noise_signal")):
         return f"auto-archive claimed on a `{v.get('bucket')}` verdict"
-    if v.get("tier") in ("P0", "P1"):
-        return ("a P0/P1 `noise` verdict is NEVER auto-archived, at any "
-                "confidence, in any scope")
+    if p0_floor_refuses(v.get("bucket"), v.get("tier")):
+        return ("a P0 verdict auto-archives only from the `read` bucket (the "
+                f"2026-09-04 ruling), and this one is `{v.get('bucket')}`")
     return None
 
 
@@ -257,10 +260,9 @@ def _r_signal(v, ctx):
     if not v.get("auto_archive"):
         return None
     if sig == READ_NOISE_SIGNAL:
-        # THE WIDENING (DOCTRINE v7 §4.2). Bucket `noise` is already required
-        # by `triage.autoarchive_blast_floor` above and P0/P1 already refused
-        # there, so the ONE thing left to validate here is the half the owner
-        # named that no bucket can carry: the mailbox says he has READ it.
+        # THE WIDENING (DOCTRINE v7 §4.2). Bucket and tier are already settled
+        # by `triage.autoarchive_blast_floor` above, so the ONE thing left here
+        # is the half no bucket can carry: the mailbox says he has READ it.
         # That comes off the driver's enumeration, so a model that invents this
         # signal on an unread thread is refused by a fact it does not control.
         if _g(ctx, "read_state") != "read":
@@ -268,8 +270,8 @@ def _r_signal(v, ctx):
                     f"reports as {_g(ctx, 'read_state') or 'unknown'} — the "
                     "UNREAD SHIELD stands under every lane (DOCTRINE §2.2/§4.2)")
         return None
-    if sig == AGED_READ_SIGNAL:
-        return aged_read_refusal(v, ctx)
+    if sig in LANE_REFUSALS:
+        return LANE_REFUSALS[sig](v, ctx)
     if sig == "recurring-automated-sender":
         if int(_g(ctx, "sender_rows_this_run", 0)) < 3 \
                 and not _g(ctx, "recurring_prior_night"):
@@ -426,13 +428,12 @@ def _disposition_of(ctx, cid) -> str | None:
 
 
 @rule("staging.scope", "row",
-      "Phase 1.6 rule 1 — `act`, plus `read` at P0/P1; never noise, never P2/P3 read")
+      "Phase 1.6 rule 1 — `act`, plus `read` at ANY tier (owner ruling 2026-09-01: "
+      "informational mail is ingested like every other email); never noise")
 def _r_scope(v, ctx):
     if v.get("disposition") != "candidate":
         return None
-    if v.get("bucket") == "act":
-        return None
-    if v.get("bucket") == "read" and v.get("tier") in ("P0", "P1"):
+    if v.get("bucket") in ("act", "read"):
         return None
     return (f"a candidate staged from a `{v.get('bucket')}` / {v.get('tier')} "
             "thread — outside Phase 1.6's scope")
@@ -452,10 +453,10 @@ def _r_never(v, ctx):
 
 
 @rule("staging.never_category_zero_opens", "run",
-      "Phase 1.6 rule 1¾ v5.60 / E29(e) — a `never` thread that was OPENED is a FAIL")
+      "Phase 1.6 rule 1¾ v5.60 / E29(e) — a `never` OPEN without the lever is a FAIL")
 def _r_never_open(run, _ctx=None):
     n = int(run.get("never_category_opens", 0))
-    if n:
+    if n and not run.get("read_never_categories"):
         return (f"{n} `never`-category thread(s) had their bodies opened — the "
                 "exclusion happens on the DRAW, before the body, so each of these "
                 "spent one of the opens the cap owed to actionable material. A "

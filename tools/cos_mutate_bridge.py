@@ -17,8 +17,7 @@ SRC_ID = "__cos_msrc"
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import time                                                   # noqa: E402
 import cos_driver as drv                                     # noqa: E402
-from cos_mutate_gates import MutationStop, _ts, short  # noqa: E402
-from cos_mutate_policy import _OPS_MODE  # noqa: E402
+from cos_mutate_gates import MutationStop  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 PAGE_JS = HERE / "cos_mutate_page.js"

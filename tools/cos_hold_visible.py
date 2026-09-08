@@ -235,16 +235,16 @@ def _assert_visible(win: int, tab: int, want_id: str | None = None) -> None:
 
 
 from cos_hold_actions import (  # noqa: E402
-    _BY_ID,
-    _BEAT,
-    _observe,
-    _restore,
-    _window_order,
-    _write,
+    _BY_ID as _BY_ID,
+    _BEAT as _BEAT,
+    _observe as _observe,
+    _restore as _restore,
+    _window_order as _window_order,
+    _write as _write,
     assert_visible_by_id,
     cmd_hold,
     configure_host,
-    eval_js_by_id,
+    eval_js_by_id as eval_js_by_id,
 )
 
 configure_host(_HostProxy())

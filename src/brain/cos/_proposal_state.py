@@ -118,6 +118,53 @@ _BRIDGE_RECEIPTS_DIRNAME = "cos-bridge-receipts"
 #: and a duplicate of a conversation another row/run already settled.
 BRIDGE_SETTLEMENT_KINDS = ("quarantined", "never-category", "duplicate")
 
+#: The CLOSED vocabulary of reasons a staged candidate got no proposal because
+#: THE LEG DID NOT CARRY IT (ATT-02, s04 2026-09-05). Distinct from
+#: ``BRIDGE_SETTLEMENT_KINDS`` above, which are the three shapes the bridge
+#: settled deliberately: those mean the leg ran and decided, these mean it
+#: never decided at all.
+#:
+#: WHY A CLOSED SET AND NOT PROSE. Measured over 151 ingestion ledgers as of
+#: run 2026-09-05-run260 (`_evidence/porter-finishes/bridge-skip-census.txt`):
+#: 596 of 1656 `act` + `ingest.relevant` rows carry neither a `proposal_id`
+#: nor any statement of what became of them, spread over the 15 runs that
+#: wrote no `_cos_ingest_bridge_<run>.jsonl` at all. ELEVEN of those 15 ran
+#: with `COS_INGEST_BRIDGE` unset, so the nightly's bridge block was skipped
+#: whole — no log line, no file, exit 0. Nothing could COUNT that, because
+#: there was nothing to count; free text would have had the same defect one
+#: level up. A reason from this tuple is countable by
+#: ``cos_runverify_bridge.check_bridge_reach`` without parsing a sentence.
+BRIDGE_SKIP_REASONS = ("leg-disabled", "backpressure-abort", "writer-busy",
+                       "refused", "receipts-root-unsafe", "no-candidates")
+
+#: The ONE ledger field a skip reason is stamped on — the producer
+#: (`tools/cos_bridge_skip.py`) and the check both read this name.
+BRIDGE_SKIP_KEY = "bridge_skip"
+
+#: The bridge record written when a pass carried NOTHING. A missing
+#: `_cos_ingest_bridge_<run>.jsonl` and one holding this row are DIFFERENT
+#: states on disk, and keeping them different is the whole of ATT-02's second
+#: rule: absence is what made those 596 rows invisible.
+BRIDGE_ZERO_SCHEMA = "cos_ingest_bridge_zero/v1"
+
+
+def bridge_skip_reason(row: Any) -> str | None:
+    """The closed-vocabulary skip reason stamped on one ingestion-ledger row.
+
+    ``None`` when the row carries none — AND when it carries a value outside
+    the vocabulary. An off-vocabulary string is not a reason, it is prose, and
+    honouring it would re-open the hole the closed set exists to shut; the row
+    is then reported as unaccounted, which is what it is. The field lives in
+    the run's ingestion ledger under ``run_ops_dir`` (VM-writable), so like
+    every other stamp there it is a CLAIM — it says what the host-side leg
+    recorded, and the loud state it produces is a FAIL either way, so there is
+    nothing here for a forger to gain.
+    """
+    if not isinstance(row, dict):
+        return None
+    got = str(row.get(BRIDGE_SKIP_KEY) or "").strip()
+    return got if got in BRIDGE_SKIP_REASONS else None
+
 
 def bridge_conversation_key(conversation_id: Any) -> str:
     """The RUN-INDEPENDENT conversation key every bridge record ends in.

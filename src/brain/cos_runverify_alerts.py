@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import os
 from typing import Any
 
 from . import cos
@@ -85,6 +86,29 @@ def recent_verdicts(vault, *, window: int = 5) -> list[dict[str, Any]]:
             for rid in known_run_ids(vault)[:max(0, int(window))]]
 
 
+def carries_unjudged_work(vault, run_id: str) -> bool:
+    """Did this run write an ingestion ledger with something in it?
+
+    (2026-09-06, RUN-01) THE FACT THAT STOPS THE CLOCK. 2026-08-29-run207 wrote
+    246 ingestion-ledger rows, then no metrics row and no validity verdict —
+    a night's work on disk, uncounted and unjudged. `stalled_runs` DID report
+    it, for three days, and then `STALLED_LOOKBACK_DAYS` aged the finding out
+    and nothing anywhere has said so since. Ageing out is right for a run that
+    produced NOTHING: an aborted night is over and re-reporting it forever is
+    noise. It is wrong for a run that produced WORK, because the work does not
+    age out — it is still on disk, still uncounted, still unjudged.
+
+    A file read of one `stat`, never a parse: the question is whether the run
+    left work behind, and a zero-byte or absent ledger answers it.
+    """
+    path = (cos.run_ops_dir(vault)
+            / f"_cos_ingestion_ledger_{run_id}.jsonl")
+    try:
+        return path.stat().st_size > 0
+    except OSError:
+        return False
+
+
 def stalled_runs(vault, *, days: int | None = None,
                  now: _dt.datetime | None = None,
                  hours: float | None = None) -> list[dict[str, Any]]:
@@ -112,7 +136,11 @@ def stalled_runs(vault, *, days: int | None = None,
                                               if days is None else days))))
     out: list[dict[str, Any]] = []
     for run_id in known_run_ids(vault):
-        if run_id[:10] < oldest.isoformat():
+        # THE DATE FLOOR APPLIES TO A RUN THAT LEFT NOTHING BEHIND (RUN-01).
+        # See `carries_unjudged_work`: a run holding an ingestion ledger stays
+        # reportable until a verdict is recorded over it, however old it is.
+        work = carries_unjudged_work(vault, run_id)
+        if not work and run_id[:10] < oldest.isoformat():
             continue
         if cos.run_validity(vault, run_id).get("recorded"):
             continue
@@ -133,11 +161,137 @@ def stalled_runs(vault, *, days: int | None = None,
         if done["complete"] or idle < limit:
             continue
         out.append({"run_id": run_id, "idle_hours": round(idle / 3600.0, 1),
-                    "artifacts": len(files), "missing": done["missing"]})
+                    "artifacts": len(files), "missing": done["missing"],
+                    "unjudged_work": work,
+                    "metrics_row": (cos.run_ops_dir(vault)
+                                    / f"_cos_metrics_row_{run_id}.json").exists()})
     return out
 
 
-def alert(vault, *, window: int = 5) -> dict[str, Any]:
+def _install_age(directory, now: _dt.datetime) -> dict[str, Any]:
+    """How old the sheets directory itself is, when no sheet has ever landed.
+
+    ``nights`` is a THRESHOLD, not an elapsed count, so it must never be
+    reported as one: on 2026-08-26 it read "MISSED 2 night(s)" over a directory
+    29 minutes old. The installer creates this directory, so its mtime dates
+    the install and is the only elapsed time this pass can measure.
+
+    DAYS, not hours: ``alerts.vault_alerts`` pins ``now`` to 12:00 UTC of the
+    current date, so an hours figure reads 0.0 for anything installed after
+    noon. A day count is honest under that pinned clock and is the same unit
+    as ``nights``.
+    """
+    try:
+        made = _dt.datetime.fromtimestamp(directory.stat().st_mtime,
+                                          tz=_dt.timezone.utc).date()
+    except OSError:                                        # pragma: no cover
+        return {"installed_date": None, "installed_days": None}
+    return {"installed_date": made.isoformat(),
+            "installed_days": max(0, (now.date() - made).days)}
+
+
+def _heartbeat_text(result: dict[str, Any], *, directory, configured: int,
+                    latest: str | None, stat_errors: int) -> str:
+    """The firing line. Two states, two sentences — a lane that has never run
+    once has not MISSED anything, and must not borrow the threshold's number.
+    """
+    tail = (f"the out-of-band directory is {directory} — check the 02:00 "
+            "launchd job and its log")
+    if latest is not None:
+        return (f"COS sheet heartbeat MISSED {configured} night(s): newest "
+                f"sheet is {result['age_hours']}h old ({latest}); {tail}")
+    age = (f"{stat_errors} directory entr(y/ies) could not be examined"
+           if stat_errors else "no sheet has ever been written")
+    days = result.get("installed_days")
+    when = ("" if days is None else
+            "; the directory was created today" if days == 0 else
+            f"; the directory was created {days} day(s) ago "
+            f"({result['installed_date']})")
+    return f"COS sheet heartbeat has NEVER FIRED: {age}{when}; {tail}"
+
+
+def sheet_heartbeat(vault, *, now: _dt.datetime | None = None,
+                    nights: int | None = None) -> dict[str, Any]:
+    """Out-of-band proof that the owner-facing sheets lane is still firing.
+
+    This intentionally never reads a run record or COS ledger. A dead nightly
+    cannot report its own death through an artifact it would have had to write;
+    the newest filesystem mtime under ``feedback.sheets_dir`` is the independent
+    signal. Configuration is read in this pass, at the moment it is used.
+    """
+    from .cos import feedback                                  # noqa: PLC0415
+
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=_dt.timezone.utc)
+    configured = (int(os.environ.get("BRAIN_COS_SHEET_HEARTBEAT_NIGHTS", "2"))
+                  if nights is None else int(nights))
+    configured = max(1, configured)
+    directory = feedback.sheets_dir(vault)
+    # An absent directory means this COS schedule has not been installed for
+    # the vault yet. The installer creates it before launchd is ever loaded;
+    # from that point onward an EMPTY directory is the required known-positive
+    # alarm, including a job that dies before its first ledger write.
+    if not directory.is_dir():
+        return {
+            "firing": False,
+            "nights": configured,
+            "sheets_dir": str(directory),
+            "latest_sheet_mtime": None,
+            "age_hours": None,
+            "state": "not-configured",
+        }
+    newest: float | None = None
+    try:
+        paths = list(directory.iterdir())
+    except OSError as exc:
+        return {
+            "firing": True,
+            "nights": configured,
+            "sheets_dir": str(directory),
+            "latest_sheet_mtime": None,
+            "age_hours": None,
+            "state": "unreadable",
+            "text": (f"COS sheet heartbeat cannot read {directory} "
+                     f"({type(exc).__name__}: {exc}) — check the 02:00 "
+                     "launchd job and directory permissions"),
+        }
+    stat_errors = 0
+    for path in paths:
+        try:
+            # s07's sheet contract is `<date>.html`. Finder metadata, editor
+            # swaps, or a launchd log copied into this directory are not proof
+            # that the owner-facing sheet lane published anything.
+            if path.is_file() and path.suffix.lower() == ".html":
+                newest = max(newest or 0.0, path.stat().st_mtime)
+        except OSError:
+            stat_errors += 1
+            continue
+    limit_seconds = configured * 24 * 60 * 60
+    age_seconds = None if newest is None else max(0.0, now.timestamp() - newest)
+    firing = age_seconds is None or age_seconds >= limit_seconds
+    latest = (_dt.datetime.fromtimestamp(newest, tz=_dt.timezone.utc).isoformat()
+              if newest is not None else None)
+    result: dict[str, Any] = {
+        "firing": firing,
+        "nights": configured,
+        "sheets_dir": str(directory),
+        "latest_sheet_mtime": latest,
+        "age_hours": (None if age_seconds is None
+                      else round(age_seconds / 3600.0, 1)),
+        "unreadable_entries": stat_errors,
+    }
+    if newest is None:
+        result.update(_install_age(directory, now))
+    if firing:
+        result["text"] = _heartbeat_text(result, directory=directory,
+                                         configured=configured, latest=latest,
+                                         stat_errors=stat_errors)
+    return result
+
+
+def alert(vault, *, window: int = 5,
+          now: _dt.datetime | None = None) -> dict[str, Any]:
     """The loud surface: which recent runs are NOT claimable, and why.
 
     Same shape and same loudness as ``unstamped_batched`` — a run scored
@@ -171,6 +325,27 @@ def alert(vault, *, window: int = 5) -> dict[str, Any]:
             "declare. The manifest's `expected_artifacts` is the list of names "
             "it owes (MAN-01); rename the artifact to the declared name and "
             "the next broker fold scores the night.")
+        # ...AND WHICH OF THEM LEFT WORK BEHIND (RUN-01). A stalled run with an
+        # ingestion ledger is not merely unscored: its rows were never counted
+        # into `_cos_metrics.jsonl` and never judged, and no later fold will do
+        # either. Named separately because the repair differs — if the run's
+        # declared artifacts can no longer be written, the honest close is to
+        # RECORD a verdict for it (`cos.record_run_validity`, INCONCLUSIVE with
+        # the reason), which is also what makes this line go quiet.
+        work = [s for s in stalled if s.get("unjudged_work")]
+        if work:
+            out["unjudged_work_runs"] = work
+            out["unjudged_work_text"] = (
+                f"{len(work)} of them wrote an INGESTION LEDGER and no verdict "
+                f"({', '.join(s['run_id'] for s in work)}) — that work is on "
+                "disk, uncounted and unjudged, and no fold will pick it up. "
+                "Re-write the missing declared artifacts if the night can "
+                "still produce them, otherwise record the run INCONCLUSIVE "
+                "naming why, which is the only thing that closes it.")
+    heartbeat = sheet_heartbeat(vault, now=now)
+    out["sheet_heartbeat"] = heartbeat
+    if heartbeat.get("firing"):
+        out["sheet_heartbeat_text"] = heartbeat["text"]
     return out
 
 

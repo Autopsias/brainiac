@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from cos_reconcile_metrics import _rows, counts_archive, counts_draft  # noqa: E402
+from cos_reconcile_metrics import _rows  # noqa: E402
 
 TOOLSETS = ("iab", "chrome-plugin")
 

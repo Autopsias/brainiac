@@ -83,7 +83,7 @@ rows that are present).
 from __future__ import annotations
 
 import datetime
-import json
+import json as json
 import os
 import re
 from pathlib import Path

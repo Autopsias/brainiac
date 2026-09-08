@@ -1434,6 +1434,24 @@ message on a live night, with the browser leg downloading into
 provides) and writing the manifest line for it.* Everything downstream of that
 manifest line is now a path with an execution trace.
 
+**Where the staging directory comes from, and the divergence that hid for four
+days (2026-09-05).** `$BRAIN_COS_DOWNLOADS_DIR` is **optional**. Unset, the
+fetch lane (`tools/cos_ctl.sh`) and the engine's sweep
+(`cos._constants.DEFAULT_INGEST_SWEEP_DOWNLOADS_DIR`) both use
+`~/.brain/cos-downloads`, so they agree by construction. Set, it must be set
+for **both halves**, and they are two different launchd jobs:
+`com.brainiac.cos-nightly` fetches, `com.brainiac.nightly.<id>` runs `brain
+maintain` and therefore sweeps. On the reference host the maintain job named a
+second, unrelated staging directory outside the engine default
+(`.../<some-workspace>/_cos_downloads`, 0 files) while the COS job filled
+`~/.brain/cos-downloads` (79 files) — neither unset, so
+`cos_nightly.sh`'s recover-when-absent block could not see it. The sweep
+reported an ordinary `moved: []` for four days and every fetched file aged past
+the six-hour recency window. The sweep now NAMES that state instead —
+`report["misconfigured"]`, plus an `action_required` row in the maintain
+results — and never silently swaps directories, because which directory is
+swept is a security decision (the same reason `~/Downloads` is refused).
+
 **Taxonomy failure semantics** (mirrored from
 `docs/cos-ingest-taxonomy.md` §5): ABSENT ⇒ the feature is off (nothing
 graduates); UNPARSEABLE ⇒ fail closed to all-`propose` plus a defect in
@@ -1734,6 +1752,130 @@ measurement existed once, on one machine, and nothing would have told you it
 was gone. Cover: `tests/test_update.py::test_stage_stages_vm_boundary_probe_executable`
 (+ the companion asserting the shell installer names it too — one staging path
 fixed is not a fix).
+
+## 6f · The attachment file lane (ATT-03) — what settles a manifest line
+
+A thread that carries a real attachment is not "taken" while the attachment is
+still outside the vault. The porter used to read such a thread as complete on
+the TEXT lane alone: the text note was signed, the chip went on, and the
+aged-read lane archived the mail while its PDF sat in a staging directory
+nothing swept.
+
+**The chip did NOT widen.** `Brainiac · Ingested` still certifies a signed note
+for the thread's own TEXT candidate. The bytes claim is a SEPARATE record on the
+host (`joins.jsonl`), never a second mailbox category — a second category would
+share the undo key `<cid>|categorize` with the priority chip.
+
+### The five states a manifest line can be in
+
+| State | Meaning | Settled? |
+|---|---|---|
+| `joined` | the bytes reached a signed note, by content hash | yes |
+| `declined` | the sweep refused the line while HOLDING its bytes | yes |
+| `withdrawn` | the payload left the funnel — owner rejected it, or its TTL expired | yes |
+| `in-funnel` | quarantined, awaiting the owner's verdict | no |
+| `unclaimed` | the sweep never claimed this line | no |
+
+A thread is markable only when every owed file has a settled line **that names
+that file**. Coverage is a MATCH, not a count. The untrusted leg picks both the
+`conversation_id` and the `filename` on a manifest line, so counting let one
+honest host decline — of a real download belonging to some other thread — pay
+for a file this thread owed and nobody had fetched. The thread's owed names come
+from its ledger row, which the host read from the mailbox; it is the only input
+to this check the untrusted leg does not write.
+
+### The three artifacts, and who may write them
+
+| Path | Holds | Writable by |
+|---|---|---|
+| `<host>/attachments/joins.jsonl` | the bytes-join claim: line key, filename, attachment id, content hash, note id | host only; **nothing reads it to decide anything** — every consumer recomputes the chain |
+| `<host>/bridge-receipts/line-settlements.jsonl` | one row per line the host STOPPED WAITING for: `key`, `state`, `msg_key`, `detail` | host only, off every VM-visible root |
+| the quarantine sidecar's `manifest_line_key` | which manifest line this payload was claimed for | host, at claim time |
+
+### Why those shapes, and not simpler ones
+
+**Nothing the untrusted leg writes may make a line look settled.** The ingest
+manifest and `claims.jsonl` both live under `drop_dir`, which the VM leg writes.
+Four separate defects came from the same mistake — the host supplying the
+AUTHORITY while the mount supplied the DESIGNATION (Hardy 1988; Miller,
+erights.org: *"don't separate designation from authority"*):
+
+1. settlements keyed by ATTACHMENT ID let one owner rejection settle a
+   different thread's line. Fixed by keying `line-settlements.jsonl` on the
+   MANIFEST LINE, so a settlement names the one line it settles and can never
+   be re-pointed at another. (It does NOT make the line itself trustworthy —
+   the key is a sha256 of a `drop_dir` entry, so choosing the entry chooses the
+   key. Defect 5 below is what that leaves, and where it is closed.);
+2. `joined` was granted by the claims row's `dest` alone. Fixed by requiring a
+   host witness — the lifecycle record's `manifest_line_key`, or the note's
+   frontmatter naming the thread;
+3. that witness was readable from the note BODY, which is the emailed file's
+   own content. Fixed by stopping the frontmatter scan at the closing `---`;
+4. the unsafe-filename refusal is decided from the manifest entry alone and
+   never touches the filesystem, so one appended line bought a `declined`
+   settlement for free. Fixed by making that branch write NO claims row and NO
+   decline — the same fail-closed reading as the stale-mtime refusal beside it.
+
+`joined` is deliberately never WRITTEN DOWN as a settlement: it is recomputed
+from the content-hash chain, so there is nothing for a forged row to claim.
+`RECORDABLE_SETTLEMENTS` names the only two states a row may carry.
+
+The other three declines — symlink, over the size cap, duplicate — still settle,
+because each requires a real file that the HOST's fetch lane placed in
+`$BRAIN_COS_DOWNLOADS_DIR` (default `~/.brain/cos-downloads`, host home, off the
+mount). The test is "did anything outside the manifest have to be true".
+
+5. **that argument was not sufficient on its own** (adversarial review pass 2,
+   2026-09-05; both reviewers found it independently). A file's presence in
+   `downloads` proves the host fetched *a* file of that name. It does not say
+   which line, or which thread, that file answers for — and both of those come
+   from the manifest entry. So the untrusted leg could append one line
+   attaching another thread's real download to a victim thread; the host then
+   declined those bytes on their own honest merits, and the count closed the
+   victim's lane. Reproduced: a thread owing `contoso.pdf`, never fetched, went
+   from `1 of 1 attachment(s) … never offered` to marked, on one appended line
+   naming an unrelated `decoy.bin`. Fixed by the name MATCH above rather than
+   by refusing the decline, which would have held every over-cap or symlinked
+   attachment open for ever. Cost on the reference host: of 191 threads that
+   pass this gate, 0 stop passing.
+
+**What is still open, stated rather than hidden.** The match is on the FILENAME.
+An attacker who names the victim's own owed filename, for a real download of
+that same name that the host declines, still pays that line. Closing that needs
+the fetch lane to bind content to a line before it refuses it, which it does not
+do today — a declined file is never hashed against anything. The residual is
+narrow (it needs a real same-named download in host home) and it is the reason
+this section says MATCH rather than PROVE.
+
+### When a thread is held, and how you hear about it
+
+`brain maintain` reports `cos_attachment_withheld` — the run, the count, and one
+sentence per thread saying WHICH lines are unsettled and how many files are
+unaccounted for.
+
+**That result alone was not a surface the owner reads** (adversarial review pass
+2, 2026-09-05). `maintenance_notify` forwards only an `action_required` item
+carrying its own dedup key; a bare `results` entry stays in the maintain output
+and never reaches `brain alerts` or the exceptions page, so on an unattended
+nightly the sentence lived in a launchd log. The fold now raises an
+`action_required` row as well, keyed `cos-attachment-withheld:<digest of the
+sorted thread ids>` — a hold that persists de-duplicates, and a thread joining or
+leaving it is a new thing to say. Keying by run id instead would mint a fresh
+alert every night for a condition that had not changed.
+
+**One hole the gate accepts by design.** `_owed_attachment_names` returns
+DISTINCT filenames, because the bridge's `_write_manifest_lines` dedups on the
+whole line and only ever writes one line for two parts sharing a name. So a
+thread carrying two DIFFERENT documents that happen to share a filename can be
+marked complete when only one set of bytes was offered, and ATT-03's promise does
+not hold for the second. The real fix is bridge-side and outside this lane;
+it is written down here rather than left to be discovered.
+
+**One known cost.** A payload whose note carries no frontmatter provenance and
+whose lifecycle record predates `manifest_line_key` satisfies neither witness,
+so it stops joining and its thread goes back to waiting until the payload is
+re-ingested. Measured on the reference host 2026-09-05: 47 join rows over 6
+threads (431 → 384 joins). Ruled by the owner that day in favour of the fix.
 
 ## 6.5 · Trust anchors (load-bearing platform assumptions)
 

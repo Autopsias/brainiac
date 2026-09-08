@@ -6,7 +6,7 @@ from ._facade import public
 from ._attachment_store import attachment_metas
 from ._claims_state import _pending_metas
 from ._guards import _safe_basename
-from ._io import _read_jsonl, _write_atomic
+from ._io import _read_jsonl
 from ._standing_approval import STANDING_ANSWER, standing_approval
 from ._layout import _env_days, _parse_ts, _ts, _utcnow, proposals_dir
 from ._learning_ledger import log_defect

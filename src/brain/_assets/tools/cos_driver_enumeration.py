@@ -7,7 +7,6 @@ Moved verbatim out of `cos_driver` and re-imported by it, so
 """
 from __future__ import annotations
 
-import datetime as _dt
 import hashlib
 import json
 import sys
@@ -17,10 +16,10 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cos_driver_accounting import _persist  # noqa: E402
 from cos_driver_completeness import assert_complete, completeness  # noqa: E402
-from cos_driver_draw import _tier, conversations  # noqa: E402
+from cos_driver_draw import CHIP_TIER, _tier, conversations  # noqa: E402
 from cos_driver_transport import (  # noqa: E402
-    ChromeTab, CdpTab, DriverStop, _ts, _utcnow, capture_night, load_sheet,
-    open_tab, stage)
+    DriverStop, _ts, _utcnow, capture_night, load_sheet,
+    open_tab)
 
 
 #: The typed fields the CATEGORY batch is allowed to see. Phase 1.5 judges from
@@ -107,6 +106,59 @@ def bind_categories(categories: dict[str, str],
 
 
 
+def owner_reversals(vault: Path, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """PEN 2 of FB-02 — what the owner UNDID by hand, read off this enumeration.
+
+    The undo ledgers say what the porter did to each thread; `rows` is what the
+    Inbox looks like now. A thread the ledger says was archived and that this
+    enumeration can see is back; a thread whose managed chip the ledger wrote
+    and the enumeration no longer reports has been unchipped. Either is an owner
+    ruling nobody typed, and `brain.cos.feedback_cli` appends it as a
+    do-not-touch keyed on the conversation.
+
+    IT ONLY MINTS ONE WHEN THE MESSAGE SET IS UNCHANGED. A conversation back in
+    the Inbox because somebody REPLIED is new work, not a reversal, and a
+    permanent do-not-touch on it would retire a live thread forever. The guard
+    lives in `feedback_cli.outlook_reversals`; this function's whole job is to
+    hand it the two inputs and the ONE chip-name-to-tier mapping
+    (`cos_driver_draw.CHIP_TIER`), so the ledger's `P1 · Today` and the
+    enumeration's `P1` are joined through the driver's own table rather than a
+    second spelling.
+
+    EVERY ledger in the ops dir, not just last night's: an owner may reverse a
+    thread days later, and `applied_mutations` takes the latest landed row per
+    (conversation, verb) by `action_ts` — never by file name, which sorts
+    `run99` after `run124` inside one day.
+
+    AN UNREACHABLE RECORD DEGRADES THIS PEN, IT DOES NOT KILL THE PASS.
+    `feedback_dir` refuses outright when `$BRAIN_INDEX_DIR` puts the host-private
+    base back inside a VM-visible root — a configuration fact, and one that must
+    not take the whole Inbox enumeration down with it. The judge lane already
+    degrades on exactly this (`cos_judge_grounding.owner_rulings`); the two now
+    agree. Nothing is minted, and the report says `unreachable` rather than a
+    zero that reads as "the owner reversed nothing".
+    """
+    from brain import config, cos                                # noqa: PLC0415
+    from brain.cos import feedback_cli                           # noqa: PLC0415
+
+    ledger_rows: list[dict[str, Any]] = []
+    for ledger in sorted(cos.run_ops_dir(vault).glob("_cos_undo_ledger_*.jsonl")):
+        for line in cos._read_nofollow(ledger).decode(
+                "utf-8", "replace").splitlines():
+            if line.strip():
+                try:
+                    ledger_rows.append(json.loads(line))
+                except ValueError:
+                    continue
+    try:
+        return feedback_cli.record_outlook_reversals(
+            vault, ledger_rows, rows, chip_tier=CHIP_TIER)
+    except (config.HostPathUnsafe, OSError) as exc:
+        return {"state": "unreachable", "detail": f"{type(exc).__name__}: {exc}",
+                "recorded": 0, "reversals": [], "new_work": [],
+                "already_recorded": 0, "considered": 0}
+
+
 def enumerate_only(vault: Path, tab_id: int | None, *,
                    evidence_path: Path | None,
                    poll_seconds: float = 3.0, max_wait: float = 900.0,
@@ -154,6 +206,14 @@ def enumerate_only(vault: Path, tab_id: int | None, *,
         "completeness": report,
         "rows": [enumeration_row(c) for c in convs],
     }
+    # THE OWNER'S OTHER PEN, RUN HERE AND PERSISTED WITH THE ENUMERATION
+    # (FB-02). This is the one pass that holds both halves of the diff — the
+    # mailbox as it is now, and the vault's own undo ledgers — and it runs
+    # before any judgment, so tonight's plan is built against a record that
+    # already knows what the owner reversed. `new_work` rides the evidence
+    # rather than the record: a thread back in the Inbox because somebody
+    # replied is named on the night's own artifact and mints nothing.
+    out["owner_reversals"] = owner_reversals(vault, out["rows"])
     _persist(evidence_path, out)
     return out
 

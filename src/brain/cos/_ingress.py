@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from ._shared import *  # noqa: F401,F403
 from ._facade import public
-from ._io import _write_atomic
 from ._layout import proposal_drop_dir, verdict_drop_dir
 
 def propose(vault, content: str, *, ident: str | None = None) -> dict[str, Any]:

@@ -5,7 +5,7 @@ from ._shared import *  # noqa: F401,F403
 from ._facade import public
 from ._criteria import evidence_lineage_key
 from ._guards import _safe_meta_id
-from ._io import _append_jsonl, _read_jsonl, _write_atomic
+from ._io import _append_jsonl, _read_jsonl
 from ._layout import _env_days, _parse_ts, _ts, _utcnow, proposals_dir
 
 def version_links_dir(vault=None) -> Path:

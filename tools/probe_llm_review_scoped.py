@@ -1,5 +1,5 @@
 """Probe llm_review_scoped with captured real outputs + a fake bundled gate."""
-import subprocess, sys, tempfile, os, textwrap, json
+import subprocess, sys, tempfile
 from pathlib import Path
 
 SCOPED = str(__import__("pathlib").Path(__file__).parent / "llm_review_scoped.py")

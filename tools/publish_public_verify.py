@@ -12,7 +12,6 @@ module does, so there is one place that owns the shared helpers.
 from __future__ import annotations
 
 import hashlib
-import sys
 import tarfile
 import zipfile
 from pathlib import Path

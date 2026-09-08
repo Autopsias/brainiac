@@ -7,7 +7,7 @@ from ._approval import approved_anchor_path_or_none, approved_payload_path_or_no
 from ._approval_cleanup import clear_approved
 from ._attachment_anchors import clear_attachment_anchor
 from ._attachment_store import _attachment_lifecycle, _discard_attachment, _ingested_raw_id, _lifecycle_payload, attachment_metas
-from ._io import _append_jsonl, _read_jsonl, _write_atomic
+from ._io import _append_jsonl, _read_jsonl
 from ._layout import _parse_ts, _ts, _utcnow, hold_dir
 from ._learning_ledger import demote_category, log_defect, record_outcome
 

@@ -33,16 +33,8 @@ KNOWN_KEYS = frozenset({
 })
 
 from cos_retro_scanners import (  # noqa: E402
-    Scan,
-    _collect_chip_events,
-    _collect_holds,
-    _iter_rows,
     _key_of,
-    _managed_categories,
     _norm,
-    _run_of,
-    _thread_of,
-    _ts_of,
     find_patterns,
     scan_vault,
 )

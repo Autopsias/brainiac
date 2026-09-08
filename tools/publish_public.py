@@ -70,18 +70,18 @@ stale stamp. Those cost seconds; the three above cost the hour.
 from __future__ import annotations
 
 import datetime as _dt
-import hashlib
+import hashlib as hashlib
 import json
-import os
+import os as os
 import re
-import shutil
+import shutil as shutil
 import subprocess
 import sys
-import tarfile
-import tempfile
-import time
-import urllib.parse
-import zipfile
+import tarfile as tarfile
+import tempfile as tempfile
+import time as time
+import urllib.parse  # noqa: F401
+import zipfile as zipfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -465,8 +465,8 @@ from tools.publish_public_uploads import (  # noqa: E402,F401
     phase_post_verify, phase_public_git, phase_release_asset,
     phase_testpypi, sync_export_into_clone)
 from tools.publish_public_verify import (  # noqa: E402
-    _archive_content_diff, _archive_members, verify_served_artifacts,
-    wait_for_pypi)
+    _archive_content_diff as _archive_content_diff, _archive_members as _archive_members, verify_served_artifacts as verify_served_artifacts,
+    wait_for_pypi as wait_for_pypi)
 from tools.publish_steps import main  # noqa: E402
 
 if __name__ == "__main__":

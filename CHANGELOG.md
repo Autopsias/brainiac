@@ -7,6 +7,136 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.37] — 2026-09-08
+### Added
+- **The owner can see what he is being asked to judge, and answer it in
+  writing** (SHEET-01, FEEDBACK-01). The nightly now renders a morning sheet
+  of the threads it judged, at ONE address that never changes, with a morning
+  nudge and a 07:00 read-back job that consumes the owner's marks. The sheet
+  explains its own words instead of assuming the reader knows the taxonomy,
+  and it states what actually reached the vault — the thread body and its
+  attached files counted apart, because a thread whose text is signed and
+  whose attachment bytes are not is not "in the vault".
+- **`brain cos-feedback` — one record, two kinds of ruling.** A rule the
+  porter must obey and a mark on one thread are different things, and are now
+  stored as different things. The record is FROZEN before anything reads it,
+  so a night cannot judge against a file that same night is still writing, and
+  the run reads it back rather than assuming it applied.
+- **The threads the porter can never read get their own list.** A thread whose
+  body no server will return was never archived, drafted or decided, and it
+  had no surface of its own — it simply stayed in the Inbox. It is now a named
+  finding with its own list, per the owner's 2026-09-06 ruling that he clears
+  them by hand.
+- **A Claude-artifact "Bundled Page" export now ingests its document instead of
+  its loader.** The outer file carries about 70 characters of readable text —
+  "This page requires JavaScript to display" — so ingest quarantined it as
+  empty. The real document is a JSON-encoded HTML string in the file's
+  `<script type="__bundler/template">` block. Measured on a live vault: 70
+  characters became 31,945. Nothing is decompressed or executed; the inner
+  document goes through the same reader, the same concealment walk and the
+  same coverage ledger as any other document.
+
+### Fixed
+- **A night no longer dies at the door.** A closed door now says WHY and gets
+  a second try; the door bar is 900s so an owner-launched night can start; the
+  scheduled night stops pinning a bar the script just lowered; a degraded page
+  is re-armed before the mutation lane is given up; and a token phase or
+  writer-lock contention is waited out rather than treated as death.
+- **A mutation issued from a closing window is no longer lost.** The rescue
+  reaches sibling windows, not only the opener, and carries the payload the
+  mail server actually sends. A mutation is shared when it is MADE now, not
+  when the window dies.
+- **A thread keeps ONE draft, and it is the newest one.** The discard lane
+  reads every ledger, deletes cross-run losers, works against an exact
+  run-bound item manifest, and stops trusting the mail server's save-time
+  timestamp.
+- **Five run-validity checks stopped failing valid nights** (E1, E6, E9, E10,
+  aged-read). A proposal was reported as an archive; the read lane's host
+  checks reported the night's verdict rather than the read lane's; a chunk's
+  prompt restated the night's row count rather than its own.
+- **One bad row no longer costs the night.** Someone else's category label, a
+  dropped verdict, a broker enrichment failure and an attachment-heavy thread
+  each used to end a run. Each now warns and continues, under an extraction
+  cap and a per-row guard.
+- **A refused read is asked again, and what it answered is recorded.** Sealed
+  mail is no longer reported as a failed read; a refused body records WHAT the
+  item is, not only how the fetch went; the re-scan asks the page again instead
+  of re-reading its own answer; and the fallback shape records how much it
+  returned.
+- **Attachments are fetched in size-bounded batches**, not one call per night,
+  and an attached email is recorded as a terminal residual rather than a fetch
+  retried forever.
+- **Grounding survives daytime CPU load**, spends its budget once instead of on
+  two cold loads, and an ungrounded night ships the context it managed to fetch
+  rather than nothing. A read thread never archives with its substance
+  unvaulted.
+- **The nightly pins its interpreter and refuses a degraded embedder**, reads
+  the freshest token in the ring rather than one request's, and stops pinning
+  `BRAIN_INDEX_DIR` — one index per vault.
+- **A vault that stopped checking no longer reports "nothing needs you".**
+  The sheet heartbeat reports its own age rather than its threshold, and the
+  staging-divergence finding is no longer hidden by its own key.
+- **`install-cos-jobs.sh` refuses an unset `BRAIN_VAULT` (exit 2) instead of
+  inventing one.** With it unset the script fell through to a default path,
+  CREATED that directory, and rendered all three launchd jobs against it —
+  silently rewriting a working nightly away from the live vault. Nothing failed
+  and nothing warned, because launchd keeps serving the loaded job from memory.
+- **The weekly synthesis stopped skipping every vault.** `brain
+  provision-local` writes ONE `--workspace` value into both the host row and
+  the cowork-vm row of the registry, and a Cowork workspace never holds an
+  unpacked `.claude/skills/` directory — its skills go through Cowork's own
+  Save-skill flow. So from 2026-08-31 the synthesis logged "no kb-curator
+  skill" for every vault and reported the run complete. It now looks in the
+  registered workspace first, then beside the vault, and skips only when
+  neither has the skill. The two concepts sharing one registry field is the
+  underlying defect and is written up in
+  `docs/operations/synthesis-workspace-lookup.md`.
+- **The extract-retry lane no longer multiplies its own output.** The attempt
+  bound was keyed on the file's BYTES but the target list was built per PATH,
+  so a retry copy that failed extraction again was re-quarantined under a new
+  name and became a second target. Measured on a live vault: 2 documents
+  became 16 files in three nights, doubling nightly. The target is the bytes
+  now.
+- **Two COS findings reached the owner as `untriaged:`** — "problems nobody
+  has looked at yet" — for conditions two owner rulings had already settled.
+  `cos-unreadable-threads:*` and `cos-attachment-withheld:*` are declared
+  BANNER in the remediation registry.
+
+### Changed
+- **A thread with no action for the owner is archived at every priority, P0
+  included** (owner ruling 2026-09-04, retiring the P0 exemption). Six code
+  sites carried the old rule; all six now route through one function. Until
+  this landed, every P0 archive was silently dropped on the scheduled night.
+- **No action means archive at P1/P2/P3, over act and read at any tier**
+  (owner ruling 2026-09-01), and the nightly window widens to 90 days.
+- **A draft alone no longer holds a thread in the Inbox** (`archive_over_draft`).
+- **Reading a `never` category is no longer the same as ingesting it**, and the
+  taxonomy overrides the model on a `never` row it can now read.
+- **The nightly draft cap rises to 30**, stated once instead of restated in
+  four places.
+- **The drafting job gets its own model call**, so the nightly has three model
+  legs, and its silence is now visible (DRAFT-01).
+- **The judgment prompt carries the host facts its rules grade** (JUDGE-03),
+  and the judge reads the owner's note on every row rather than once.
+- **Ingestion is its own question**, and a stale act thread leaves by itself.
+- **Dependencies refreshed and `uv.lock` added**; `F401` is enforced again and
+  a ruff ignore rule that suppressed nothing was removed; twenty ratchet
+  waivers were dropped and the eight that remain have a real reader. The test
+  suite no longer starts a live embedder.
+- **The VM egress ceiling is a recorded preference, not a boundary** (A-13).
+  0.20.31 said the signed ceiling came "from a source the VM cannot forge".
+  It does not: the pinned anchor it verifies against sits in the staging dir
+  on the mount, which the sandbox can write, so a session can mint its own
+  key and raise its own clamp (Codex Security `2daadd6f`, reproduced
+  2026-09-05). The claim is withdrawn in the module docstring, the bootstrap
+  comment and `docs/security-acceptances.md` A-13, and a test pins the limit.
+  Nothing surfaces through it: the vault and the snapshot are off the mount
+  since A-05, so the role=vm CLI has no note body to read at any ceiling.
+- **The Chat-tab MCP bundle no longer calls itself read-only.** The `.mcpb`
+  manifest and `docs/harness-wiring.md` still said "read verbs only" after
+  the `capture` tool shipped in 0.20.32; they now name the one quasi-write
+  and the lane it goes through (draft → drain, `duplicate-id` refused).
+
 ## [0.20.36] — 2026-09-04
 ### Fixed
 - **The re-ruling worked and the REPORT lied.** `verify-audit

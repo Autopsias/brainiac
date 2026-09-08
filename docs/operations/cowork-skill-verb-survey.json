@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
   "generated": "2026-08-28T21:28:23Z",
-  "produced_by": "closed-stacks-2026-08-27 / S01 / FND-02 (rework 2, after the second adversarial-review round); derived columns RE-DERIVED by S02 / DESK-02 after the broker grew grep, graph_expand, read, hybrid_search and diagnose; derived columns RE-DERIVED AGAIN by S03 / DESK-03 after the broker grew alerts, exceptions, inbox; derived columns RE-DERIVED AGAIN by S04 / DESK-04 after the broker grew capture; derived columns RE-DERIVED AGAIN by S06B / DESK-07 after the 14 Cowork bundles were migrated onto the broker (consumers changed, seam unchanged); cli_parser_choices RE-DERIVED by one-command-per-vault-2026-08-30 / S01 / CMD-01 after the host CLI grew the host-only `provision-local` subcommand (74 -> 75). No other derived column moved: the verb appears in no skill bundle and is not in cli.VM_ALLOWED, so candidates, verbs, dispositions and the broker columns are byte-unchanged.",
+  "produced_by": "closed-stacks-2026-08-27 / S01 / FND-02 (rework 2, after the second adversarial-review round); derived columns RE-DERIVED by S02 / DESK-02 after the broker grew grep, graph_expand, read, hybrid_search and diagnose; derived columns RE-DERIVED AGAIN by S03 / DESK-03 after the broker grew alerts, exceptions, inbox; derived columns RE-DERIVED AGAIN by S04 / DESK-04 after the broker grew capture; derived columns RE-DERIVED AGAIN by S06B / DESK-07 after the 14 Cowork bundles were migrated onto the broker (consumers changed, seam unchanged); cli_parser_choices RE-DERIVED by one-command-per-vault-2026-08-30 / S01 / CMD-01 after the host CLI grew the host-only `provision-local` subcommand (74 -> 75). No other derived column moved: the verb appears in no skill bundle and is not in cli.VM_ALLOWED, so candidates, verbs, dispositions and the broker columns are byte-unchanged; cli_parser_choices RE-DERIVED by night-porter-2026-08-25 (the 2026-09-01 archive-ruling commit) after the survey caught up with the host-only `cos` and `cos-feedback` subcommands, added 2026-08-26 by f00b2db without the same-commit re-record (75 -> 77); the same pass re-recorded the chief-of-staff bundle content_sha256 after the 2026-09-01 DOCTRINE.md ruling edit. Verbs, tokens and candidates are byte-unchanged: neither new subcommand appears in any skill bundle or in cli.VM_ALLOWED.",
   "consumed_by": [
     "s02 definition of done",
     "s07 walk checklist",
@@ -26,15 +26,15 @@
     "staged_bundles_dir": "<workspace>/vault/.brain/skills",
     "staged_bundle_hashes_omitted_reason": "a .skill zip's sha256 is not a content identity: zip headers carry per-file mtimes and cowork_workspace_install.sh re-runs the packager on every install, so the same content hashes differently (measured: 3a4923e17aa626d4 vs f80581dcfacd36dd). skill_md_git_blob and content_sha256 below are the content anchors; s07's drift check must use those, not a zip sha.",
     "content_anchor_recipe": "Both per-bundle anchors below are defined by tests/test_cowork_skill_verbs.py::derive_bundles, which is their normative definition; s07 must reproduce these values, not invent its own. content_sha256: take every file under the bundle directory (Path.rglob('*'), is_file(), NO suffix filter -- the packager filters nothing either), sorted by absolute path (equivalently by relative path -- every file shares the bundle prefix); feed one sha256 in that order with, per file, the file's path RELATIVE to the bundle dir as POSIX text, then a single NUL byte (b'\\0'), then the file's raw bytes; the hex digest is the bundle's content_sha256. No zip, no mtime, no subprocess, so it is stable across re-packaging. skill_md_git_blob: the git blob sha1 of SKILL.md's raw bytes, i.e. sha1(b'blob <len>\\0' + data), computed in-process (helper _git_blob_sha1).",
-    "cli_subcommand_count": 76,
-    "cli_subcommand_count_note": "73 when S01 recorded this survey on 2026-08-27; 74 from 2026-08-28, when S05 added the host-only `authorize-original` subcommand. This number is DERIVED from the live parser by tests/test_cowork_skill_verbs.py::derive, so any session adding or removing a CLI subcommand must re-record it here in the same commit or two committed tests go red. 75 from 2026-08-30, when one-command-per-vault S01 added the host-only `provision-local` subcommand (CMD-01).",
+    "cli_subcommand_count": 78,
+    "cli_subcommand_count_note": "73 when S01 recorded this survey on 2026-08-27; 74 from 2026-08-28, when S05 added the host-only `authorize-original` subcommand. This number is DERIVED from the live parser by tests/test_cowork_skill_verbs.py::derive, so any session adding or removing a CLI subcommand must re-record it here in the same commit or two committed tests go red. 75 from 2026-08-30, when one-command-per-vault S01 added the host-only `provision-local` subcommand (CMD-01). 77 from 2026-09-01: the survey caught up with the host-only `cos` (attended sheet group) and `cos-feedback` (owner-feedback pen) subcommands, added 2026-08-26 by f00b2db WITHOUT the same-commit re-record this note requires — recorded late by the night-porter archive-ruling commit. 78 from the same day's merge of master: release 0.20.35 added the host-only `check-egress` subcommand (the outbound term guard); master recorded 76 for it, and this row is the union of the two lineages, re-derived on the merged tree.",
     "staged_bundles_dir_note": "the concrete host path is in docs/operations/closed-stacks-s01-transcripts-evidence.md; it is not recorded here because this file IS scanned by tools/check_client_names.py and the host workspace directory carries a denylisted client name."
   },
   "bundles_scanned": 14,
   "files_scanned": 15,
   "raw_matches": 250,
   "distinct_tokens": 73,
-  "cli_parser_choices": 76,
+  "cli_parser_choices": 78,
   "mcp_registered_tools": [
     "alerts",
     "bases_query",
@@ -1202,8 +1202,8 @@
         "DOCTRINE.md",
         "SKILL.md"
       ],
-      "skill_md_git_blob": "a907079071134f1d4e25ff15a1282386b1aab9a3",
-      "content_sha256": "83ccee4cc4f2f9020ef5fd36e017aada1e8c6527ff732ee96a6167dbf8e1f72c"
+      "skill_md_git_blob": "f538c297f51330bca12348d0b8dab2c16e38cff4",
+      "content_sha256": "ce1fe6e1b29d4f6208ac2eac0b9af25de0115e7ac6b076afec527e3d46eddc72"
     },
     {
       "skill": "curation",
@@ -1462,5 +1462,15 @@
     ],
     "note_on_chief_of_staff": "chief-of-staff's content_sha256 moved because it names the kernel skill in 5 places, including one string pinned by tests/skills/test_chief_of_staff_telemetry.py. Doc and test were moved in the same edit. NOTE chief-of-staff/SKILL.md is SUPERSEDED (DOCTRINE.md is the running doctrine) but is still the file that test reads, and DOCTRINE.md names no skill, so nothing there needed changing."
   },
-  "sec07_update": "2026-09-01 (SEC-07): the host CLI grew `check-egress`, the outbound term guard, and it IS in cli.VM_ALLOWED — the Cowork leg is the one reading wild content beside a web tool, so it needs the guard most. cli_parser_choices 75 -> 76. It is classified `undecided` (VM_ALLOWED_NOT_A_READ): it returns a VERDICT on an outbound string, never note content, so there is nothing for the broker to serve and `add_read` would misdescribe it. It appears in no skill bundle — the caller is a PreToolUse hook, not a skill — so it joins vm_allowed_verbs_no_bundle_uses. No other derived column moved. disposition_counts is deliberately UNCHANGED: it counts the verb table (tokens found in bundles), and this verb is in none — incrementing it was the first attempt and the oracle caught it."
+  "sec07_update": "2026-09-01 (SEC-07): the host CLI grew `check-egress`, the outbound term guard, and it IS in cli.VM_ALLOWED — the Cowork leg is the one reading wild content beside a web tool, so it needs the guard most. cli_parser_choices 75 -> 76. It is classified `undecided` (VM_ALLOWED_NOT_A_READ): it returns a VERDICT on an outbound string, never note content, so there is nothing for the broker to serve and `add_read` would misdescribe it. It appears in no skill bundle — the caller is a PreToolUse hook, not a skill — so it joins vm_allowed_verbs_no_bundle_uses. No other derived column moved. disposition_counts is deliberately UNCHANGED: it counts the verb table (tokens found in bundles), and this verb is in none — incrementing it was the first attempt and the oracle caught it.",
+  "draft_cap_ruling_update": {
+    "date": "2026-09-04",
+    "why_a_bundle_hash_moved": "OWNER RULING 2026-09-04 raises the unattended nightly's reply-draft cap from 10 to 30. The cap was BINDING, not a margin: over the twelve runs that kept chunk evidence (244-257) eleven drew exactly 10 draft candidates and one drew 8, against 68 `act` threads on run 257 alone. chief-of-staff/DOCTRINE.md carries the new ruling beside the 2026-08-17 one it amends, and SKILL.md stops restating the number in four places -- including the Phase-1-step-5 string pinned by tests/skills/test_chief_of_staff_telemetry.py, which asserted the words \"cap 10\" and so went red on a ruling that relaxed no constraint. Hashes re-derived by derive_bundles(), the normative definition named in authority.content_anchor_recipe.",
+    "bundles_changed": [
+      "chief-of-staff (DOCTRINE.md + SKILL.md)"
+    ],
+    "bundles_unchanged": 13,
+    "also_re_derived": [],
+    "note_on_derived_columns": "candidates, verbs and disposition_counts are UNCHANGED: the edit added and removed no `brain <token>` and renamed no bundle. Only the two content anchors moved."
+  }
 }

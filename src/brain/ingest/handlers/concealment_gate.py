@@ -192,6 +192,12 @@ COVERED_SOURCES: dict[str, tuple[str, tuple[str, ...], str]] = {
     "html:text": (WALKED, (_PKG + "concealment_html",),
                   "concealment_html walks the same tree html.py flattens with "
                   "text_content(), and reports every text node it read"),
+    "html:bundled": (WALKED, (_PKG + "concealment_html",),
+                     "the same walker over the same reader, applied to the "
+                     "INNER document of a bundled artifact page instead of "
+                     "its loader (html.py's `_bundled_document`) — the loader "
+                     "carries no text worth scanning and the inner document "
+                     "is what the note holds"),
     "docx:body": (WALKED, (_PKG + "concealment_office",),
                   "concealment_office.docx_runs walks every w:r in the "
                   "renderer's body order — not paragraph.runs, which stops at "

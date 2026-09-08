@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="artifact-capabilities" content='{"artifact":{}}'>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'unsafe-inline'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
+  <title>Morning Sheet · {{DATE}}</title>
+  <style>
+    :root{--ground:#F2F4F7;--surface:#FFF;--ink:#151A21;--muted:#5B6673;--line:#D5DAE1;--accent:#0F6E6E;--accent-soft:#D8ECEB;--you:#B7791F;--you-soft:#F6E9CF;--done:#2F7D4E;--done-soft:#DCEFE2;--display:"Bricolage Grotesque",sans-serif;--body:"IBM Plex Sans",sans-serif;--mono:"IBM Plex Mono",monospace}
+    @media(prefers-color-scheme:dark){:root{--ground:#0F1418;--surface:#161C22;--ink:#E6EAEE;--muted:#9AA6B2;--line:#2A333C;--accent:#3FB8B0;--accent-soft:#12302F;--you:#E0A94B;--you-soft:#3A2C12;--done:#5CBF80;--done-soft:#153224}}
+    *{box-sizing:border-box}html{background:var(--ground);color:var(--ink);font-family:var(--body)}body{margin:0}main{max-width:1160px;margin:auto;padding:42px 28px 90px}h1,h2{font-family:var(--display);margin:0}h1{font-size:42px;line-height:1}h2{font-size:20px}p{margin:6px 0}[hidden]{display:none!important}.eyebrow,.meta,small,.empty{color:var(--muted)}.eyebrow{font:500 11px var(--mono);letter-spacing:.12em;text-transform:uppercase}.mast{display:flex;gap:24px;align-items:flex-end;justify-content:space-between;margin-bottom:24px}.mast p{text-align:right;font-size:13px}.panel{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px;margin:14px 0}.summary{display:grid;grid-template-columns:1fr auto;gap:20px}.stats{display:grid;grid-template-columns:repeat(5,minmax(86px,1fr));gap:8px}.stat{background:var(--ground);border-radius:10px;padding:12px}.stat b{display:block;font:700 24px var(--display)}.stat span{font-size:12px;color:var(--muted)}.run-state{display:grid;grid-template-columns:1fr 1fr;gap:8px;min-width:310px}.state-card{border-left:4px solid var(--accent);background:var(--accent-soft);padding:10px;border-radius:8px}.state-card.stop{border-color:var(--you);background:var(--you-soft)}.state-card b{display:block;text-transform:uppercase;font:500 12px var(--mono)}.state-card span{font-size:13px;overflow-wrap:anywhere}.section-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:12px}.section-head p{font-size:13px}.ruling{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;padding:12px 0;border-top:1px solid var(--line)}.ruling:first-of-type{border-top:0}.ruling strong,.ruling small{display:block;overflow-wrap:anywhere}.ruling small{margin-top:4px}.ruling label{white-space:nowrap}.split{display:grid;grid-template-columns:1fr 1fr;gap:14px}.split ul,.panel ul{margin:10px 0 0;padding-left:20px}.split li,.panel li{margin:8px 0;overflow-wrap:anywhere}.thread{display:grid;grid-template-columns:minmax(250px,1.3fr) minmax(210px,.85fr) minmax(260px,1.05fr);gap:16px;align-items:start;padding:16px 0;border-top:1px solid var(--line)}.thread>*{min-width:0}.subject{font-weight:500;font-size:15px;overflow-wrap:anywhere}.meta{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px;font-size:11px}.action,.flag,.tier{border-radius:999px;padding:3px 7px;background:var(--done-soft);color:var(--done);font:500 10px var(--mono);text-transform:uppercase}.tier{background:var(--ground);color:var(--muted)}.flag.sample{background:var(--you-soft);color:var(--you)}.flag.stale{background:var(--accent-soft);color:var(--accent)}code{font-family:var(--mono);font-size:11px;overflow-wrap:anywhere}.marks label,.ruling label{font-size:12px}.field{display:block;color:var(--muted);font-size:12px;line-height:1.4;margin-top:8px}.field:first-child{margin-top:0}textarea,select{display:block;width:100%;margin-top:5px;border:1px solid var(--line);border-radius:8px;background:var(--ground);color:var(--ink);padding:8px;font:13px var(--body)}textarea{resize:vertical;min-height:54px}select{cursor:pointer}[data-draft-text]{min-height:120px;font:12.5px var(--mono)}.feedback textarea{min-height:100px}.savebar{position:sticky;bottom:12px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:flex-end;margin-top:18px;padding:12px 14px;background:color-mix(in srgb,var(--surface) 94%,transparent);border:1px solid var(--line);border-radius:12px;box-shadow:0 8px 28px #0002}.savebar button{border:0;border-radius:9px;padding:11px 18px;background:var(--accent);color:white;font:700 14px var(--display);cursor:pointer}.savebar button.second{background:var(--ground);color:var(--ink);border:1px solid var(--line)}.savebar button:disabled{cursor:not-allowed;filter:grayscale(1);opacity:.48}#save-status{margin-right:auto;color:var(--muted);font-size:12px;max-width:60ch}.guide{border-left:4px solid var(--accent)}.guide .lede,.effect .lede{font-size:15px;margin:0 0 10px}.effect{border-left:4px solid var(--you)}.howto{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;margin:12px 0}.howto div{background:var(--ground);border-radius:10px;padding:11px 12px}.howto b{display:block;font:700 13px var(--display);margin-bottom:3px}.howto span{font-size:12.5px;color:var(--muted);line-height:1.45}.when{border-radius:999px;padding:3px 7px;background:var(--ground);color:var(--ink);font:500 10px var(--mono)}.cat{border-radius:999px;padding:3px 7px;background:var(--accent-soft);color:var(--accent);font:500 10px var(--mono)}.why{margin:8px 0 0;font-size:13px;color:var(--muted);line-height:1.45}.said{margin:6px 0 0;font-size:12.5px;color:var(--ink);opacity:.85}.files{margin-top:8px}.files code{display:block;margin-top:3px;color:var(--ink)}.toggle{display:flex;gap:8px;align-items:center;margin:4px 0 10px;padding:10px 12px;background:var(--ground);border-radius:10px;font-size:13px;cursor:pointer}.toggle input{width:auto;margin:0;cursor:pointer}#show-all{position:absolute;opacity:0;pointer-events:none}#show-all:not(:checked) ~ .thread.off{display:none}.thread.off{background:linear-gradient(90deg,var(--ground),transparent 30%)}@media(max-width:860px){main{padding:24px 14px 70px}.howto{grid-template-columns:1fr}.summary,.split{grid-template-columns:1fr}.stats{grid-template-columns:repeat(3,1fr)}.run-state{min-width:0}.thread{grid-template-columns:1fr}.mast{align-items:flex-start;flex-direction:column}.mast p{text-align:left}}
+  </style>
+</head>
+<body>
+<main>
+  <header class="mast"><div><div class="eyebrow">Night porter · {{DATE}}</div><h1>Morning sheet</h1></div><p>Generated {{GENERATED_AT}}<br>{{RUN_IDS}}<br><code>{{SHEET_ID}}</code></p></header>
+  <section class="panel effect"><div class="section-head"><div><div class="eyebrow">Since last time</div><h2>What your marks changed</h2></div></div>{{EFFECT}}</section>
+  <section class="panel guide"><div class="section-head"><div><div class="eyebrow">Read this first</div><h2>How to use this page</h2></div></div><p class="lede">Below is every mail thread the porter worked on last night. For each one it says what it did and why. You are judging <b>that action</b> — not the mail.</p>{{SELECTION}}{{HOWTO}}{{CATEGORIES}}<p class="meta">Nothing here undoes anything. Marks are feedback for the next night; they never move mail back.</p></section>
+  <section class="panel summary"><div class="stats">{{COUNTS}}</div><div class="run-state"><div class="state-card"><b>Door check · {{DOOR}}</b><span>{{DOOR_DETAIL}}</span></div><div class="state-card stop"><b>Batch stopped · {{STOP}}</b><span>{{STOP_DETAIL}}</span></div></div></section>
+  <section class="panel"><div class="section-head"><div><div class="eyebrow">Owner controls</div><h2>Standing rulings</h2></div><p>These are the rules the judge is given. Revoke any that no longer hold.</p></div>{{RULINGS}}</section>
+  <div class="split"><section class="panel"><div class="eyebrow">Unbiased denominator</div><h2>Held-out archived threads</h2><p class="meta">{{HELD_OUT_META}}</p>{{HELD_OUT}}</section><section class="panel"><div class="eyebrow">Judge-02</div><h2>Stale, archived</h2>{{STALE}}</section></div>
+  <section class="panel"><div class="eyebrow">Previous sheet</div><h2>Overturned last time</h2>{{OVERTURNED}}</section>
+  <section class="panel"><div class="section-head"><div><div class="eyebrow">The rows worth your time</div><h2>{{THREAD_COUNT}} threads to look at</h2></div><p>Answer only what you disagree with. A blank answer means nothing, not agreement.</p></div>
+    <input type="checkbox" id="show-all"><label class="toggle" for="show-all"><span aria-hidden="true">▸</span> Show the other {{HIDDEN_COUNT}} threads from last night too</label>
+    {{THREADS}}</section>
+  <section class="panel feedback"><div class="eyebrow">Anything the rows missed</div><h2>Free-text feedback</h2><p class="meta">For anything that is not about one thread — how the night ran, what this page should show, a pattern you noticed.</p><textarea id="feedback-text" aria-label="Free-text feedback"></textarea></section>
+  <div class="savebar"><span id="save-status">Your marks stay in this page until you press Save. Save writes <code>{{MARKS_FILENAME}}</code> to your Downloads; nothing is sent anywhere.</span><button class="second" hidden id="publish-button" type="button">Save as a new Artifact version</button><button id="save-button" type="button">Save my marks</button></div>
+</main>
+<script type="application/json" id="{{STATE_ID}}">{{STATE_JSON}}</script>
+<script>
+(() => {
+  'use strict';
+  const stateEl = document.getElementById('{{STATE_ID}}');
+  const save = document.getElementById('save-button');
+  const publish = document.getElementById('publish-button');
+  const status = document.getElementById('save-status');
+  const state = JSON.parse(stateEl.textContent);
+  const byCid = new Map(state.threads.map(x => [x.conversation_id, x]));
+  const byRule = new Map(state.standing_rulings.map(x => [x.rule_key, x]));
+  // `sheet_marks.UNCATEGORISED`. A test asserts this literal still equals it —
+  // the sentence the owner reads and the sentence Python would produce for the
+  // same mark must not drift into two different offers.
+  const UNCATEGORISED = 'uncategorised';
+  const ROW_FIELD = {judgment: 'judgment', label: 'label', draft: 'draft_mark'};
+  // A rule is proposed by a CORRECTION only. `right` and `send-as-is` are
+  // agreement, and agreement has no rule to make.
+  const AGREES = new Set(['', 'right', 'send-as-is']);
+
+  const templateKey = (col, value) =>
+    col === 'judgment' ? 'judgment:' + String(value).split(':')[0]
+    : col === 'draft' ? 'draft:' + value : 'label';
+  const suggestedRule = (col, value, category) => {
+    const template = state.rule_templates[templateKey(col, value)];
+    if (!template) return '';
+    const parts = String(value).split(':');
+    return template.replaceAll('{category}', category || UNCATEGORISED)
+                   .replaceAll('{value}', parts[0])
+                   .replaceAll('{tier}', parts[1] || '');
+  };
+
+  // Show or hide one column's rule box, and offer the template sentence in it.
+  // An edited box is NEVER overwritten: the owner's wording wins over the
+  // offer, and re-picking the same value must not silently undo his edit.
+  const syncRule = (article, select) => {
+    const col = select.dataset.col;
+    const box = article.querySelector(`.rulebox[data-rule-for="${col}"]`);
+    if (!box) return;
+    const area = box.querySelector('[data-rule-text]');
+    const value = select.value;
+    if (AGREES.has(value)) { box.hidden = true; return; }
+    const offer = suggestedRule(col, value, byCid.get(article.dataset.cid)?.category || '');
+    if (!area.value.trim() || area.value === area.dataset.offered) {
+      area.value = offer; area.dataset.offered = offer;
+    }
+    box.hidden = false;
+  };
+
+  // THE DRAFT BOX GROWS TO THE DRAFT. `sheet_render._draft_block` sizes it in
+  // the HTML from the draft's LINE count, which is what a scripts-stripped
+  // copy gets; it cannot know where the lines WRAP in this column, and on the
+  // 2026-09-04 sheet wrapping doubled every box (233px rendered against 478px
+  // of text). This is presentation only — the value travels in the state JSON
+  // either way — so a browser with scripts sizes it properly and one without
+  // still gets the line-count box rather than six rows.
+  const fit = (el) => {
+    el.style.height = 'auto';
+    el.style.height = (el.scrollHeight + 2) + 'px';
+  };
+
+  document.querySelectorAll('.thread').forEach(article => {
+    const row = byCid.get(article.dataset.cid); if (!row) return;
+    article.querySelectorAll('[data-col]').forEach(select => {
+      select.value = row[ROW_FIELD[select.dataset.col]] || '';
+      select.addEventListener('change', () => syncRule(article, select));
+    });
+    const note = article.querySelector('[data-note]'); if (note) note.value = row.note;
+    const draft = article.querySelector('[data-draft-text]');
+    if (draft) { draft.value = row.draft_text; fit(draft); draft.addEventListener('input', () => fit(draft)); }
+    for (const rule of (row.rules || [])) {
+      const box = article.querySelector(`.rulebox[data-rule-for="${rule.column}"]`);
+      if (box) { box.hidden = false; box.querySelector('[data-rule-text]').value = rule.text; }
+    }
+    article.querySelectorAll('[data-col]').forEach(select => {
+      if (!AGREES.has(select.value)) syncRule(article, select);
+    });
+  });
+  // AND AGAIN ONCE THE WEBFONT ARRIVES. The draft boxes are sized above while
+  // the fallback mono face is still in use; the real one is wider, the text
+  // reflows taller, and every box measured 25 of 25 clipped afterwards. There
+  // is no third size to wait for — `fonts.ready` resolves once, and it
+  // resolves immediately when the font never loads at all (offline, which is
+  // the normal case for this page).
+  document.fonts?.ready?.then(
+    () => document.querySelectorAll('[data-draft-text]').forEach(fit));
+  document.querySelectorAll('.ruling').forEach(el => {
+    const row = byRule.get(el.dataset.ruleKey);
+    if (row) el.querySelector('[data-revoke]').checked = row.revoke;
+  });
+  document.getElementById('feedback-text').value = state.feedback_text;
+
+  // Read every control back into `state`, and mirror each value into the DOM
+  // as an ATTRIBUTE. A saved copy is read with its scripts stripped, so a
+  // value that lives only in a DOM property would render as an empty control.
+  const serialize = () => {
+    document.querySelectorAll('.thread').forEach(article => {
+      const row = byCid.get(article.dataset.cid); if (!row) return;
+      const rules = [];
+      article.querySelectorAll('[data-col]').forEach(select => {
+        row[ROW_FIELD[select.dataset.col]] = select.value;
+        [...select.options].forEach(o => o.toggleAttribute('selected', o.value === select.value));
+        const box = article.querySelector(`.rulebox[data-rule-for="${select.dataset.col}"]`);
+        const text = box ? box.querySelector('[data-rule-text]').value.trim() : '';
+        if (!AGREES.has(select.value) && text) {
+          rules.push({column: select.dataset.col, value: select.value, text});
+        }
+      });
+      row.rules = rules;
+      const note = article.querySelector('[data-note]');
+      row.note = note ? note.value : '';
+      const draft = article.querySelector('[data-draft-text]');
+      if (draft) row.draft_text = draft.value;
+      row.verdict = null;
+      article.querySelectorAll('textarea').forEach(x => { x.textContent = x.value; });
+    });
+    document.querySelectorAll('.ruling').forEach(el => {
+      const row = byRule.get(el.dataset.ruleKey);
+      const box = el.querySelector('[data-revoke]');
+      if (row) row.revoke = box.checked;
+      box.toggleAttribute('checked', box.checked);
+    });
+    const feedback = document.getElementById('feedback-text');
+    state.feedback_text = feedback.value; feedback.textContent = feedback.value;
+    stateEl.textContent = JSON.stringify(state).replaceAll('<','\\u003c').replaceAll('>','\\u003e').replaceAll('&','\\u0026');
+  };
+
+  // `sheet_marks.canonical_payload`: sorted keys, compact separators, no ASCII
+  // escaping. The digest has to match a string Python produces, so the key
+  // order cannot be JavaScript's insertion order.
+  const stable = (v) => {
+    if (v === null || typeof v !== 'object') return JSON.stringify(v);
+    if (Array.isArray(v)) return '[' + v.map(stable).join(',') + ']';
+    return '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + stable(v[k])).join(',') + '}';
+  };
+  const sha256 = async (text) => {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+    return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+  };
+  const isMarked = (row) => Boolean(row.judgment || row.label || row.draft_mark);
+
+  // `sheet_marks.marks_from_state`, in the browser. UNSET rows are dropped
+  // HERE — that is where "absence of a mark is not agreement" is enforced on
+  // this side — and `rows_shown` travels separately as the denominator.
+  const marksPayload = async (transport) => {
+    const marks = state.threads.filter(isMarked).map(row => ({
+      conversation_id: row.conversation_id, subject_sha256: row.subject_sha256,
+      action_taken: row.action_taken, category: row.category || '',
+      judgment: row.judgment, label: row.label, draft: row.draft_mark,
+      draft_text: row.draft_text || '', note: row.note || '',
+      rules: (row.rules || []).map(r => ({column: r.column, value: r.value, text: r.text})),
+    }));
+    const payload = {
+      schema: 'cos-marks/1', sheet_id: state.sheet_id, date: state.date,
+      // `sheet_marks.sheet_run`: one run id, or '' when the night ran twice.
+      run: (state.run_ids || []).length === 1 ? String(state.run_ids[0]) : '',
+      transport, rows_shown: state.threads.filter(r => r.shown).length, marks,
+      revoked: state.standing_rulings.filter(r => r.revoke).map(r => ({
+        rule_key: r.rule_key, rule: r.rule,
+        conversation_id: r.conversation_id, subject_sha256: r.subject_sha256})),
+      feedback_text: state.feedback_text,
+    };
+    const body = {};
+    for (const k of ['sheet_id', 'date', 'run', 'rows_shown', 'marks', 'revoked', 'feedback_text']) body[k] = payload[k];
+    payload.content_sha256 = await sha256(stable(body));
+    return payload;
+  };
+
+  save.addEventListener('click', async () => {
+    serialize();
+    if (!globalThis.crypto || !crypto.subtle) {
+      status.textContent = 'This browser will not hash the file, so saving it would produce a marks file the record refuses. Open this page in Safari or Chrome.';
+      return;
+    }
+    const payload = await marksPayload('file');
+    if (!payload.marks.length && !payload.revoked.length && !payload.feedback_text.trim()) {
+      status.textContent = 'Nothing to save yet — you have not answered any question on any row.';
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], {type: 'application/json'}));
+    const link = document.createElement('a');
+    link.href = url; link.download = '{{MARKS_FILENAME}}';
+    document.body.appendChild(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    status.textContent = `Saved {{MARKS_FILENAME}} with ${payload.marks.length} marked row(s) and ${payload.revoked.length} revoke(s). Read it back with: brain cos-feedback --from-marks ~/Downloads/{{MARKS_FILENAME}}`;
+  });
+
+  // THE ARTIFACT PATH IS KEPT, as an optional SECOND transport rather than the
+  // only one. It republishes this page with the marks inside its own state;
+  // the file path above needs nothing running at all.
+  publish.addEventListener('click', async () => {
+    if (!publish.dataset.ready) return;
+    publish.disabled = true; status.textContent = 'Publishing this marked page as a new version…';
+    serialize();
+    try {
+      const saved = document.documentElement.cloneNode(true);
+      saved.querySelector('#save-status').textContent = 'Saved copy.';
+      await globalThis.__cosPublisher.publish('<!doctype html>\n' + saved.outerHTML);
+      status.textContent = 'Saved as a new Artifact version.';
+    } catch (error) { status.textContent = `Save failed: ${error?.message || error}`; }
+    finally { publish.disabled = false; }
+  });
+  (async () => {
+    try {
+      const claude = globalThis.claude;
+      if (!claude || typeof claude.use !== 'function') return;
+      const capability = await claude.use('artifact');
+      if (!capability || typeof capability.publish !== 'function') return;
+      globalThis.__cosPublisher = capability;
+      publish.hidden = false; publish.dataset.ready = '1';
+    } catch (_) { /* no capability: the file path above is the whole story */ }
+  })();
+})();
+</script>
+</body>
+</html>

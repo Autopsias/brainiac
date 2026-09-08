@@ -7,6 +7,7 @@ from ._attachment_store import (
     _sweep_recency_seconds, _write_attachment_meta, attachment_quarantine_dir,
     ingest_manifest_dir,
 )
+from ._attachment_store import record_sweep_decline
 from ._criteria import evidence_unit_key
 from ._guards import _safe_basename
 from ._io import _append_jsonl, _read_jsonl
@@ -33,6 +34,15 @@ def _claim_manifest_line(vault, *, dry_run: bool, now: _dt.datetime,
     if dest:
         record["dest"] = dest
     _append_jsonl(_sweep_claims_path(vault), record, vault=vault)
+    # AND OFF THE MOUNT WHEN IT IS A DECLINE. The row above is the sweep's
+    # idempotency key and lives in the VM-writable drop tree; a `refused`/
+    # `duplicate` word there SETTLES an attachment-carrying thread's ATT-03
+    # gate, so it is recorded again where the untrusted leg cannot write it and
+    # only the host record is read for that decision
+    # (`_attachment_store.line_settlements`).
+    if disposition.startswith(("refused", "duplicate")):
+        record_sweep_decline(vault, key=key, disposition=disposition,
+                             msg_key=str(entry.get("msg_key") or ""), now=now)
     claimed_keys.add(key)
 
 
@@ -51,8 +61,16 @@ def _manifest_candidate(vault, downloads: Path, entry: dict[str, Any], *, now: _
     names = [name for name in names if isinstance(name, str) and name.strip()]
     safe_names = [name for name in (_safe_basename(name) for name in names) if name]
     if not safe_names:
-        _claim_manifest_line(vault, dry_run=dry_run, now=now, claimed_keys=claimed_keys, key=key,
-                             entry=entry, disposition="refused: unsafe filename (basename only)")
+        # NO CLAIM, NO DECLINE — the same fail-CLOSED reading as the stale-mtime
+        # refusal below, and for a sharper reason (adversarial review,
+        # 2026-09-05). THIS BRANCH NEVER TOUCHES THE FILESYSTEM: it is decided
+        # from the manifest entry's own `filename`, and the manifest lives under
+        # `drop_dir`, which the untrusted leg writes — so a host decline here let
+        # ONE appended line settle a thread whose attachment was never offered,
+        # chipping it `Ingested` with its bytes never fetched. The other three
+        # declines each require a real file the HOST's fetch lane placed in
+        # `downloads` (host home, off the mount), so they still settle. Full
+        # reasoning and the probe: `docs/cos-ops.md` §6f, defect 4.
         report["refused"].append({"filename": names[0] if names else None, "reason": "unsafe filename"})
         return None
     filename = next((name for name in safe_names if (downloads / name).exists()), None)
@@ -73,6 +91,17 @@ def _manifest_candidate(vault, downloads: Path, entry: dict[str, Any], *, now: _
         return None
     age = now.timestamp() - stat.st_mtime
     if age > _sweep_recency_seconds():
+        # STATED CEILING (review 2026-09-05): this refusal writes NO claims row
+        # and NO host decline, so the manifest line stays `unclaimed` forever
+        # and — under ATT-03 — holds its thread out of the ingestion chip for
+        # good. That is deliberate and it is the fail-CLOSED reading: the file
+        # on disk is a pre-existing host file the VM manifest cannot claim, so
+        # the vault genuinely does NOT have those bytes and must not read as if
+        # it did. Recording a `refused: stale` disposition here would settle the
+        # thread on the strength of the sweep having been too slow, which is the
+        # 596-lost-candidates shape (ATT-02) with a new name. The real cure is
+        # for the bytes to be re-fetched — which the next night does whenever
+        # the thread is still in the mailbox — not for the gate to relent.
         _report_unmatched(report, [filename],
                           f"not a fresh download: host mtime is {age / 3600.0:.1f}h old "
                           f"(recency window {_sweep_recency_seconds() // 3600}h) — a pre-existing host "
@@ -128,8 +157,16 @@ def _manifest_candidate(vault, downloads: Path, entry: dict[str, Any], *, now: _
 
 def _attachment_metadata(entry: dict[str, Any], *, aid: str, file_sha: str, filename: str,
                          destination: Path, category: str, disposition: str, tier: str,
-                         claim: dict[str, Any], now: _dt.datetime) -> dict[str, Any]:
-    """Build one attachment-quarantine sidecar."""
+                         claim: dict[str, Any], line_key: str,
+                         now: _dt.datetime) -> dict[str, Any]:
+    """Build one attachment-quarantine sidecar.
+
+    ``manifest_line_key`` is what makes a later WITHDRAWAL designate the line
+    it settles rather than borrowing a name off the mount — see
+    :func:`brain.cos.line_settlements_path`. It is written here, at claim
+    time, because this is the only moment the host holds both the payload and
+    the manifest entry it came from.
+    """
     rules_version = entry.get("extraction_rules_version")
     return {
         "id": aid, "sha256": file_sha, "filename": filename, "path": str(destination),
@@ -137,6 +174,7 @@ def _attachment_metadata(entry: dict[str, Any], *, aid: str, file_sha: str, file
         "rules_version": rules_version, "pattern": entry.get("pattern"),
         "bundle_version": entry.get("bundle_version"), "kind": "attachment",
         "msg_key": provenance.sanitize_value(entry.get("msg_key")), "provenance": claim,
+        "manifest_line_key": str(line_key),
         "claimed": _ts(now),
         "ttl_expires": _ts(now + _dt.timedelta(days=_env_days(
             PROPOSAL_TTL_DAYS_ENV, DEFAULT_PROPOSAL_TTL_DAYS))), "state": "pending",
@@ -178,7 +216,8 @@ def _quarantine_manifest_candidate(vault, candidate: Path, filename: str, entry:
         shutil.move(str(candidate), destination)
         _write_attachment_meta(vault, _attachment_metadata(
             entry, aid=aid, file_sha=file_sha, filename=filename, destination=destination,
-            category=category, disposition=disposition, tier=tier, claim=claim, now=now))
+            category=category, disposition=disposition, tier=tier, claim=claim,
+            line_key=key, now=now))
     _claim_manifest_line(vault, dry_run=dry_run, now=now, claimed_keys=claimed_keys, key=key,
                          entry=entry, disposition="quarantined", dest=str(destination))
     report["moved"].append(provenance.scrub({
@@ -210,18 +249,111 @@ def _sweep_manifest_lines(vault, manifests: Path, downloads: Path, *, taxonomy: 
                     claimed_keys=claimed_keys, key=key, report=report)
 
 
+def _default_downloads_dir() -> tuple[Path | None, str]:
+    """The engine's own staging directory, when the environment names none.
+
+    `tools/cos_ctl.sh` defaults `$BRAIN_COS_DOWNLOADS_DIR` to
+    `~/.brain/cos-downloads`, and `tools/cos_attachment_fetch.py` writes
+    wherever that variable points — so on a host that never set it the fetch
+    lands there and the sweep, which read nothing, reported itself disabled.
+    This closes that case and only that case.
+
+    IT IS NOT WHAT WENT WRONG ON THE REFERENCE HOST — the first version of this
+    docstring said it was, and the review was right to refuse it. Re-measured
+    2026-09-05 by reading every live plist: TWO launchd jobs set the variable
+    to TWO directories. `com.brainiac.cos-nightly.plist` (the job that fetches)
+    says `~/.brain/cos-downloads`, which held 79 files; the maintain job
+    `com.brainiac.nightly.<id>.plist` (the job that sweeps) says a second,
+    unrelated staging directory outside the engine default
+    (`.../<some-workspace>/_cos_downloads`), which held 0 with an mtime of
+    2026-09-01. Neither is unset and neither is wrong alone, so nothing
+    reported a fault. A configured value still wins here unconditionally; what
+    answers the real defect is `_misconfigured_staging`, which makes the sweep
+    SAY the configured directory is empty of the files the manifest names while
+    the engine default holds them.
+
+    It answers `None` when the directory is absent — a host with no attachment
+    lane has nothing to sweep and must not have one invented for it — and the
+    refusals that matter are re-applied by the caller either way: a symlink or
+    a resolved `~/Downloads` is still refused, whatever named it.
+    """
+    d = Path(DEFAULT_INGEST_SWEEP_DOWNLOADS_DIR).expanduser()
+    try:
+        if not d.is_dir():
+            return None, "absent"
+    except OSError:
+        return None, "absent"
+    return d, "engine-default"
+
+
+def _misconfigured_staging(report: dict[str, Any], downloads: Path,
+                           source: str) -> None:
+    """Name a CONFIGURED staging directory that has none of the manifest's
+    files while the engine's own default has them. NEVER swaps to it.
+
+    THE FAILURE THIS EXISTS FOR IS SILENT AND LASTED FOUR DAYS. The sweep read
+    a real, configured, EMPTY directory and reported a perfectly ordinary zero:
+    `moved: []`, `refused: []`, no `disabled_reason`, nothing to read as a
+    fault. Meanwhile the fetch lane, which takes its directory from a different
+    environment, was filling `~/.brain/cos-downloads` — 79 files by 2026-09-05,
+    5 sweep passes that day, 0 claims since 2026-09-01.
+
+    It REPORTS rather than repairs, and that is deliberate. Silently sweeping a
+    directory the operator did not name would make the configured value a
+    suggestion, and the whole reason this lane refuses `~/Downloads` is that
+    WHICH directory is swept is a security decision. Repointing the launchd job
+    is the owner's action; the engine may not write one.
+
+    Cheap by construction: it runs only when the sweep moved nothing, and it
+    stats the names the manifest already asked for.
+    """
+    if source != "configured" or report.get("moved"):
+        return
+    names = {str(n) for n in (report.get("unmatched") or []) if n}
+    if not names:
+        return
+    default, _ = _default_downloads_dir()
+    if default is None:
+        return
+    try:
+        if default.resolve() == downloads.resolve():
+            return
+    except OSError:
+        return
+    found = sorted(n for n in names if (default / n).is_file())
+    if not found:
+        return
+    report["misconfigured"] = {
+        "configured": str(downloads),
+        "engine_default": str(default),
+        "manifest_names_found_in_default": len(found),
+        "manifest_names_unmatched": len(names),
+        "examples": found[:5],
+        "detail": (
+            f"{len(found)} of {len(names)} file(s) this run's ingest-manifest "
+            f"names are in {default} but NOT in the configured "
+            f"{INGEST_SWEEP_DOWNLOADS_ENV} ({downloads}). The fetch lane and "
+            "the sweep are pointed at different directories. Nothing was "
+            "swept from the default: repoint the job that runs `brain "
+            "maintain`, or unset the variable so the engine default applies."),
+    }
+
+
 def ingest_sweep(vault, *, downloads_dir: Path | str | None = None,
                  dry_run: bool = False,
                  now: _dt.datetime | None = None) -> dict[str, Any]:
     """Claim fresh host downloads named by unclaimed ingest-manifest lines."""
     now = now or _utcnow()
     configured = downloads_dir or os.environ.get(INGEST_SWEEP_DOWNLOADS_ENV)
-    downloads = Path(configured).expanduser() if configured else None
+    downloads, source = ((Path(configured).expanduser(), "configured")
+                         if configured else _default_downloads_dir())
     report = _sweep_report(downloads, dry_run)
+    report["downloads_dir_source"] = source
     if downloads is None:
         report["disabled_reason"] = (
             f"set {INGEST_SWEEP_DOWNLOADS_ENV} to a dedicated host-only download staging directory; "
-            "shared ~/Downloads is never swept")
+            f"shared ~/Downloads is never swept, and the engine's own default "
+            f"({DEFAULT_INGEST_SWEEP_DOWNLOADS_DIR}) does not exist on this host")
         return report
     if downloads.is_symlink() or downloads.resolve() == (Path.home() / "Downloads").resolve():
         report["disabled_reason"] = "refusing shared or symlinked ~/Downloads; configure a dedicated host-only staging directory"
@@ -235,7 +367,9 @@ def ingest_sweep(vault, *, downloads_dir: Path | str | None = None,
     _sweep_manifest_lines(
         vault, manifests, downloads, taxonomy=ingest_taxonomy(vault, log=True), now=now,
         dry_run=dry_run, claimed_keys=claimed, max_bytes=_sweep_max_bytes(), report=report)
+    _misconfigured_staging(report, downloads, source)
     return report
 
 
-__all__ = ["ingest_sweep"]
+__all__ = ["ingest_sweep", "_default_downloads_dir",
+           "_misconfigured_staging"]

@@ -391,6 +391,19 @@ def main(argv: list[str]) -> int:
     # The output budget, the stale-failure unlink and the answer/projection
     # writes all live in `cos_model_answer_write.write_answer`; the ceiling is
     # passed in so this module's own `MAX_ANSWER_BYTES` is read at call time.
+    # THE RECEIPT, beside the answer, named for the leg that paid for it —
+    # `verdicts.usage.json` / `verdicts-draft.usage.json` — so the two legs in
+    # one directory never overwrite each other's. Best effort: it is written
+    # before the answer's own budget check so a refused answer still records
+    # what the call cost, and a failure to write it is not a failed leg.
+    receipt = cos_model_answer_envelope.usage_receipt(text)
+    if receipt:
+        try:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            (args.out.parent / f"{args.out.stem}.usage.json").write_text(
+                json.dumps(receipt, sort_keys=True) + "\n", encoding="utf-8")
+        except OSError:
+            pass
     return cos_model_answer_write.write_answer(
         args, rows, stats, note, text, max_answer_bytes=MAX_ANSWER_BYTES,
         describe=_describe)

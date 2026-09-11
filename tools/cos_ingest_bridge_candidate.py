@@ -24,7 +24,7 @@ from tools.cos_ingest_bridge_content import (
     _anomaly_nid, _attachment_names, _proposal_content, choice_for_candidate)
 from tools.cos_ingest_bridge_store import (
     _SETTLEMENT_CLAIM_KEYS, _bridge_ident, _claim_settlement, _conv_key,
-    _row_shape, _write_manifest_lines)
+    _record_previous, _row_shape, _write_manifest_lines)
 
 
 def _corpus_text(row: dict, crow: dict | None, report: dict,
@@ -124,6 +124,34 @@ def _never_category(vault, row: dict, outcome: dict, *, category: str,
     return True
 
 
+def _already_ingested(vault, row: dict, outcome: dict, *, note_id: str,
+                      run_id: str, key: str, now: _dt.datetime,
+                      dry_run: bool) -> None:
+    """DD-01 — this vault has ALREADY SIGNED a note for exactly this text.
+
+    The ONE cross-run rule, and the only one attempt 14's "no delivery
+    verdict" bar admits: it is decided from `cos.signed_bridge_notes`, whose
+    yes needs a host-private claims row AND a vault note whose own bytes hash
+    to it. No ledger stamp, no drop file, no VM-writable record is consulted
+    (A-12) — a forged frontmatter claim without a claims row proves nothing
+    and falls through to a fresh drop.
+
+    Settled the same way `_never_category` settles: the HOST record first,
+    then the mount-side claim, so a crash between the two leaves a record
+    with no claim (inert) rather than a claim no record backs.
+    """
+    outcome.update({"outcome": "already-ingested", "ident": note_id,
+                    "reason": "the vault already holds a SIGNED note "
+                    f"({note_id}) whose cos.source_sha256 IS this "
+                    "candidate's captured text — one email, one note "
+                    "(DD-01); nothing about this thread has changed since"})
+    if not dry_run:
+        cos.record_bridge_settlement(
+            vault, run_id=run_id, conversation_key=key,
+            kind="already-ingested", detail=f"signed note {note_id}", now=now)
+        _claim_settlement(row, "bridge_already_ingested", note_id)
+
+
 def _same_run_duplicate(vault, row: dict, outcome: dict, prior: dict, *,
                         run_id: str, key: str, now: _dt.datetime,
                         dry_run: bool) -> None:
@@ -204,11 +232,85 @@ def _candidate_content(run_id: str, row: dict, *, choice: str,
     return text, attachments, None
 
 
+#: bridge conversation key -> the SIGNED notes this vault holds for it
+#: (`cos.signed_bridge_notes`), built ONCE per pass and passed down.
+SignedNotes = dict[str, list[dict[str, str]]]
+
+
+def _already_signed(vault, run_id: str, row: dict, outcome: dict, *, key: str,
+                    text: str | None, attachments: list[str],
+                    signed: SignedNotes, shape: tuple,
+                    handled: dict[str, dict], now: _dt.datetime,
+                    dry_run: bool) -> bool:
+    """True = this vault has ALREADY SIGNED a note for exactly this text, and
+    the candidate is settled here rather than filed again (DD-01).
+
+    ``signed`` is `cos.signed_bridge_notes`, built ONCE per pass (one vault
+    walk) and passed down: its yes needs a host-private claims row AND a
+    vault note whose own bytes hash to it, so it is EVIDENCE and attempt
+    14's collapse — a verdict read off VM-writable state — does not reach
+    it. Without this rule the bridge re-filed an unchanged thread every
+    night (1571 notes for 190 conversations, 2026-09-10). It still cannot
+    skip silently: the settlement is host-recorded, the row claims it and
+    the outcome says so.
+
+    `_corpus_text` already refused this candidate unless the corpus row's
+    `text_sha256` IS `sha256_text(text)`, so that number and a signed note's
+    `cos.source_sha256` are the same number by construction. A signed note
+    WITHOUT that field can never match and falls through to a fresh drop —
+    never to a silent skip.
+
+    ATTACHMENTS VETO THE SKIP. A chip certifies a signed note for the
+    thread's TEXT, and this run's manifest line is what puts its FILES into
+    the sweep; settling a file-carrying candidate on a text match would
+    strand bytes outside the vault, the one gap the predecessor plan closed
+    with a code-shaped cause.
+    """
+    if text is None or attachments:
+        return False
+    tsha = sha256_text(text)
+    same = next((n for n in reversed(signed.get(key) or [])
+                 if n.get("source_sha256") == tsha), None)
+    if same is None:
+        return False
+    _already_ingested(vault, row, outcome, note_id=same["id"], run_id=run_id,
+                      key=key, now=now, dry_run=dry_run)
+    handled[key] = {"ident": same["id"], "shape": shape,
+                    "prior_drop": "already-ingested"}
+    return True
+
+
+def _pinned_previous(vault, run_id: str, key: str, signed: SignedNotes,
+                     pins: dict[str, str], dry_run: bool) -> str | None:
+    """The predecessor this RUN binds for one conversation — the newest note
+    the vault signed for it (AGENTS.md §2 bitemporal keys), PINNED.
+
+    `previous_version` is the only drop field derived from vault state, and
+    vault state moves. Sign a predecessor between two passes of one run and
+    the second pass would stage different bytes under the same ident, which
+    the engine's replay guard could no longer bind — the duplicate ask that
+    guard exists to suppress, on the very re-run `check_bridge_reach` asks an
+    operator to perform (review 2026-09-10). So the FIRST pass to bind a
+    conversation records its answer host-side (`_previous_record_path`, off
+    every VM-visible root) and every later pass of the same run reuses it.
+    "No predecessor" is pinned just as firmly as a note id.
+    """
+    if key in pins:
+        return pins[key] or None
+    prior = signed.get(key) or []
+    previous = prior[-1]["id"] if prior else None
+    pins[key] = previous or ""
+    if not dry_run:
+        _record_previous(vault, run_id, key, previous or "")
+    return previous
+
+
 def _decide_candidate(vault, run_id: str, row: dict, outcome: dict, *,
                       taxonomy: dict, corpus: dict, report: dict,
                       manifest_path: Path, known_keys: set[str],
                       handled: dict[str, dict], consumed: set[str],
-                      flush, now: _dt.datetime, dry_run: bool) -> None:
+                      signed: SignedNotes, pins: dict[str, str], flush,
+                      now: _dt.datetime, dry_run: bool) -> None:
     """Decide and (unless dry-run) EXECUTE one candidate, in place on
     ``outcome`` and the ledger ``row``. Every exit sets `outcome["outcome"]`,
     so the tally and the bridge ledger agree by construction.
@@ -223,7 +325,8 @@ def _decide_candidate(vault, run_id: str, row: dict, outcome: dict, *,
     ``consumed``, the claims ledger's sha set, AFTER the drop is written —
     can only turn a drop the engine will delete unseen into a loud
     quarantine (`_execute_fresh_drop`); it can never make this function skip
-    silently or report a delivery."""
+    silently or report a delivery. ONE CROSS-RUN RULE JOINS THEM (DD-01),
+    clearing the same bar because its yes is EVIDENCE: `_already_signed`."""
     cid = str(row.get("conversation_id") or "")
     category = str(row.get("category") or "").strip()
     ident = _bridge_ident(run_id, cid)
@@ -273,6 +376,11 @@ def _decide_candidate(vault, run_id: str, row: dict, outcome: dict, *,
                         "reason": defect["reason"], "shape": shape}
         return
 
+    if _already_signed(vault, run_id, row, outcome, key=key, text=text,
+                       attachments=attachments, signed=signed, shape=shape,
+                       handled=handled, now=now, dry_run=dry_run):
+        return
+    previous = _pinned_previous(vault, run_id, key, signed, pins, dry_run)
     # THE TIER, from the one engine classifier: MNPI default; the row's claim
     # and the category floor can only RAISE. The bridge cannot lower a tier.
     tier, _why = provenance.email_classification(
@@ -295,7 +403,8 @@ def _decide_candidate(vault, run_id: str, row: dict, outcome: dict, *,
         vault, run_id, row, outcome, choice=choice, tier=tier, text=text,
         crow=crow, attachments=attachments, ident=ident, key=key,
         manifest_path=manifest_path, known_keys=known_keys,
-        handled=handled, consumed=consumed, shape=shape, flush=flush, now=now)
+        handled=handled, consumed=consumed, shape=shape, flush=flush,
+        now=now, previous=previous)
 
 
 def _execute_fresh_drop(vault, run_id: str, row: dict, outcome: dict, *,
@@ -303,7 +412,8 @@ def _execute_fresh_drop(vault, run_id: str, row: dict, outcome: dict, *,
                         crow: dict | None, attachments: list[str], ident: str,
                         key: str, manifest_path: Path, known_keys: set[str],
                         handled: dict[str, dict], consumed: set[str],
-                        shape: tuple, flush, now: _dt.datetime) -> None:
+                        shape: tuple, flush, now: _dt.datetime,
+                        previous: str | None = None) -> None:
     """Write the drop for one candidate, in this order: flush pending stamps,
     MANIFEST LINE, drop, REPLAY OBSERVATION, stamps."""
     # PERSIST PENDING STAMPS BEFORE THIS DROP HITS DISK: with the ledger
@@ -333,7 +443,8 @@ def _execute_fresh_drop(vault, run_id: str, row: dict, outcome: dict, *,
     # expired is the ENGINE's replay guard's call at sweep time, not ours.
     res = cos.propose(vault, _proposal_content(
         run_id=run_id, row=row, choice=choice, tier=tier, text=text,
-        corpus_row=crow, attachments=attachments, now=now), ident=ident)
+        corpus_row=crow, attachments=attachments, now=now,
+        previous_version=previous), ident=ident)
     # THE REPLAY OBSERVATION (attempt 15). The guard's call is still the
     # engine's — but the bridge reads what that call WILL BE, from the same
     # authority the sweep reads (`_claim_text_drops`: any claims-ledger entry

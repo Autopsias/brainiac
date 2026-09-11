@@ -336,6 +336,16 @@ def vault_root(
     return cwd_vault
 
 
+def vault_relative_path(abs_path: str | os.PathLike[str] | None) -> str:
+    """``path`` relative to the vault root (SF-02); falls back to ``abs_path`` unchanged when unresolvable — never raises."""
+    if not abs_path:
+        return ""
+    try:
+        return Path(abs_path).resolve().relative_to(vault_root()).as_posix()
+    except (VaultNotFoundError, ValueError):
+        return str(abs_path)
+
+
 def vault_slug8(vault: str | os.PathLike[str] | None = None) -> str:
     """The 8-hex per-vault id — the SAME hash the per-vault app-data dir uses
     (see ``index_dir``). One vault => one stable id, distinct vaults => distinct

@@ -362,7 +362,8 @@ def write_corpus(vault: Path, run_id: str, accounting: dict[str, Any],
             subject=((b or {}).get("subject")
                      or (enumerated.get(cid) or {}).get("subject") or None),
             read_lane=READ_LANE,
-            body_opened=bool(row["body_opened"]))
+            body_opened=bool(row["body_opened"]),
+            raw_chars=(b or {}).get("raw_chars") if b else None)
         ext = corpus_extraction(row)
         try:
             cos_corpus.append_thread(vault, run_id, extraction=ext, **kw)

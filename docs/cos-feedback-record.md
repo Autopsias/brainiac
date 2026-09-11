@@ -302,8 +302,9 @@ The sheet embeds its state as JSON in
 ```
 
 **Element id: `cos-sheet-state`** (`feedback.SHEET_STATE_ELEMENT_ID`).
-**Schema: `cos-sheet-state/3`** (`feedback.SHEET_STATE_SCHEMA`) — `/3` since
-2026-09-07, when thread rows gained `capture` (§4b). It was `cos-sheet-state/2`,
+**Schema: `cos-sheet-state/4`** (`feedback.SHEET_STATE_SCHEMA`) — `/4` since
+2026-09-09, when the state gained `questions` (the owner-interview lane, INT-01,
+below). It was `/3` from 2026-09-07, when thread rows gained `capture` (§4b), and `cos-sheet-state/2`,
 bumped from `/1` by extension 6 (§10), which replaced the single
 `verdict` control with three columns and added five state blocks.
 s07 writes it; the page republishes itself with the owner's marks on Save;
@@ -329,6 +330,7 @@ neither exists yet (§8).
 | `door_check` | `{verdict: …}` — the **door-check verdict**, one of `open` / `closed` / `skipped-not-signed-in` | **THE RUN LEDGER (s06)**, not the feedback record |
 | `batch_stop` | `{reason: …}` — the **batch stop reason**, one of `backlog-empty` / `batches-reached` / `door-closed` / `session-died` / `not-started` | **THE RUN LEDGER (s06)**, not the feedback record |
 | `feedback_text` | the **one free-text box** at the bottom of the sheet | the OWNER, read back by s05 |
+| `questions` | `{rows, applied, quiet}` — **the questions the vault asks the owner** (INT-01, 2026-09-09): each row is `{key, shape, asked_on, expires_on, question, evidence, options, default, target, change, answer, note, status}` with `options` a list of `{action, label}` and `default` always `skip`; the page writes the picked option's `action` into `answer` and the free text into `note`. `applied` lists the lines the last answers produced; `quiet` says the lane is down to one question a day. Present and empty when there is nothing to ask | `interview.sheet_block` (the nightly's `brain interview --nightly`, run inside `chain_finish` before the sheet build); answers ride the marks file as `answers` and are applied by `interview_apply` on the next night |
 | `category_legend` | one entry per category ON THIS PAGE — `{category, disposition, means}` — saying what that category CAUSES; **empty** when the taxonomy is off or unparseable (EXTENSION 5, s08) | s07, from `_taxonomy.ingest_taxonomy` — the OWNER's own `overlay/cos/ingest.md`. Never read back |
 
 Three rules the validator enforces, each of which is a real failure mode:
@@ -512,7 +514,7 @@ sheet the owner opened:
 |---|---|---|
 | `judgment` | `right`, or `<bucket>:<tier>` — the twelve should-be values `act:P0`, `act:P1`, `act:P2`, `act:P3`, `read:P0`, `read:P1`, `read:P2`, `read:P3`, `noise:P0`, `noise:P1`, `noise:P2`, `noise:P3` (`sheet_marks.JUDGMENT_VALUES`) | `BUCKETS` × `TIERS`, asserted equal to `tools/cos_judge_rules.py`'s own |
 | `label` | `right`, or any entry in this sheet's `label_vocabulary` | the OWNER's `overlay/cos/ingest.md` taxonomy, so it is checked against the sheet and never against a constant here |
-| `draft_mark` | `send-as-is`, `tone`, `facts`, `too-long`, `missing-point` (`sheet_marks.DRAFT_VALUES`) | fixed; they are the four things the drafting prompt can act on |
+| `draft_mark` | `send-as-is`, `not-needed`, `tone`, `facts`, `too-long`, `missing-point` (`sheet_marks.DRAFT_VALUES`) | fixed; they are the four things the drafting prompt can act on |
 
 **`""` — UNSET — is a first-class fourth value on every one of them, and it is
 never filed.** An unmarked row is UNKNOWN: not agreement, not disagreement. So
@@ -611,9 +613,15 @@ the ONE writer.
 ```
 
 The file's own keys are `schema`, `sheet_id`, `date`, `run`, `transport`,
-`rows_shown`, `marks`, `revoked`, `feedback_text` and `content_sha256`; a
+`rows_shown`, `marks`, `revoked`, `feedback_text`, `answers` and `content_sha256`; a
 `revoked` entry carries `rule_key`, `rule`, `conversation_id` and
 `subject_sha256`, and a proposed rule carries `column`, `value` and `text`.
+An `answers` entry (INT-01, 2026-09-09) carries `key`, `action` and `note` —
+the interview question's key, the option ACTION the owner picked (never the
+label, which the phrasing leg may reword) and the free text beside it; the
+list is present and empty when nothing was answered, and it is INSIDE the
+`content_sha256` digest on both ends. `sheet_select.record_consumed` copies
+it onto the consumed-sheets row, where `interview_apply` reads it.
 
 `MARKS_FILE_KEYS` and `MARK_KEYS` are **closed sets**, checked by
 `sheet_marks.validate_marks` at BOTH ends — the sheet builder on the payload it

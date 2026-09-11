@@ -104,15 +104,20 @@ class _PlanningMixin:
             row.get("superseded_by", ""), row.get("previous_version", ""),
             row.get("title_norm", ""),
         ) + ((stored_verdict(row.get("concealment")),) if has_verdict_column else ())
+        # PV-01: same degradation as the verdict — named only when present.
+        has_frontmatter_column = self._frontmatter_sql() == self.FRONTMATTER_COL
+        if has_frontmatter_column:
+            values += (row.get("frontmatter") or "{}",)
         c.execute(
             "INSERT INTO notes(rowid, id, title, type, classification, zone, path,"
             " created, updated, sha256, content_hash, body, document_date,"
             " effective_date, superseded_date, is_latest_version, superseded_by,"
             " previous_version, title_norm"
-            # Two module literals only, chosen by the flag above — no caller
+            # Module literals only, chosen by the flags above — no caller
             # value reaches the SQL text. See `_schema._concealment_sql`.
-            + (f", {self.CONCEALMENT_COL})" if has_verdict_column else ")")
-            + f" VALUES ({','.join('?' * len(values))})",  # nosec B608
+            + (f", {self.CONCEALMENT_COL}" if has_verdict_column else "")
+            + (f", {self.FRONTMATTER_COL}" if has_frontmatter_column else "")
+            + f") VALUES ({','.join('?' * len(values))})",  # nosec B608
             values,
         )
         # Projection rows are written in the same transaction as the note,

@@ -90,6 +90,8 @@ DISABLED_ENV = "BRAIN_INGEST_TIER_GUARD_DISABLED"
 #: so the alternative remedy — find them and lower them through the audited
 #: path — stays available either way.
 DECIDED_ONLY_ENV = "BRAIN_INGEST_TIER_GUARD_DECIDED_ONLY"
+#: The leg a top-tier overlay keyword raises on — see `_keyword_verdict`.
+KEYWORD_LEG = "overlay_keyword"
 # The guard's vocabulary and its two records live in a sibling so this module
 # stays under the size limit; re-exported so every existing
 # `tierguard.UNAVAILABLE` / `.Verdict` / `.LegCounts` caller is unchanged.
@@ -137,8 +139,11 @@ class CrossTierGuard:
     through every candidate (and every nested zip member / eml attachment) so
     the corpus table is paid for once."""
 
-    def __init__(self, conn: Any) -> None:
+    def __init__(self, conn: Any, vault: Any = None) -> None:
         self._conn = conn
+        #: Where the overlay keyword ring lives. ``None`` (a bare guard with no
+        #: vault) skips the keyword leg; `guard_for` always passes one.
+        self._vault = vault
         self._docs: list[tuple[str, int, frozenset[int]]] | None = None
         #: Notes admitted THIS RUN before the corpus table was built. The
         #: top-tier bypass returns without building it, so an MNPI attachment
@@ -241,6 +246,9 @@ class CrossTierGuard:
         """Return the high-water admission tier for ``body``."""
         base = tier_of(tier)
         self._unreadable = ""
+        keyword = self._keyword_verdict(body, base)
+        if keyword is not None:
+            return keyword
         early, tokens, docs = self._verdict_precheck(body, base)
         if early is not None:
             return early
@@ -385,6 +393,39 @@ class CrossTierGuard:
             return None
         return "shared_substance", word_jaccard
 
+    def _keyword_verdict(self, body: str, base: str) -> Verdict | None:
+        """The ``overlay_keyword`` leg (owner ruling 2026-09-11): a body carrying
+        a top-tier ring term enters at the top tier.
+
+        It runs FIRST, ahead of the body floor and the corpus: a cover sheet
+        whose only substance is its marking is exactly the document that must
+        not enter low, and no similarity leg can see a marking. An unreadable
+        ring is ``unavailable`` — counted and stamped like every other check
+        that could not run, never a quiet "no term matched"."""
+        if (self._vault is None or _env_on(DISABLED_ENV)
+                or tier_rank(base) >= tier_rank(TIERS[-1])):
+            return None
+        from ..overlay_keywords import top_tier_term
+
+        term, errors = top_tier_term(body or "", vault=self._vault)
+        if errors:
+            self.counts.unavailable += 1
+            return Verdict(
+                tier=base, status=UNAVAILABLE,
+                reason=("no keyword check was made: the overlay keyword ring "
+                        f"could not be read ({', '.join(errors)}) — admitted "
+                        "at the declared tier"))
+        if term is None:
+            return None
+        raised_to = TIERS[-1]
+        self.counts.raised += 1
+        self.counts.raised_by_leg[KEYWORD_LEG] = (
+            self.counts.raised_by_leg.get(KEYWORD_LEG, 0) + 1)
+        return Verdict(
+            tier=raised_to, status=RAISED, leg=KEYWORD_LEG,
+            reason=(f"raised {base} -> {raised_to}: overlay keyword {term!r} "
+                    f"maps to {raised_to}"))
+
     def _clear_verdict(self, base: str) -> Verdict:
         self.counts.clear += 1
         return Verdict(tier=base, status=CLEAR)
@@ -443,4 +484,4 @@ def guard_for(core: Any) -> CrossTierGuard:
         conn = core.index.conn
     except Exception:  # noqa: BLE001 — a broken index must not abort a drain
         conn = None
-    return CrossTierGuard(conn)
+    return CrossTierGuard(conn, getattr(core, "vault", None))

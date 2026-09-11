@@ -26,7 +26,7 @@
     "staged_bundles_dir": "<workspace>/vault/.brain/skills",
     "staged_bundle_hashes_omitted_reason": "a .skill zip's sha256 is not a content identity: zip headers carry per-file mtimes and cowork_workspace_install.sh re-runs the packager on every install, so the same content hashes differently (measured: 3a4923e17aa626d4 vs f80581dcfacd36dd). skill_md_git_blob and content_sha256 below are the content anchors; s07's drift check must use those, not a zip sha.",
     "content_anchor_recipe": "Both per-bundle anchors below are defined by tests/test_cowork_skill_verbs.py::derive_bundles, which is their normative definition; s07 must reproduce these values, not invent its own. content_sha256: take every file under the bundle directory (Path.rglob('*'), is_file(), NO suffix filter -- the packager filters nothing either), sorted by absolute path (equivalently by relative path -- every file shares the bundle prefix); feed one sha256 in that order with, per file, the file's path RELATIVE to the bundle dir as POSIX text, then a single NUL byte (b'\\0'), then the file's raw bytes; the hex digest is the bundle's content_sha256. No zip, no mtime, no subprocess, so it is stable across re-packaging. skill_md_git_blob: the git blob sha1 of SKILL.md's raw bytes, i.e. sha1(b'blob <len>\\0' + data), computed in-process (helper _git_blob_sha1).",
-    "cli_subcommand_count": 78,
+    "cli_subcommand_count": 79,
     "cli_subcommand_count_note": "73 when S01 recorded this survey on 2026-08-27; 74 from 2026-08-28, when S05 added the host-only `authorize-original` subcommand. This number is DERIVED from the live parser by tests/test_cowork_skill_verbs.py::derive, so any session adding or removing a CLI subcommand must re-record it here in the same commit or two committed tests go red. 75 from 2026-08-30, when one-command-per-vault S01 added the host-only `provision-local` subcommand (CMD-01). 77 from 2026-09-01: the survey caught up with the host-only `cos` (attended sheet group) and `cos-feedback` (owner-feedback pen) subcommands, added 2026-08-26 by f00b2db WITHOUT the same-commit re-record this note requires — recorded late by the night-porter archive-ruling commit. 78 from the same day's merge of master: release 0.20.35 added the host-only `check-egress` subcommand (the outbound term guard); master recorded 76 for it, and this row is the union of the two lineages, re-derived on the merged tree.",
     "staged_bundles_dir_note": "the concrete host path is in docs/operations/closed-stacks-s01-transcripts-evidence.md; it is not recorded here because this file IS scanned by tools/check_client_names.py and the host workspace directory carries a denylisted client name."
   },
@@ -34,7 +34,7 @@
   "files_scanned": 15,
   "raw_matches": 250,
   "distinct_tokens": 73,
-  "cli_parser_choices": 78,
+  "cli_parser_choices": 79,
   "mcp_registered_tools": [
     "alerts",
     "bases_query",
@@ -1203,7 +1203,7 @@
         "SKILL.md"
       ],
       "skill_md_git_blob": "f538c297f51330bca12348d0b8dab2c16e38cff4",
-      "content_sha256": "ce1fe6e1b29d4f6208ac2eac0b9af25de0115e7ac6b076afec527e3d46eddc72"
+      "content_sha256": "6fc1c063dcc0e2572c0e715254259c2fa017c7071176de128b0fc74bc5901c9c"
     },
     {
       "skill": "curation",
@@ -1472,5 +1472,6 @@
     "bundles_unchanged": 13,
     "also_re_derived": [],
     "note_on_derived_columns": "candidates, verbs and disposition_counts are UNCHANGED: the edit added and removed no `brain <token>` and renamed no bundle. Only the two content anchors moved."
-  }
+  },
+  "interview_lane_update": "2026-09-09 (INT-01): the host CLI grew the host-only `interview` subcommand (the owner-interview lane: the vault asks the owner on the morning sheet; docs/cos-interview.md). cli_parser_choices 78 -> 79. It is NOT in cli.VM_ALLOWED and appears in no skill bundle — the callers are the nightly's chain_finish and the repo-local /brain-grill skill, which is not a packaged bundle — so candidates, verbs, dispositions and the broker columns are byte-unchanged."
 }

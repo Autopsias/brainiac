@@ -879,7 +879,12 @@ a retired note's title or alias names that note. Every surfaced hit still
 carries `is_latest_version` (a plain semantic-search agent can prefer the
 current claim without a second round-trip). Both temporal flags stay
 **VM_ALLOWED** — they are read-only filters over already-gated rows, no
-different in trust from any other `bases-query`.
+different in trust from any other `bases-query`. **`grep` follows the same
+rule (2026-09-11)** — the same predicate, the same `--include-retired` flag,
+and every grep row carries `is_latest_version`. It used to scan every note:
+measured on the reference vault, `brain grep gama` returned 12 bridge notes,
+11 of them retired copies of one email, with no field to tell them apart.
+`recent` has hidden them since 2026-08-26.
 
 **Breadth-intent routing (RTE-01).** A heuristic adapted from NapMem's
 observed navigator behavior (arXiv 2607.05794) — the paper never classifies
@@ -1424,7 +1429,14 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
   write path before this was visible) triages it once into a **host-private**
   disposition file (`brain doctor --json` prints its path); each disposition is
   **pinned to the bytes it was ruled on**, so the same note changing again
-  returns as unexplained. Never re-sign or delete drifted notes to clear the
+  returns as unexplained. **The hit itself says so too (A-14, 2026-09-11):**
+  the egress gate stamps `drift: unexplained` (or `explained`, once triaged)
+  on every surfaced note whose current bytes differ from what the chain
+  signed. The host still serves the current bytes — the file is the truth
+  and the index a cache — so this is a warning on the row, not a refusal;
+  and an ABSENT field is not an assurance, because the read path mints no
+  positive provenance claim (A-12). Never re-sign or delete drifted notes to
+  clear the
   count. That file moved OFF `<vault>/.brain/` on 2026-08-07: it decides
   whether tampering counts as EXPLAINED, and a match needs only path + issue +
   observed hash — every one of which is known to whoever edited the note — so
@@ -1447,6 +1459,19 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
   covered come back as UNEXPLAINED for the owner to re-rule; the file records
   `migrated_hash_convention` with the date and the count, and that count is the
   size of the re-ruling task, not a regression.
+
+### Finding an email (Cowork retro, 2026-09-10)
+
+- **Run `brain --role vm alerts` first, every session** (§9) — before any
+  search.
+- For a named entity or codename, run **ONE** `search "<name>"` with `k=5`.
+  No variants, no `grep`.
+- **Never run `find` on the mount.** The note files are not there — a Cowork
+  session reads through the desk broker, not the filesystem (§6).
+- Asked for "the email": return the captured text **verbatim**, plus a header
+  line (sender, sent, subject — or `not captured` when the note carries none).
+- **State truncation and missing fields explicitly.** Never imply a field or
+  the body is complete when it is not.
 
 ---
 

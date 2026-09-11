@@ -240,7 +240,15 @@ def _thread_state(
                 # times and call them the files that came with the thread.
                 "received": str(row.get("received") or ""),
                 "category": str(row.get("category") or ""),
-                "reason": _why(row, action),
+                # A re-draft is named as one: the owner read the sixth draft
+                # on one thread as a repeat ("wasn't this the same reply?",
+                # marks 2026-09-08). The plan discards the superseded draft
+                # in the same run, so the discard row is the host's own fact.
+                "reason": _why(row, action) + (
+                    " This replaces the draft the porter wrote on an earlier "
+                    "night; that one was discarded."
+                    if action == "drafted" and (cid, "discard-draft") in landed
+                    else ""),
                 "files": [str(name) for name in
                           (row.get("attachment_manifest") or [])],
                 "capture": _capture(row, cid in signed, cid in files_signed),

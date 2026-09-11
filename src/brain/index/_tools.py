@@ -3,30 +3,80 @@ from __future__ import annotations
 
 from ._shared import *  # noqa: F401,F403
 from ._retirement import RETIRED_PREDICATE
+from ..provenance import CONVERSATION_KEY, SENDER_KEY, header_row_fields, parse_index_frontmatter
+
+#: PV-02: frontmatter keys ``bases_query`` may filter on beyond the fixed
+#: columns. Each maps to a ``json_extract`` over ``notes.frontmatter`` whose
+#: JSON PATH is a BOUND parameter, so the key never reaches the SQL text.
+_FRONTMATTER_FILTERS = {
+    CONVERSATION_KEY: f'$."{CONVERSATION_KEY}"',
+    SENDER_KEY: f'$."{SENDER_KEY}"',
+}
+
+
+def _grep_whole_word(escaped: str) -> str:
+    """SF-01: wrap an escaped grep term so it matches a WHOLE word — 'gama'
+    must not hit 'argamassas' or the 'Gama' inside 'Vasco da Gama'.
+    `(?<!\\w)`/`(?!\\w)` works on stdlib `re` and the `regex` engine alike,
+    and on accented words (`\\w` is Unicode-aware under both). Only used for
+    non-regex patterns — `regex=True` compiles the caller's pattern
+    untouched, so substring matching stays available behind that switch."""
+    return f"(?<!\\w){escaped}(?!\\w)"
 
 
 class _ToolMixin:
     """Index tool-query methods."""
 
-    def _grep_rows(self) -> list[Any]:
-        """Every note as ``(id,title,classification,zone,path,body,concealment)``.
+    def _grep_rows(self, include_retired: bool = False) -> list[Any]:
+        """Every LIVE note as
+        ``(id,title,classification,zone,path,body,concealment,frontmatter,is_latest_version)``.
 
         Its own method only so :meth:`grep` stays inside the function-length
         ratchet; nothing else calls it.
 
-        FALSE POSITIVE (scanner: string-built SQL): the sole interpolation is
+        Retired versions are dropped here, in SQL and so before matching,
+        unless ``include_retired`` — the same ``RETIRED_PREDICATE`` ``search``
+        and ``recent`` use, never a second definition. grep used to scan every
+        note: measured 2026-09-11 on the reference vault, ``grep gama`` returned
+        12 cosbridge rows and 11 of them were retired copies of one email, with
+        no field on the row to say so. The row now carries
+        ``is_latest_version`` for a caller who asks for the retired ones.
+
+        FALSE POSITIVE (scanner: string-built SQL): the interpolations are
         ``_concealment_sql()``, which returns one of two module literals — the
-        column name, or ``''`` on an index that predates it. No caller input
-        reaches the SQL text. See ``_schema._concealment_sql``.
+        column name, or ``''`` on an index that predates it — and
+        ``RETIRED_PREDICATE``, a module constant. No caller input reaches the
+        SQL text. See ``_schema._concealment_sql``.
         """
+        where = "" if include_retired else f" WHERE NOT {RETIRED_PREDICATE}"
         return self.conn.execute(  # nosec B608
-            "SELECT id,title,classification,zone,path,body,"
-            f"{self._concealment_sql()} FROM notes"
+            "SELECT n.id,n.title,n.classification,n.zone,n.path,n.body,"
+            f"{self._concealment_sql()},{self._frontmatter_sql()},"
+            f"n.is_latest_version FROM notes AS n{where}"
         ).fetchall()
+
+    def _grep_snippet(self, line: str, rxs: list[Any], n: int = 160) -> str:
+        """The matched line, windowed AROUND the actual match — not just the
+        first ``n`` chars from the start. A plain-truncated snippet used to
+        silently drop the match itself off a long line, which made the
+        whole-word grep fix (SF-01) look like it had missed rows it had
+        actually matched correctly."""
+        s = " ".join(line.split())
+        m = None
+        for rx in rxs:
+            m = self._grep_bounded_search(rx, s)
+            if m:
+                break
+        if m is None:
+            return s[:n] + ("…" if len(s) > n else "")
+        start = max(0, min(m.start() - n // 2, max(0, len(s) - n)))
+        end = min(len(s), start + n)
+        return (("…" if start > 0 else "") + s[start:end]
+                + ("…" if end < len(s) else ""))
 
     def grep(
         self, pattern: str, *, k: int = 20, ignore_case: bool = True,
-        regex: bool = False, max_tier: str | None = None,
+        regex: bool = False, max_tier: str | None = None, include_retired: bool = False,
     ) -> list[dict[str, Any]]:
         """Lexical-first exact/regex scan over note bodies — NO embedding.
 
@@ -90,14 +140,14 @@ class _ToolMixin:
                      if len(t) > 2 and t.lower() not in _STOP]
         multi = (not regex) and len(terms) > 1
         if multi:
-            rxs = [_re.compile(_re.escape(t), flags) for t in terms]
+            rxs = [_re.compile(_grep_whole_word(_re.escape(t)), flags) for t in terms]
         else:
             try:
-                rx = _re.compile(pattern if regex else _re.escape(pattern), flags)
+                rx = _re.compile(pattern if regex else _grep_whole_word(_re.escape(pattern)), flags)
             except _re.error:
                 rx = _re.compile(_re.escape(pattern), flags)
             rxs = [rx]
-        rows = self._grep_rows()
+        rows = self._grep_rows(include_retired)  # retired dropped pre-match
         if max_tier is not None:
             allows = cls_mod.ClassificationFilter(max_tier=max_tier).allows
             rows = [r for r in rows if allows(r[2])]
@@ -114,12 +164,13 @@ class _ToolMixin:
             )
             out.append({
                 "id": r[0], "title": r[1], "classification": r[2],
-                "zone": r[3], "path": r[4],
-                "match_count": len(matches),
-                "terms_matched": distinct,
-                "snippet": self._snippet(matches[0]),
+                "zone": r[3], "path": r[4], "vault_path": self._vault_path(r[4]),
+                "match_count": len(matches), "terms_matched": distinct,
+                "snippet": self._grep_snippet(matches[0], rxs),
                 "source": "grep",
                 "concealment": stored_verdict(r[6]),
+                **header_row_fields(r[7]),
+                "is_latest_version": str(r[8] or ""),
             })
         out.sort(key=lambda d: (-d.get("terms_matched", 1), -d["match_count"], d["id"]))
         return out[:k]
@@ -168,7 +219,8 @@ class _ToolMixin:
         # order_by is defaulted, so neither reaches the SQL text. Every VALUE
         # (`val`, `k`) is a bound param, never interpolated.
         # See docs/SECURITY_NOTES.md.
-        unknown = sorted(k for k in filters if k not in cols)
+        unknown = sorted(k for k in filters
+                         if k not in cols and k not in _FRONTMATTER_FILTERS)
         if unknown:
             # REFUSE rather than drop. A dropped filter returns an UNFILTERED
             # result set that looks exactly like an answer: asking for
@@ -180,11 +232,21 @@ class _ToolMixin:
             # to `search` or `grep`.
             raise ValueError(
                 f"bases_query: unknown filter key(s) {unknown} — "
-                f"filterable columns are {sorted(cols)}. Nothing was queried; "
+                f"filterable keys are {sorted(cols | set(_FRONTMATTER_FILTERS))}. "
+                "Nothing was queried; "
                 "an unrecognised key is refused rather than dropped, because a "
                 "dropped filter returns everything and reads as an answer."
             )
+        fm_col = self._frontmatter_sql()
         for key, val in filters.items():
+            if key in _FRONTMATTER_FILTERS:
+                # `fm_col` is one of two module literals; the JSON path and the
+                # value are both bound. `json_valid` first because
+                # `json_extract('')` raises `malformed JSON` (probed 2026-09-11).
+                where.append(
+                    f"json_extract(CASE WHEN json_valid({fm_col}) THEN {fm_col} END, ?) = ?")  # nosec B608
+                params.extend([_FRONTMATTER_FILTERS[key], val])
+                continue
             where.append(f"{key} = ?")  # nosec B608 - key is allowlisted above
             params.append(val)
         if latest_only:
@@ -211,7 +273,8 @@ class _ToolMixin:
         rows = self.conn.execute(sql, params).fetchall()
         keys = ["id", "title", "classification", "zone", "path", "type", "updated",
                 "is_latest_version", "concealment"]
-        return [dict(zip(keys, r)) | {"concealment": stored_verdict(r[8])} for r in rows]
+        return [dict(zip(keys, r)) | {"concealment": stored_verdict(r[8]), "vault_path": self._vault_path(r[4])}
+                for r in rows]
 
     def graph_expand(
         self, seeds: list[str], *, depth: int = 2, k: int = 10, use_ppr: bool = True,
@@ -233,7 +296,7 @@ class _ToolMixin:
         r = self.conn.execute(  # nosec B608 - two module literals only
             "SELECT id,title,type,classification,zone,path,created,updated,sha256,body,"
             "is_latest_version,superseded_by,previous_version,superseded_date,"
-            f"{self._concealment_sql()}"
+            f"{self._concealment_sql()},{self._frontmatter_sql()}"
             " FROM notes WHERE id=?",
             (note_id,),
         ).fetchone()
@@ -245,7 +308,11 @@ class _ToolMixin:
                 "superseded_date", "concealment"]
         # `get` is the one verb that returns the WHOLE body, so it is the one a
         # reader most needs the verdict beside (M-3b).
-        return dict(zip(keys, r)) | {"concealment": stored_verdict(r[14])}
+        # PV-01: the parsed frontmatter, so the email header line (and every
+        # other key the note carries) reaches a reader of the index alone.
+        return dict(zip(keys, r)) | {"concealment": stored_verdict(r[14]),
+                                     "frontmatter": parse_index_frontmatter(r[15]),
+                                     "vault_path": self._vault_path(r[5])}
 
     def recent(
         self, limit: int = 10, *, include_retired: bool = False
@@ -271,14 +338,16 @@ class _ToolMixin:
         dated = "(n.updated GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*')"
         rows = self.conn.execute(
             "SELECT n.id,n.title,n.classification,n.zone,n.path,n.updated,"
-            f"{self._concealment_sql()} "
+            f"{self._concealment_sql()},{self._frontmatter_sql()} "
             f"FROM notes AS n {where}"
             f"ORDER BY COALESCE({dated}, 0) DESC, n.updated DESC, n.id ASC LIMIT ?",
             (limit,),
         ).fetchall()
         keys = ["id", "title", "classification", "zone", "path", "updated",
                 "concealment"]
-        return [dict(zip(keys, r)) | {"concealment": stored_verdict(r[6])}
+        return [dict(zip(keys, r)) | {"concealment": stored_verdict(r[6]),
+                                      "vault_path": self._vault_path(r[4])}
+                | header_row_fields(r[7])
                 for r in rows]
 
     def near_dup(self, *, min_score: float = 0.95, k: int = 5) -> list[dict[str, Any]]:

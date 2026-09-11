@@ -70,9 +70,65 @@ def _run_retro(args, ctx) -> int:
     return 0
 
 
+def _run_interview(args, ctx) -> int:
+    import datetime as _dt                                    # noqa: PLC0415
+    from pathlib import Path                                  # noqa: PLC0415
+
+    from .. import interview as _iv                           # noqa: PLC0415
+    from .. import interview_apply as _ia                     # noqa: PLC0415
+
+    core = ctx.core
+    today = _dt.date.fromisoformat(args.date) if args.date else None
+    out: dict = {}
+    if args.answer is not None:
+        if not args.action:
+            _emit(None, False, "error: --answer KEY requires --action ACTION")
+            return 2
+        try:
+            out["answer"] = _ia.apply_answer(core, args.answer, args.action,
+                                             args.note or "", today)
+        except ValueError as exc:
+            _emit(None, False, f"error: {exc}")
+            return 1
+    if args.apply or args.nightly:
+        out["apply"] = _ia.apply_answers(core, today)
+    if args.generate or args.nightly:
+        gen = _iv.generate(core, today)
+        out["generate"] = gen
+        if args.prompt_out and gen["keys"]:
+            rows = [r for r in _iv.open_rows(_iv.read_state(core.vault))
+                    if r["key"] in gen["keys"]]
+            d = Path(args.prompt_out)
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "prompt.txt").write_text(_iv.phrase_prompt(core.vault, rows),
+                                          encoding="utf-8")
+            out["prompt"] = str(d / "prompt.txt")
+    if not out:
+        out = {"open": _iv.sheet_rows(_iv.read_state(core.vault))}
+    if args.json:
+        _emit(out, True)
+        return 0
+    if "open" in out:
+        rows = out["open"]
+        lines = [f"interview: {len(rows)} open question(s)"]
+        for r in rows:
+            lines.append(f"[{r['key']}] {r['shape']}: {r['question']}")
+        _emit(None, False, "\n".join(lines))
+        return 0
+    a = out.get("apply") or out.get("answer") or {}
+    g = out.get("generate") or {}
+    _emit(None, False,
+          f"interview: applied {a.get('applied', 0)}, skipped {a.get('skipped', 0)}, "
+          f"failed {len(a.get('failed') or [])}; asked {g.get('asked', 0)} "
+          f"(room {(g.get('budget') or {}).get('room', 0)}), "
+          f"detector errors {len(g.get('errors') or [])}")
+    return 0
+
+
 _HANDLERS = {
     "inbox": _run_inbox,
     "retro": _run_retro,
+    "interview": _run_interview,
 }
 
 COMMANDS = tuple(_HANDLERS)

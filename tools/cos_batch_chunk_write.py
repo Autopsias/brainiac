@@ -90,17 +90,13 @@ def write_chunks(src: ChunkSources, placed: list[tuple[list[str], int, bool, boo
                 _h, rows_t = split_batch(bodies[t])
                 batch_ids |= {r.get("conversation_id") for r in rows_t
                               if isinstance(r, dict)}
-            # DRAFT-01: THE DRAFT JOB GETS ITS OWN PROMPT, and only when
-            # this chunk actually has a draft row. A chunk with none writes no
-            # file, and the nightly then fires no second call for it — the leg
-            # costs a call only where there is something to draft.
-            _h, draft_rows = split_batch(bodies["draft"])
-            if src.compose_draft is not None and draft_rows:
-                src.ground().write_text_0600(
-                    chunk_dir / "prompt-draft.txt",
-                    src.compose_draft(src.instruction, bodies["draft"],
-                                      src.closing))
-                rec["draft_rows"] = len(draft_rows)
+            # DRAFT-01 MOVED OUT OF THIS LOOP (2026-09-09). The draft prompt
+            # is composed by `--split-draft` over its OWN groups of <=35 rows
+            # (`cos_batch_chunk_plan.do_split_draft`), never per judgment
+            # chunk: riding these chunks made the per-message output ceiling
+            # the per-night draft cap, and left 27 `act` threads unoffered on
+            # run 281. `bodies["draft"]` is still written as a batch file so a
+            # chunk stays a complete record of what its rows were.
             join_records.append(join_chunk(chunk_name, prompt_text,
                                            mt[0] if mt else None,
                                            mt[1] if mt else None,

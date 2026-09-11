@@ -53,17 +53,31 @@ def _note_conversation(text: str) -> str:
     A note with no frontmatter at all answers "" — the same as one whose
     frontmatter is silent, which is the fail-closed direction.
     """
+    return _note_fields(text, ("provenance.conversation_id",)).get(
+        "provenance.conversation_id", "")
+
+
+def _note_fields(text: str, keys: tuple[str, ...]) -> dict[str, str]:
+    """The frontmatter values a note's HEAD names, for ``keys``.
+
+    The general form of :func:`_note_conversation`, and the ONE place the
+    stop-at-the-closing-``---`` rule that function's docstring argues for is
+    implemented — a second copy of that scan is how the weaker one ships. An
+    unterminated (or over-long) frontmatter answers ``{}``, the same
+    fail-closed direction, and a key the block does not name is simply
+    absent.
+    """
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
-        return ""
+        return {}
+    out: dict[str, str] = {}
     for line in lines[1:]:
         if line.strip() == "---":
-            return ""
-        if line.startswith("provenance.conversation_id:"):
-            return line.split(":", 1)[1].strip()
-    # No closing `---` inside the bytes we read: the frontmatter is either
-    # unterminated or longer than the slice, and neither is a witness.
-    return ""
+            return out
+        for k in keys:
+            if line.startswith(f"{k}:"):
+                out.setdefault(k, line.split(":", 1)[1].strip())
+    return {}
 
 
 #: What a conflicting pair of claims rows for ONE manifest line collapses to.
@@ -299,5 +313,6 @@ def _joined_row(root: Path, entry: dict[str, Any], *, cid: str, msg_key: str,
 __all__ = ['ATTACHMENT_JOIN_SCHEMA', 'LINE_JOINED', 'LINE_DECLINED',
            'LINE_WITHDRAWN', 'LINE_IN_FUNNEL', 'LINE_UNCLAIMED',
            'LINE_SETTLED', 'CLAIM_CONFLICT', '_note_conversation',
+           '_note_fields',
            '_sweep_claim_dests', '_line_state',
            'attachment_lane_context', '_joined_row']

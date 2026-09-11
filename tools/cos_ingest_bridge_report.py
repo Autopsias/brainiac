@@ -78,6 +78,9 @@ def _finish_report(report: dict, outcomes: list[dict]) -> tuple[dict, int]:
     report.update({
         "refused": refused, "dropped": _n("dropped", "dropped (dry-run)"),
         "never": _n("never"), "already_dropped": _n("already-dropped"),
+        # DD-01: candidates whose captured text the vault has already signed
+        # a note for. Not a drop and not a skip — the leg ran and settled it.
+        "already_ingested": _n("already-ingested"),
         "quarantined": len(q_keys), "quarantines": quarantines,
         "quarantine_max": qmax,
         "manifest_lines": sum(len(o.get("manifest_lines") or [])

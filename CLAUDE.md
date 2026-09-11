@@ -29,6 +29,36 @@ default cap = full vault, `--role vm` default = Internal; narrow with
 the published read-only snapshot and never signs — see
 `docs/cowork-windows-install.md`.
 
+**One Email, One Note closed and LANDED 2026-09-11** as `518bc8c1` — 7 of 7
+sessions DONE, 11 of 11 items DONE. The acceptance review scores **4 ACHIEVED,
+0 GAP, 3 NOT-YET-MEASURABLE**:
+`_plans/one-email-one-note-2026-09-10/_evidence/one-email-one-note/acceptance-review.md`.
+The three unmeasured criteria (a scheduled night that settles `already-ingested`
+and files no copy, the email header on the LIVE index, and the body budget on the
+newest corpus) wait for two things only: the owner's rebuild window, and a night
+that actually judges threads — the last two nights judged 0 (session died, then
+not signed in). The land also carries `fix/grep-retired-and-fold-reindex`, which
+closes the review's finding 1: `grep` now hides retired versions unless
+`--include-retired`, and every row carries `is_latest_version`. The owner skipped
+the review's recommended `ultrareview` before the merge. Suite on the merged tree:
+**7046 passed, 5 skipped, 0 failed**; ratchets 0 BLOCKING on all three; ruff
+clean. `run.py land` parked `default-unresolved` as always; the hand merge is in
+the plan's `LAND_NOTICE.txt`.
+
+**The index format on `master` is now 5, and both live indexes stay 4 until the
+owner rebuilds them.** Nothing rebuilds by itself yet: the hourly jobs run the
+engine installed in `~/.brainiac/venv`, which stays the old one until
+`pip install --force-reinstall --no-deps` of this checkout (the version number did
+not change, so a plain upgrade skips it). The installed engine's `sync` rebuilds a
+format-4 index the moment it is the new code, so the install IS the start of the
+rebuild — do it only in the window, with the two hourly nightlies and
+`com.brainiac.cos-nightly` booted out. The COS night runs this checkout's code
+directly; the new write path degrades on a format-4 index rather than failing, and
+it is NOT measured whether that night reaches `sync`, so keep it booted out until
+`brain --vault <v> status --json` reads `index.schema_version` = `5` on both
+vaults. **Re-dispatch s07 after the rebuild and the first judged night on the
+merged code (earliest 2026-09-12).**
+
 **The Porter Finishes closed and LANDED 2026-09-06** as `5ddf5480` — 12 of 12
 sessions terminal, 16 of 16 items DONE. The acceptance review scores its seven
 criteria: **1 ACHIEVED** (the nightly armed at 02:00, its literal "deploy

@@ -68,9 +68,9 @@ def _row_shape(row: dict) -> tuple:
             _attachment_shape(row))
 
 
-#: The three ledger-row settlement CLAIMS E16 reads (`settlement_claim`).
+#: The four ledger-row settlement CLAIMS E16 reads (`settlement_claim`).
 _SETTLEMENT_CLAIM_KEYS = ("bridge_quarantined", "bridge_refused",
-                          "bridge_duplicate_of")
+                          "bridge_duplicate_of", "bridge_already_ingested")
 
 
 def _claim_settlement(row: dict, field: str, value: str) -> None:
@@ -137,6 +137,58 @@ def _manifest_record_path(vault, run_id: str) -> Path:
     become the only durable attachment intent. Dedup now consults only what
     the host itself recorded writing."""
     return receipts_root(vault) / f"manifest-{safe_slug(run_id)}.jsonl"
+
+
+def _previous_record_path(vault, run_id: str) -> Path:
+    """The host-private record of the PREDECESSOR this run bound to each
+    conversation — the PIN that keeps the drop bytes deterministic per run.
+
+    `previous_version` is the one drop field derived from VAULT STATE (which
+    note this vault has already SIGNED for the thread), and vault state moves
+    between passes: sign run1's note between two passes of run2 and the
+    second pass stages DIFFERENT bytes under the same ident, which the
+    engine's replay guard can no longer bind — the duplicate ask that guard
+    exists to suppress (review 2026-09-10). The first pass to stage a
+    conversation therefore RECORDS the predecessor it bound, and every later
+    pass of the same run reuses it, so `_proposal_content` stays a pure
+    function of (run, candidate, corpus, taxonomy, tier) as its docstring
+    says. Same store and same shape as `_manifest_record_path`, for the same
+    reason: a host-private record is what makes a re-run reproduce the first
+    pass, and the mount cannot forge it."""
+    return receipts_root(vault) / f"previous-{safe_slug(run_id)}.jsonl"
+
+
+def _known_previous(vault, run_id: str) -> dict[str, str]:
+    """conversation key -> the predecessor id THIS run already bound ("" for
+    "no predecessor", which is just as binding). FIRST record wins — the file
+    is append-only and only the first pass's answer is the one on disk in the
+    drop. A torn or non-dict line is not a record; an unreadable file records
+    nothing, which re-derives from the vault rather than inventing a pin."""
+    out: dict[str, str] = {}
+    path = _previous_record_path(vault, run_id)
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return out
+    for x in lines:
+        if not x.strip():
+            continue
+        try:
+            entry = json.loads(x)
+        except ValueError:
+            continue
+        if isinstance(entry, dict) and str(entry.get("key") or ""):
+            out.setdefault(str(entry["key"]), str(entry.get("previous") or ""))
+    return out
+
+
+def _record_previous(vault, run_id: str, key: str, previous: str) -> None:
+    """Pin one conversation's predecessor for this run, BEFORE the drop is
+    written — a crash between the two leaves a pin the retry honours, which
+    is the direction that keeps the retry's bytes identical."""
+    _receipts_ensure(vault)
+    cos.append_jsonl(_previous_record_path(vault, run_id),
+                     {"key": key, "previous": previous})
 
 
 def _write_manifest_lines(vault, run_id: str, row: dict, crow: dict | None, *,

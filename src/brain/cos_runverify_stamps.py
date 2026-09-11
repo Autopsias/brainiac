@@ -28,6 +28,8 @@ def settlement_claim(row: dict[str, Any]) -> str | None:
         return "never-category"
     if str(row.get("bridge_duplicate_of") or "").strip():
         return "duplicate"
+    if str(row.get("bridge_already_ingested") or "").strip():
+        return "already-ingested"
     return None
 
 
@@ -40,7 +42,9 @@ def bridge_settled(row: dict[str, Any], *, drop_stamped: Callable,
     — parked with evidence in the claim-quarantine store), a never-category
     row (``bridge_refused: never-category`` — zero drops by owner rule), or a
     duplicate of a conversation another row/run already settled
-    (``bridge_duplicate_of``). Each of those has NO proposal to attribute, so
+    (``bridge_duplicate_of``), or a candidate whose captured text the vault
+    has ALREADY SIGNED a note for (``bridge_already_ingested`` — DD-01, one
+    email one note). Each of those has NO proposal to attribute, so
     demanding an id from it turned one quarantined thread into RUN_INVALID
     and made the night's genuinely good drops unclaimable — the quarantine
     design breaking the night it exists to save.

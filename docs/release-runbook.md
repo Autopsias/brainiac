@@ -731,9 +731,21 @@ version cut, dry-run, one owner decision card, then the pipeline with
 per-act `--confirm` consent recorded in evidence.
 
 ```
-python3 tools/publish_public.py v<X.Y.Z> --denylist ~/brainiac-release-groundtruth.txt
-python3 tools/publish_public.py v<X.Y.Z> --denylist <path> --dry-run     # verify only
-python3 tools/publish_public.py v<X.Y.Z> --denylist <path> --from public-git  # resume a partial run
+.venv/bin/python tools/publish_public.py v<X.Y.Z> --denylist ~/brainiac-release-groundtruth.txt
+.venv/bin/python tools/publish_public.py v<X.Y.Z> --denylist <path> --dry-run     # verify only
+.venv/bin/python tools/publish_public.py v<X.Y.Z> --denylist <path> --from public-git  # resume a partial run
+```
+
+**Run it with the project's own interpreter, not bare `python3`.** The test
+phase runs the suite under whatever interpreter launched the pipeline. This
+runbook said `python3` until 0.20.37, and on the release host that resolves to
+a Homebrew interpreter missing 10 of the project's declared distributions: the
+suite ran 26m43s and reported 38 failed / 94 errors, every one a missing import
+rather than a defect. `phase_preflight` now refuses that interpreter in about
+three seconds and names the fix, so this is a note about WHY, not a trap you
+can still fall into.
+
+```
 ```
 
 Why it exists (measured, 2026-07-29): the manual chain shipped v0.19.17 to

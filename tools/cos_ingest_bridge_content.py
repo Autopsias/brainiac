@@ -184,15 +184,41 @@ def _run_day(run_id: str, now: _dt.datetime) -> str:
 
 def _proposal_content(*, run_id: str, row: dict, choice: str, tier: str,
                       text: str | None, corpus_row: dict | None,
-                      attachments: list[str], now: _dt.datetime) -> str:
+                      attachments: list[str], now: _dt.datetime,
+                      previous_version: str | None = None) -> str:
     """The drop for one candidate: provenance CLAIMS, the judged category, the
     content choice, and the SOURCE MAP. Every field is a claim — the host join
     reads the LEDGER row, not this frontmatter (STA-01). DETERMINISTIC per
     run (see `_run_day`): a re-run stages byte-identical content, which is
-    exactly what lets the engine's replay guard own duplicate suppression."""
+    exactly what lets the engine's replay guard own duplicate suppression.
+
+    ``previous_version`` (DD-01) names the newest note the vault has already
+    SIGNED for this thread, in the documented bitemporal shape (AGENTS.md §2:
+    a bare id or a ``[[wikilink]]``), so a thread whose text changed reads as
+    a new version of the earlier note rather than an unrelated copy. It is
+    the ONE field here derived from vault state rather than from this run's
+    input, so the caller PINS it host-side on the first pass that stages the
+    conversation (`_known_previous`) and reuses that answer on every later
+    pass of the same run — the determinism above is what the replay guard
+    binds on, and vault state moves between passes while a run id does not."""
     corpus_row = corpus_row or {}
     prov, cid = _claims(row, corpus_row), str(row.get("conversation_id") or "")
     source_digest = str(corpus_row.get("text_sha256") or "") or None
+    # TR-01: a cut body says so. `raw_chars` is the TRUE character count the
+    # OWA driver read before clipping to `BODY_BUDGET_CHARS`; it is only ever
+    # bigger than the captured `text` when the driver actually cut something.
+    # Forward-only (see the plan's context bundle): a corpus row captured
+    # before this shipped carries no `raw_chars`, so `truncated` is simply
+    # never asserted for it rather than guessed.
+    # `raw_chars` comes from JS `text.length` — UTF-16 code UNITS. Comparing
+    # it against Python's `len(text)` (code POINTS) makes any body with an
+    # astral character (most emoji) read as "cut" even when nothing was:
+    # each such character is 1 code point but 2 UTF-16 units. Measure in the
+    # driver's own unit instead so "cut" only fires on an actual clip.
+    text_chars = len(text.encode("utf-16-le")) // 2 if text else 0
+    raw_chars = corpus_row.get("raw_chars")
+    truncated = bool(text and text.strip() and isinstance(raw_chars, int)
+                     and raw_chars > text_chars)
     # `updated` is set EXPLICITLY (attempt 16, finding 3): `capture.enforce`
     # fills any missing `updated` from the WALL-CLOCK day, so omitting it
     # made the staged bytes differ across midnight — the replay guard binds
@@ -206,6 +232,11 @@ def _proposal_content(*, run_id: str, row: dict, choice: str, tier: str,
         "category": str(row.get("category") or "").strip(), "cos.run": run_id}
     if source_digest:
         fm["cos.source_sha256"] = source_digest
+    if previous_version:
+        fm["previous_version"] = f"[[{previous_version}]]"
+    if truncated:
+        fm["truncated"] = "true"
+        fm["raw_chars"] = raw_chars
     fm.update({f"provenance.{k}": prov[k] for k in
                ("sender", "sent", "conversation_id", "subject") if prov.get(k)})
 
@@ -218,7 +249,11 @@ def _proposal_content(*, run_id: str, row: dict, choice: str, tier: str,
     lines += [f"- expected artifact: {n} (ingest-manifest lane; owner "
               "acceptance anchor INT-04)" for n in attachments] + [""]
     if text is not None and text.strip():
-        lines += ["## Captured message text", "", text.rstrip(), ""]
+        lines += ["## Captured message text", ""]
+        if truncated:
+            lines.append(f"> Captured text is cut at {text_chars} of "
+                         f"{raw_chars} characters (OWA driver body budget).")
+        lines += [text.rstrip(), ""]
     elif attachments:
         lines += ["The value of this candidate is its attachment(s); the "
                   "covering message carried no captured text.", ""]

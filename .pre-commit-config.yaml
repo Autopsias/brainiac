@@ -76,7 +76,16 @@ repos:
         entry: python3 tools/package_clients.py --validate-only
         language: system
         pass_filenames: false
-        files: '^(pyproject\.toml|AGENTS\.md|CLAUDE\.md|README\.md|src/brain/_version\.py|src/brain/_assets/.*|packaging/npm/.*|\.claude/skills/.*|\.agents/skills/.*|plugins/.*)$'
+        # The last four prefixes are the MIRROR SOURCES (PYP-02:
+        # package_clients.ENGINE_ASSET_FILES copies them into
+        # src/brain/_assets/). Without them this hook could not fire on the
+        # one change that breaks the mirror -- a commit touching only
+        # tools/cos_*.py matched nothing here, so the whole-repo check that
+        # WOULD have caught it was never invoked, and master carried a mirror
+        # lagging its own source (measured 2026-09-08, dfb34916).
+        # tests/test_packaging_mirror_hook.py keeps this list and
+        # ENGINE_ASSET_FILES from drifting apart again.
+        files: '^(pyproject\.toml|AGENTS\.md|CLAUDE\.md|README\.md|src/brain/_version\.py|src/brain/_assets/.*|packaging/npm/.*|\.claude/skills/.*|\.agents/skills/.*|plugins/.*|tools/.*|scripts/.*|routines/.*|assets/.*)$'
 
       # The quality ratchet, second iteration. The first (--project . at
       # commit time) died in two days: whole-project judgment refused a

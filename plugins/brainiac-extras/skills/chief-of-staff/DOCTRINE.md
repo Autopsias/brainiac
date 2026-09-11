@@ -482,6 +482,18 @@ defines, and reports the rest), and by the host's own `category_stamp` and
       read state, whether the action screens actually ran, and the three
       screens themselves, and REFUSES the claim on evidence you do not
       control. Uncertainty means leave `auto_archive` false.
+      A ROW WHOSE CATEGORY THE OWNER DISPOSITIONS `never` IS THE COMMONEST
+      AGED-READ CASE, AND IT IS THE ONE MOST OFTEN MISSED. `never` means the
+      vault keeps nothing from this thread — so there is no substance left to
+      protect and the only question is whether he OWES anything. Meeting
+      acceptances, calendar notices, system mail and digests are the usual
+      shape. Ask the same question you ask of any row, and CLAIM IT when he
+      owes nothing. `never` is NOT itself the reason to claim: such a thread
+      can still ask him something ("can we move Thursday?"), and then it is
+      `act` like any other. Measured on run 279: 19 rows sat `read` with no
+      signal, 16 of them with the body OPEN and readable, and every one stays
+      in his inbox for good — no lane can take a row with no signal, so
+      withholding it is not the cautious answer, it is the permanent one.
   No signal ⇒ auto_archive false (the needs-review lane).
 - `stale` is for the `act` bucket ONLY, and it is the porter archiving a thread
   the world moved past: send
@@ -625,7 +637,7 @@ Enforced by `hold.verdict_vocabulary`,
   `Held · deadline`. A `false` under `subject-only` means the body was never
   read, not that nothing is owed. Use `ask_age_days` for the age rule below
   rather than recomputing a date, and send none of them back.
-- Cap {cap} for the leg as a whole; ACT rows first.
+- Cap {cap} per message; ACT rows first.
 - Recipients: the ORIGINAL THREAD ONLY. Never add one.
 - Brain-grounded, and SAY WHICH. Send `brain_grounded: true` only when the
   VAULT CONTEXT MAP actually carried the facts this reply states. Otherwise

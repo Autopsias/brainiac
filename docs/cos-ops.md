@@ -338,8 +338,25 @@ One **append-only JSONL file per run**, named for the run id
  "chars": 67,
  "provenance": {"sender": "Alice <a@example.com>", "sent": "2026-08-02T09:14:00Z",
                 "subject": "RE: annex"},
- "secret_findings": [], "read_lane": "chrome-plugin", "body_opened": true}
+ "secret_findings": [], "read_lane": "chrome-plugin", "body_opened": true,
+ "raw_chars": 67}
 ```
+
+`raw_chars` (TR-01, 2026-09-11, optional int) is the TRUE character count
+`tools/cos_driver_page.js`'s `getItemOnce` read before clipping `text` to
+`BODY_BUDGET_CHARS` — it is only ever bigger than `chars` when the driver
+actually cut the body. **Unit: UTF-16 code units** (JS `text.length`), not
+Python code points — an astral character (most emoji) is 1 code point but 2
+UTF-16 units, so `_proposal_content` measures the stored text the same way
+(`len(text.encode("utf-16-le")) // 2`) rather than with Python's `len()`,
+or an unclipped body carrying an emoji would misread as cut (fixed
+2026-09-11 before this session closed; see `tests/test_cos_corpus_raw_chars.py`'s
+emoji cases). Forward-only: a row captured before this shipped carries no
+`raw_chars`, and none is ever backfilled onto it (a re-fetch is the only way
+to recover a true length, and this session does not do that). The bridge
+(`cos_ingest_bridge_content._proposal_content`) reads it against the row's
+own `text`, measured in the same UTF-16 unit, to decide whether to stamp
+the staged note; see below.
 
 `conversation_id` is the **join key back to the ingestion ledger**: the ledger
 keeps the verdict, the corpus keeps the input, and the pair is what makes a
@@ -371,8 +388,9 @@ shape, so an empty night and a crashed one are different artifacts.
 
 **Untrusted input is bounded, and over the bound a row is REFUSED, never
 trimmed.** Every field arrives from the browser leg: `text` caps at 1 MiB
-(three orders above the run's own 4000-character extraction budget — it only
-ever trips on a runaway page dump) and every other field at 4096 characters —
+(over 30x the run's own 32000-character extraction budget, raised from 4000
+by TR-02 — see below; it only ever trips on a runaway page dump) and every
+other field at 4096 characters —
 `read_lane` and each provenance value by character count, `extraction` by the
 bytes its canonical JSON encoding adds to the row, and `body_opened` must be an
 actual boolean (it is read as a fact about what the run did, and a truthy
@@ -417,6 +435,90 @@ harness and the test fixtures build corpora through the same
 `cos_corpus.append_thread` the run uses. A synthetic corpus and a real one are
 the same artifact, or the harness is measuring a different format from the one
 the run writes.
+
+#### TR-01/TR-02 — a cut body says so, and the budget went up (2026-09-11)
+
+**A cut body used to be invisible.** `getItemOnce` in `cos_driver_page.js`
+always computed `raw_chars` (the true character count before clipping), but
+nothing past the JS layer ever carried it: `cos_driver_capture.py` dropped it
+on the floor, the corpus row never stored it, and the staged note carried no
+sign that its "## Captured message text" section was anything but the whole
+email. `raw_chars` now rides the corpus row (schema above) and the bridge
+(`_proposal_content`) stamps `truncated: "true"` + `raw_chars` in the note's
+frontmatter plus one line, `> Captured text is cut at N of M characters (OWA
+driver body budget).`, directly above the text, whenever the row's
+`raw_chars` exceeds what the corpus actually stored — **both sides of that
+comparison measured in UTF-16 code units** (`raw_chars` is JS `text.length`;
+`_proposal_content` measures the stored text with
+`len(text.encode("utf-16-le")) // 2`, not Python's code-point `len()`), a
+fix landed before this session closed after the orchestrator's review
+measured 53 of 639 opened bodies carrying an astral character (an emoji)
+whose Python code-point count differs from its UTF-16 length, which would
+otherwise have stamped a false "cut" marker on every one of them despite
+none being clipped. **Forward-only**: a note
+already in the vault — the Project Gama keeper included (run283,
+`a0ab2d98b576`) — stays cut at 4000 characters with no marker, because its
+corpus row predates this and carries no `raw_chars` to compare against; that
+is a known, accepted gap, not something this session fixed.
+
+**Measured before raising the budget** (last 7 closed corpora for
+the reference vault as of 2026-09-11, `2026-09-08-run276.jsonl` through
+`2026-09-09-run283.jsonl`, index dir resolved via `config.index_dir(vault)`):
+
+| fact | value |
+|---|---|
+| total corpus rows (7 nights) | 827 |
+| body-opened rows carrying text | 639 |
+| rows landing at EXACTLY the old 4000-char cap | 308 (48.2% of opened) |
+| median chars among opened bodies | 3999 |
+| rows carrying `raw_chars` (pre-TR-01 corpora) | 0 |
+| total judged-input chars at the old budget | 1,950,071 (~278,600/night) |
+
+Almost half of every opened body was landing AT the cap, and the median was
+one character short of it — most captured mail was hard against the budget,
+not comfortably under it. `raw_chars` is 0 across all 7 files because none of
+them predates this session; the TRUE lengths of the 308 capped rows are not
+recoverable without re-fetching, so no exact post-raise total can be measured
+retroactively — only bounded. **`BODY_BUDGET_CHARS` raised 4000 -> 32000**
+in `tools/cos_driver_transport.py` (both it and the adjacent `BODY_BUDGET`
+display string that `cos_driver_ledger_row.py` writes into every ledger row —
+changing the int alone would have left the ledger claiming the old budget
+forever). `MAX_TEXT_BYTES` (1 MiB per corpus row) is untouched and stays over
+30x the new budget. Every consumer of the old literal `4000`/`BODY_BUDGET`
+was checked by grep: `cos_driver_ledger_row.py`, `cos_driver.py`,
+`cos_driver_accounting.py` all re-import the two constants (no second
+definition to miss), and `cos_driver_page.js`'s own defensive fallback
+(`o.budget || 4000`, only reachable if the host ever failed to send an
+explicit `budget`) was raised to `32000` alongside it.
+
+**The judge has no character cap of its own, so raising capture alone would
+have raised judged input by the same factor.** `cos_judge_batches.staging_rows`
+and `cos_judge_night._row_ctx` both pass a thread's corpus `text` straight
+into the model's batch with nothing trimming it — `COS_BODY_CAP`
+(`tools/cos_nightly.sh`) is the count of BODIES OPENED per night (200 by
+default), not a character budget. Worst case, treating every one of the 308
+capped rows as if it had grown to the full new budget: `308 * 32000 +
+(1,950,071 - 308 * 4000) = 10,574,071` judged-input characters over the same
+7 nights — a ~5.4x jump from the measured 1,950,071, in line with the
+single-night 800K → 6.4M estimate in this session's brief. **That growth was
+judged material, so `cos_judge_night.py` now carries a SEPARATE
+`JUDGE_BODY_CHAR_CAP = 4000`** — pinned at the OLD capture budget, not the
+new one — and `_row_ctx` slices the text the model reads to that cap before
+computing `text_len` (so `staging.evidence_required`'s span check still binds
+on what the model was actually shown). The corpus row and the staged note
+both still carry the FULL body up to the new 32000-char capture budget; only
+the judge's own view is held flat. Net effect: judged-input bytes stay at
+essentially today's ~1.95M/7-nights (every previously-capped body is capped
+identically today and tomorrow), while a much smaller share of vault notes
+carry a cut body at all.
+
+The disk-size table above (`tonight's doctrine`, `every thread opened at the
+4000-char body budget`, …) predates this raise and is not recomputed here —
+it is a 4.6-26 MiB/30-nights estimate at the OLD 4000-char budget and should
+be read as a stale reference point, not a current one; nothing in this
+session's scope requires a fresh disk projection, since the corpus retention
+window (§ above) already treats the pressure as one-directional (downward).
+Full readout, evidence and the counts above: `_evidence/one-email-one-note/s05-budget.md`.
 
 #### How the nightly writes it (WIR-01) — `brain cos-corpus-append` / `-close`
 

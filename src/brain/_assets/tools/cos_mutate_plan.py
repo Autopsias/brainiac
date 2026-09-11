@@ -17,8 +17,6 @@ from cos_reconcile_metrics import MUTATION_VERBS  # noqa: E402
 
 #: (v7.3, AGED-01) Belt 2 lives in its own module (the 500-LOC bound).
 from cos_mutate_plan_aged import aged_read_refusal  # noqa: E402
-#: (STALE-01) Belt 2 of the stale-act lane, same bound, same shape.
-from cos_mutate_plan_stale import stale_act_refusal  # noqa: E402
 #: (FB-02) The OWNER's own standing thread rulings, and the whole-plan screen
 #: that honours them. Same 500-LOC bound, same shape as the belts above; both
 #: names are re-imported here so `plan_stages.screen_owner_rulings` keeps the
@@ -62,7 +60,7 @@ def lane_refusal(row: dict[str, Any],
                             archive_over_draft=archive_over_draft)
     if why:
         return why
-    for refuse in (stale_act_refusal, noise_read_refusal):
+    for refuse in (stale_act_refusal, owner_replied_refusal, noise_read_refusal):
         why = refuse(row, signed_ingested)
         if why:
             return why
@@ -255,12 +253,15 @@ from cos_mutate_gates import (  # noqa: E402
     _read_jsonl, _within_window, kill_switch, stop_file as stop_file, stopped as stopped)
 from cos_mutate_ledger import (  # noqa: E402,F401
     split_the_draft_belts, threads_already_drafted)
-#: (FIX-03) The INGEST-MARK screen lives in its own module, same reason and
-#: same shape as the aged-read belt above: the 500-LOC bound. Re-imported
-#: here so `plan_stages.screen_ingest_marks` keeps its name for the CLI.
+#: (FIX-03) The INGEST-MARK screen and the two draft holds live in their own
+#: modules, same reason as the aged-read belt above: the 500-LOC bound.
 from cos_mutate_plan_marks import (  # noqa: E402,F401
     ingested_conversations, mark_lane_disposition_blindness,
     screen_ingest_marks)
+#: (STALE-01) Belt 2 of the stale-act lane and the two draft holds.
+from cos_mutate_plan_stale import (  # noqa: E402
+    draft_max_age_days, owner_replied_refusal, owner_sent_by_conversation,
+    screen_stale_drafts, stale_act_refusal)
 from cos_mutate_policy import (  # noqa: E402
     DEFAULT_CAPS, MANAGED_CHIPS, STATES as STATES)
 #: The recency window default, read once at import exactly as the parent does
@@ -296,17 +297,13 @@ def build_plan(vault: Path, run_id: str, *, caps: dict[str, int] | None = None,
     def exclude(cid: str, verb: str, why: str) -> None:
         excluded.append({"conversation_id": short(cid), "verb": verb, "reason": why})
 
-    # The screening stages themselves live in cos_mutate_plan (s18): each is
-    # handed this module's own callables, so a monkeypatch on cos_mutate keeps
-    # governing them and the definitions stay single.
     # The signed-ingest set (SIGNED vault copies) is both the archive belts'
     # substance-gate escape (RULE 1) and the ingestion mark's driver.
     ingested = ingested_conversations(run_id, rows, vault,
                                       since_days=since_days)
     # THE OWNER'S SECOND LEVER, read from the SAME overlay file as the kill
     # switch and in the same call, so a night can never honour one and miss the
-    # other. `.get` with a False default: an absent or unreadable overlay is
-    # already the disabled shape, and a stale caller sees the pre-ruling rule.
+    # other. `.get` with a False default: absent or unreadable ⇒ disabled.
     archive_over_draft = bool(kill_switch(vault).get("archive_over_draft"))
     planned = screen_ledger_rows(
         rows, exclude, short=short, chip_for=chip_for, managed_chips=MANAGED_CHIPS,
@@ -330,10 +327,13 @@ def build_plan(vault: Path, run_id: str, *, caps: dict[str, int] | None = None,
     ledger_ids = {r["conversation_id"] for r in rows}
     received_by_cid = {r["conversation_id"]: r.get("received") for r in rows}
     owner_drafted, porter_drafted = split_the_draft_belts(vault, rows)
-    planned += screen_drafts(
-        drafts, ledger_ids, received_by_cid, run_id, exclude,
-        short=short, draft_signature=draft_signature, draft_form=draft_form,
-        drafted_ids=owner_drafted, replaceable_ids=porter_drafted)
+    planned += screen_stale_drafts(
+        screen_drafts(drafts, ledger_ids, received_by_cid, run_id, exclude,
+                      short=short, draft_signature=draft_signature,
+                      draft_form=draft_form, drafted_ids=owner_drafted,
+                      replaceable_ids=porter_drafted),
+        received_by_cid, exclude, now=_utcnow(), max_age_days=draft_max_age_days(),
+        sent_by_cid=owner_sent_by_conversation(vault, run_id))
 
     planned, ruling_report = screen_owner_rulings(planned, vault, exclude)
     # THE PER-THREAD BUDGET, over the ASSEMBLED plan and after every lane has

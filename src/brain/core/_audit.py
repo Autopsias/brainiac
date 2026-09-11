@@ -73,6 +73,70 @@ class _CoreAuditMixin:
         return {"signed_hashes": signed_hashes,
                 "dispositions": load_drift_dispositions(self.vault)}
 
+    def drift_marker(self, path: str) -> str | None:
+        """VULN-3387 inline marker (A-14): what a host reader is told about a
+        hit whose CURRENT bytes are not the bytes the audit chain signed.
+
+        ``"unexplained"`` when the file's bytes differ from the last hash the
+        chain signed for that path and no owner disposition explains them;
+        ``"explained"`` when a disposition does. ``None`` in every other case,
+        and None is NOT an assurance: it also covers a path the chain never
+        bound, the VM leg (no chain), an unreadable chain and an unreadable
+        file. Negative-only by design — the read path mints no positive
+        provenance claim (A-12, owner ruling 2026-09-04). The host index keeps
+        serving the edited bytes; this only says so on the hit itself instead
+        of leaving it to `doctor`/`verify-audit`.
+        """
+        facts = self._drift_marker_facts()
+        signed_hashes = facts.get("signed_hashes") or {}
+        if not signed_hashes:
+            return None
+        from ..audit_drift import match_disposition
+        from ..index_stages.sync import _chain_key
+        from ..notes import sha256_file
+
+        fp = Path(path)
+        if not fp.is_absolute():
+            fp = Path(self.vault) / fp
+        rel = _chain_key(str(fp), Path(self.vault))
+        signed = signed_hashes.get(rel)
+        if signed is None:
+            return None
+        try:
+            actual = sha256_file(fp)
+        except OSError:
+            return None
+        if actual == signed:
+            return None
+        record = {"path": rel, "issue": "content_drift", "actual_sha256": actual}
+        if match_disposition(record, facts.get("dispositions") or {}):
+            return "explained"
+        return "unexplained"
+
+    def _drift_marker_facts(self) -> dict[str, Any]:
+        """`_sync_guard_facts`, cached per core and re-read when the chain or
+        the disposition file changes on disk (stat key). The MCP broker is a
+        long-lived process: an uncached read re-parses the whole chain per
+        hit; a stale cache would call a note signed a minute ago drifted."""
+        audit = getattr(self, "audit", None)
+        if audit is None:
+            return {}
+        from ..audit_drift import drift_dispositions_path
+
+        key = []
+        for f in (Path(audit.log_path), drift_dispositions_path(Path(self.vault))):
+            try:
+                st = f.stat()
+                key.append((st.st_mtime_ns, st.st_size))
+            except OSError:
+                key.append(None)
+        cached = getattr(self, "_drift_facts_cache", None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        facts = self._sync_guard_facts()
+        self._drift_facts_cache = (key, facts)
+        return facts
+
     def set_vm_egress_tier(self, tier: str | None) -> dict[str, Any]:
         """Set (or with ``None``, remove) the HOST-SIGNED VM egress ceiling
         (VULN-3386). This is the one sanctioned way to raise what a role=vm

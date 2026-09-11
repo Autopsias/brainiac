@@ -119,13 +119,37 @@ export BRAIN_REQUIRE_REAL_EMBEDDER=1
 # Scope is still the recency window (the last COS_SINCE_DAYS days) plus the
 # lane's own guards. `--all` still lifts the window for a historic sweep.
 SINCE_DAYS="${COS_SINCE_DAYS:-14}"
-BODY_CAP="${COS_BODY_CAP:-20}"
+# THE DEFAULT WAS 20 FROM s05 UNTIL 2026-09-08, FOR NO RECORDED REASON.
+# The SCHEDULED night never used it — its launchd plist sets
+# COS_BODY_CAP=200 and has opened 100-112 bodies a night since
+# 2026-09-02 — so this default bit only a MANUAL run that forgot the
+# variable, and a manual run is exactly where it does the most damage.
+# AT 20 IT CORRUPTS THE JUDGMENT, it does not merely slow the drain. The
+# judge cannot call a thread "no action needed" without its body, so an
+# unopened thread was judged on its subject line. Measured that day on 107
+# threads judged twice: of the 79 whose body opened for the FIRST time, 32
+# moved `read` -> `act` (40%); of the 28 whose body did NOT newly open,
+# ZERO made that move. My OWN wide run of 2026-09-08 ran at the default and
+# produced 32 such wrong verdicts; the re-run at 200 corrected them.
+# It cost nothing to lift. The read pass is dominated by the scan, not by
+# the bodies: 10 bodies took 174s, 19 took 171s, 110 took 199s — under two
+# seconds per body at the margin. Override with COS_BODY_CAP.
+BODY_CAP="${COS_BODY_CAP:-200}"
 MAX_TURNS="${COS_MAX_TURNS:-40}"
 BATCHES="${BRAIN_COS_BATCHES:-1}"
-# The two model legs fail together around 250 rows: one-message overflow and
-# declining closed-vocabulary compliance. 120 leaves deliberate headroom and
-# is the population ceiling for BOTH category and judgment prompts.
-THREAD_CAP="${BRAIN_COS_BATCH_THREAD_CAP:-120}"
+# RAISED 120 -> 250 ON 2026-09-08. The 120 dated from before either model leg
+# was CHUNKED, when the whole batch went to the model in ONE call: at ~258
+# rows it deliberated for 44k thinking tokens and returned 24 verdicts of
+# 258, and the coverage floor correctly made that night read-only. Chunking
+# fixed that outright — "261 of 261 across 6 chunks" (run 133) — and BOTH
+# legs now split at ~50 rows (COS_JUDGE_CHUNK_SIZE, COS_CATEGORY_CHUNK_SIZE),
+# so the model never sees more than 50 whatever this number is. The cap was
+# protecting a call shape that no longer exists, while a 124-thread inbox
+# lost 4 threads off the end of every single-batch night. 250 matches the
+# largest population ever judged clean here. Override with
+# BRAIN_COS_BATCH_THREAD_CAP; raise BRAIN_COS_BATCHES only if the inbox
+# outgrows even this.
+THREAD_CAP="${BRAIN_COS_BATCH_THREAD_CAP:-250}"
 CHAIN_CHILD=0
 
 # HOW MANY CHUNKS OF EITHER MODEL LEG RUN AT ONCE. The chunks are independent
@@ -457,12 +481,92 @@ print(json.dumps([{"batch_id": b.get("batch_id"), "digest": b.get("digest"),
     log "batch stop: $REASON (status=$STATUS, unreconciled=$UNRECONCILED, thread-cap=$THREAD_CAP)"
     log "batch ledger: $FINISH"
 
+    # --- BEGIN interview leg (INT-01) ------------------------------------------
+    # THE VAULT ASKS THE OWNER, on the sheet built below. Yesterday's answers
+    # (off the consumed marks files) are applied and today's questions drawn
+    # BEFORE the build, so the sheet renders them; one small model leg then
+    # rewords the questions, and the host wording stands whenever it fails.
+    # NOTHING HERE CAN KILL THE NIGHT: every failure logs and continues. The
+    # questions come from the VAULT, not the mailbox, so the lane runs on a
+    # door-closed night too (2026-09-09: the first night stopped at the door
+    # and the guard below skipped it); with no child run there is no $EV, and
+    # the leg's files go under the vault's own host-private lane dir instead.
+    INTERVIEW="${COS_INTERVIEW:-1}"
+    if [ "$INTERVIEW" = "1" ] && [ "${DRY:-0}" -ne 1 ]; then
+      if [ -n "${EV:-}" ] && [ -d "${EV:-/nonexistent}" ]; then
+        INT_DIR="$EV/interview"
+      else
+        INT_DIR="$BRAIN_VAULT/.brain/interview/leg"
+      fi
+      ( umask 077; mkdir -p "$INT_DIR" ); chmod 700 "$INT_DIR"
+      rm -f "$INT_DIR/prompt.txt"
+      INT_OUT="$($PY -m brain.cli interview --nightly --prompt-out "$INT_DIR" \
+          2>>"$LOG")"; INT_RC=$?
+      if [ "$INT_RC" -ne 0 ]; then
+        log "interview: the lane did not run (rc=$INT_RC) — the sheet renders
+ without new questions; see $LOG"
+      else
+        log "$(printf '%s' "$INT_OUT" | tr -d '\n')"
+        if [ -s "$INT_DIR/prompt.txt" ]; then
+          interview_leg() {
+            : > "$INT_DIR/leg.stderr" && chmod 600 "$INT_DIR/leg.stderr"
+            # THE LEG'S STDOUT IS PIPED INTO THE PARSER, NEVER WRITTEN; the
+            # same pinned tool boundary the other legs carry.
+            "$CLAUDE_BIN" -p "${MODEL_TOOLS[@]}" \
+                --model "${COS_INTERVIEW_MODEL:-sonnet}" \
+                --setting-sources "" --no-session-persistence \
+                --max-turns "${COS_INTERVIEW_MAX_TURNS:-4}" \
+                < "$INT_DIR/prompt.txt" 2>>"$INT_DIR/leg.stderr" \
+              | $PY tools/cos_interview_cli.py --score --vault "$BRAIN_VAULT" \
+                  >> "$LOG" 2>&1
+            INT_PIPE=("${PIPESTATUS[@]}")
+            [ "${INT_PIPE[0]}" -eq 0 ] && [ "${INT_PIPE[1]}" -eq 0 ]
+          }
+          # ONE RETRY: the smoke test of 2026-09-09 saw the same prompt come
+          # back empty once and complete the next time ($0.03, 7-30s).
+          interview_leg || interview_leg || log "interview: the phrasing leg
+ produced no usable wording twice — the host wording stands (see $INT_DIR/leg.stderr)"
+        fi
+      fi
+    else
+      log "interview: OFF (COS_INTERVIEW=$INTERVIEW, dry=${DRY:-0})"
+    fi
+    # --- END interview leg (INT-01) --------------------------------------------
+
     # SHEET-01 is a product of the WHOLE sign-in session, not of any one child
     # run.  The batch ledger above is the first point at which its named door
     # and stop facts exist, so building earlier would force the sheet to guess
     # them or read an empty default.  Keep a failed build loud but do not rewrite
     # the mailbox outcome: the sheet refuses missing/torn run inputs, and the
     # out-of-band sheets-directory heartbeat reports that independent failure.
+    # A SESSION THAT RAN NO BATCH MUST NOT REPLACE A GOOD SHEET WITH AN EMPTY
+    # ONE (2026-09-09). The 02:00 night of that day stopped at the door —
+    # `skipped-not-signed-in`, `batches_run: 0`, nothing judged — and then built
+    # `sheets/2026-09-09.html` reading "0 of tonight's 0 threads" and pointed
+    # `today.html` at it. The owner's morning sheet was BLANK, and the 116
+    # threads he had not yet marked were one directory away with nothing
+    # pointing at them. Same shape as the empty sheet of 2026-09-06.
+    #
+    # The guard is `batches_run`, not the stop reason: `door-closed` is only one
+    # of the ways a session ends having judged nothing, and a reason list would
+    # go stale the next time one is added. A session that ran even ONE batch
+    # still builds, however badly that batch went — a partial night has real
+    # rows and the sheet is how the owner sees them.
+    #
+    # IT FAILS TOWARDS BUILDING. An unparseable `$FINISH` yields 1, so the sheet
+    # is built exactly as before: the bug this fixes is a blank page for one
+    # morning, and silently stopping sheet builds for good would be worse.
+    SESSION_BATCHES_RUN="$(printf '%s' "$FINISH" | $PY -c 'import json, sys
+try:
+    print(int(json.load(sys.stdin).get("batches_run") or 0))
+except Exception:
+    print(1)' 2>>"$LOG")"
+    if [ "${SESSION_BATCHES_RUN:-1}" -eq 0 ]; then
+      log "sheet build SKIPPED: this session ran 0 batch(es) ($REASON), so it
+ judged nothing and has no rows to render — the previous sheet and today.html
+ are left alone rather than overwritten with an empty page"
+      return 0
+    fi
     SHEET_OUT="$($PY -m brain.cli cos sheet 2>>"$LOG")"; SHEET_RC=$?
     if [ "$SHEET_RC" -eq 0 ]; then
       log "sheet build: $(printf '%s' "$SHEET_OUT" | tr -d '\n')"
@@ -1625,14 +1729,41 @@ answer is long, keep emitting array elements across as many messages as it takes
 — never a partial object and never prose between them. You have no way to write
 a file and must not try. Do not run any brain or cos command.
 JCLO
+# FILL THE ROUNDS (owner ruling 2026-09-09, "2"). Five chunks under
+# CHUNK_PARALLEL=3 ran as 3 + 2 on run 281 — one slot idle for the whole second
+# round of a 32-minute leg. The group size is chosen so the chunk count is a
+# multiple of the parallelism, from the byte-fit's MEASURED landing size (25
+# rows), not the authored 50 that the halving turns into 25. An explicit
+# COS_JUDGE_CHUNK_SIZE still wins. Arithmetic + worked examples:
+# `cos_batch_chunk_plan.round_size`.
+JUDGE_SIZE="${COS_JUDGE_CHUNK_SIZE:-$($PY -c '
+import sys; sys.path.insert(0, "tools")
+from cos_batch_chunk import split_batch
+from cos_batch_chunk_plan import round_size
+rows = len(split_batch(open(sys.argv[1], encoding="utf-8").read())[1])
+print(round_size(rows, int(sys.argv[2])))' "$EV/batches/batch-triage.md" "$CHUNK_PARALLEL" 2>>"$LOG" || echo 50)}"
+log "judgment group size: $JUDGE_SIZE (parallel $CHUNK_PARALLEL)"
 SPLIT_OUT="$($PY tools/cos_batch_chunk.py --split --batches-dir "$EV/batches" \
-    --out-dir "$EV/chunks" --size "${COS_JUDGE_CHUNK_SIZE:-50}" \
+    --out-dir "$EV/chunks" --size "$JUDGE_SIZE" \
     --grounding "$EV/grounding.json" \
     --instruction "$EV/judgment-instruction.txt" \
     --closing "$EV/judgment-closing.txt" \
     --join-out "$EV/grounding-join.json" 2>>"$LOG")" \
   || die "the judgment batch could not be split into chunks — see $LOG" 7
 log "judgment split: $SPLIT_OUT"
+# THE DRAFT LEG'S OWN SPLIT (owner ruling 2026-09-09, "1"). Draft rows no
+# longer ride the judgment chunks: they are grouped on their own at <=35 per
+# message — the output ceiling — so the whole eligible pool is offered and the
+# night has no draft cap. Same instruction and closing the judgment leg uses;
+# the draft prompt carries no grounding map, which is why this is one call.
+# A night with nothing to draft writes no dchunk and fires no call.
+rm -rf "$EV/dchunks"
+DSPLIT_OUT="$($PY tools/cos_batch_chunk.py --split-draft \
+    --batch "$EV/batches/batch-draft.md" --out-dir "$EV/dchunks" \
+    --instruction "$EV/judgment-instruction.txt" \
+    --closing "$EV/judgment-closing.txt" 2>>"$LOG")" \
+  || die "the draft batch could not be split into its own chunks — see $LOG" 7
+log "draft split: $DSPLIT_OUT"
 # THE JOIN IS LOGGED, AND IT IS NOT THE GATE. E10 is the gate: it reads
 # `$EV/grounding-join.json` and FAILs a night that declared itself GROUNDED
 # while its map never reached a prompt. Logging it here is so the morning can
@@ -1814,7 +1945,9 @@ draft_chunk_leg() {
  run; the night still triages, and the leg's own stderr is
  $DCHUNK/draft-leg.stderr"
 }
-for CHUNK in "$EV"/chunks/chunk-*; do
+# One call per dchunk (2026-09-09); a night with no draft rows has no dchunks
+# and this loop fires nothing.
+for CHUNK in "$EV"/dchunks/dchunk-*; do
   [ -f "$CHUNK/prompt-draft.txt" ] || continue
   while [ "$(jobs -rp | wc -l | tr -d ' ')" -ge "$CHUNK_PARALLEL" ]; do
     sleep 2
@@ -1830,6 +1963,7 @@ wait
 # if NO chunk produced usable verdicts the merge exits nonzero and the night dies
 # 9, READ-ONLY — the same state a single-call leg that answered nothing reached.
 MERGE_OUT="$($PY tools/cos_batch_chunk.py --merge --chunks-dir "$EV/chunks" \
+    --draft-chunks-dir "$EV/dchunks" \
     --out "$EV/verdicts.json" 2>>"$LOG")"
 MERGE_RC=$?
 log "judgment merge: $MERGE_OUT"

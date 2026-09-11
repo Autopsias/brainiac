@@ -76,7 +76,7 @@ SHEET_STATE_KEYS = frozenset({
     "held_out", "stale_archived", "standing_rulings", "overturned_last_time",
     "excluded", "door_check", "batch_stop", "feedback_text",
     "category_legend", "sheet_id", "label_vocabulary", "rule_templates",
-    "effect", "selection",
+    "effect", "selection", "questions",
 })
 
 #: One line per field: who WRITES it. `feedback_render.render_budget` and the
@@ -136,6 +136,11 @@ SHEET_STATE_PRODUCERS = {
                        "disposition that file gives it, so the legend states "
                        "the disposition and never invents a meaning. Empty "
                        "when the taxonomy is off or unparseable",
+    "questions": "the owner-interview lane (`interview.sheet_block`, INT-01, "
+                 "2026-09-09): the OPEN questions the vault asks the owner, "
+                 "each with its evidence, fixed option actions and a default "
+                 "of skip, plus the lines the last answers produced. Present "
+                 "and empty when the lane has nothing to ask",
 }
 
 #: `rule` IS AN s05 EXTENSION to the frozen shape, and it is the field without
@@ -388,6 +393,23 @@ def _check_new_blocks(state: dict[str, Any]) -> None:
              "marks preceded this sheet it SAYS so rather than printing zero")
 
 
+def _check_questions(state: dict[str, Any]) -> None:
+    """The interview block: open questions in the lane's closed row shape."""
+    from .. import interview as _interview                    # noqa: PLC0415
+    q = state.get("questions")
+    _require(isinstance(q, dict) and set(q) == {"rows", "applied", "quiet"},
+             "questions must carry rows, applied and quiet — the interview "
+             "lane's open questions, present and empty rather than absent")
+    try:
+        _interview.validate_rows(q["rows"])
+    except ValueError as exc:
+        _require(False, str(exc))
+    _require(isinstance(q["applied"], list)
+             and all(isinstance(x, dict) for x in q["applied"]),
+             "questions.applied must be a list of the lines the last answers "
+             "produced")
+
+
 def validate_sheet_state(state: Any) -> dict[str, Any]:
     """Refuse a sheet state the owner could act on but s05 could not read back.
 
@@ -414,6 +436,7 @@ def validate_sheet_state(state: Any) -> dict[str, Any]:
         _check_ruling(row, i)
     _check_blocks(state)
     _check_new_blocks(state)
+    _check_questions(state)
     return state
 
 

@@ -116,8 +116,9 @@ import sys                                                    # noqa: E402
 from pathlib import Path                                      # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cos_judge_rules import READ_NOISE_SIGNAL              # noqa: E402
+from cos_judge_rules_aged import AGED_READ_SIGNAL          # noqa: E402
 from cos_judge_rules_stale import (  # noqa: E402
-    STALE_ACT_SIGNAL, STALE_REASONS)
+    OWNER_REPLIED_SIGNAL, STALE_ACT_SIGNAL, STALE_REASONS)
 
 
 JUDGMENT_SLOTS = ("verdict", "category", "disposition", "held_reason",
@@ -177,11 +178,42 @@ def archive_eligibility(row: dict[str, Any]) -> tuple[bool, str] | None:
     # refused off facts the model does not control; here the host merely names
     # the typed signal that carries it through the planner, E3 and the sheet.
     if row.get("verdict") == "act":
+        # THE OWNER-REPLIED LANE (owner ruling 2026-09-09, "1"), FIRST because
+        # it is the strongest evidence on an `act` row: the owner's own sent
+        # reply, newer than the thread's newest message. He asked "do I need to
+        # categorise the emails I have dealt with myself, or can you see what I
+        # sent" — and the night already read the fact and threw it away. It
+        # rides the SAME three floors above; `owner_replied_last` is stamped by
+        # `cos_judge_night.load_night` off this run's sent baseline, so it is a
+        # host fact the model never touches, exactly like `read_state`.
+        if row.get("owner_replied_last") is True:
+            return True, OWNER_REPLIED_SIGNAL
         st = row.get("stale")
         if isinstance(st, dict) and st.get("is_stale") is True \
                 and st.get("reason") in STALE_REASONS:
             return True, STALE_ACT_SIGNAL
         return None
+    # THE READ LANE, OWNER RULING 2026-09-08. Until tonight a `read` verdict
+    # fell through here and kept whatever the model claimed, so the model's own
+    # `aged-read-no-action` was its ONLY route out of the inbox — and it
+    # declined on 19 of run279's rows and on the identical 19 of run280's, with
+    # the guidance added, the prompt verified present in all five chunks and
+    # median body length 3221 chars. The claim is not being withheld for want
+    # of asking; a prompt cannot move it, measured twice.
+    #
+    # THE RISK THE OWNER ACCEPTED, IN HIS WORDS "Option 2". This archives on
+    # the model's `read` bucket — "worth the owner's eyes, no action" — without
+    # its separate archive assertion. The doctrine's own caution is that under
+    # `subject-only` a `false` on the ask detectors means the host DID NOT LOOK,
+    # and the honest verdict is then `read`; measured 2026-09-08, 32 of 79
+    # threads judged without their bodies moved `read` -> `act` once opened.
+    # THAT IS WHY THE BODY BELT MATTERS AND IS NOT DUPLICATED HERE: naming the
+    # signal ARMS `cos_mutate_plan_aged.aged_read_refusal`, which refuses the
+    # row unless the body actually opened, the draft census is clear, the age
+    # parses and Rule 1's substance gate holds. An unopened row is refused
+    # there, so this function never archives a subject-line judgment.
+    if row.get("verdict") == "read":
+        return True, AGED_READ_SIGNAL
     if row.get("verdict") != "noise":
         return None
     return True, READ_NOISE_SIGNAL

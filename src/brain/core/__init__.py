@@ -34,6 +34,7 @@ from ._retrieval import _CoreRetrievalMixin
 from ._capture import _CoreCaptureMixin
 from ._supersession_journal import _SupersessionJournalMixin
 from ._supersession import _SupersessionTransactionMixin
+from ._supersede_batch import SupersedeBatch
 from ._audit import _CoreAuditMixin
 from ._briefing import _CoreBriefingMixin
 from ._health import _CoreHealthMixin
@@ -111,6 +112,9 @@ class BrainCore(
         else:
             log = Path(audit_log) if audit_log else config.default_audit_log(self.vault)
             self.audit = AuditChain(log)
+        from .. import egress as _egress
+
+        _egress.register_drift_source(self)
 
     def _require_host(self, op: str) -> None:
         if self.role != config.ROLE_HOST:
@@ -132,7 +136,7 @@ class BrainCore(
         _mkdir_durable(directory, fsync_dir=_fsync_dir_strict)
 
 __all__ = [
-    "BrainCore", "RoleError", "SupersedeJournalUnreadable",
+    "BrainCore", "RoleError", "SupersedeBatch", "SupersedeJournalUnreadable",
     "SupersedeNotDurable", "SupersedePreconditionFailed", "WriterLockBusy",
     "MULTI_GUARD_STRONG_RANK", "MULTI_MAX_VARIANTS", "MULTI_RRF_K",
     "_contained_in", "_fsync_dir_strict", "_mkdir_durable",

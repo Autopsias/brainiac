@@ -158,6 +158,20 @@ def ingest_transcript(
     text, autolink_added = autolink.apply_autolinks(
         text, title=path.stem, origin=origin, vault=vault,
     )
+    # Owner ruling 2026-09-11: a top-tier ring term raises a transcript to the
+    # top tier, as `tierguard`'s keyword leg does on the drop zone. This route
+    # has no guard to stamp "could not check", so an unreadable ring fails
+    # CLOSED to the top tier; the signed write reason says which one happened.
+    from ..classification import TIERS, rank as _rank
+    from ..overlay_keywords import top_tier_term
+
+    raised_why = ""
+    term, ring_errors = top_tier_term(text, vault=vault)
+    if (term or ring_errors) and _rank(classification) < _rank(TIERS[-1]):
+        raised_why = (f"; raised {classification} -> {TIERS[-1]}: "
+                      + (f"overlay keyword {term!r}" if term else
+                         f"overlay keyword ring unreadable ({', '.join(ring_errors)})"))
+        classification = TIERS[-1]
     body_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
     lang = language or detect_language(path.name)
     meta = _transcript_meta(
@@ -175,7 +189,7 @@ def ingest_transcript(
     content = _pipeline._build_frontmatter(meta, text)
     core.write_note(
         note_rel, content,
-        reason=f"ingest-transcript {path.name} -> raw/{slug}.md (origin={origin})",
+        reason=f"ingest-transcript {path.name} -> raw/{slug}.md (origin={origin}){raised_why}",
         subtree="raw",
     )
     manifest[original_sha] = slug

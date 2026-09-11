@@ -138,6 +138,25 @@ def _file_mark(vault: Any, mark: dict[str, Any], *, common: dict[str, Any],
             minted = str(written["rule_key"])
             out["rules"].append(minted)
         _counter_updates(vault, origin, minted, row, out)
+    # A NOTE IS NEVER DROPPED (owner's first marks, 2026-09-08). Every branch
+    # above persists a row only when it has a verdict, a rule text or a live
+    # rule to confirm — and a plain `right` carrying nothing but the owner's
+    # own words fell through all of them. Measured on his first sheet: 16
+    # notes written, 5 reached the record, 11 lost, and the 11 were the ones
+    # that carried his actual message ("too late to draft", "only
+    # informational", "I had already answered this"). The judge had been made
+    # to READ notes the hour before; the pipe was downstream of this hole.
+    #
+    # One question, asked once: did THIS mark mint any row? If not and it
+    # carries a note, the note lands as a thread ruling with the derived
+    # verdict — the row kind the record already has for "the owner said
+    # something about this thread". No new key, no new shape.
+    minted_any = (verdict in (DO_NOT_TOUCH_VERDICT, WANTED_MORE_VERDICT)
+                  or (verdict == "right" and cid in out.get("released", []))
+                  or any(texts.get(c) for c, _v, _o in answered))
+    if row["note"].strip() and not minted_any:
+        record_thread_ruling(vault, **row)
+        out["noted"] = out.get("noted", 0) + 1
     if answered or verdict != "right":
         return
     # THE SUBJECT-DIGEST CONFIRMATION DETECTOR, carried forward unchanged: a
@@ -209,6 +228,7 @@ def record_marks(vault: Any, payload: dict[str, Any], *,
         # a page-wide box names none, so it travels to the run report as the
         # owner's words and stops there.
         "feedback_text": str(payload.get("feedback_text") or ""),
+        "answers": len(payload.get("answers") or []),
     }
     held = {str(r["conversation_id"]) for r in held_threads(record["rows"])}
     for mark in payload["marks"]:

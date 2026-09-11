@@ -37,7 +37,7 @@ def _chunk_answers(chunks_dir: Path, prefix: str,
     return arrays, skipped, len(chunk_dirs)
 
 
-def graft_drafts(chunks_dir: Path, merged: list) -> dict:
+def graft_drafts(chunks_dir: Path, merged: list, prefix: str = "chunk") -> dict:
     """DRAFT-01: copy each `draft` the SECOND leg wrote onto its triage verdict.
 
     The draft job runs in its own model call (`prompt-draft.txt` →
@@ -64,7 +64,7 @@ def graft_drafts(chunks_dir: Path, merged: list) -> dict:
         if isinstance(row, dict) and row.get("conversation_id") is not None:
             by_id.setdefault(str(row["conversation_id"]), row)
     grafted, orphaned, chunks, flagged = 0, 0, 0, 0
-    for cd in sorted(chunks_dir.glob("chunk-*")):
+    for cd in sorted(chunks_dir.glob(f"{prefix}-*")):
         try:
             rows = json.loads((cd / "verdicts-draft.json").read_text(encoding="utf-8"))
         except (OSError, ValueError, json.JSONDecodeError):
@@ -90,17 +90,59 @@ def graft_drafts(chunks_dir: Path, merged: list) -> dict:
             "drafts_orphaned": orphaned, "needs_owner_flagged": flagged}
 
 
-def do_merge(chunks_dir: Path, out: Path) -> tuple[dict, int]:
+def sum_usage(*dirs: tuple[Path, str]) -> dict:
+    """Add up the per-call receipts `cos_model_answer` writes beside each
+    answer (`<answer>.usage.json`). Numbers only; a missing or unreadable
+    receipt is counted as a call with no usage, never as an error — the night
+    reporting what it spent must not be able to stop the night."""
+    tot = {"calls": 0, "with_usage": 0, "input_tokens": 0, "output_tokens": 0,
+           "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+           "cost_usd": 0.0, "duration_ms": 0}
+    models: set[str] = set()
+    for d, prefix in dirs:
+        if not (d and d.is_dir()):
+            continue
+        for cd in sorted(d.glob(f"{prefix}-*")):
+            tot["calls"] += 1
+            try:
+                u = json.loads(next(cd.glob("*.usage.json")).read_text(encoding="utf-8"))
+            except (StopIteration, OSError, ValueError):
+                continue
+            if not isinstance(u, dict):
+                continue
+            tot["with_usage"] += 1
+            for k in ("input_tokens", "output_tokens", "cache_read_input_tokens",
+                      "cache_creation_input_tokens", "duration_ms"):
+                if isinstance(u.get(k), int):
+                    tot[k] += u[k]
+            if isinstance(u.get("cost_usd"), (int, float)):
+                tot["cost_usd"] = round(tot["cost_usd"] + float(u["cost_usd"]), 4)
+            for m in u.get("models") or []:
+                if isinstance(m, str):
+                    models.add(m)
+    tot["models"] = sorted(models)
+    return tot
+
+
+def do_merge(chunks_dir: Path, out: Path,
+             draft_dir: Path | None = None) -> tuple[dict, int]:
     # A dropped chunk's rows go unjudged; the H4 coverage floor is the backstop.
     arrays, skipped, expected = _chunk_answers(chunks_dir, "chunk", "verdicts.json")
     merged = [r for rows in arrays for r in rows]
-    drafts = graft_drafts(chunks_dir, merged)
+    # DRAFTS COME FROM THEIR OWN SPLIT when the nightly made one (2026-09-09);
+    # an older evidence dir with drafts riding the judgment chunks still merges.
+    if draft_dir is not None and draft_dir.is_dir():
+        drafts = graft_drafts(draft_dir, merged, "dchunk")
+    else:
+        drafts = graft_drafts(chunks_dir, merged)
+    usage = sum_usage((chunks_dir, "chunk"), (draft_dir, "dchunk"))
 
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(merged, indent=1, ensure_ascii=False), encoding="utf-8")
     summary = {"chunks_merged": len(arrays),
                "chunks_expected": expected,
-               "rows": len(merged), "skipped": skipped, **drafts}
+               "rows": len(merged), "skipped": skipped, **drafts,
+               "usage": usage}
     # ZERO usable chunks is the leg producing nothing — exit nonzero so the caller
     # dies 9 READ-ONLY. Keyed on chunks_merged, not rows: a chunk that legitimately
     # judged an empty group returns `[]`, which IS a merged chunk (rc 0, a quiet

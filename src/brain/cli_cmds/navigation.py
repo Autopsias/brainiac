@@ -11,6 +11,7 @@ _filter_dicts = shared._filter_dicts
 _freshness_block = shared._freshness_block
 _egress_footer = shared._egress_footer
 _concealment_notice = shared._concealment_notice
+_header_line = shared._header_line
 _variant_block = shared._variant_block
 _render_variant_block = shared._render_variant_block
 _render_explain_hit = shared._render_explain_hit
@@ -108,6 +109,7 @@ def _run_recent(args, ctx) -> int:
     else:
         lines = [
             f"{it['updated']}  {it['id']}  ({it['classification'] or 'UNLABELLED'})"
+            + _header_line(it)
             + (f"\n{_concealment_notice(it)}" if _concealment_notice(it) else "")
             for it in surfaced
         ]

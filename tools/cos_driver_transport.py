@@ -29,8 +29,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 #: DEPLOYMENT surface (`codex-automation` / `cowork-desktop`), a different axis.
 READ_LANE = "rest"
 
-BODY_BUDGET_CHARS = 4000
-BODY_BUDGET = "4000 extracted characters"
+#: RAISED 4000 -> 32000 (TR-02, 2026-09-11). Measured over the last 7 closed
+#: corpora for the reference vault (827 rows, 639 body-opened): 308 of 639 opened
+#: bodies (48%) landed at exactly the OLD 4000-char cap and the median opened
+#: body was 3999 chars — most captured mail was hard against the budget, not
+#: comfortably under it. `docs/cos-ops.md` (TR-02) carries the full readout.
+#: This raises what the CORPUS and the note carry; it does NOT raise what the
+#: judge reads per body — see `JUDGE_BODY_CHAR_CAP` in `cos_judge_night.py`,
+#: added the same session because the judge has no cap of its own and 200
+#: bodies/night at 32000 chars would be a ~5-8x jump in judged-input bytes.
+BODY_BUDGET_CHARS = 32000
+BODY_BUDGET = "32000 extracted characters"
 BODY_OPEN_CAP = 20
 
 

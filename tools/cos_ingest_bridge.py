@@ -131,6 +131,7 @@ from tools.cos_ingest_bridge_content import (  # noqa: E402,F401
 from tools.cos_ingest_bridge_store import (  # noqa: E402,F401
     _SETTLEMENT_CLAIM_KEYS, _attachment_shape, _bridge_ident,
     _claim_settlement, _consumed_shas, _conv_key, _known_manifest_keys,
+    _known_previous,
     _manifest_record_path, _receipts_ensure, _row_shape, _write_manifest_lines,
     bridge_ledger_path, receipts_root)
 from tools.cos_ingest_bridge_candidate import (  # noqa: E402,F401
@@ -242,7 +243,7 @@ def bridge_run(vault, run_id: str, *, now: _dt.datetime | None = None,
         refused_report = {
             "schema": SCHEMA, "run": run_id, "status": "refused",
             "vault": str(vault), "candidates": 0, "dropped": 0,
-            "manifest_lines": 0, "never": 0, "already_dropped": 0,
+            "manifest_lines": 0, "never": 0, "already_dropped": 0, "already_ingested": 0,
             "quarantined": 0, "quarantines": [],
             "refused": [{"conversation_id": None, "detail": str(exc),
                          "reason": exc.reason}],
@@ -282,7 +283,7 @@ def bridge_run(vault, run_id: str, *, now: _dt.datetime | None = None,
         # never a fallback to another mount-side location (that design failed
         # three times) and never an escaped traceback.
         report.update({"status": "refused", "dropped": 0, "manifest_lines": 0,
-                       "never": 0, "already_dropped": 0, "quarantined": 0,
+                       "never": 0, "already_dropped": 0, "already_ingested": 0, "quarantined": 0,
                        "quarantines": [],
                        "candidates_not_dropped": len(candidates),
                        "refused": [{"conversation_id": None,
@@ -299,7 +300,7 @@ def bridge_run(vault, run_id: str, *, now: _dt.datetime | None = None,
         # message that sends an operator looking at the mail instead of at the
         # clock. Nothing was dropped; re-running is the whole fix.
         report.update({"status": "writer-busy", "dropped": 0,
-                       "manifest_lines": 0, "never": 0, "already_dropped": 0,
+                       "manifest_lines": 0, "never": 0, "already_dropped": 0, "already_ingested": 0,
                        "quarantined": 0, "quarantines": [],
                        "candidates_not_dropped": len(candidates),
                        "refused": [], "error": str(exc),
@@ -318,7 +319,7 @@ def _backpressure_abort(vault: Path, run_id: str, candidates: list[dict],
     report.update({
         "status": "backpressure-abort", "candidates_not_dropped": len(candidates),
         "open_batches": [b.get("batch_id") for b in open_batches],
-        "dropped": 0, "manifest_lines": 0, "never": 0, "already_dropped": 0,
+        "dropped": 0, "manifest_lines": 0, "never": 0, "already_dropped": 0, "already_ingested": 0,
         "quarantined": 0, "quarantines": [],
         "reason": (f"a proposal batch is already open ({ids}) — the bridge "
                    f"ABORTED all {len(candidates)} candidate(s) rather than "
@@ -358,6 +359,11 @@ def _bridge_locked(vault: Path, run_id: str, rows: list[dict],
     mpath = cos.ingest_manifest_dir(vault) / f"manifest-{run_id}.jsonl"
     known_keys = _known_manifest_keys(vault, run_id, mpath)
     consumed = _consumed_shas(vault)
+    # DD-01, both built ONCE per pass and passed down (`_cross_run` says why):
+    # one vault walk, ~1.2s for 3,993 notes, and this run's predecessor pins.
+    signed = cos.signed_bridge_notes(vault)
+    report["signed_conversations"] = len(signed)
+    pins = _known_previous(vault, run_id)
     outcomes: list[dict] = []
     handled: dict[str, dict] = {}   # conv key -> settled THIS pass
     pending = {"dirty": False}
@@ -385,8 +391,8 @@ def _bridge_locked(vault: Path, run_id: str, rows: list[dict],
         _decide_candidate(vault, run_id, row, outcome, taxonomy=taxonomy,
                           corpus=corpus, report=report, manifest_path=mpath,
                           known_keys=known_keys, handled=handled,
-                          consumed=consumed, flush=flush, now=now,
-                          dry_run=dry_run)
+                          consumed=consumed, signed=signed, pins=pins,
+                          flush=flush, now=now, dry_run=dry_run)
         if not dry_run:
             cos.run_ops_dir(vault).mkdir(parents=True, exist_ok=True)
             cos.append_jsonl(bridge_ledger_path(vault, run_id), outcome)
@@ -441,6 +447,7 @@ def main(argv: list[str] | None = None) -> int:
           f"{len(report.get('refused') or [])} refused, "
           f"{report.get('never', 0)} never, "
           f"{report.get('already_dropped', 0)} already dropped, "
+          f"{report.get('already_ingested', 0)} already ingested, "
           f"{report.get('manifest_lines', 0)} manifest line(s)")
     for r in report.get("refused") or []:
         print(f"  REFUSED {r.get('reason')}: {r.get('detail', '')}")

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from ._shared import *  # noqa: F401,F403
+from ..provenance import header_row_fields
 
 
 class _RecordMixin:
@@ -13,7 +14,7 @@ class _RecordMixin:
         # column name or `''`. No caller input reaches the SQL text.
         r = self.conn.execute(
             "SELECT id,title,classification,zone,path,body,is_latest_version,type,"
-            f"{self._concealment_sql()}"  # nosec B608
+            f"{self._concealment_sql()},{self._frontmatter_sql()}"  # nosec B608
             " FROM notes WHERE rowid=?",
             (rowid,),
         ).fetchone()
@@ -27,6 +28,8 @@ class _RecordMixin:
             # concealment verdict travels with it. `unknown` (never `clean`) is
             # what a note indexed before the column existed says about itself.
             "concealment": stored_verdict(r[8]),
+            # PV-02: sender/sent/subject, absent when the note has none.
+            "header": header_row_fields(r[9]),
         }
 
     @staticmethod

@@ -141,7 +141,9 @@ def _grep_bounded_search_impl(compiled, text: str, *, has_timeout: bool):
     return compiled.search(text)
 
 
-SCHEMA_VERSION = 4  # ADR-0008: normalized title projection + aliases table.
+SCHEMA_VERSION = 5  # PV-01: `notes.frontmatter` — the parsed frontmatter as JSON,
+# so an email note's provenance.sender / .sent / .subject reach a result row.
+# v4 was ADR-0008's normalized title projection + aliases table.
 
 INDEX_FORMAT_VERSION = 1  # RB-02: bumped whenever resume-compatibility breaks.
 

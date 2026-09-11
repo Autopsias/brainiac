@@ -119,6 +119,14 @@ def _add_grep(sub) -> None:
     sp.add_argument("pattern")
     sp.add_argument("-k", type=int, default=20, help="max results (default: 20)")
     sp.add_argument("--regex", action="store_true", help="treat pattern as a regex")
+    sp.add_argument(
+        "--include-retired",
+        dest="include_retired",
+        action="store_true",
+        help="also match notes a supersede chain has retired (is_latest_version: "
+             "false). Hidden by default, as in search and recent; every row "
+             "carries is_latest_version so the retired ones are marked",
+    )
     add_common(sp)
 
 

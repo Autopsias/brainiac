@@ -130,6 +130,8 @@ just before stdout, below).
 > and NEVER signs, indexes, or opens WAL. The host commit path is `brain write`
 > (used by drain-on-invoke).
 
+**Finding an email (Cowork retro, 2026-09-10):** one `search`, no `find` on
+the mount, quote the captured text — see AGENTS.md §5.
 
 ---
 

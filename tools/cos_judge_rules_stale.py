@@ -64,6 +64,17 @@ from cos_judge_rules_aged import (  # noqa: E402
 #: STALE-01. The typed signal an act thread archives under.
 STALE_ACT_SIGNAL = "stale-act-archived"
 
+#: OWNER-REPLIED (owner ruling 2026-09-09, "1"). The typed signal a thread
+#: archives under when the OWNER'S OWN sent reply is newer than the thread's
+#: newest message. It is not a model claim and is not in `NOISE_SIGNALS`: the
+#: model is never offered the word and cannot ask for it. `load_night` stamps
+#: the FACT (`owner_replied_last`) off this run's sent baseline and
+#: `archive_eligibility` names the signal — the same producer/consumer split
+#: the read and stale lanes use. Measured on run 282: 24 of 116 inbox threads
+#: carried an owner reply newer than their newest message, all 24 read, 10 of
+#: them judged `act` and so left in the inbox with nothing owed on them.
+OWNER_REPLIED_SIGNAL = "owner-replied-archived"
+
 #: The closed reason vocabulary of the `stale` field. A word outside it is
 #: refused, never read as a variant.
 STALE_ANSWERED = "answered-by-other"

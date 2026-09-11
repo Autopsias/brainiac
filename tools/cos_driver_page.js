@@ -660,7 +660,7 @@
   window.__cosDriverRun = function (opts) {
     var o = opts || {};
     var cap = o.cap || 20;
-    var budget = o.budget || 4000;
+    var budget = o.budget || 32000;  // TR-02: fallback only; the host always sends BODY_BUDGET_CHARS
     var pageSize = o.page_size || 100;
     var maxPages = o.max_pages || 60;
     var sentWindowStart = o.sent_window_start;   // ISO string
@@ -738,7 +738,8 @@
       })
       .then(function () {
         state.phase = "sent";
-        return enumFolder("sentitems", 50, 4).then(function (s) {
+        /* 12 pages: the 30-day sent window (~360 items) must not truncate. */
+        return enumFolder("sentitems", 50, 12).then(function (s) {
           var items = s.items.filter(function (it) {
             return it.received && new Date(it.received) >= new Date(sentWindowStart);
           }).map(function (it) {

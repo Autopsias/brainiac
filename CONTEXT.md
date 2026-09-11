@@ -172,6 +172,34 @@ that has moved since capture, so it can report risk but must not block. A stabil
 over a mutated vault cannot separate ranking drift from vault drift without a per-query
 vault fingerprint.
 
+## Version chains
+
+**Retire** vs **supersede** — one English word, two DIFFERENT frontmatter shapes, and
+choosing the wrong one is a real design error this repo has already made twice.
+*Supersede* (`core.supersede`, `brain supersede`, `src/brain/core/_supersession.py:17`)
+writes **both** sides of a chain: the old note gets `superseded_by` + `superseded_date` +
+`is_latest_version: false`, and the successor gets `previous_version` +
+`is_latest_version: true`. It requires a real successor and refuses without one.
+*Retire* (`cos/_hold_undo.py:206 _retire_signed_note`) writes a plain marker —
+`retired` / `retired_date` / `retired_reason`, **no supersession keys at all** — because
+an undo retracts a claim and has no successor. B6 changed it to that shape precisely
+because stamping `is_latest_version: false` with no successor left the vault permanently
+failing `tools/validate.py:299`. So: a cleanup that keeps one note and points the copies
+at it is a **supersession**, never a retirement, and `_retire_signed_note` is the wrong
+primitive for it. Named here because the 2026-09-10 *One Email, One Note* plan specified
+the supersede SHAPE while naming the retire FUNCTION.
+
+**Star** vs **chain** — `supersede(old, new)` sets `new.previous_version = old` on every
+call, so N copies superseded onto ONE keeper leave the keeper naming only the LAST of
+them. That asymmetric shape is what `unsupersede`'s own docstring
+(`_supersession.py:190`) describes as the malformed state it had to be written to repair:
+*"two notes both declared `superseded_by: …-qr-qa` while `qr-qa` named only one of them
+as its `previous_version`"*. `tools/validate.py` does **not** catch it — it has no
+reciprocity rule, no fork rule, and no "supersession section" in its output at all; its
+only supersession checks are the five in `check_bitemporal` (lines 290-310). So a bulk
+dedup either chains its members oldest-to-newest, or knowingly writes stars that no
+checker will flag.
+
 ## Failure surfacing
 
 **Pull surface** — a surface the operator has to go and look at: `brain doctor`,
@@ -276,6 +304,18 @@ did (`_cos_verdict_ledger_*.jsonl`, `_cos_ingestion_ledger_*.jsonl`,
 ledger while its counter stayed truthful, and a pre-flight metrics row once reported six
 empty nights while 181 real archives went unledgered. A diagnosis is only sound once the
 two are **joined** — a count agreeing with itself proves nothing.
+
+**Body budget** vs **body cap** — two different limits, and neither bounds the other.
+`BODY_BUDGET_CHARS` (`tools/cos_driver_transport.py:32`, today 4000) is the **characters
+kept per message body**, clipped client-side in `cos_driver_page.js getItemOnce`.
+`COS_BODY_CAP` (`tools/cos_nightly.sh:137`, today 200) is the **number of bodies opened
+per night**. Raising the budget therefore multiplies the judge's total input with nothing
+capping it — 200 bodies at 32,000 characters is 6.4 M characters against today's 800 K.
+Commit `3d18ddf8` ("the body-cap DEFAULT was 20") moved the COUNT, not a character
+budget. There is also a THIRD copy of the number: `BODY_BUDGET = "4000 extracted
+characters"` on the next line, a display string that
+`tools/cos_driver_ledger_row.py:76` writes into the ledger row — change the int alone and
+the ledger keeps claiming the old budget.
 
 **Verdict ledger** vs **ingestion ledger** — the *verdict* ledger is one row per
 classified thread (`act` / `read` / `noise` + priority); the *ingestion* ledger is one row

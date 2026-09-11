@@ -942,6 +942,54 @@ reads its decision from the mount.
 
 ---
 
+## A-14 · The host serves a note's current bytes, signed or not
+
+**Raised as:** the pentest team's re-test of VULN-3387, 2026-09-11: "the
+vulnerability is fixed, but only for role VM. For role HOST the changed,
+unsigned content is visible after `brain sync` and `brain sync --publish`. Is
+this the expected behaviour?" — with the note that the change is to the note's
+CONTENT, not its classification. Reproduced by execution the same day on a
+scratch vault with the installed engine (0.20.37); owner ruling the same day.
+
+**What the finding says, and it is right.** VULN-3387's fix has two halves.
+`sync` refuses an unsigned classification DOWNGRADE and keeps the signed tier
+(`index_stages/sync.py:_refused_downgrade`). `snapshot` withholds from the VM
+copy any note whose current bytes match nothing the chain signed and no
+disposition explains (`snapshot.py:_withhold_paths`) — content edits included.
+Neither half touches the host's own index: after a body edit on disk, host
+`get` returns the edited body, `sync --publish` records `withheld_drift: 1`,
+`--role vm get` returns `not_found`, `verify-audit --check-content` reports
+`1 unexplained`, and `doctor` carries the warning row.
+
+**What is accepted, stated plainly.** The host reads the file, because the
+file is the truth and the index a disposable cache. The owner edits notes in
+an editor and those edits never pass the signing path; a host that refused
+unsigned bytes would drop every hand edit from retrieval until re-signed, and
+would not stop the only actor it could apply to — whoever can write the host
+vault as the owner can also run `brain write` as the owner. The residual is
+therefore: a process running with the owner's permissions can rewrite a note
+and the host serves the rewrite. It is bounded by detection (INT-02: the
+chain keeps the signed hash, the drift reads `unexplained` until ruled on)
+and, since 2026-09-11, by the hit itself: the egress chokepoint stamps
+`drift: unexplained` (or `explained`, once triaged) on every surfaced note
+whose current bytes differ from what the chain signed
+(`egress.py:_mark_drift`, `core/_audit.py:drift_marker`). Negative-only by
+design — an ABSENT field is not an assurance, and covers a path the chain
+never bound, the VM leg, an unreadable chain or an unreadable file; the read
+path mints no positive provenance claim (A-12).
+`tests/test_drift_inline_marker.py` pins both the marker and its silence.
+
+**What is NOT affected.** The VM half is unchanged: the Cowork leg has had no
+write access to the vault since A-05 closed (2026-09-01), and a drifted note
+never reaches its snapshot. The injection question a rewritten note raises
+(the row still reads `content_trust: curated`) is A-06's, and A-06's controls
+apply unchanged.
+
+**What would reopen it:** a note body reaching the VM snapshot with
+`withheld_drift` at 0 while `verify-audit` reports it unexplained
+(`tests/test_snapshot_drift_withhold.py` fails), or a host read surface that
+bypasses `egress.apply_gate` and so carries no marker.
+
 ---
 
 ## Not accepted, and deliberately absent

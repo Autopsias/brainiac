@@ -160,6 +160,25 @@ NOTE_CREATION_POLICIES: dict[str, dict[str, str]] = {
                   "superseded_date without superseded_by is a shape "
                   "tools/validate.py rejects (AGENTS.md §2)",
     },
+    "interview_apply.append_section": {
+        "path": "interview_apply.append_section (the owner-interview lane, "
+                "INT-01: an owner-review line or an owner-update section on "
+                "an EXISTING brain/ note)",
+        "kind": "exempt",
+        "reason": "appends the owner's answer under a heading of a note that "
+                  "already exists, through the audited write path — an edit, "
+                  "not a new note; the wikilinks it writes are the evidence "
+                  "ids the question cited, never inferred",
+    },
+    "interview_apply.write_decision_note": {
+        "path": "interview_apply.write_decision_note (INT-01: a decision note "
+                "minted from a source the owner confirmed as a decision)",
+        "kind": "counted",
+        "reason": "a NEW brain/resources/ decision note anchored to its "
+                  "source by `source: [[id]]` (TMP-05) and citing it inline; "
+                  "no autolink pass — the one link that matters is the "
+                  "owner-confirmed anchor, and the daily folds link the rest",
+    },
 }
 
 _VALID_KINDS = {"autolinked", "chained", "exempt", "counted"}

@@ -105,6 +105,19 @@ def held_threads(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return _by_verdict(rows, DO_NOT_TOUCH_VERDICT)
 
 
+def commented_threads(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Threads the owner AGREED with and still wrote something about.
+
+    Neither a do-not-touch nor a `missed`: verdict `right`, note non-empty.
+    A release row (`right`, no note) is not one of these — it says nothing.
+    Since 2026-09-08 every note the owner writes lands as a thread ruling
+    (`feedback_marks._file_mark`), so this is where "no need to draft this
+    kind of thread" lives when he did not also propose a rule.
+    """
+    return [r for r in _by_verdict(rows, "right")
+            if str(r.get("note") or "").strip()]
+
+
 def wanted_more_threads(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """The `missed` side: the owner said the porter did nothing and should have.
 
@@ -138,7 +151,9 @@ def projected_thread_rulings(rows: list[dict[str, Any]], *,
 
     held = newest(held_threads(rows))
     more = newest(wanted_more_threads(rows))
+    said = newest(commented_threads(rows))
     room = max(limit - len(held[:limit]), 0)
+    room2 = max(room - len(more[:room]), 0)
     return {"rendered": held[:limit], "excluded": len(held[limit:]),
             "excluded_digests": [str(r.get("conversation_id_digest"))
                                  for r in held[limit:]],
@@ -146,6 +161,11 @@ def projected_thread_rulings(rows: list[dict[str, Any]], *,
             "wanted_more_excluded": len(more[room:]),
             "wanted_more_digests": [str(r.get("conversation_id_digest"))
                                     for r in more[room:]],
+            # Third list, served LAST out of the same ceiling: the owner's
+            # commentary on threads he otherwise agreed with.
+            "commented": said[:room2],
+            "commented_excluded": len(said[room2:]),
+            "commented_active": len(said),
             "ceiling": limit, "stored": len(thread_rows(rows)),
             "active": len(held), "wanted_more_active": len(more)}
 
@@ -166,9 +186,30 @@ def render_budget(vault: Any = None, *, now: _dt.datetime | None = None,
         "rules": ranked_rules(rows, now=now, cap=rule_cap),
         "thread_rulings": projected_thread_rulings(rows,
                                                    ceiling=thread_ceiling),
+        "page_notes": page_notes(vault),
     }
 
 
+PAGE_NOTES_SHOWN = 3
+
+
+def page_notes(vault: Any = None) -> list[dict[str, str]]:
+    """The owner's page-wide free-text notes, newest last, at most
+    `PAGE_NOTES_SHOWN`. Read off the consumed-marks record: a note names no
+    thread, so it is not a ruling, but the owner asked (2026-09-08) that every
+    free-text field on the sheet reach the judge. Never raises."""
+    from .sheet_select import read_consumed                      # noqa: PLC0415
+    try:
+        rows = read_consumed(vault)
+    except Exception:                                            # noqa: BLE001
+        return []
+    notes = [{"sheet_date": str(r.get("sheet_date") or ""),
+              "text": str(r.get("feedback_text") or "").strip()}
+             for r in rows if str(r.get("feedback_text") or "").strip()]
+    return notes[-PAGE_NOTES_SHOWN:]
+
+
 __all__ = ['_latest_by', 'live_rules', 'ranked_rules', 'latest_thread_rulings',
-           'held_threads', 'wanted_more_threads', 'projected_thread_rulings',
+           'held_threads', 'wanted_more_threads', 'commented_threads', 'projected_thread_rulings',
+           'page_notes', 'PAGE_NOTES_SHOWN',
            'render_budget']

@@ -23,6 +23,7 @@ class RebuildPlan:
     start_chunk_rowid: int
     notes_per_batch: int
     batch_starts: list[int]
+    vault_root: str
 
 
 def _plan_rebuild(index: Any, vault: Path, resume: Any | None) -> RebuildPlan:
@@ -58,6 +59,7 @@ def _plan_rebuild(index: Any, vault: Path, resume: Any | None) -> RebuildPlan:
         start_chunk_rowid=start_chunk_rowid,
         notes_per_batch=notes_per_batch,
         batch_starts=list(range(0, len(notes), notes_per_batch)),
+        vault_root=Path(vault).as_posix(),  # unresolved: scan_vault stores paths as passed
     )
 
 
@@ -103,6 +105,7 @@ def _commit_rebuild_batch(
         vector_offset += chunk_count
     index._set_meta("committed_batches", str(batch_number + 1))
     index._set_meta("vault_fingerprint", plan.fingerprint)
+    index._set_meta("vault_root", plan.vault_root)
     index._set_meta("index_format_version", str(format_version))
     index._set_meta("notes_per_batch", str(plan.notes_per_batch))
     index._set_meta("finished", "true" if is_last_batch else "false")
@@ -149,6 +152,7 @@ def _commit_empty_rebuild(index: Any, plan: RebuildPlan, format_version: int) ->
     index.conn.execute("BEGIN IMMEDIATE")
     index._set_meta("committed_batches", "0")
     index._set_meta("vault_fingerprint", plan.fingerprint)
+    index._set_meta("vault_root", plan.vault_root)
     index._set_meta("index_format_version", str(format_version))
     index._set_meta("finished", "true")
     index.conn.commit()

@@ -29,6 +29,7 @@ sender or subject must not reach any downstream artifact.
 """
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Iterable, Mapping
 
@@ -346,3 +347,68 @@ def email_classification(
 
     assert tier in TIERS
     return tier, reasons
+
+
+# -- PV-01/PV-02: the frontmatter the index stores, and the header row fields --
+#: Bound on ``notes.frontmatter``. Mirrors ``cos_corpus.MAX_FIELD_CHARS`` (4096)
+#: without importing the COS stack into the index write path.
+MAX_INDEX_FRONTMATTER_CHARS = 4096
+TRUNCATED_KEY = "_truncated"
+#: Result-row field name -> the frontmatter key it is read from.
+ROW_FIELDS: tuple[tuple[str, str], ...] = (
+    ("sender", SENDER_KEY), ("sent", SENT_KEY), ("subject", SUBJECT_KEY))
+
+
+def _str_keys(value: Any) -> Any:
+    """Every mapping key as ``str``, at every depth.
+
+    YAML hands back ``int``/``date``/``bool``/``None`` keys (``2026: x``), and
+    ``json.dumps(sort_keys=True)`` raises on them — ``default=`` never reaches a
+    key — which aborted a whole rebuild or sync on one foreign note.
+    """
+    if isinstance(value, Mapping):
+        # `1` and "1" collide once stringified: the key that was ALREADY a
+        # string wins (stable sort puts it last), so the result never depends
+        # on the order the YAML listed them.
+        items = sorted(value.items(), key=lambda kv: isinstance(kv[0], str))
+        return {str(k): _str_keys(v) for k, v in items}
+    if isinstance(value, (list, tuple)):
+        return [_str_keys(v) for v in value]
+    return value
+
+
+def index_frontmatter_json(meta: Mapping[str, Any] | None,
+                           cap: int = MAX_INDEX_FRONTMATTER_CHARS) -> str:
+    """The parsed frontmatter as the JSON ``notes.frontmatter`` stores.
+
+    Over ``cap`` it is NEVER cut mid-value: it keeps every ``provenance.*`` key
+    plus ``_truncated: true``, so the header line survives and the reader is
+    told the rest was dropped. If even that is over the cap, only the flag
+    remains — still bounded, still honest. ``default=str`` because YAML hands
+    back ``datetime.date`` for a bare date; that covers VALUES only, so keys go
+    through :func:`_str_keys` first.
+    """
+    meta = _str_keys(dict(meta or {}))
+    out = json.dumps(meta, sort_keys=True, default=str, ensure_ascii=False)
+    if len(out) <= cap:
+        return out
+    kept = {k: v for k, v in meta.items() if k.startswith("provenance.")}
+    kept[TRUNCATED_KEY] = True
+    out = json.dumps(kept, sort_keys=True, default=str, ensure_ascii=False)
+    return out if len(out) <= cap else json.dumps({TRUNCATED_KEY: True})
+
+
+def parse_index_frontmatter(raw: str | None) -> dict[str, Any]:
+    """``notes.frontmatter`` back to a dict; ``{}`` for NULL, ``''`` or junk."""
+    try:
+        value = json.loads(raw) if raw else {}
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def header_row_fields(raw: str | None) -> dict[str, str]:
+    """``sender``/``sent``/``subject`` for a result row — absent keys omitted."""
+    meta = parse_index_frontmatter(raw)
+    return {name: ", ".join(map(str, v)) if isinstance(v, list) else str(v)
+            for name, key in ROW_FIELDS if (v := meta.get(key)) not in (None, "", [])}

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Guarded end-to-end public release pipeline (runbook §7.6-§8 in one command).
 
-    python3 tools/publish_public.py v0.19.18 --denylist ~/brainiac-release-groundtruth.txt
-    python3 tools/publish_public.py v0.19.18 --denylist <path> --dry-run       # verify only, no gates
-    python3 tools/publish_public.py v0.19.18 --denylist <path> --from public-git  # resume after a partial run
+    .venv/bin/python tools/publish_public.py v0.19.18 --denylist ~/brainiac-release-groundtruth.txt
+    .venv/bin/python tools/publish_public.py v0.19.18 --denylist <path> --dry-run       # verify only, no gates
+    .venv/bin/python tools/publish_public.py v0.19.18 --denylist <path> --from public-git  # resume after a partial run
 
 Owner decision 2026-07-29 (amending the runbook's earlier "publishing is
 never scripted" rule): the pipeline ORCHESTRATES the release, but every
@@ -265,6 +265,11 @@ def phase_preflight(tag: str, *, expect_published: bool | None = False) -> str:
     resuming AT it means the push may or may not have happened already, and
     either PyPI state is fine.
     """
+    # FIRST, because it costs ~1s and the phase it protects costs ~27
+    # minutes. `phase_tests` runs the suite under THIS interpreter
+    # (`sys.executable`), so an interpreter without the project's declared
+    # environment fails on imports long after anything could be learned.
+    assert_interpreter_can_run_the_suite(sys.executable)
     if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
         raise PublishError(f"tag must look like vX.Y.Z, got {tag!r}")
     version = tag[1:]
@@ -456,9 +461,10 @@ sys.modules.setdefault("tools.publish_public", sys.modules[__name__])
 # sibling resolves its collaborators through THIS module at call time — a
 # monkeypatch on publish_public._run (etc.) keeps governing them.
 from tools.publish_public_checks import (  # noqa: E402,F401
-    _load_denylist_terms, _scan_tree, phase_build, phase_export, phase_tests,
-    phase_windows_ci, pytest_failure_summary, scanner_self_test,
-    suite_parallel_args, worktree_sha)
+    _RELEASE_ENV_EXEMPT_GROUPS, _load_denylist_terms, _release_env_groups,
+    _scan_tree, assert_interpreter_can_run_the_suite, phase_build,
+    phase_export, phase_tests, phase_windows_ci, pytest_failure_summary,
+    scanner_self_test, suite_parallel_args, worktree_sha)
 from tools.publish_public_uploads import (  # noqa: E402,F401
     _clean_venv_check,
     _non_pypi_index, _poll, _throwaway_venv, build_mcpb, npm_pack_smoke,

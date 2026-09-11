@@ -16,6 +16,18 @@ def _egress_footer(report: dict) -> str:
     return line
 
 
+def _header_line(item: dict) -> str:
+    """PV-02: ``    from <sender>  <sent>`` for an email row, or ``""``.
+
+    One renderer so search, grep and recent print the header the same way; a
+    note that is not an email prints nothing extra.
+    """
+    parts = [f"from {item['sender']}" if item.get("sender") else "",
+             str(item.get("sent") or "")]
+    text = "  ".join(p for p in parts if p)
+    return f"\n    {text}" if text else ""
+
+
 def _concealment_notice(item: dict) -> str:
     """The `!! N run(s) of text in this note's source were HIDDEN` line, or "".
 

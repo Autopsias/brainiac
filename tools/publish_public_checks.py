@@ -13,6 +13,7 @@ import shutil
 import sys
 import tarfile
 import tempfile
+import tomllib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -41,6 +42,98 @@ def pytest_failure_summary(stdout: str, *, max_names: int = 40) -> str:
     return ("\n".join(out) or "\n".join(lines[-3:])
             or "(pytest produced no output at all -- it did not start; "
                "check the invocation and the interpreter's plugins)")
+
+
+#: `quant-tools` is the ONE group a release interpreter may lack. It carries
+#: `onnx`, a model-conversion tool nothing in the suite imports — and the
+#: reference environment that produces a green suite (this repo's `.venv`)
+#: does not have it. Demanding it would refuse the very interpreter that
+#: works. Every other group is required: a release is the one run where you
+#: want the complete declared environment.
+_RELEASE_ENV_EXEMPT_GROUPS = frozenset({"quant-tools"})
+
+
+def assert_interpreter_can_run_the_suite(python: str) -> str:
+    """Refuse an interpreter that cannot pass the suite, in about a second.
+
+    Measured 2026-09-08: `python3 tools/publish_public.py` on the release
+    host resolves to a bare Homebrew interpreter with 12 of the project's
+    declared distributions missing. The suite ran for 26m43s and reported
+    38 failed / 94 errors — every one of them a missing `mcp`, `pytesseract`
+    or `onnxruntime`, none of them a defect in the code being released. The
+    runbook and this file's own docstring both spell that command, so the
+    trap is written down twice and costs half an hour each time.
+
+    `suite_parallel_args` already probes this interpreter, but only for the
+    two test ACCELERATORS, and it deliberately degrades rather than fails —
+    correct for speed, wrong for an environment that cannot pass at all.
+
+    Distributions are checked by NAME through `importlib.metadata`, never by
+    importing them: a requirement name IS a distribution name, so nothing
+    here needs a second table mapping `pytest-xdist` to `xdist` or `Pillow`
+    to `PIL`. The list comes from pyproject, so it cannot drift.
+    """
+    groups = _release_env_groups()
+    probe = (
+        "import sys\n"
+        "from importlib.metadata import PackageNotFoundError, distribution\n"
+        "missing = []\n"
+        "for name in sys.argv[1:]:\n"
+        "    try:\n"
+        "        distribution(name)\n"
+        "    except PackageNotFoundError:\n"
+        "        missing.append(name)\n"
+        "print(' '.join(missing))\n")
+    wanted = sorted({name for names in groups.values() for name in names})
+    proc = _pp._run([python, "-c", probe, *wanted])
+    if proc.returncode != 0:
+        # The interpreter cannot even run the probe. Do not guess why.
+        raise _pp.PublishError(
+            f"{python} could not run the environment probe: "
+            f"{(proc.stderr or proc.stdout).strip()[:300]}")
+    missing = proc.stdout.split()
+    if not missing:
+        return f"release interpreter {python}: every declared distribution present"
+    where = {name: group for group, names in groups.items() for name in names}
+    # `.get`, not `[]`: the probe's stdout is whatever that interpreter
+    # printed, and a name we did not ask about must be REPORTED, never a
+    # KeyError inside the code whose whole job is to explain a bad
+    # interpreter.
+    listed = ", ".join(f"{n} ({where.get(n, 'unrecognised output')})"
+                       for n in missing)
+    raise _pp.PublishError(
+        f"the interpreter running this pipeline cannot pass the suite — "
+        f"{python} is missing {len(missing)} declared distribution(s): {listed}\n"
+        f"  The test phase would run for ~27 minutes and fail on imports, not "
+        f"on the code being released.\n"
+        f"  Fix: re-run this pipeline with the project's own environment, e.g. "
+        f"`.venv/bin/python tools/publish_public.py ...`, or install into this "
+        f"one with `{python} -m pip install -e '.[{','.join(sorted(groups))}]'`.")
+
+
+def _release_env_groups() -> dict[str, list[str]]:
+    """`{extra: [distribution names]}` from pyproject, exempt groups dropped.
+
+    The requirement name is everything before the first version specifier,
+    marker or extras bracket — parsed here rather than with `packaging`,
+    which a release interpreter is not guaranteed to carry (and this guard
+    exists precisely to run on an interpreter that carries little).
+    """
+    with open(_pp.REPO_ROOT / "pyproject.toml", "rb") as fh:
+        data = tomllib.load(fh)
+    out: dict[str, list[str]] = {}
+    optional = data.get("project", {}).get("optional-dependencies", {})
+    for group, reqs in optional.items():
+        if group in _RELEASE_ENV_EXEMPT_GROUPS:
+            continue
+        names = []
+        for raw in reqs:
+            name = re.split(r"[\s<>=!~;\[]", raw.strip(), maxsplit=1)[0]
+            if name:
+                names.append(name)
+        if names:
+            out[group] = names
+    return out
 
 
 def suite_parallel_args(python: str) -> tuple[list[str], str]:

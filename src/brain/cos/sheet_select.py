@@ -117,6 +117,15 @@ def record_consumed(vault: Any, payload: dict[str, Any], *, ts: str,
         "marks": len(payload["marks"]),
         "marks_filed": int(marks_filed),
         "consumed_at": str(ts),
+        # The page-wide free-text box. It names no thread, so it mints no
+        # rule; it reaches the judge as a page note (`render_budget`).
+        "feedback_text": str(payload.get("feedback_text") or "")[:600],
+        # The owner's answers to the questions the vault asked (INT-01). They
+        # name no thread and mint no rule; `interview_apply` reads them off
+        # this row on the next night and executes each one.
+        "answers": [{"key": str(a["key"]), "action": str(a["action"]),
+                     "note": str(a.get("note") or "")[:600]}
+                    for a in (payload.get("answers") or [])[:10]],
     }
     _append_jsonl(consumed_path(vault), row, vault=vault)
     return row
@@ -154,18 +163,56 @@ def outlook_touched_since(vault: Any, since: str) -> set[str]:
     return out
 
 
+def marked_threads(vault: Any, before: str) -> dict[str, str]:
+    """conversation id -> the action the owner already ruled on, from every
+    sheet FILED before `before`.
+
+    The record row carries the `sheet_id`; the consumed ledger carries that
+    sheet's date. Joined exactly as `effect_block` joins them, so the selection
+    rule and the effect sentence read one truth.
+    """
+    earlier = {str(c.get("sheet_id") or "") for c in read_consumed(vault)
+               if str(c.get("sheet_date") or "") < str(before)} - {""}
+    if not earlier:
+        return {}
+    out: dict[str, str] = {}
+    for row in read_record(vault)["rows"]:
+        if row.get("revoked") or str(row.get("sheet_id") or "") not in earlier:
+            continue
+        thread = row.get("thread") or row
+        cid = str(thread.get("conversation_id") or "")
+        if cid:
+            out[cid] = str(row.get("action_taken") or "")
+    return out
+
+
 def apply_selection(threads: list[dict[str, Any]],
-                    touched: set[str]) -> dict[str, Any]:
+                    touched: set[str],
+                    marked: dict[str, str] | None = None) -> dict[str, Any]:
     """Set `shown` on every row and return the counts, BY REASON.
 
     Mutates the rows because `shown` is part of the frozen state — the saved
     page has to carry which rows it asked about, or `rows_shown` on the marks
     file is a number nobody can check.
     """
-    reasons = {"draft": 0, "held_out": 0, "loud_archive": 0, "outlook": 0}
+    reasons = {"draft": 0, "held_out": 0, "loud_archive": 0, "outlook": 0,
+               "already_marked": 0}
+    marked = marked or {}
     shown = 0
     for row in threads:
         hit = []
+        # DO NOT ASK TWICE (owner, 2026-09-08: "I expect the sheet to be
+        # updated so I don't need to evaluate the same emails"). A thread he
+        # has already ruled on stays off the sheet — UNLESS the porter did
+        # something different to it since, because then the ruling has been
+        # tested and he should see the result. `effect_block` measures that
+        # same difference; this is the selection side of the same join.
+        cid = row["conversation_id"]
+        if cid in marked and marked[cid] == row["action_taken"] \
+                and cid not in touched:
+            row["shown"] = False
+            reasons["already_marked"] += 1
+            continue
         # A DRAFT, not "a draft that landed". The drafting leg writes the text
         # before the mutation lane saves anything, so a night that wrote a
         # reply and failed to save it still produced a reply in the owner's

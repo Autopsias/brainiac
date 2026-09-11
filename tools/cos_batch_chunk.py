@@ -410,6 +410,8 @@ def main(argv: list[str]) -> int:
     p.add_argument("--merge", action="store_true")
     p.add_argument("--split-category", action="store_true")
     p.add_argument("--merge-category", action="store_true")
+    p.add_argument("--split-draft", action="store_true")
+    p.add_argument("--draft-chunks-dir", type=Path, default=None)
     p.add_argument("--batches-dir", type=Path)
     p.add_argument("--batch", type=Path)
     p.add_argument("--out-dir", type=Path)
@@ -429,15 +431,25 @@ def main(argv: list[str]) -> int:
     p.add_argument("--prompt-max-bytes", type=int, default=None)
     args = p.parse_args(argv)
 
-    modes = [args.split, args.merge, args.split_category, args.merge_category]
+    modes = [args.split, args.merge, args.split_category, args.merge_category,
+             args.split_draft]
     if sum(1 for m in modes if m) != 1:
         print("choose exactly one of --split / --merge / --split-category / "
               "--merge-category", file=sys.stderr)
         return 2
     if args.size is None:
         env = ("COS_CATEGORY_CHUNK_SIZE" if args.split_category
+               else "COS_DRAFT_CHUNK_SIZE" if args.split_draft
                else "COS_JUDGE_CHUNK_SIZE")
-        args.size = int(os.environ.get(env) or 50)
+        if args.split_draft:                     # the per-MESSAGE output ceiling
+            from cos_judge_rules import DRAFT_CAP                # noqa: PLC0415
+            args.size = int(os.environ.get(env) or DRAFT_CAP)
+        else:
+            args.size = int(os.environ.get(env) or 50)
+
+    if args.split_draft:
+        from cos_batch_chunk_plan import run_split_draft             # noqa: PLC0415
+        return run_split_draft(args, split_batch, compose_draft_prompt)
 
     if args.split or args.split_category:
         need = "--batch" if args.split_category else "--batches-dir"
@@ -474,7 +486,8 @@ def main(argv: list[str]) -> int:
             print(f"category merge failed: {e}", file=sys.stderr)
             return 1
     else:
-        summary, rc = do_merge(args.chunks_dir, args.out)
+        summary, rc = do_merge(args.chunks_dir, args.out,
+                               draft_dir=args.draft_chunks_dir)
     print(json.dumps(summary))
     return rc
 

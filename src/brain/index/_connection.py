@@ -91,6 +91,19 @@ class _ConnectionMixin:
         # in place) and reset with the connection, since `rebuild` points
         # `db_path` at a staging file mid-flight.
         self._concealment_column: bool | None = None
+        # PV-01: same question for the `frontmatter` column. Unlike
+        # `concealment` this one rides a SCHEMA_VERSION bump, so a stale index
+        # is rebuilt rather than migrated in place — the flag only keeps a
+        # READ-ONLY published snapshot that predates the bump from raising
+        # `no such column` before the host republishes.
+        self._frontmatter_column: bool | None = None
+        # SF-02: the vault root THIS INDEX was built from (meta key
+        # "vault_root"), cached like the two flags above and reset with the
+        # connection for the same reason — `rebuild` repoints `db_path`
+        # mid-flight. Loaded lazily so a read never pays a meta lookup it
+        # doesn't need.
+        self._vault_root_meta: str | None = None
+        self._vault_root_meta_loaded: bool = False
         self._conn: sqlite3.Connection | None = None
 
     @property
@@ -114,6 +127,9 @@ class _ConnectionMixin:
 
     def close(self) -> None:
         self._concealment_column = None
+        self._frontmatter_column = None
+        self._vault_root_meta = None
+        self._vault_root_meta_loaded = False
         if self._conn is not None:
             self._conn.close()
             self._conn = None

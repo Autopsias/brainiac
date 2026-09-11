@@ -222,7 +222,18 @@ def readback(vault: Any, downloads_dir: Path) -> dict[str, Any]:
                                and f["marks_filed"] == 0),
         "files": files,
     }
-    cos.append_jsonl(_readback_runs_path(vault), report)
+    # THE VAULT IS THREADED, and it has to be: `_append_lock_path` proves the
+    # lock dir off every VM-visible root, which resolves the vault root, and a
+    # caller that passes none makes that resolve `$BRAIN_VAULT` and then the CWD.
+    # This job runs from launchd with `/` as its CWD and only `--vault` in argv,
+    # so three live mornings (2026-09-07..09) died here at exit 2 — after the
+    # marks would have been filed, before the morning was recorded. The two other
+    # callers in this lane (`feedback.feedback_path`, `sheet_select.consumed_path`)
+    # have passed it since 2026-08-18; this one was missed. NO TEST COULD SEE IT:
+    # `conftest`'s session fixture replaces `host_lock_dir` with a stub that
+    # ignores the vault, so the whole class is invisible to the suite — which is
+    # why the check below asserts the ARGUMENT, not the behaviour.
+    cos.append_jsonl(_readback_runs_path(vault), report, vault=vault)
     return report
 
 

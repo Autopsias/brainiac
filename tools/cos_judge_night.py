@@ -18,6 +18,18 @@ import cos_signals_stale                                        # noqa: E402
 from cos_judge_rules import _age_days  # noqa: E402
 import cos_voice                       # noqa: E402
 
+#: TR-02, 2026-09-11: the JUDGE's per-body input cap, DELIBERATELY separate
+#: from `cos_driver_transport.BODY_BUDGET_CHARS` (the CAPTURE budget, raised
+#: 4000 -> 32000 the same session). The judge has no cap of its own today, so
+#: raising the capture budget alone would raise the judge's total input by
+#: the same factor with nothing bounding it: measured over the last 7 closed
+#: corpora for the reference vault, 308 of 639 opened bodies (48%) sat AT the old
+#: 4000-char cap, so most of a night's judged text would grow, not stay flat.
+#: Held at the OLD capture budget so judged-input bytes stay roughly where
+#: they are today; the corpus row and the note both still carry the FULL body
+#: up to the new 32000-char capture budget. See `docs/cos-ops.md` (TR-02).
+JUDGE_BODY_CHAR_CAP = 4000
+
 # ---------------------------------------------------------------------------
 # a night: batches out, verdicts in
 # ---------------------------------------------------------------------------
@@ -74,7 +86,10 @@ def _row_ctx(row: dict[str, Any], c: dict[str, Any],
     at the 100-line function bound; `night` carries the facts read once per
     night (the taxonomy, the sender census, the spine, the draft census)."""
     prov = c.get("provenance") or {}
-    text = c.get("text") or ""
+    # JUDGE_BODY_CHAR_CAP, not the (now larger) capture budget: see its
+    # definition above. The corpus row and the note keep the full body; only
+    # what the model reads is capped here.
+    text = (c.get("text") or "")[:JUDGE_BODY_CHAR_CAP]
     cid = row["conversation_id"]
     ctx = {
         "sender": prov.get("sender"),
@@ -146,6 +161,35 @@ def _row_ctx(row: dict[str, Any], c: dict[str, Any],
     return ctx
 
 
+def _stamp_owner_facts(rows: list[dict[str, Any]], vault: Path, run_id: str,
+                       drafted_convids: set[str]) -> None:
+    """Two HOST facts about the owner himself, onto every ledger row (owner
+    ruling 2026-09-09). Extracted from `load_night` at the 100-line function
+    bound; it mutates the rows in place, as the loop it replaced did.
+
+    `owner_replied_last` — his own sent reply is newer than the thread's newest
+    message. The night has read Sent Items every run since FB-05 and used it
+    for draft feedback alone, so a thread he answered himself kept coming back
+    `act` and was drafted again (10 such rows on run 282).
+    `archive_eligibility` cannot reach a vault, so the fact has to ride the
+    row, the same way `read_state` does. A missing baseline degrades the whole
+    lane to `False`, which is exactly how every night before this behaved.
+
+    `porter_drafted` — whose unsent draft sits on the thread, from the SAME set
+    `split_the_draft_belts` calls belt 2. The archive belt needs it because the
+    row's bare `isDraft` cannot tell the owner's work in progress from the
+    porter's own leftover: on run 282, 4 of the 5 threads he had answered were
+    held out of the archive by a draft the PORTER wrote and then declined to
+    refresh, which would have stuck them there permanently.
+    """
+    from cos_mutate_plan_stale import (                       # noqa: PLC0415
+        owner_replied_last, owner_sent_by_conversation)
+    owner_sent = owner_sent_by_conversation(vault, run_id)
+    for row in rows:
+        row["owner_replied_last"] = owner_replied_last(row, owner_sent)
+        row["porter_drafted"] = row["conversation_id"] in drafted_convids
+
+
 def load_night(vault: Path, run_id: str,
                categories: dict[str, str] | None = None,
                selection: set[str] | None = None) -> dict[str, Any]:
@@ -204,6 +248,7 @@ def load_night(vault: Path, run_id: str,
     # that could not have planned its mutations either.
     from cos_mutate_ledger import threads_already_drafted     # noqa: PLC0415
     drafted_convids = threads_already_drafted(vault)
+    _stamp_owner_facts(rows, vault, run_id, drafted_convids)
     senders: dict[str, int] = {}
     for c in corpus.values():
         s = (c.get("provenance") or {}).get("sender")

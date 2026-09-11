@@ -192,3 +192,31 @@ def match_keyword_tier(
         if best is None or TIERS.index(tier) > TIERS.index(best[0]):
             best = (tier, term)
     return best if best else (None, None)
+
+
+def top_tier_term(
+    text: str,
+    vault: str | os.PathLike[str] | None = None,
+    explicit: str | os.PathLike[str] | None = None,
+) -> tuple[str | None, list[str]]:
+    """A ring term mapped to the TOP tier that ``text`` contains, plus every
+    ring file that could not be read.
+
+    The admission rule for sources that do NOT come from email (owner ruling
+    2026-09-11). The email lane starts at MNPI and uses the whole ring to
+    LOWER; a drop-zone or transcript source starts low, so only a top-tier row
+    may move it, and only up. Applying every row was measured first on the
+    reference vault: 648 of 1,019 Internal sources would have entered at
+    Restricted and left the Cowork VM's Internal cap, almost all on one common
+    Restricted term.
+
+    ``errors`` is returned, never swallowed: "the ring could not be read" and
+    "no term matched" are opposite answers, and each caller decides what the
+    first one costs.
+    """
+    errors: list[str] = []
+    tiers = resolve_keyword_tiers(vault, explicit, errors)
+    top = {term: tier for term, tier in tiers.items() if tier == TIERS[-1]}
+    if not top:
+        return None, errors
+    return match_keyword_tier(text, tiers=top)[1], errors

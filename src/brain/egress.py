@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import contextvars as _contextvars
 import json
+import weakref
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -88,6 +89,7 @@ def apply_gate(
     flt = cls.ClassificationFilter(max_tier=max_tier)
     surfaced = flt.filter(items, key=key)
     _mark_content_trust(surfaced)
+    _mark_drift(surfaced)
     report = flt.redaction_report(items, key=key)
     _tally(len(surfaced), int(report.get("withheld", 0) or 0))
     return surfaced, report
@@ -197,6 +199,44 @@ def _mark_content_trust(items: list[dict]) -> None:
         trust = TRUST_BY_ZONE.get(str(item.get("zone", "")).strip())
         if trust:
             item[CONTENT_TRUST_KEY] = trust
+
+
+DRIFT_KEY = "drift"
+_drift_source: "weakref.ref | None" = None
+
+
+def register_drift_source(core: Any) -> None:
+    """VULN-3387 inline marker (A-14): the core whose audit chain decides
+    whether a surfaced hit's bytes are the signed ones. Registered by
+    `BrainCore.__init__`; one process serves one vault (MCP: one server per
+    vault, owner ruling 2026-08-17), so the newest core wins. A weakref, so a
+    core that has gone away keeps nothing alive and the gate goes quiet."""
+    global _drift_source
+    _drift_source = weakref.ref(core)
+
+
+def _mark_drift(items: list[dict]) -> None:
+    """Stamp `drift: unexplained|explained` on each surfaced NOTE hit whose
+    current bytes differ from what the chain signed. Never stamps a value
+    that means "fine" — absence is not an assurance (A-12). Anything that
+    stops the check (no core, no chain, VM leg) stops it silently: the
+    gate's job is withholding, and this marker must never break a read."""
+    core = _drift_source() if _drift_source is not None else None
+    marker = getattr(core, "drift_marker", None)
+    if marker is None:
+        return
+    for item in items:
+        if not isinstance(item, dict) or DRIFT_KEY in item:
+            continue
+        path = item.get("path")
+        if not path or not item.get("zone"):
+            continue
+        try:
+            verdict = marker(str(path))
+        except Exception:  # noqa: BLE001 — a marker must never break a read
+            continue
+        if verdict:
+            item[DRIFT_KEY] = verdict
 
 
 def gate_dossier_tensions(decisions: list[dict], surfaced_sources: list[dict]) -> None:

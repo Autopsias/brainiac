@@ -13,6 +13,7 @@ captured prompt, the words do not.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -143,6 +144,47 @@ def _wanted_more_lines(threads: dict[str, Any], *,
     return out
 
 
+def _commented_lines(threads: dict[str, Any], *,
+                     redact: bool = False) -> list[str]:
+    """Threads the owner agreed with and still wrote about — his commentary.
+
+    The 2026-09-08 sheet: judgment right on 31 of 31, label right on 31 of 31,
+    and sixteen notes, eleven of which said some version of "you should not
+    have drafted this". None of them is a do-not-touch and none asks for more;
+    they are the owner explaining his own mail, and they are the most direct
+    instruction this block carries. Nothing in the host enforces them.
+    """
+    if not threads.get("commented_active"):
+        return []
+    out = [f"THREADS THE OWNER COMMENTED ON "
+           f"({len(threads['commented'])} shown of "
+           f"{threads['commented_active']} active) — he agreed with what the "
+           "porter did and wrote a note anyway. Read each note as an "
+           "instruction about threads LIKE this one; nothing in the host "
+           "enforces it, so it is yours to apply:"]
+    out += [_thread_line(r, redact=redact) for r in threads["commented"]]
+    if threads.get("commented_excluded"):
+        out.append(f"  {threads['commented_excluded']} further commented "
+                   "thread(s) are stored and not shown tonight.")
+    return out
+
+
+def _page_note_lines(notes: list[dict[str, Any]], *, redact: bool) -> list[str]:
+    """The owner's page-wide free-text box, one line per sheet. It names no
+    thread, so it binds nothing by itself; it is his reading of the night as a
+    whole, and he asked that it be weighed."""
+    if not notes:
+        return []
+    out = [f"THE OWNER'S PAGE NOTES ({len(notes)} most recent sheet(s)) — written "
+           "in the sheet's free-text box about the night as a whole. Weigh "
+           "them against every row tonight:"]
+    for n in notes:
+        text = str(n.get("text") or "")[:NOTE_CHARS]
+        shown = f"({len(text)} chars, withheld)" if redact else json.dumps(text)
+        out.append(f"  [sheet {n.get('sheet_date') or '?'}] {shown}")
+    return out
+
+
 def rulings_block(budget: dict[str, Any] | None, *, redact: bool = False) -> str:
     """The `{rulings}` section of the triage and draft prompts.
 
@@ -186,6 +228,8 @@ def rulings_block(budget: dict[str, Any] | None, *, redact: bool = False) -> str
                    "are stored and not shown tonight; the run report names "
                    "them, and the host still refuses them.")
     out += _wanted_more_lines(threads, redact=redact)
+    out += _commented_lines(threads, redact=redact)
+    out += _page_note_lines(budget.get("page_notes") or [], redact=redact)
     if budget["unreadable"]:
         out.append(f"  WARNING: {budget['unreadable']} line(s) of the owner "
                    "record could not be read this run — some rulings may be "

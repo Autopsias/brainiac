@@ -15,6 +15,7 @@ _filter_dicts = shared._filter_dicts
 _freshness_block = shared._freshness_block
 _egress_footer = shared._egress_footer
 _concealment_notice = shared._concealment_notice
+_header_line = shared._header_line
 _variant_block = shared._variant_block
 _render_variant_block = shared._render_variant_block
 _render_explain_hit = shared._render_explain_hit
@@ -175,6 +176,7 @@ def _render_search(
             f"  ({hit['classification'] or 'UNLABELLED'})"
             f"  {hit.get('date') or 'undated'}  "
             f"{hit['score'] if hit.get('score') is not None else 'redacted'}"
+            f"{_header_line(hit)}"
             f"\n    {hit['snippet']}"
             + (f"\n{_concealment_notice(hit)}" if _concealment_notice(hit) else "")
             for hit in surfaced
@@ -410,14 +412,17 @@ def _run_grep(args, ctx) -> int:
     core = ctx.core
     # Drop above-ceiling notes BEFORE matching (broker parity, 2026-09-01):
     # the withheld count was an oracle over content the caller may not read.
-    items = core.grep(args.pattern, k=args.k, regex=args.regex, max_tier=args.max_tier)
+    items = core.grep(args.pattern, k=args.k, regex=args.regex, max_tier=args.max_tier,
+                      include_retired=getattr(args, "include_retired", False))
     surfaced, report = _filter_dicts(items, args.max_tier)
     if args.json:
         _emit({"pattern": args.pattern, "results": surfaced, "egress": report}, True)
     else:
         lines = [
             f"{h['id']} ({h['classification'] or 'UNLABELLED'}) "
-            f"x{h['match_count']}\n    {h['snippet']}"
+            f"x{h['match_count']}"
+            + (" RETIRED" if str(h.get("is_latest_version", "")).lower() == "false" else "")
+            + f"{_header_line(h)}\n    {h['snippet']}"
             + (f"\n{_concealment_notice(h)}" if _concealment_notice(h) else "")
             for h in surfaced
         ]

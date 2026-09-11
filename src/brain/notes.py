@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from . import frontmatter
+from .provenance import index_frontmatter_json
 
 
 def sha256_text(text: str) -> str:
@@ -150,6 +151,10 @@ class Note:
             "is_latest_version": self.is_latest_version,
             "superseded_by": self.superseded_by,
             "previous_version": self.previous_version,
+            # PV-01: the parsed frontmatter, bounded, so a result row can carry
+            # the email header line without re-reading the file (the Cowork VM
+            # reads only the published index snapshot).
+            "frontmatter": index_frontmatter_json(self.meta),
         }
 
 

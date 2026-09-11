@@ -107,8 +107,8 @@ def check_bridge_reach(run_id: str, rows: list[dict[str, Any]],
     score green, and a night that scored green over 40 unreached candidates is
     the failure this control is named for. A legitimate zero — a run with no
     ingest-relevant rows, or one whose every candidate the bridge settled
-    without a drop (never-category, quarantined, duplicate) — passes, because
-    the leg ran and answered for each row.
+    without a drop (never-category, quarantined, duplicate, already-ingested)
+    — passes, because the leg ran and answered for each row.
     """
     scoped = [r for r in rows
               if str(r.get("disposition") or "") != _MARKER_DISPOSITION]

@@ -7,6 +7,48 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.38] — 2026-09-11
+### Changed
+- **A document carrying a top-tier keyword now enters at that tier on every
+  intake route, not only email** (owner ruling 2026-09-11). A drop-zone,
+  deliverable or transcript source whose text contains an overlay ring term
+  mapped to MNPI is admitted at MNPI, even when its body is too short for the
+  similarity legs. On the drop zone the note records
+  `classification_guard_leg: overlay_keyword` and the term; on the transcript
+  route the signed write reason does. Only top-tier rows raise: applying the
+  whole ring would have moved 648 of 1,019 Internal sources on the reference
+  vault to Restricted and out of the Cowork VM's reach. An unreadable ring is
+  `unavailable` on the guarded routes and fails closed to MNPI on the
+  transcript route, which has no guard to report it.
+
+### Fixed
+- **`brain grep` no longer answers with retired versions.** It scanned every
+  note, so one email filed eleven times answered as eleven rows — measured
+  2026-09-11 on the reference vault, 10 of 11 were retired copies, and no
+  field on the row said so. grep now uses the same retired rule as `search`
+  and `recent`, takes `--include-retired` (CLI and MCP), and every row
+  carries `is_latest_version`.
+- **The nightly version-chain and dedup folds reindex once per run, not once
+  per link.** Each `supersede` ended with a sync that walks the whole vault
+  (~26s on a 5,638-note vault, measured 2026-09-10), so a family of N versions
+  cost the hourly run N-1 full scans. Both folds now write through
+  `SupersedeBatch`: one writer lock from the first link, one reconcile on every
+  exit, and no lock or sync at all on a run with nothing to write.
+
+### Security
+- **A host hit now says when its bytes are not the signed ones** (VULN-3387
+  follow-up, A-14). The pentest team re-tested the fix and found that a note
+  edited on disk outside the audited write path — body changed, tier
+  untouched — is still served to the HOST role after `brain sync` and
+  `brain sync --publish`. That is the design: the Markdown file is the truth
+  and the index a cache the owner's editor feeds, and the VM copy already
+  withholds the note. What was missing was the hit saying so: `doctor` and
+  `verify-audit` reported the drift, the row did not. The egress chokepoint
+  now stamps `drift: unexplained` (or `explained`, once the owner triaged
+  exactly those bytes) on every surfaced note whose current bytes differ from
+  the last hash the chain signed. Negative-only: an absent field is not an
+  assurance (A-12), and nothing here changes what is served or withheld.
+
 ## [0.20.37] — 2026-09-08
 ### Added
 - **The owner can see what he is being asked to judge, and answer it in

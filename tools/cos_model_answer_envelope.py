@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -202,6 +203,47 @@ def _answer_from_stream(events: list[dict[str, Any]],
     return rows, (f"{len(rows)} row(s) reassembled from {n_assistant} assistant "
                   f"event(s) across {turns} turn(s); "
                   f"{n_denied} tool call(s) refused by the permission gate")
+
+
+_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9._\[\]-]{1,64}$")
+_USAGE_INTS = ("input_tokens", "output_tokens", "cache_read_input_tokens",
+               "cache_creation_input_tokens")
+
+
+def usage_receipt(text: str) -> dict[str, Any]:
+    """What one leg call cost, off the stream's terminal `result` event —
+    NUMBERS ONLY plus pattern-checked model ids. Empty dict when there is no
+    stream, no result, or nothing usable; never raises. The night could not
+    say what it spent until 2026-09-09: stdout went straight into the parser
+    and stderr was empty, so every cost estimate was made from prompt bytes.
+    Nothing free-text from the envelope ever reaches this receipt — that is
+    the same rule `project_envelope_field` enforces for the note."""
+    try:
+        events = _stream_events(text)
+        result = next((e for e in reversed(events or [])
+                       if isinstance(e, dict) and e.get("type") == "result"), None)
+        if result is None:
+            return {}
+        out: dict[str, Any] = {}
+        usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
+        for k in _USAGE_INTS:
+            v = usage.get(k)
+            if isinstance(v, int) and not isinstance(v, bool) and v >= 0:
+                out[k] = v
+        for k in ("duration_ms", "num_turns"):
+            v = result.get(k)
+            if isinstance(v, int) and not isinstance(v, bool) and v >= 0:
+                out[k] = v
+        cost = result.get("total_cost_usd")
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost >= 0:
+            out["cost_usd"] = round(float(cost), 6)
+        mu = result.get("modelUsage")
+        if isinstance(mu, dict):
+            out["models"] = sorted(m for m in mu if isinstance(m, str)
+                                   and _MODEL_ID_RE.match(m))
+        return out
+    except Exception:                                            # noqa: BLE001
+        return {}
 
 
 def _answer_from_single_envelope(

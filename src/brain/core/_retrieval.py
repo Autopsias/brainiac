@@ -84,14 +84,17 @@ class _CoreRetrievalMixin:
         )
     def grep(
         self, pattern: str, *, k: int = 20, regex: bool = False,
-        max_tier: str | None = None,
+        max_tier: str | None = None, include_retired: bool = False,
     ) -> list[dict[str, Any]]:
         """Lexical-first scan over note bodies — no embedding (RET-04).
+
+        Versions a supersede chain retired are hidden unless ``include_retired``.
 
         ``max_tier`` drops above-ceiling notes BEFORE matching, so hit counts
         and ranking cannot be used as an oracle over content the caller may not
         read — see :meth:`brain.index._tools._ToolMixin.grep`."""
-        return self.index.grep(pattern, k=k, regex=regex, max_tier=max_tier)
+        return self.index.grep(pattern, k=k, regex=regex, max_tier=max_tier,
+                               include_retired=include_retired)
     def bases_query(
         self, filters: dict[str, str] | None = None, *, k: int = 50,
         latest_only: bool = False, as_of: str | None = None,

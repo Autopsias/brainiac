@@ -392,7 +392,7 @@ def dispatch_grep(
         str(args["pattern"]),
         k=int(args.get("k", 20)),
         regex=bool(args.get("regex", False)),
-        max_tier=max_tier,
+        max_tier=max_tier, include_retired=bool(args.get("include_retired", False)),
     )
     surfaced, report = _filtered(items, max_tier)
     return {"pattern": str(args["pattern"]), "results": surfaced, "egress": report}

@@ -73,7 +73,7 @@ def _live_head(note_id: str, successor_of: dict[str, str]) -> str:
 
 
 def _retire_renditions(
-    core: Any,
+    batch: Any,
     renditions: dict[tuple[str, int], list[tuple[str, dict[str, str]]]],
     primaries: dict[tuple[str, int], list[str]],
     successor_of: dict[str, str],
@@ -98,7 +98,7 @@ def _retire_renditions(
                 report["skipped_conflict"].append(nid)
                 continue
             try:
-                core.supersede(nid, primary,
+                batch.supersede(nid, primary,
                                reason="auto rendition (same version, other format)")
                 report["renditions"].append(
                     {"rendition": nid, "primary": primary, "family": key[0]})
@@ -173,7 +173,20 @@ def auto_version_chains(core: Any) -> dict[str, Any]:
     correct. Ambiguous families are now skipped quietly (``skipped_ambiguous``
     — informational, never action-required); ``skipped_conflict`` keeps its
     original meaning: an orderable family whose manual chain disagrees, which
-    IS a human call."""
+    IS a human call.
+
+    Every link in one run goes through ONE ``SupersedeBatch``: one writer lock
+    and one reindex after the last link, not a full-vault sync per link.
+    ``auto_dedup_fold`` reads the index straight after this fold, so the
+    reconcile has to land here, not only at the end of the daily block."""
+    from .core import SupersedeBatch
+
+    with SupersedeBatch(core, "auto-version-chains") as batch:
+        return _chain_families(core, batch)
+
+
+def _chain_families(core: Any, batch: Any) -> dict[str, Any]:
+    """The body of :func:`auto_version_chains`; every write goes through ``batch``."""
     families, renditions, primaries, successor_of = _group_versions(core)
     report: dict[str, Any] = {"chained": [], "renditions": [], "skipped_conflict": [],
                               "skipped_ambiguous": [], "errors": []}
@@ -206,7 +219,7 @@ def auto_version_chains(core: Any) -> dict[str, Any]:
             if meta[old_id]["superseded_by"] == new_id:
                 continue  # already chained — idempotent re-run
             try:
-                core.supersede(old_id, new_id, reason="auto version-chain (nightly self-organization)")
+                batch.supersede(old_id, new_id, reason="auto version-chain (nightly self-organization)")
                 report["chained"].append({"old": old_id, "new": new_id, "family": fam})
             except Exception as exc:  # noqa: BLE001 — one bad family never aborts the fold
                 report["errors"].append({"family": fam, "old": old_id,
@@ -214,7 +227,7 @@ def auto_version_chains(core: Any) -> dict[str, Any]:
                 break
     for link in report["chained"]:
         successor_of[link["old"]] = link["new"]
-    _retire_renditions(core, renditions, primaries, successor_of, report)
+    _retire_renditions(batch, renditions, primaries, successor_of, report)
     return report
 
 

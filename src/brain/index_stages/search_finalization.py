@@ -81,6 +81,7 @@ def materialize_hits(
                 classification=row["classification"],
                 zone=row["zone"],
                 path=row["path"],
+                vault_path=index._vault_path(row["path"]),
                 score=ranking.scores[rowid],
                 source=_source(ranking, rowid),
                 snippet=index._snippet(snippet_source),
@@ -89,6 +90,7 @@ def materialize_hits(
                 type=row.get("type", ""),
                 concealment=row.get("concealment", "unknown"),
                 duplicates=ranking.candidates.collapse.absorbed_ids.get(rowid, []),
+                header=row.get("header", {}),
             )
         )
     return MaterializedSearch(hits, row_by_id)

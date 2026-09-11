@@ -55,7 +55,7 @@ RESOLUTIONS = {"owner-reply-latest": "owner_reply_is_latest",
                "approval-granted": "approval_granted",
                "superseding-thread": "superseding_thread"}
 TIER_ORDER = ["Public", "Internal", "Confidential", "Restricted", "MNPI"]
-DRAFT_CAP = 30  # per NIGHT; owner ruling, DOCTRINE.md 3.4
+DRAFT_CAP = 35  # ruling 2026-09-09; = output ceiling, test_cos_draft_cap_*
 
 #: Words a run reaches for when it replaces rule 2's SUBSTANCE test with a
 #: NOVELTY test. None of them appears in the doctrine; all of them were written

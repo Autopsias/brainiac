@@ -12,7 +12,7 @@ from . import config, cos, provenance
 def append_thread(vault, run_id: Any, *, conversation_id: Any, text: str,
                   sender: Any = None, sent: Any = None, subject: Any = None,
                   read_lane: Any = None, body_opened: Any = None,
-                  extraction: Any = None,
+                  extraction: Any = None, raw_chars: Any = None,
                   now: _dt.datetime | None = None) -> dict[str, Any]:
     """Append ONE thread's captured text to ``run_id``'s corpus.
 
@@ -47,6 +47,13 @@ def append_thread(vault, run_id: Any, *, conversation_id: Any, text: str,
             f"body_opened must be a boolean, not "
             f"{type(body_opened).__name__} — it is read as a fact about what "
             f"the run did, and a truthy string is not that fact.")
+    if raw_chars is not None and (isinstance(raw_chars, bool)
+                                  or not isinstance(raw_chars, int)
+                                  or raw_chars < 0):
+        raise CorpusRefused(
+            f"raw_chars must be a non-negative integer, not {raw_chars!r} — "
+            f"it is the true character count the OWA driver read before "
+            f"clipping, and a malformed count cannot be compared to `chars`.")
     if extraction is not None:
         _bounded_json(extraction, field="extraction", cap=MAX_EXTRACTION_BYTES)
     p = corpus_path(vault, rid)
@@ -67,7 +74,8 @@ def append_thread(vault, run_id: Any, *, conversation_id: Any, text: str,
     }
     for key, val in (("read_lane", _opt(read_lane, field="read_lane")),
                      ("body_opened", body_opened),
-                     ("extraction", extraction)):
+                     ("extraction", extraction),
+                     ("raw_chars", raw_chars)):
         if val is not None:
             row[key] = val
     try:

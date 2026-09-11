@@ -73,8 +73,15 @@ STALE_ACT_SIGNAL = "stale-act-archived"
 #: The signals that may JUSTIFY an auto-archive. `none` is a descriptive label
 #: and `automated-mail-marker` was retired at run 127 (no typed field validates
 #: it), so neither can carry a row into the archive lane.
+#: (owner ruling 2026-09-09) The owner-replied signal. Its bucket row below is
+#: `act` + `read`: the lane fires on an `act` row (the case the ruling is
+#: about), and a `read` row that also carries an owner reply keeps the
+#: aged-read signal it already had, so the pair is stated rather than assumed.
+OWNER_REPLIED_SIGNAL = "owner-replied-archived"
+
 ARCHIVING_SIGNALS = frozenset({"recurring-automated-sender", "read-noise-bucket",
-                               AGED_READ_SIGNAL, STALE_ACT_SIGNAL})
+                               AGED_READ_SIGNAL, STALE_ACT_SIGNAL,
+                               OWNER_REPLIED_SIGNAL})
 
 #: Which BUCKET each lane's archive may sit in. The default is `noise`; the
 #: aged-read ruling widened its own signal to `read` and STALE-01 widens ITS
@@ -82,7 +89,8 @@ ARCHIVING_SIGNALS = frozenset({"recurring-automated-sender", "read-noise-bucket"
 #: is looked up per row by that row's own signal, so `read-noise-bucket` and
 #: `aged-read-no-action` mean exactly what they meant before.
 ARCHIVE_BUCKETS = {AGED_READ_SIGNAL: frozenset({"noise", "read"}),
-                   STALE_ACT_SIGNAL: frozenset({"act"})}
+                   STALE_ACT_SIGNAL: frozenset({"act"}),
+                   OWNER_REPLIED_SIGNAL: frozenset({"act", "read"})}
 DEFAULT_ARCHIVE_BUCKETS = frozenset({"noise"})
 
 

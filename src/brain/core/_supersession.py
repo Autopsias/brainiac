@@ -15,7 +15,8 @@ class _SupersessionTransactionMixin:
     """Supersession transactions for BrainCore."""
 
     def supersede(self, old_id: str, new_id: str, *, reason: str = "",
-                  expect: dict[str, Any] | None = None) -> dict[str, Any]:
+                  expect: dict[str, Any] | None = None,
+                  reindex: bool = True) -> dict[str, Any]:
         """Retire ``old_id`` in favour of ``new_id`` — both sides of the version
         chain, written through the audited ``write_note`` path (ADR-0003 Ruling
         2/8). HOST-broker only.
@@ -52,6 +53,33 @@ class _SupersessionTransactionMixin:
         trailing ``self.sync()`` call's own acquisition is a same-process no-op,
         not a second wait.
 
+        ``reindex=False`` REMOVES that trailing reindex from the critical
+        section and hands index consistency to the caller. The signed writes,
+        the journal and the lock are unchanged; only the index is left stale,
+        and ``reindexed`` comes back ``None`` instead of a count so a caller can
+        tell "synced, nothing changed" from "not synced at all". It exists for
+        ONE shape of caller: a bulk replay that holds this same lock across its
+        whole loop (the counter above makes every inner acquisition a no-op) and
+        syncs ONCE at the end, in a ``finally``, so an aborted loop still
+        reconciles what it wrote. Measured 2026-09-10 on a 5638-note vault: the
+        per-pair scan is ~26s of a ~26s call, so 1360 pairs cost ~10 hours with
+        it and ~6 minutes without. A caller that does not hold the lock across
+        the loop, or that can exit without syncing, must NOT use it — it leaves
+        signed notes on disk that no ``search``/``get``/``--latest-only`` query
+        can see, with nothing that reports the staleness.
+
+        Use it through ``SupersedeBatch`` (``core/_supersede_batch.py``), which
+        keeps both obligations in code: it holds the lock from its first call
+        and recovers-then-syncs on every exit. The nightly version-chain and
+        dedup folds use it. ``tools/cos_bridge_retire_duplicates.py`` predates
+        the class and keeps the same two obligations by hand.
+
+        The outer-lock half is ALSO enforced here: ``reindex=False`` refuses
+        unless the re-entrant depth counter shows the caller already holds the
+        lock (``_require_caller_held_lock``). The "sync at the end, in a
+        ``finally``" half cannot be checked by a callee, which cannot see
+        whether its caller will — that is why it lives in the batch.
+
         ``expect`` (HARDENED:codex-8) is an OPTIONAL precondition set a caller
         computed OUT of band — content hashes and chain-head values it saw when
         it decided this supersession was correct. Every key present is verified
@@ -67,7 +95,32 @@ class _SupersessionTransactionMixin:
         self._require_host("supersede notes (writes both sides of a version chain)")
         with vault_writer_lock(self.vault, verb="supersede"):
             return self._supersede_locked(old_id, new_id, reason=reason,
-                                          expect=expect)
+                                          expect=expect, reindex=reindex)
+    def _require_caller_held_lock(self, verb: str) -> None:
+        """``reindex=False`` is safe only inside a lock the CALLER already
+        holds, and the re-entrant depth counter is the one fact that proves it.
+
+        Depth 1 means THIS call took the lock and will release it on return,
+        so nothing is left to reconcile the index — the caller would walk away
+        with signed notes on disk that no ``search``/``get``/``--latest-only``
+        query can see, and nothing reports that. Depth 2 or more means an outer
+        ``vault_writer_lock`` is open and is the caller that must sync.
+
+        The obligation used to be docstring prose. This makes it executable,
+        because the flag is a public keyword on a host-broker verb and the
+        failure it permits is silent (adversarial review pass 2, 2026-09-11).
+        """
+        from .. import config
+        from ..lock import _DEPTH
+
+        if _DEPTH.get(str(config.writer_lock_path(self.vault)), 0) <= 1:
+            raise ValueError(
+                f"{verb}(reindex=False) requires the CALLER to hold the vault "
+                "writer lock across its whole loop and to reconcile the index "
+                "once at the end; this process holds it only for this call, so "
+                "the notes it signs would be absent from the index with nothing "
+                "reporting it. See the `reindex` paragraph in supersede().")
+
     @staticmethod
     def _check_supersede_expect(expect: dict[str, Any], *, old_id: str, new_id: str,
                                 old_before: str, new_before: str,
@@ -101,7 +154,10 @@ class _SupersessionTransactionMixin:
                     f"drifted (expected {want!r}, found {got!r}) — the pair "
                     "changed after the decision was made; nothing was written")
     def _supersede_locked(self, old_id: str, new_id: str, *, reason: str = "",
-                          expect: dict[str, Any] | None = None) -> dict[str, Any]:
+                          expect: dict[str, Any] | None = None,
+                          reindex: bool = True) -> dict[str, Any]:
+        if not reindex:
+            self._require_caller_held_lock("supersede")
         self._recover_pending_supersede()
 
         if old_id == new_id:
@@ -169,13 +225,21 @@ class _SupersessionTransactionMixin:
         )
         self._clear_supersede_journal()
 
-        sync_res = self.sync(drain=False)
+        # reindex=False skips the per-pair full-vault scan for a bulk caller
+        # that holds this lock across its whole loop and syncs once at the end.
+        # `reindexed` is None in that mode, never zeros: a caller must be able
+        # to tell "synced, nothing changed" from "not synced at all". Contract
+        # and the caller's obligations: the `reindex` paragraph in supersede().
+        sync_res = self.sync(drain=False) if reindex else None
         return {
             "old_id": old_id, "new_id": new_id,
             "old_write": old_write, "new_write": new_write,
-            "reindexed": {"added": sync_res.get("added", 0), "updated": sync_res.get("updated", 0)},
+            "reindexed": None if sync_res is None else {
+                "added": sync_res.get("added", 0),
+                "updated": sync_res.get("updated", 0)},
         }
-    def unsupersede(self, old_id: str, new_id: str, *, reason: str = "") -> dict[str, Any]:
+    def unsupersede(self, old_id: str, new_id: str, *, reason: str = "",
+                    reindex: bool = True) -> dict[str, Any]:
         """Undo ONE supersession link ``old_id -> new_id``, both sides, through
         the audited ``write_note`` path. HOST-broker only.
 
@@ -212,12 +276,20 @@ class _SupersessionTransactionMixin:
         Same single-writer lock and same crash journal as ``supersede`` (a
         crash between the two signed writes is rolled back by the same
         ``_recover_pending_supersede``).
+
+        ``reindex=False`` carries exactly the contract, the caller obligations
+        and the ``reindexed: None`` return that the ``reindex`` paragraph in
+        ``supersede`` states. Read it there; do not use this flag without it.
         """
         self._require_host("unsupersede notes (writes both sides of a version chain)")
         with vault_writer_lock(self.vault, verb="unsupersede"):
-            return self._unsupersede_locked(old_id, new_id, reason=reason)
+            return self._unsupersede_locked(old_id, new_id, reason=reason,
+                                            reindex=reindex)
     def _unsupersede_locked(self, old_id: str, new_id: str, *,
-                            reason: str = "") -> dict[str, Any]:
+                            reason: str = "",
+                            reindex: bool = True) -> dict[str, Any]:
+        if not reindex:
+            self._require_caller_held_lock("unsupersede")
         self._recover_pending_supersede()
 
         if old_id == new_id:
@@ -279,7 +351,12 @@ class _SupersessionTransactionMixin:
                 reason=f"{why} (clearing {new_id})")
         self._clear_supersede_journal()
 
-        sync_res = self.sync(drain=False)
+        # reindex=False skips the per-pair full-vault scan for a bulk caller
+        # that holds this lock across its whole loop and syncs once at the end.
+        # `reindexed` is None in that mode, never zeros: a caller must be able
+        # to tell "synced, nothing changed" from "not synced at all". Contract
+        # and the caller's obligations: the `reindex` paragraph in supersede().
+        sync_res = self.sync(drain=False) if reindex else None
         kept = next((str(new_meta.get(k)) for k in ("previous_version", "replaces")
                      if not reciprocal and new_meta.get(k)), None)
         return {
@@ -287,6 +364,7 @@ class _SupersessionTransactionMixin:
             "old_write": old_write, "new_write": new_write,
             "cleared_keys": list(back_keys),
             "new_previous_version_kept": kept,
-            "reindexed": {"added": sync_res.get("added", 0),
-                          "updated": sync_res.get("updated", 0)},
+            "reindexed": None if sync_res is None else {
+                "added": sync_res.get("added", 0),
+                "updated": sync_res.get("updated", 0)},
         }

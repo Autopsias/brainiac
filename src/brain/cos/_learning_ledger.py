@@ -207,7 +207,12 @@ def catching_up_ingest_runs(vault, run_id: str, *,
     STATED CEILING: the window bounds the catch-up at ``since_days`` (14 by
     default, ``$BRAIN_COS_SINCE_DAYS``), applied to the LEDGER FILE NAME — so
     this reads a fortnight of ledgers rather than every run the host has ever
-    made, and a candidate signed later than that is never marked. An `--all`
+    made. IT BOUNDS THE WORK, NOT THE ANSWER (DD-01, 2026-09-10): a thread
+    whose offering run has left the window still reads as signed, because
+    :func:`signed_ingested_catching_up` falls through to the cross-run note
+    index. This docstring claimed the opposite until the bridge stopped
+    re-offering an unchanged thread every night, which is what had been
+    keeping every signed thread's evidence inside the window. An `--all`
     run lifts the plan's recency window but NOT this one; widening it is a
     knob, not a redesign.
     """
@@ -272,6 +277,33 @@ def signed_ingested_catching_up(vault, run_id: str,
             by_run[rid] = mine
     by_run[run_id] = [r for r in rows if r.get("conversation_id")]
     signed = signed_ingested_conversations_by_run(vault, by_run) & wanted
+    # THE NIGHTLY RE-DROP WAS DOING A SECOND JOB, AND DD-01 TOOK IT AWAY
+    # (review 2026-09-10). Every clause above is keyed on a PER-RUN bridge
+    # ident, so a thread only answers yes while some run INSIDE the window
+    # still offered it. The bridge used to re-offer an unchanged thread every
+    # night, which re-stated its signed evidence inside the window forever;
+    # now it settles the thread `already-ingested` and offers nothing, so a
+    # fortnight later the window is empty. Probed: sign `2026-08-18-run1`,
+    # settle on `2026-08-19-run2` -> {thread-1}, ask again on
+    # `2026-09-10-run9` -> set(). That empty set feeds the
+    # `Brainiac · Ingested` chip AND the aged-read RULE-1 archive escape, so
+    # the thread could never be archived — the inbox-to-zero goal DD-01
+    # exists for, closed by DD-01 itself.
+    #
+    # `signed_bridge_notes` is the cross-run half of the SAME join, and it is
+    # the same STRENGTH: sha256 of the note file's OWN BYTES against a sha the
+    # host-private claims ledger recorded, and only then the note's own
+    # `provenance.conversation_id`. Frontmatter alone is still a claim
+    # (STA-01) — a forged note carries no claims row and answers no at any
+    # age. ONE FULL VAULT WALK (~1.2s / 3,993 notes), so it is built once here
+    # and only when something is still unaccounted for.
+    missing = wanted - signed
+    if missing:
+        from ._bridge_notes import signed_bridge_notes        # noqa: PLC0415
+        from ._proposal_state import bridge_conversation_key  # noqa: PLC0415
+        index = signed_bridge_notes(vault)
+        signed |= {cid for cid in missing
+                   if index.get(bridge_conversation_key(cid))}
     # A UNION IS ONLY SOUND FOR A FACT THAT CANNOT BECOME FALSE (ATT-03,
     # 2026-09-05). "This thread's files are accounted for" is not such a fact:
     # a new attachment on an existing thread makes an older run's YES wrong,

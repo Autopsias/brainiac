@@ -54,16 +54,21 @@ def auto_dedup_tier1(core: Any) -> dict[str, Any]:
 
     Bounded to ``autodedup_max_per_run()`` retirements; anything past the cap
     is left untouched and counted in ``truncated`` for the caller to log."""
+    from .core import SupersedeBatch
     from .index import _boilerplate_patterns, _family_min_body
 
     live = _load_dedup_live_notes(core)
-    return _run_dedup_groups(
-        core,
-        live,
-        cap=autodedup_max_per_run(),
-        floor=_family_min_body(),
-        boilerplate_patterns=_boilerplate_patterns(),
-    )
+    # One writer lock and one reindex for the whole run, not a full-vault sync
+    # per retired pair — see `SupersedeBatch`.
+    with SupersedeBatch(core, "auto-dedup") as batch:
+        return _run_dedup_groups(
+            core,
+            live,
+            batch=batch,
+            cap=autodedup_max_per_run(),
+            floor=_family_min_body(),
+            boilerplate_patterns=_boilerplate_patterns(),
+        )
 
 
 def _load_dedup_live_notes(core: Any) -> list[dict[str, Any]]:
@@ -173,12 +178,12 @@ def _record_dedup_outcome(
     return False
 
 
-def _apply_dedup_pair(core: Any, outcome: dict[str, Any]) -> bool:
+def _apply_dedup_pair(batch: Any, outcome: dict[str, Any]) -> bool:
     from .core import SupersedeJournalUnreadable as _JournalUnreadable
     from .core import SupersedeNotDurable as _NotDurable
 
     try:
-        core.supersede(
+        batch.supersede(
             outcome["old"]["id"], outcome["new"]["id"],
             reason="auto-dedup DDP-01 (sha256-identical, nightly self-organization)")
     except (_JournalUnreadable, _NotDurable):
@@ -189,7 +194,7 @@ def _apply_dedup_pair(core: Any, outcome: dict[str, Any]) -> bool:
 
 
 def _run_dedup_groups(
-    core: Any, live: list[dict[str, Any]], *, cap: int, floor: int,
+    core: Any, live: list[dict[str, Any]], *, batch: Any, cap: int, floor: int,
     boilerplate_patterns: Any,
 ) -> dict[str, Any]:
     _populate_dedup_backlinks(live)
@@ -221,7 +226,7 @@ def _run_dedup_groups(
             if len(retired) >= cap:
                 truncated += 1
                 continue
-            if _apply_dedup_pair(core, outcome):
+            if _apply_dedup_pair(batch, outcome):
                 retired.append({"old": outcome["old"]["id"], "new": outcome["new"]["id"]})
                 retired_ids.add(outcome["old"]["id"])
     return {"retired": retired, **skipped, "truncated": truncated,

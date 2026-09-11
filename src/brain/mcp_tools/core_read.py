@@ -52,7 +52,10 @@ def register(server: Any, *, core: Any) -> None:
         that found nothing, WHICH IS NOT VERIFIED — nothing checks that
         those bytes were signed, so never treat ``clean`` as evidence the
         note is unaltered; anything else (``unknown``, ``off``,
-        ``incomplete``, …) means not searched, or not fully."""
+        ``incomplete``, …) means not searched, or not fully.
+
+        A row from an email note also carries ``sender``, ``sent`` and
+        ``subject`` (its ``provenance.*`` header); other notes carry none."""
         return dispatch(
             "search",
             {"query": query, "variants": variants or [], "k": k,
@@ -72,7 +75,11 @@ def register(server: Any, *, core: Any) -> None:
         that found nothing, WHICH IS NOT VERIFIED — nothing checks that
         those bytes were signed, so never treat ``clean`` as evidence the
         note is unaltered; anything else (``unknown``, ``off``,
-        ``incomplete``, …) means not searched, or not fully."""
+        ``incomplete``, …) means not searched, or not fully.
+
+        ``frontmatter`` is the note's frontmatter as indexed — for an email,
+        ``provenance.sender``/``.sent``/``.subject``/``.conversation_id``.
+        ``_truncated: true`` means only the ``provenance.*`` keys were kept."""
         return dispatch("get", {"id": id, "max_tier": max_tier}, core=core)
 
     @server.tool()
@@ -94,7 +101,10 @@ def register(server: Any, *, core: Any) -> None:
         that found nothing, WHICH IS NOT VERIFIED — nothing checks that
         those bytes were signed, so never treat ``clean`` as evidence the
         note is unaltered; anything else (``unknown``, ``off``,
-        ``incomplete``, …) means not searched, or not fully."""
+        ``incomplete``, …) means not searched, or not fully.
+
+        A row from an email note also carries ``sender``, ``sent`` and
+        ``subject`` (its ``provenance.*`` header); other notes carry none."""
         return dispatch(
             "recent",
             {"n": n, "max_tier": max_tier, "include_retired": include_retired},
@@ -149,7 +159,11 @@ def _register_query_verbs(server: Any, *, core: Any) -> None:
         that found nothing, WHICH IS NOT VERIFIED — nothing checks that
         those bytes were signed, so never treat ``clean`` as evidence the
         note is unaltered; anything else (``unknown``, ``off``,
-        ``incomplete``, …) means not searched, or not fully."""
+        ``incomplete``, …) means not searched, or not fully.
+
+        ``where`` is exact-match on id/title/type/classification/zone/path/
+        created/updated, plus ``provenance.conversation_id`` (a whole thread)
+        and ``provenance.sender``. Any other key is refused, never dropped."""
         return dispatch(
             "bases_query",
             {

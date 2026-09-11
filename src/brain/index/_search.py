@@ -63,11 +63,13 @@ class _SearchMixin:
             hits.append(Hit(
                 id=row["id"], title=row["title"],
                 classification=row["classification"], zone=row["zone"],
-                path=row["path"], score=0.0, source="lexical",
+                path=row["path"], vault_path=self._vault_path(row["path"]),
+                score=0.0, source="lexical",
                 snippet=self._snippet(row["body"]),
                 is_latest_version=row.get("is_latest_version", ""),
                 date=str(d or ""), type=row.get("type", ""),
                 concealment=stored_verdict(row.get("concealment")),
+                header=row.get("header", {}),
                 evidence=(
                     self._evidence_from_exact(exact, rid)
                     or ("keyword_exact" if self._literal_keyword_match(

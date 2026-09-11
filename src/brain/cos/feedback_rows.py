@@ -34,7 +34,7 @@ SHEET_STATE_ELEMENT_ID = "cos-sheet-state"
 #: to "what reached the vault". Display only — no mark column moved and
 #: `sheet_marks.validate_marks` is untouched — but the thread-row key set
 #: is exact, so an older PAGE refuses rather than degrades.
-SHEET_STATE_SCHEMA = "cos-sheet-state/3"
+SHEET_STATE_SCHEMA = "cos-sheet-state/4"
 
 KIND_RULE = "rule"
 KIND_THREAD = "thread"

@@ -113,10 +113,14 @@ def run_proposal_drop_record(vault, run_id: str) -> dict[str, Any]:
 
 BRIDGE_SETTLEMENT_SCHEMA = "cos_bridge_settlement/v1"
 _BRIDGE_RECEIPTS_DIRNAME = "cos-bridge-receipts"
-#: The three shapes the bridge settles WITHOUT a drop: a quarantined
+#: The four shapes the bridge settles WITHOUT a drop: a quarantined
 #: candidate, a never-ingest-category candidate (zero drops by owner rule),
-#: and a duplicate of a conversation another row/run already settled.
-BRIDGE_SETTLEMENT_KINDS = ("quarantined", "never-category", "duplicate")
+#: a duplicate of a conversation another row/run already settled, and — since
+#: DD-01, 2026-09-10 — a candidate whose captured TEXT this vault has already
+#: SIGNED a note for (`cos.signed_bridge_notes`), which is the cross-run rule
+#: that stops the bridge re-filing an unchanged thread every night.
+BRIDGE_SETTLEMENT_KINDS = ("quarantined", "never-category", "duplicate",
+                           "already-ingested")
 
 #: The CLOSED vocabulary of reasons a staged candidate got no proposal because
 #: THE LEG DID NOT CARRY IT (ATT-02, s04 2026-09-05). Distinct from

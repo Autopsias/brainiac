@@ -8,7 +8,7 @@ least wrong. Three independent closed questions replace it:
 
     JUDGMENT   right | should-be <act|read|noise> at <P0..P3>
     LABEL      right | should-be <a category from the owner's own taxonomy>
-    DRAFT      send-as-is | needs <tone|facts|too-long|missing-point>
+    DRAFT      send-as-is | not-needed | needs <tone|facts|too-long|missing-point>
 
 plus one optional NOTE. **UNSET is a first-class fourth value on every one of
 them, and it is never filed.** An unmarked row is UNKNOWN — not agreement and
@@ -50,7 +50,12 @@ JUDGMENT_VALUES = ("right",) + tuple(
 #: DRAFT: what is wrong with the reply the porter wrote, in four words the
 #: drafting prompt can act on. `send-as-is` is the explicit agreement — it is a
 #: MARK, not the absence of one.
-DRAFT_VALUES = ("send-as-is", "tone", "facts", "too-long", "missing-point")
+#: `not-needed` since 2026-09-08 — the owner's own request off his first sheet:
+#: "add an option for my judgment of the drafts where I can say that no draft
+#: was needed in this case". Without it he wrote the same sentence into eleven
+#: note boxes and once mis-used `missing-point` to carry it.
+DRAFT_VALUES = ("send-as-is", "not-needed", "tone", "facts", "too-long",
+                "missing-point")
 
 #: LABEL takes `right` or any entry in the sheet's own `label_vocabulary`,
 #: which is the owner's `overlay/cos/ingest.md` taxonomy. It is therefore
@@ -66,8 +71,12 @@ MARKS_SCHEMA = "cos-marks/1"
 #: silent partial read becomes an owner ruling nobody made.
 MARKS_FILE_KEYS = frozenset({
     "schema", "sheet_id", "date", "run", "transport", "rows_shown",
-    "content_sha256", "marks", "revoked", "feedback_text",
+    "content_sha256", "marks", "revoked", "feedback_text", "answers",
 })
+#: One owner answer to a question the vault asked (INT-01): the question's
+#: key, the option ACTION picked (never the label — labels are reworded), and
+#: the free-text note beside it.
+ANSWER_KEYS = frozenset({"key", "action", "note"})
 MARK_KEYS = frozenset({
     "conversation_id", "subject_sha256", "action_taken", "category",
     "judgment", "label", "draft", "draft_text", "note", "rules",
@@ -104,6 +113,9 @@ RULE_TEMPLATES = {
     "draft:too-long": "Reply drafts on {category} threads should be shorter.",
     "draft:missing-point": "Reply drafts on {category} threads must answer "
                            "the main ask directly.",
+    "draft:not-needed": "Do not draft replies on {category} threads that are "
+                        "informational, already answered, or too old to "
+                        "answer as first written.",
 }
 
 UNCATEGORISED = "uncategorised"
@@ -232,7 +244,7 @@ def canonical_payload(payload: dict[str, Any]) -> str:
     """
     body = {k: payload.get(k) for k in
             ("sheet_id", "date", "run", "rows_shown", "marks", "revoked",
-             "feedback_text")}
+             "feedback_text", "answers")}
     return json.dumps(body, ensure_ascii=False, sort_keys=True,
                       separators=(",", ":"))
 
@@ -303,6 +315,25 @@ def _check_mark(mark: Any, index: int, labels: tuple[str, ...] | None) -> None:
     _check_rules(mark, index)
 
 
+def _check_answers(payload: dict[str, Any]) -> None:
+    from .. import interview as _interview                    # noqa: PLC0415
+    answers = payload.get("answers")
+    _require(isinstance(answers, list),
+             "answers must be a list, empty when the sheet asked nothing or "
+             "the owner answered nothing — absent would be indistinguishable "
+             "from a file written before the lane existed")
+    for i, a in enumerate(answers):
+        _require(isinstance(a, dict) and set(a) == ANSWER_KEYS,
+                 f"answers[{i}] must carry exactly {sorted(ANSWER_KEYS)}")
+        _require(_interview._KEY_RE.fullmatch(str(a.get("key") or "")),
+                 f"answers[{i}].key is not an interview question key")
+        _require(isinstance(a.get("action"), str)
+                 and _interview._ACTION_RE.fullmatch(a["action"]),
+                 f"answers[{i}].action must be an option action code")
+        _require(isinstance(a.get("note"), str) and len(a["note"]) <= 2000,
+                 f"answers[{i}].note must be a string of at most 2000 chars")
+
+
 def validate_marks(payload: Any, *,
                    labels: tuple[str, ...] | None = None) -> dict[str, Any]:
     """Refuse a marks file the owner could have saved but this pen cannot file.
@@ -367,6 +398,7 @@ def validate_marks(payload: Any, *,
                  "keyed on the thread the rule came off")
         _require(_SHA256_RE.fullmatch(str(entry.get("subject_sha256") or "")),
                  f"revoked[{index}].subject_sha256 must be a full sha256")
+    _check_answers(payload)
     want = marks_content_sha256(payload)
     _require(payload.get("content_sha256") == want,
              "content_sha256 does not cover these marks (expected "
@@ -413,6 +445,10 @@ def marks_from_state(state: dict[str, Any], *,
                      "subject_sha256": str(r["subject_sha256"])}
                     for r in state["standing_rulings"] if r.get("revoke")],
         "feedback_text": str(state.get("feedback_text") or ""),
+        "answers": [{"key": str(q["key"]), "action": str(q["answer"]),
+                     "note": str(q.get("note") or "")}
+                    for q in (state.get("questions") or {}).get("rows") or []
+                    if q.get("answer")],
     }
     payload["content_sha256"] = marks_content_sha256(payload)
     return payload
@@ -429,7 +465,7 @@ def _is_marked(row: dict[str, Any]) -> bool:
 
 
 __all__ = ['BUCKETS', 'TIERS', 'JUDGMENT_VALUES', 'DRAFT_VALUES',
-           'LABEL_RIGHT', 'MARKS_SCHEMA', 'MARKS_FILE_KEYS', 'MARK_KEYS',
+           'LABEL_RIGHT', 'MARKS_SCHEMA', 'MARKS_FILE_KEYS', 'MARK_KEYS', 'ANSWER_KEYS',
            'REVOKE_KEYS', 'RULE_KEYS', 'COLUMNS', 'RULE_TEMPLATES',
            'UNCATEGORISED', 'sheet_run', 'suggested_rule', 'rule_origin', 'contradicts',
            'derive_verdict', 'canonical_payload', 'marks_content_sha256',

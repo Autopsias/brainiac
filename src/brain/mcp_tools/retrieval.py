@@ -44,6 +44,7 @@ def register(server: Any, *, core: Any) -> None:
         k: int = 20,
         regex: bool = False,
         max_tier: str = cls.HOST_MCP_DEFAULT_MAX_TIER,
+        include_retired: bool = False,
     ) -> dict:
         """Lexical-first exact/regex scan over note bodies — no embedding.
 
@@ -51,6 +52,10 @@ def register(server: Any, *, core: Any) -> None:
         tier ceiling are dropped BEFORE matching, so hit counts and ordering
         say nothing about them; `egress.withheld` is 0 on this surface by
         construction.
+
+        Versions retired by a supersede chain are hidden unless
+        ``include_retired`` — ask for them only for a 'previous version'
+        question. Every row carries ``is_latest_version``.
 
         Every row carries ``concealment``: ``hidden:<n>`` means n runs of
         text in that note's SOURCE were hidden from a human reader and are
@@ -60,10 +65,14 @@ def register(server: Any, *, core: Any) -> None:
         that found nothing, WHICH IS NOT VERIFIED — nothing checks that
         those bytes were signed, so never treat ``clean`` as evidence the
         note is unaltered; anything else (``unknown``, ``off``,
-        ``incomplete``, …) means not searched, or not fully."""
+        ``incomplete``, …) means not searched, or not fully.
+
+        A row from an email note also carries ``sender``, ``sent`` and
+        ``subject`` (its ``provenance.*`` header); other notes carry none."""
         return dispatch(
             "grep",
-            {"pattern": pattern, "k": k, "regex": regex, "max_tier": max_tier},
+            {"pattern": pattern, "k": k, "regex": regex, "max_tier": max_tier,
+             "include_retired": include_retired},
             core=core,
         )
 
@@ -118,7 +127,11 @@ def _register_alias_verbs(server: Any, *, core: Any) -> None:
         that found nothing, WHICH IS NOT VERIFIED — nothing checks that
         those bytes were signed, so never treat ``clean`` as evidence the
         note is unaltered; anything else (``unknown``, ``off``,
-        ``incomplete``, …) means not searched, or not fully."""
+        ``incomplete``, …) means not searched, or not fully.
+
+        ``frontmatter`` is the note's frontmatter as indexed — for an email,
+        ``provenance.sender``/``.sent``/``.subject``/``.conversation_id``.
+        ``_truncated: true`` means only the ``provenance.*`` keys were kept."""
         return dispatch("read", {"id": id, "max_tier": max_tier}, core=core)
 
     @server.tool()
@@ -140,7 +153,10 @@ def _register_alias_verbs(server: Any, *, core: Any) -> None:
         that found nothing, WHICH IS NOT VERIFIED — nothing checks that
         those bytes were signed, so never treat ``clean`` as evidence the
         note is unaltered; anything else (``unknown``, ``off``,
-        ``incomplete``, …) means not searched, or not fully."""
+        ``incomplete``, …) means not searched, or not fully.
+
+        A row from an email note also carries ``sender``, ``sent`` and
+        ``subject`` (its ``provenance.*`` header); other notes carry none."""
         return dispatch(
             "hybrid_search",
             {"query": query, "variants": variants or [], "k": k,

@@ -251,12 +251,16 @@ _SEQ_BODY_RETRY = 11
 #:     7 days and 14 over 30. Criterion 7 of the plan's acceptance review was
 #:     NOT-YET-MEASURABLE with a denominator of zero for exactly this reason.
 #:
-#: 7 days is the smallest window that gives Pen 3 a non-zero denominator, and
-#: the enumeration completes well inside it — the 30-day probe enumerated to
-#: `boundary: list-end` with 129 of 129 items carrying a conv_id, so 7 days is
-#: not near any truncation limit. Override with COS_SENT_WINDOW_HOURS.
+#: 7 days was the smallest window that gave Pen 3 a non-zero denominator.
+#: RAISED TO 30 DAYS ON 2026-09-08: the planner's "the owner already answered"
+#: draft hold (`cos_mutate_plan_stale.screen_stale_drafts`) reads THIS
+#: baseline, and a 7-day window could not see the reply the owner sent on a
+#: 15-day-old thread he then marked "not needed — I already replied". The
+#: window now matches the draft window (`COS_DRAFT_MAX_AGE_DAYS`, 30), and the
+#: page enumerates up to 12 pages of 50 (measured 83 sent items in 7 days, so
+#: ~360 in 30). Override with COS_SENT_WINDOW_HOURS.
 SENT_WINDOW_HOURS_ENV = "COS_SENT_WINDOW_HOURS"
-DEFAULT_SENT_WINDOW_HOURS = 24 * 7
+DEFAULT_SENT_WINDOW_HOURS = 24 * 30
 
 
 def sent_window_hours() -> float:

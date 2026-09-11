@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import cos, cos_corpus
+from .. import interview as _interview
 from ..cos_echecks import STALE_ACT_SIGNAL
 
 from .feedback import (
@@ -40,6 +41,7 @@ from .sheet_marks import RULE_TEMPLATES
 from .sheet_render import render_html  # noqa: F401  re-exported
 from .sheet_select import (
     apply_selection,
+    marked_threads,
     effect_block,
     outlook_touched_since,
     previous_sheet_date,
@@ -266,6 +268,7 @@ def build_state(
     selection = apply_selection(
         thread_state,
         outlook_touched_since(vault, previous_sheet_date(vault, sheet_date)),
+        marked=marked_threads(vault, sheet_date),
     )
 
     budget, rulings = _standing_rulings(vault, now=now)
@@ -309,6 +312,7 @@ def build_state(
         "rule_templates": dict(RULE_TEMPLATES),
         "selection": selection,
         "effect": effect_block(vault, thread_state, sheet_date),
+        "questions": _interview.sheet_block(vault),
     }
     return validate_sheet_state(state)
 
@@ -359,9 +363,17 @@ def write_today_pointer(vault: Any, sheet: Path, *, threads: int = 0) -> Path:
     A REAL FILE, NOT A SYMLINK. `publishable_sheet` refuses a symlinked page
     and the sheets are read with `_read_nofollow`, because a writable link in a
     mount-visible directory is a way to serve one page while a reader believes
-    it validated another. This writes an ordinary redirect page instead: it
-    carries no thread text of its own, so it never becomes a second, unaudited
-    copy of the mail.
+    it validated another. This writes a one-frame page that EMBEDS the newest
+    sheet: it carries no thread text of its own, so it never becomes a second,
+    unaudited copy of the mail.
+
+    A FRAME, NOT A REDIRECT (2026-09-08). The first version was a meta
+    refresh. A redirect swaps the address bar for the dated file it lands on,
+    so a tab opened on Monday and reloaded on Tuesday reloads Monday's sheet
+    for ever — the owner reloaded `2026-09-07.html` and read "31 of 109" a
+    full day after the 60-thread sheet existed. A frame keeps the address on
+    `today.html`; a reload re-reads this file, and this file is rewritten
+    every night to name the newest sheet.
 
     Best-effort by construction: a sheet that was written is the deliverable,
     and failing to write a convenience pointer must never fail the night.
@@ -372,10 +384,14 @@ def write_today_pointer(vault: Any, sheet: Path, *, threads: int = 0) -> Path:
         count = f"{threads} thread(s)" if threads else "your sheet"
         body = (
             "<!doctype html>\n<html><head><meta charset=\"utf-8\">"
-            f"<meta http-equiv=\"refresh\" content=\"0; url=sheets/{href}\">"
-            "<title>Brainiac — today's sheet</title></head>"
-            f"<body><p>Opening {html.escape(count)} — "
-            f"<a href=\"sheets/{href}\">sheets/{href}</a></p></body></html>\n"
+            "<title>Brainiac — today's sheet</title>"
+            "<style>html,body{margin:0;height:100%}"
+            "iframe{border:0;width:100%;height:100%;display:block}"
+            "p{margin:0;padding:2px 8px;font:12px system-ui}</style></head>"
+            f"<body><iframe src=\"sheets/{href}\" title=\"today's sheet\">"
+            "</iframe>"
+            f"<p>{html.escape(count)} — <a href=\"sheets/{href}\">sheets/{href}"
+            "</a> (open directly if the frame stays blank)</p></body></html>\n"
         )
         target.parent.mkdir(parents=True, exist_ok=True)
         cos._write_atomic(target, body.encode("utf-8"), mode=0o600)

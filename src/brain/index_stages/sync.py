@@ -343,7 +343,7 @@ def _project_concealment(
     return len(rows)
 
 
-def _commit_vault_fingerprint(index: Any) -> None:
+def _commit_vault_fingerprint(index: Any, vault: Path) -> None:
     fingerprint = index._vault_fingerprint_projection(
         (str(path), str(content_hash or ""))
         for path, content_hash in index.conn.execute(
@@ -351,6 +351,13 @@ def _commit_vault_fingerprint(index: Any) -> None:
         ).fetchall()
     )
     index._set_meta("vault_fingerprint", fingerprint)
+    # SF-02: the root THIS INDEX was built from, so `_vault_path` can strip it
+    # lexically at read time instead of resolving against the READER's own
+    # environment — wrong on the Cowork VM, whose vault root is a mount path
+    # that differs from the host's.
+    # Unresolved on purpose: scan_vault stores note paths in the form the vault
+    # was passed, so a resolved root never prefixes them through a symlink.
+    index._set_meta("vault_root", Path(vault).as_posix())
 
 
 def _do_sync(
@@ -374,7 +381,7 @@ def _do_sync(
         signed_hashes=signed_hashes, dispositions=dispositions,
     )
     _project_concealment(index, on_disk)
-    _commit_vault_fingerprint(index)
+    _commit_vault_fingerprint(index, vault)
     index.conn.commit()
     return counts.as_dict(), refused
 

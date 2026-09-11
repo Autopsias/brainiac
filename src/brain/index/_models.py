@@ -15,6 +15,12 @@ class Hit:
     path: str
     score: float
     source: str  # "lexical" | "semantic" | "both" | "exact"
+    #: SF-02: `path` relative to the vault root — set by the caller building
+    #: this Hit (`index._vault_path(path)`), never resolved here. `Hit` has
+    #: no index handle, and the whole point of SF-02's fix is that the root
+    #: must come from the INDEX (what it was built from), never a reader's
+    #: own environment — see `_schema._vault_path`.
+    vault_path: str = ""
     snippet: str = ""
     is_latest_version: str = ""  # TMP-02: "true"|"false"|"" — post-egress field,
                                   # never consulted by the classification gate.
@@ -40,6 +46,10 @@ class Hit:
     # see; it carries no note text, no attacker-authored string, and
     # nothing about any note the caller was denied.
     duplicates: list[str] = field(default_factory=list)
+    #: PV-02: the email header line — ``sender``/``sent``/``subject`` read from
+    #: the note's ``provenance.*`` frontmatter. Empty keys are omitted from
+    #: ``to_dict`` so a note that is not an email carries no header noise.
+    header: dict[str, str] = field(default_factory=dict)
     # HYG-01: ids this hit ABSORBED at ranking time — byte-identical, already
     # owner-superseded copies of the same bytes that would otherwise have taken
     # their own result slots. Provenance, never a second slot. Egress-safe by
@@ -54,6 +64,7 @@ class Hit:
             "classification": self.classification,
             "zone": self.zone,
             "path": self.path,
+            "vault_path": self.vault_path,
             "score": round(self.score, 6),
             "source": self.source,
             "snippet": self.snippet,
@@ -64,6 +75,7 @@ class Hit:
             "create_safety": self.create_safety,
             "concealment": self.concealment,
             **({"duplicates": list(self.duplicates)} if self.duplicates else {}),
+            **self.header,
         }
 
 @dataclass

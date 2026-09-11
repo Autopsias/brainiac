@@ -24,7 +24,8 @@ class _SchemaMixin:
                 document_date TEXT, effective_date TEXT, superseded_date TEXT,
                 is_latest_version TEXT, superseded_by TEXT, previous_version TEXT,
                 title_norm TEXT NOT NULL,
-                concealment TEXT
+                concealment TEXT,
+                frontmatter TEXT
             )"""
         )
         c.execute(
@@ -54,6 +55,7 @@ class _SchemaMixin:
         self._set_meta("embed_dim", str(self.embedder.dim))
         self.backend.setup(c, self.embedder.dim)
         self._concealment_column = True  # created above, no PRAGMA needed
+        self._frontmatter_column = True  # ditto (PV-01)
 
     #: The one place the M-3b retrieval verdict's column name is written.
     CONCEALMENT_COL = "concealment"
@@ -116,6 +118,60 @@ class _SchemaMixin:
             self._concealment_column = self.CONCEALMENT_COL in cols
         return self.CONCEALMENT_COL if self._concealment_column else "''"
 
+    #: The one place the PV-01 frontmatter column name is written.
+    FRONTMATTER_COL = "frontmatter"
+
+    def _frontmatter_sql(self) -> str:
+        """``frontmatter`` if this index carries the column, else ``''``.
+
+        Same degradation shape as :meth:`_concealment_sql`, and for the same
+        reason — one interpolated fragment, two module literals, so a read
+        against an index that predates the column returns an empty value
+        instead of raising ``no such column`` out of ``get``.
+
+        It does NOT migrate in place, and that is the difference. The column
+        holds the parsed frontmatter, so an ``ALTER TABLE ADD COLUMN`` would
+        leave every existing row NULL — a filter on ``provenance.sender``
+        would then return nothing and read exactly like an answer. Filling it
+        means re-reading every note, which is a rebuild. So PV-01 bumps
+        :data:`SCHEMA_VERSION` instead and lets ``sync`` self-delegate to
+        ``rebuild`` (``index_stages/sync._fallback_rebuild``).
+        """
+        if self._frontmatter_column is None:
+            cols = self._notes_columns()
+            if not cols:
+                return "''"
+            self._frontmatter_column = self.FRONTMATTER_COL in cols
+        return self.FRONTMATTER_COL if self._frontmatter_column else "''"
+
+    def _index_vault_root(self) -> str | None:
+        """The vault root THIS INDEX was built from (meta key ``vault_root``,
+        written by rebuild/sync), cached per connection. ``None`` on a
+        pre-migration index that predates the write."""
+        if not self._vault_root_meta_loaded:
+            self._vault_root_meta = self.get_meta("vault_root")
+            self._vault_root_meta_loaded = True
+        return self._vault_root_meta
+
+    def _vault_path(self, abs_path: str | None) -> str:
+        """``abs_path`` relative to the vault root (SF-02) — LEXICAL string
+        prefix-stripping against the root this index was built from, never
+        against the reader's own environment. That distinction is the whole
+        point: the Cowork VM reads a host-built snapshot through a mount path
+        that differs from the host's own vault root, so resolving against
+        ``config.vault_root()`` (the reader's env) returned the untouched
+        host path on the one surface SF-02 exists for. Falls back to the
+        env-based :func:`config.vault_relative_path` only when this index
+        carries no stored root (built before this change). Never raises."""
+        if not abs_path:
+            return ""
+        root = self._index_vault_root()
+        if not root:
+            return config.vault_relative_path(abs_path)
+        s = str(abs_path)
+        prefix = root if root.endswith("/") else root + "/"
+        return s[len(prefix):] if s.startswith(prefix) else s
+
     def _notes_columns(self) -> set[str]:
         """Column names on ``notes``; empty if the table does not exist yet."""
         return {r[1] for r in self.conn.execute("PRAGMA table_info(notes)")}
@@ -156,6 +212,8 @@ class _SchemaMixin:
 
     def _set_meta(self, k: str, v: str) -> None:
         self.conn.execute("INSERT OR REPLACE INTO meta(k, v) VALUES (?, ?)", (k, v))
+        if k == "vault_root":
+            self._vault_root_meta_loaded = False  # sync/rebuild changed it
 
     def get_meta(self, k: str) -> str | None:
         try:

@@ -33,6 +33,31 @@ def _add_retro(sub) -> None:
     add_common(sp)
 
 
+def _add_interview(sub) -> None:
+    sp = sub.add_parser(
+        "interview",
+        help="the owner-interview lane (INT-01): list the open questions the vault asks on the morning sheet; --nightly applies the answers, then draws the day's questions. HOST-ONLY.",
+    )
+    sp.add_argument("--nightly", action="store_true",
+                    help="apply pending answers, expire, then generate")
+    sp.add_argument("--apply", action="store_true",
+                    help="apply the answers on consumed sheets only")
+    sp.add_argument("--generate", action="store_true",
+                    help="draw today's questions only")
+    sp.add_argument("--prompt-out", default=None, metavar="DIR",
+                    help="with --nightly/--generate: write the phrasing leg's prompt.txt here")
+    sp.add_argument("--answer", default=None, metavar="KEY",
+                    help="answer one open question now (with --action, optional --note)")
+    sp.add_argument("--action", default=None, metavar="ACTION",
+                    help="the option action to apply (see the question's options)")
+    sp.add_argument("--note", default="", metavar="TEXT",
+                    help="the free-text note beside the answer")
+    sp.add_argument("--date", default=None, metavar="YYYY-MM-DD",
+                    help="run as of this date (tests and replays)")
+    add_common(sp)
+
+
 def add_parser(sub) -> None:
     _add_inbox(sub)
     _add_retro(sub)
+    _add_interview(sub)

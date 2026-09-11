@@ -304,7 +304,12 @@ def batch_membership(rows: list[dict[str, Any]],
          if r["conversation_id"] in staged
          and ctx(r["conversation_id"]).get("read_state") == "read"),
         key=lambda r: chips.index(r["tier"]) if r.get("tier") in chips
-        else len(chips))][:DRAFT_CAP]
+        else len(chips))]
+    # NO `[:DRAFT_CAP]` HERE SINCE 2026-09-09. The cap is a per-MESSAGE output
+    # ceiling and lives where the messages are made (`--split-draft --size`);
+    # slicing the night's list to it left 27 `act` threads unoffered on run
+    # 281. Order is kept — tier first — so a night past even that still
+    # offers the highest tiers first.
     return {"triage": triage, "staging": staging, "hold": hold, "draft": draft}
 
 

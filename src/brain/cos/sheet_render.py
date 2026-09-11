@@ -22,6 +22,7 @@ from .feedback import SHEET_STATE_ELEMENT_ID, thread_digest
 from .feedback_sheet import validate_sheet_state
 from .sheet_glossary import COLUMN_MEANS, capture_html, glossary_block
 from .sheet_marks import DRAFT_VALUES, JUDGMENT_VALUES, LABEL_RIGHT
+from .sheet_questions import questions_block
 
 #: WHAT THE PAGE SHOWS where the capture record has no subject. It lives here
 #: rather than in `sheet.py` because it is display text, and `sheet.py` imports
@@ -54,6 +55,7 @@ VERDICT_MEANS = (
 #: What each DRAFT answer means in the owner's words.
 DRAFT_MEANS = {
     "send-as-is": "send as it stands",
+    "not-needed": "no draft was needed",
     "tone": "needs my tone",
     "facts": "gets facts wrong",
     "too-long": "too long",
@@ -391,16 +393,21 @@ def _selection_block(state: dict[str, Any]) -> str:
     names = {"draft": "a reply was drafted", "held_out": "held-out sample",
              "loud_archive": "archived at P0/P1",
              "outlook": "you moved it in Outlook"}
+    # `already_marked` is a DROP reason, not an ask: listing it beside the asks
+    # made the header sum to 19 over a "15" (sheet 2026-09-08).
     reasons = ", ".join(
         f"{int(count)} {names.get(key, key)}"
         for key, count in sorted(selection["reasons"].items())
-        if int(count))
+        if int(count) and key != "already_marked")
+    already = int(selection["reasons"].get("already_marked") or 0)
     hidden = int(selection["total"]) - int(selection["shown"])
     return (
         f'<p class="lede">You are being asked to look at '
         f'<b>{int(selection["shown"])}</b> of tonight&rsquo;s '
         f'{int(selection["total"])} threads'
         + (f" — {html.escape(reasons)}." if reasons else ".")
+        + (f" {already} you already marked on an earlier sheet are not asked "
+           "again." if already else "")
         + "</p>"
         + (f'<p class="meta">The other {hidden} are on this page too, behind '
            "the toggle below. Marking one of them counts exactly the same.</p>"
@@ -458,6 +465,7 @@ def render_html(state: dict[str, Any]) -> str:
             f"{int(stop.get('unreconciled_threads') or 0)} unreconciled thread(s)"
         ),
         "{{RULINGS}}": _rulings_block(state),
+        "{{QUESTIONS}}": questions_block(state),
         "{{HELD_OUT}}": _list_rows(
             state,
             state["held_out"]["conversation_ids"],

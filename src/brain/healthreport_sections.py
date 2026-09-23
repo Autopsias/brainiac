@@ -246,6 +246,9 @@ def _invariant_extra(name: str, metric: dict[str, Any], inv_module: Any) -> str:
     elif name in ("unshelved_deliverables", "stale_shelf_entries",
                   "unanchored_deliverable_payloads"):
         extra = _deliverable_extra(name, metric)
+    elif name == "supersede_declared_failed":
+        extra = (f"of {brief_mod._esc(metric.get('declared', '?'))} live note(s) "
+                 "declaring `replaces:`; fix with `brain supersede <old> <new>`")
     if metric.get("error"):
         extra = f"ERROR: {brief_mod._esc(metric['error'])}"
     return extra

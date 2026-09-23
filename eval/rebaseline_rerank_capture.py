@@ -47,6 +47,29 @@ def _sha256_file(path: str | None) -> str | None:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def _applied_counts(applied: list[bool], gate_skipped: list[bool]) -> dict[str, int]:
+    """Split rerank_applied=False in two: the RK-02 gate skipped the cross-encoder
+    BY RULE (a pinned unique identity already decides rank 1), or the reranker
+    FAILED (timeout / exception). Only the second is a defect, so 66/66 applied
+    is not the pass line -- applied + gate_skipped = n with failed = 0 is."""
+    return {
+        "true": sum(applied), "false": sum(1 for x in applied if not x), "n": len(applied),
+        "gate_skipped": sum(gate_skipped),
+        "failed": sum(1 for a, g in zip(applied, gate_skipped) if not a and not g),
+    }
+
+
+def _checkpoint(path: Path, runs, latency, applied, gate_skipped) -> None:
+    path.write_text(json.dumps(
+        {"runs": runs, "latency_ms": latency, "verified_applied": applied,
+         "gate_skipped": gate_skipped}, ensure_ascii=False), encoding="utf-8")
+
+
+def _progress(done: int, total: int, qid: str, ms: float, trace) -> None:
+    print(f"[{done}/{total}] {qid} {ms:.0f}ms rerank_applied={bool(trace.rerank_applied)} "
+          f"gate_skipped={bool(trace.rerank_gate.get('skipped'))}", file=sys.stderr, flush=True)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--golden", required=True)
@@ -86,6 +109,7 @@ def main() -> int:
         mapping = mapping_doc.get("mapping", mapping_doc)
 
     verified_applied = []
+    gate_skipped = []  # RK-02: skipped by rule, not failed -- count it apart
     runs: dict[str, dict[str, float]] = {}
     latency: dict[str, float] = {}
     # A wide-window arm is ~50 min of cross-encoder work. Writing only at the
@@ -98,12 +122,8 @@ def main() -> int:
         runs.update(prev.get("runs", {}))
         latency.update(prev.get("latency_ms", {}))
         verified_applied.extend(prev.get("verified_applied", []))
+        gate_skipped.extend(prev.get("gate_skipped", []))
         print(f"resumed: {len(runs)} queries already captured", file=sys.stderr, flush=True)
-
-    def _checkpoint():
-        partial_path.write_text(json.dumps(
-            {"runs": runs, "latency_ms": latency, "verified_applied": verified_applied},
-            ensure_ascii=False), encoding="utf-8")
 
     total = len(qmeta)
     for done, (qid, q) in enumerate(qmeta.items(), start=1):
@@ -115,6 +135,7 @@ def main() -> int:
         )
         latency[qid] = round((time.perf_counter() - t0) * 1000.0, 2)
         verified_applied.append(bool(trace.rerank_applied))
+        gate_skipped.append(bool(trace.rerank_gate.get("skipped")))
 
         doc_rank_score: dict[str, float] = {}
         n = len(hits)
@@ -128,9 +149,8 @@ def main() -> int:
             if src not in doc_rank_score or synthetic_score > doc_rank_score[src]:
                 doc_rank_score[src] = synthetic_score
         runs[qid] = doc_rank_score
-        print(f"[{done}/{total}] {qid} {latency[qid]:.0f}ms "
-              f"rerank_applied={bool(trace.rerank_applied)}", file=sys.stderr, flush=True)
-        _checkpoint()
+        _progress(done, total, qid, latency[qid], trace)
+        _checkpoint(partial_path, runs, latency, verified_applied, gate_skipped)
 
     index_stats = idx.stats()
     index_state = {
@@ -146,10 +166,7 @@ def main() -> int:
                    "rerank_gate": rerank_gate_enabled(None)},
         "vault": vault_root,
         "source_root": args.source_root,
-        "rerank_applied_verified": {
-            "true": sum(verified_applied), "false": sum(1 for x in verified_applied if not x),
-            "n": len(verified_applied),
-        },
+        "rerank_applied_verified": _applied_counts(verified_applied, gate_skipped),
         "score_semantics": "rank-derived (n - position), NOT the raw RRF/Hit.score -- "
                             "see this script's module docstring",
         # WHICH map, not just "mapped: true". Measured 2026-08-06: the same
@@ -175,8 +192,10 @@ def main() -> int:
     }
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(out, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    c = _applied_counts(verified_applied, gate_skipped)
     print(f"captured {len(runs)} queries [{args.system}] rerank_top={args.rerank_top} "
-          f"rerank_applied={sum(verified_applied)}/{len(verified_applied)} -> {args.out}")
+          f"rerank_applied={c['true']}/{c['n']} gate_skipped={c['gate_skipped']} "
+          f"failed={c['failed']} -> {args.out}")
     return 0
 
 

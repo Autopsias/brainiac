@@ -5,8 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from .context import MaintenanceRun
-from .. import (cos_corpus, deliverables_ledger, deliverables_previous,
+from .. import (_optional, deliverables_ledger, deliverables_previous,
                 deliverables_shelf, maintenance, querylog)
+
+# ADR 0013: the COS corpus exists only where COS does.
+if _optional.cos_available():
+    from .. import cos_corpus
 
 
 class RetentionFoldsMixin:
@@ -20,7 +24,8 @@ class RetentionFoldsMixin:
             return
         self.duplicate_retention_fold(run)
         self.query_capture_retention_fold(run)
-        self.cos_corpus_retention_fold(run)
+        if _optional.cos_available():
+            self.cos_corpus_retention_fold(run)
         self.deliverables_previous_retention_fold(run)
 
     def duplicate_retention_fold(self, run: MaintenanceRun) -> None:

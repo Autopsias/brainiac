@@ -60,9 +60,58 @@ def _announce_escalation(index: Any, reason: str, detail: str) -> None:
     )
 
 
+def _upgrade_schema_in_place(index: Any, vault: Path) -> int | None:
+    """Format 4 -> 5 without re-embedding; the notes filled, or None.
+
+    Format 5 added ONE nullable column, ``notes.frontmatter`` (PV-01). Its
+    docstring in ``_schema`` ruled that filling it "means re-reading every
+    note, which is a rebuild" — but a rebuild also re-embeds every chunk, and
+    the chunks do not change between 4 and 5. Measured 2026-09-11 on the
+    reference vault: the full rebuild was estimated at 13 hours; reading every
+    note's frontmatter took 99 s. So: add the column, fill it from every note
+    whose ``content_hash`` still matches the index, stamp the version, and let
+    the incremental sync that follows rewrite the few notes that changed
+    (``_write_planned`` names the column now that it exists). Any other
+    version gap still escalates to a full rebuild.
+    """
+    if index.get_meta("schema_version") != "4" or not index._notes_columns():
+        return None
+    from ..provenance import index_frontmatter_json  # local: import cycle
+
+    conn = index.conn
+    conn.execute("BEGIN IMMEDIATE")
+    if index.FRONTMATTER_COL not in index._notes_columns():
+        conn.execute(f"ALTER TABLE notes ADD COLUMN {index.FRONTMATTER_COL} TEXT")
+    index._frontmatter_column = None  # re-read the PRAGMA on the next use
+    indexed = dict(conn.execute("SELECT path, content_hash FROM notes").fetchall())
+    filled = 0
+    # ponytail: a second vault scan (sync scans again right after); fold the
+    # two together if a vault ever makes this scan cost more than seconds.
+    for note in scan_vault(vault):
+        path = note.path.as_posix()
+        if indexed.get(path) != note.content_hash:
+            continue  # changed since indexing: the sync below rewrites it
+        conn.execute(
+            f"UPDATE notes SET {index.FRONTMATTER_COL}=? WHERE path=?",  # nosec B608
+            (index_frontmatter_json(note.meta), path),
+        )
+        filled += 1
+    index._set_meta("schema_version", "5")
+    conn.commit()
+    print(
+        f"brain: index schema upgraded in place 4 -> 5 ({filled} notes filled, "
+        "no re-embed)",
+        file=sys.stderr,
+        flush=True,
+    )
+    return filled
+
+
 def _fallback_rebuild(
     index: Any, vault: Path, json_mode: bool
 ) -> dict[str, Any] | None:
+    if not index._schema_ready():
+        _upgrade_schema_in_place(index, vault)
     if not index._schema_ready():
         from ..index._settings import SCHEMA_VERSION  # local: import cycle
 

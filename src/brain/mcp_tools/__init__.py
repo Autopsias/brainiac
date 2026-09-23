@@ -99,7 +99,8 @@ from typing import Any
 
 #: Load order. Append, never insert: a client's tool list is ordered by
 #: registration and the Cowork skills read it top-down.
-MODULES: tuple[str, ...] = ("core_read", "retrieval", "housekeeping", "capture")
+MODULES: tuple[str, ...] = (
+    "core_read", "retrieval", "housekeeping", "capture", "supersession")
 
 _REGISTERING: _contextvars.ContextVar[bool] = _contextvars.ContextVar(
     "brain_mcp_seam_registering", default=False,

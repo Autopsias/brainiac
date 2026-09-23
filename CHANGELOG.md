@@ -7,6 +7,39 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.39] — 2026-09-23
+### Added
+- **A new version can retire the old one without a Mac terminal (SUP-01).**
+  Beside a file in `vault/inbox/_deliverables/<project>/`, a
+  `<filename>.supersedes` sidecar names the old note id(s); a dropped `.md` may
+  carry `replaces:` instead. The ingest applies the same audited `supersede`
+  after payload and anchor land. The broker gains `supersede` and
+  `unsupersede` tools, and `capture` honours `replaces:`. Over the broker the
+  link is applied only when the vault itself relates the two notes; any other
+  pair becomes an owner proposal (`{applied: false, proposed: true}`), so an
+  injected session cannot retire unrelated notes. A declaration that cannot be
+  applied never fails the ingest: it is reported as
+  `supersede_declared_failed` in the maintain results, `brain alerts`, the
+  exceptions page, and a new corpus invariant of that name.
+
+### Fixed
+- **A format-4 index upgrades in place instead of rebuilding.** 0.20.38 moved
+  the index to format 5, so the first `brain sync` on that release rebuilt the
+  whole index, which takes hours on a large vault. `sync` now adds the new
+  column, fills it from every unchanged note and stamps format 5 — about 35 s
+  on the reference vault. Only an index older than format 4 still rebuilds.
+
+### Removed
+- **The Chief of Staff (COS) email assistant is no longer in the public
+  package** (ADR 0013). The wheel, the sdist, the plugins and the skill mirrors
+  carry no `cos-*` verb, `tools/cos_*` tool, COS skill or COS nightly routine.
+  The second brain itself is unchanged. If a 0.20.38 install used a `cos-*`
+  verb or a COS scheduled job, that keeps working only until the install
+  upgrades; after the upgrade those verbs are gone and the jobs fail.
+  The scheduled brief and weekly synthesis skip their COS step with one log
+  line instead of failing. The release refuses any build that still carries
+  COS code.
+
 ## [0.20.38] — 2026-09-11
 ### Changed
 - **A document carrying a top-tier keyword now enters at that tier on every

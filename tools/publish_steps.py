@@ -17,6 +17,7 @@ from tools.publish_public import (
     PublishError,
     REPO_ROOT,
     _run,
+    assert_dist_has_no_cos,
     gate,
     phase_build,
     phase_export,
@@ -137,6 +138,9 @@ def _run_upload_phases(
     artifacts: list[Path],
     denylist: Path,
 ) -> None:
+    # ADR 0013: re-judge the artifacts right before anything leaves this Mac, so
+    # a resumed run (`--from`) can never upload a wheel the checker never saw.
+    assert_dist_has_no_cos(export_dir, artifacts)
     if should_run("testpypi"):
         gate_fn("testpypi", "upload to TestPyPI",
                 "uploads are permanent per version — a bad artifact burns the number "

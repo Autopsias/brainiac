@@ -19,6 +19,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from . import _optional
 from . import interview as _iv
 from .interview_detect import note_path as _note_path
 
@@ -31,7 +32,10 @@ _UPDATED_RE = re.compile(r"^updated:.*$", re.M)
 # --------------------------------------------------------------------------
 def pending_answers(vault: Any, state: dict[str, Any]) -> list[dict[str, Any]]:
     """The answers on consumed sheets whose question is still open. The
-    newest consumed row wins when a key was answered twice."""
+    newest consumed row wins when a key was answered twice. The sheets are
+    COS's; without it there are none to read (ADR 0013)."""
+    if not _optional.cos_available():
+        return []
     from .cos.sheet_select import read_consumed  # noqa: PLC0415
     open_keys = {r["key"]: r for r in _iv.open_rows(state)}
     latest: dict[str, dict[str, Any]] = {}
@@ -84,8 +88,16 @@ def write_decision_note(core: Any, row: dict[str, Any], note: str,
     kernel template's shape, anchored to the source (TMP-05)."""
     src = row["target"]["id"]
     phrase = row["question"].split('"')[1] if row["question"].count('"') >= 2 else ""
-    title = (note.strip().splitlines()[0][:120] if note.strip()
-             else phrase[:120] or src)
+    # 2026-09-13/15: an empty note titled the note from the bare quote
+    # ("approved on 2", "formally approved"); the passage says what it was.
+    passage = str(row.get("context") or "").strip("… ")
+    title = (note.strip().splitlines()[0] if note.strip()
+             else passage or phrase or src)
+    if len(title) > 120:
+        title = title[:120].rsplit(" ", 1)[0]
+    # The title sits inside a double-quoted YAML scalar; a quote in the
+    # passage (a quoted procedure name) would end it early.
+    title = re.sub(r'["\\]', "'", title)
     stem = f"decision-{today.isoformat()}-{_slug(title)}"
     rel = f"brain/resources/{stem}.md"
     cls = "Internal"
@@ -105,7 +117,7 @@ def write_decision_note(core: Any, row: dict[str, Any], note: str,
         f"Recorded from [[{src}]], which carries the decision language "
         f"\"{phrase}\"; confirmed by the owner on {today.isoformat()} "
         "(owner interview).", "", "## Decision", "",
-        note.strip() or phrase or "See the source.", "", "## Rationale", "",
+        note.strip() or passage or phrase or "See the source.", "", "## Rationale", "",
         "See [[" + src + "]].", "", "## Consequences", "", "", "",
     ])
     core.write_note(rel, body, reason=f"owner interview {today.isoformat()}")
@@ -119,9 +131,11 @@ def _ev_links(row: dict[str, Any]) -> str:
 def _apply_tension(core, row, action, note, today, reason):
     path = row["target"]["path"]
     if action == "stands":
-        append_section(core, path, "## Owner review", [
-            f"- {today}: stands as decided, checked against {_ev_links(row)} "
-            "(owner interview)."], today, reason)
+        lines = [f"- {today}: stands as decided, checked against {_ev_links(row)} "
+                 "(owner interview)."]
+        if note.strip():
+            lines.append(f"  - owner's note: {note.strip()}")
+        append_section(core, path, "## Owner review", lines, today, reason)
         return "owner-review line added: stands"
     if action == "changed":
         body = [f"The owner says this changed after {_ev_links(row)}."]
@@ -142,21 +156,25 @@ def _apply_decision(core, row, action, note, today, reason):
 
 
 def _apply_late(core, row, action, note, today, reason):
-    cid = row["target"]["id"]
-    if action == "done":
-        core.cos_spine_record(event="completed", commitment_id=cid, note=reason)
-        return "commitment completed"
-    if action == "dropped":
-        core.cos_spine_record(event="cancelled", commitment_id=cid, note=reason)
-        return "commitment cancelled"
-    if action == "reschedule":
-        m = _DATE_RE.search(note)
-        if not m:
-            raise ValueError("no YYYY-MM-DD date in the note; left open")
-        core.cos_spine_record(event="rescheduled", commitment_id=cid,
-                              due=m.group(1), note=reason)
-        return f"commitment moved to {m.group(1)}"
-    return None
+    # ADR 0013: the commitment spine is COS's. Without it the row stays open
+    # (a raise), rather than closing as answered with nothing recorded.
+    if _optional.cos_available():
+        cid = row["target"]["id"]
+        if action == "done":
+            core.cos_spine_record(event="completed", commitment_id=cid, note=reason)
+            return "commitment completed"
+        if action == "dropped":
+            core.cos_spine_record(event="cancelled", commitment_id=cid, note=reason)
+            return "commitment cancelled"
+        if action == "reschedule":
+            m = _DATE_RE.search(note)
+            if not m:
+                raise ValueError("no YYYY-MM-DD date in the note; left open")
+            core.cos_spine_record(event="rescheduled", commitment_id=cid,
+                                  due=m.group(1), note=reason)
+            return f"commitment moved to {m.group(1)}"
+        return None
+    raise ValueError("the commitment spine is not installed in this build; left open")
 
 
 def _apply_orphan(core, row, action, note, today, reason):
@@ -225,7 +243,11 @@ def record_text(entries: list[dict[str, Any]], today: _dt.date) -> str:
 def _drop_record(core: Any, text: str, today: _dt.date) -> dict[str, Any]:
     inbox = Path(core.vault) / "inbox"
     inbox.mkdir(parents=True, exist_ok=True)
-    (inbox / f"owner-interview-{today.isoformat()}.md").write_text(
+    # One file per APPLY, not per day: two answers given in one session used
+    # to collide on the archived original and the second landed in quarantine
+    # (`archive_collision`, 2026-09-13).
+    stamp = _dt.datetime.now().strftime("%H%M%S")
+    (inbox / f"owner-interview-{today.isoformat()}-{stamp}.md").write_text(
         text, encoding="utf-8")
     res = core.ingest_dropzone()
     return {k: len(res.get(k) or []) for k in ("ingested", "quarantined")

@@ -98,6 +98,15 @@ jobs:
           test "$(ls dist/*.whl | wc -l)" -eq 1 || { echo "::error::expected exactly one wheel"; exit 1; }
           test "$(ls dist/*.tar.gz | wc -l)" -eq 1 || { echo "::error::expected exactly one sdist"; exit 1; }
 
+      - name: Check the build carries no COS
+        # ADR 0013: the public package leaves the COS (the private email
+        # assistant) out. This is the same checker the release pipeline runs on
+        # the Mac, now on the artifact CI is about to hand to the publish job.
+        # Stdlib only; it installs nothing.
+        run: |
+          set -euo pipefail
+          python tools/export_check_no_cos.py --dist dist/*
+
       - name: Upload dist
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

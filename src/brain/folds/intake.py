@@ -6,7 +6,16 @@ import hashlib as _hashlib
 import json as _json
 
 from .context import MaintenanceRun
-from .. import config, maintenance
+from .. import _optional, config, maintenance
+
+# ADR 0013: both constants feed only the COS folds, which never run without COS.
+if _optional.cos_available():
+    from ..cos.sheet_threads import BODY_NEVER_READABLE as _BODY_NEVER_READABLE
+    from ..cos._attachment_gate import (
+        BODY_ERROR_NIGHTS as _BODY_ERROR_NIGHTS)
+else:
+    _BODY_NEVER_READABLE = frozenset()
+    _BODY_ERROR_NIGHTS = 0
 
 
 class IntakeFoldsMixin:
@@ -77,6 +86,8 @@ class IntakeFoldsMixin:
 
     def cos_ingest_sweep_fold(self, run: MaintenanceRun) -> None:
         """Quarantine manifest-named downloads for the current owner batch."""
+        if not _optional.cos_available():
+            return  # ADR 0013: `daily.py` already skips it; this states it here too.
         try:
             result = self.cos_ingest_sweep()
             run.results["cos_ingest_sweep"] = result
@@ -187,6 +198,8 @@ class IntakeFoldsMixin:
         of a decision another function already made, so failing to describe it
         must not fail the maintain run.
         """
+        if not _optional.cos_available():
+            return  # ADR 0013: COS state exists only where COS does.
         try:
             from .. import cos                                   # noqa: PLC0415
 
@@ -268,10 +281,13 @@ class IntakeFoldsMixin:
     #: and `never-category` are s09's own terminal reasons; the other two come
     #: from the body lane. `no-substance` is deliberately NOT here — that body
     #: WAS read and simply said nothing, which is a judgment, not a refusal.
-    UNREADABLE_BODY_REASONS = ("rights-protected-message",
-                               "server-returned-no-body",
-                               "rest-read-returned-shell",
-                               "never-category")
+    #: ONE definition, and it lives beside the `held_reason` vocabulary it
+    #: draws from (`cos.sheet_threads.BODY_NEVER_READABLE`), because the
+    #: morning sheet builds the owner's hand-clear list from the same set —
+    #: an alert and a list that disagree about which threads are stuck is
+    #: worse than either alone. `never-category` LEFT this set on 2026-09-12;
+    #: the constant's own comment carries the measurement.
+    UNREADABLE_BODY_REASONS = _BODY_NEVER_READABLE
 
     def _cos_unreadable_threads(self, run: MaintenanceRun) -> None:
         """The threads the porter can NEVER read — owner ruling 2026-09-06.
@@ -297,6 +313,8 @@ class IntakeFoldsMixin:
         decision another function already made, so failing to describe it must
         not fail the maintain run.
         """
+        if not _optional.cos_available():
+            return  # ADR 0013: COS state exists only where COS does.
         try:
             from .. import cos                                   # noqa: PLC0415
 
@@ -339,6 +357,7 @@ class IntakeFoldsMixin:
             return
         ids = sorted(stuck)
         digest = _hashlib.sha256("\n".join(ids).encode()).hexdigest()[:12]
+        nights = self._error_night_streaks(run, run_id, stuck)
         item = maintenance.action_required_item(
             f"{len(ids)} thread(s) in {run_id} have a body the porter can "
             f"never read, so they will never be archived, drafted or decided "
@@ -346,15 +365,69 @@ class IntakeFoldsMixin:
             "every auto-archive lane refuses an unreadable body on purpose — a "
             "blanked body makes every content screen read False, so archiving "
             "one would act on the absence of evidence rather than evidence of "
-            "absence. These threads are terminal, not pending",
+            "absence. These threads are terminal, not pending — a body which "
+            f"ERRORS on {_BODY_ERROR_NIGHTS} distinct nights stops holding its "
+            "own thread in the FILE gate, but no lane archives it for you "
+            "either way, so it stays here until you clear it. The night count "
+            "below is how far each one has got",
             "run `brain maintain` and read `cos_unreadable_threads` for the "
             "per-thread reason, then archive or answer each one in Outlook "
             "yourself",
-            "; ".join(f"{cid}: {why}" for cid, why in
-                      sorted(stuck.items())[:3]),
+            "; ".join(self._unreadable_detail(cid, why, nights)
+                      for cid, why in sorted(stuck.items())[:3]),
         )
         item["notify_key"] = f"cos-unreadable-threads:{digest}"
         run.action_required.append(item)
+
+    def _error_night_streaks(self, run: MaintenanceRun, run_id: str,
+                             stuck: dict[str, str]) -> dict[str, int]:
+        """How many consecutive nights each stuck thread's body has ERRORED.
+
+        THE COUNT BELONGS IN THE ALERT AND NOT ON THE SHEET (owner ruling
+        2026-09-13). The morning sheet says what to do today; "night 2 of 3"
+        is a fact about the machine being about to give up, which is what an
+        alert is for. Zero for every thread whose body opened fine — a
+        rights-protected message is the owner's for ever and no streak runs.
+
+        Reported, never fatal, like the fold that calls it: a walk that cannot
+        answer costs the alert its night counts, not its alert.
+
+        BUT IT SAYS SO (review 2026-09-14). A blanket `except` returning `{}`
+        deleted "night N of 3" from the one surface that shows it, and left
+        nothing anywhere saying why — so the alert read as though no thread
+        had ever errored. The error now rides `cos_unreadable_threads`, the
+        way the folds that call this record theirs, and one thread that
+        raises no longer drops the counts of the others.
+        """
+        if not _optional.cos_available():
+            return {}  # ADR 0013: COS state exists only where COS does.
+        try:
+            from ..cos import body_error_night_streak                # noqa: PLC0415
+        except Exception as exc:                                 # noqa: BLE001
+            self._streak_error(run, exc)
+            return {}
+        out: dict[str, int] = {}
+        for cid in stuck:
+            try:
+                out[cid] = body_error_night_streak(self.vault, cid, run_id)
+            except Exception as exc:                             # noqa: BLE001
+                self._streak_error(run, exc)
+        return out
+
+    @staticmethod
+    def _streak_error(run: MaintenanceRun, exc: BaseException) -> None:
+        """Record the FIRST streak failure on the fold's own result block."""
+        block = run.results.setdefault("cos_unreadable_threads", {})
+        if isinstance(block, dict):
+            block.setdefault("streaks_error",
+                             f"{type(exc).__name__}: {exc}"[:300])
+
+    @staticmethod
+    def _unreadable_detail(cid: str, why: str, nights: dict[str, int]) -> str:
+        """One thread's line: the id, the cause, and how close it is to release."""
+        n = nights.get(cid) or 0
+        return f"{cid}: {why}" + (
+            f" (night {n} of {_BODY_ERROR_NIGHTS})" if n else "")
 
     def _cos_attachment_join_record(self, run: MaintenanceRun) -> None:
         """Record the BYTES-JOIN claim for every run still in reach (ATT-03).
@@ -380,6 +453,8 @@ class IntakeFoldsMixin:
         (`attachment_lane_context`), so a failure to write the record costs a
         reader convenience and costs the mark nothing.
         """
+        if not _optional.cos_available():
+            return  # ADR 0013: COS state exists only where COS does.
         try:
             from .. import cos                                   # noqa: PLC0415
             result = cos.record_attachment_joins(self.vault)

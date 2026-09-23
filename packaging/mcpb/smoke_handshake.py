@@ -59,9 +59,11 @@ def expected_tools() -> set[str]:
 #: name the engine does not declare, listed here or not.
 NEVER_EXPOSED = frozenset({
     "write", "rebuild", "maintain", "ingest", "ingest_transcript", "sync",
-    "snapshot", "anchor", "verify_audit", "supersede", "unsupersede",
-    "graphify", "init",
+    "snapshot", "anchor", "verify_audit", "graphify", "init",
 })
+# SUP-01 (2026-09-18): `supersede`/`unsupersede` LEFT this list by owner
+# instruction. The broker serves them guarded (visibility, relatedness, else a
+# CUR-01 proposal) and refuses them under role=vm: `brain.supersede_declared`.
 
 EXPECTED_TOOLS = expected_tools()
 

@@ -139,4 +139,24 @@ def dispatch_capture(
         reason="mcp capture",
     )
     _record_capture_trace(vault=core.vault)
+    if res.get("signed"):
+        _declared_supersede(content, res, core=core, max_tier=max_tier)
     return res
+
+
+def _declared_supersede(
+    content: str, res: dict[str, Any], *, core: Any, max_tier: str,
+) -> None:
+    """SUP-01: a captured note that says ``replaces: <id>`` runs the broker's
+    guarded supersede after the write. A captured note is untrusted-authored,
+    so ``supersede_declared.related`` never relates it by its own say-so: the
+    pair is PROPOSED to the owner, not applied. The outcome rides on the
+    capture result either way, so the caller is told which."""
+    from . import frontmatter, supersede_declared
+
+    meta, _body = frontmatter.parse_text(content)
+    declared = supersede_declared.parse_ids(meta.get("replaces"))
+    if declared:
+        res["supersede"] = supersede_declared.guarded(
+            core, declared[0], str(res["id"]), reason="`replaces:` on a captured note",
+            max_tier=max_tier, declared_by="mcp:capture")

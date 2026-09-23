@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from .context import MaintenanceRun
-from .. import graph, invariants, maintenance
+from .. import graph, invariants, maintenance, maintenance_recommendations
 
 
 class InvariantFoldsMixin:
@@ -91,8 +91,12 @@ class InvariantFoldsMixin:
                 invariants.LANE_HEALTH_STATE_SUBKEY: lane_health_state,
             }
             if not run.dry_run and regressions:
+                # Keyed on the regression SET, not the run date: an unchanged
+                # regression re-appended daily under a fresh date key (retro
+                # signature ``duplicate-findings``, 2026-09-08..10 in the field).
                 self._append_hot_once(
-                    f"maintain:corpus-invariants:{run.date.isoformat()}",
+                    "maintain:corpus-invariants:"
+                    + maintenance_recommendations.regressions_finding_key(regressions),
                     invariants.render_invariants_hot_entry(
                         regressions, metrics, run.date
                     ),

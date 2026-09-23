@@ -10,6 +10,7 @@ from . import deliverables as DLV
 from . import handlers as H
 from . import pipeline_stages as stages
 from . import tierguard as TG
+from .. import _optional
 
 
 def run_ingest(core: Any, *, dry_run: bool = False) -> dict[str, Any]:
@@ -125,7 +126,6 @@ def _dry_run_preview(
     candidates: list[Path],
     symlinks: list[Path],
 ) -> dict[str, Any]:
-    from .. import cos as COS
     from . import pipeline as facade
 
     for link in symlinks:
@@ -148,14 +148,14 @@ def _dry_run_preview(
             })
             continue
         try:
-            preview = COS.read_nofollow(path, max_bytes=facade.MAX_INGEST_BYTES)
-        except COS.ApprovedTooLarge:
+            preview = facade.read_nofollow(path, max_bytes=facade.MAX_INGEST_BYTES)
+        except facade.ReadTooLarge:
             report["quarantined"].append({
                 "file": path.name,
                 "reason": "file_too_large",
             })
             continue
-        except COS.ApprovedRefused:
+        except facade.ReadRefused:
             report["skipped"].append({"file": path.name, "reason": "unreadable"})
             continue
         result = facade._extract_verified(handler, preview, path.suffix, vault)
@@ -170,6 +170,8 @@ def _dry_run_preview(
 
 
 def _load_release_guard(drain: stages.DrainRecord, candidates: list[Path]) -> bool:
+    if not _optional.cos_available():
+        return True  # ADR 0013: no COS, no attachment release records to honour.
     from .. import cos as COS
 
     try:
@@ -259,13 +261,25 @@ def _handle_processing_exception(record: stages.ClaimRecord, exc: Exception) -> 
 
 
 def _finish_successful_attempt(record: stages.ClaimRecord) -> None:
-    from .. import cos as COS
     from . import pipeline as facade
 
     if record.original_sha in record.drain.failures:
         record.drain.failures.pop(record.original_sha, None)
         facade._save_failures(record.drain.vault, record.drain.failures)
-    if record.anchor is not None:
+    _retire_spent_anchor(record)
+
+
+def _retire_spent_anchor(record: stages.ClaimRecord) -> None:
+    """Only bytes the manifest now names are spent (signed, or filed as a
+    duplicate of a note). A quarantine also ends the pass without raising,
+    and retiring the anchor there refused every later retry of the same
+    bytes `approved_anchor_missing` — `released_without_anchor` uses the
+    same manifest test for "spent"."""
+    if not _optional.cos_available():
+        return  # ADR 0013: anchors exist only where COS does.
+    if record.anchor is not None and record.original_sha in record.drain.manifest:
+        from .. import cos as COS
+
         COS.clear_attachment_anchor(
             record.drain.vault,
             record.anchor.get("dest") or record.path,
@@ -278,6 +292,8 @@ _LEGACY_CLAIM_STORE = "ingest-provenance.json"
 
 def released_without_anchor(vault: Path, manifest: dict[str, str]) -> set[str]:
     """Return released attachment hashes that no longer have a live anchor."""
+    if not _optional.cos_available():
+        return set()
     from .. import config
     from .. import cos as COS
 

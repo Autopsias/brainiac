@@ -202,6 +202,16 @@ _SHELF_INVARIANTS = {
              "that stays up means that write keeps failing — the one metric "
              "that can see the shelf mechanism having stopped entirely, since "
              "the other two read 0 of 0 when nothing is being marked at all"),
+    "invariant:supersede_declared_failed": Remedy(
+        BANNER,
+        note="live notes whose `replaces:` names a note that is NOT retired "
+             "under them (SUP-01) — the old version is still live in search. "
+             "`brain health-report` samples the pairs; `brain supersede <old> "
+             "<new>` on the host clears each"),
+    "supersede_declared_failed": Remedy(
+        BANNER,
+        note="this run's owner-declared supersession(s) that could not be "
+             "applied; the corpus count above keeps reporting them"),
 }
 
 _EXACT: dict[str, Remedy] = {
@@ -355,6 +365,10 @@ _EXACT: dict[str, Remedy] = {
         note="out-of-band COS liveness: the sheets directory, not a run "
              "record the dead night would have needed to write, missed its "
              "configured publication window"),
+    "cos:code-missing": Remedy(
+        BANNER,
+        note="ADR 0013: this vault has COS folders but the installed engine "
+             "has no COS code, so the nightly cannot run; never silent"),
     "exceptions": Remedy(
         BANNER, note="EXC-03: the unified 'N exception(s) — open <page>' "
                      "banner, read the SAME way on host and VM from the "

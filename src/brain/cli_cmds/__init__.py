@@ -13,12 +13,23 @@ from . import retrieval, retrieval_parser
 from . import versioning, versioning_parser
 from . import navigation, navigation_parser
 from . import owner_workflow, owner_workflow_parser
-from . import cos_capture, cos_capture_parser
-from . import cos_operations, cos_operations_parser
 from . import index_storage, index_storage_parser
 from . import ingest_storage, ingest_storage_parser
 from . import presentation, presentation_parser
 from . import maintenance, maintenance_parser
+from .. import _optional
+
+# The COS verbs register only when the private COS code is installed
+# (ADR 0013); they keep their place in the group order so `brain --help`
+# reads the same as before on a COS build.
+_COS_PARSERS: tuple[Any, ...] = ()
+_COS_RUNTIME: tuple[Any, ...] = ()
+if _optional.cos_available():
+    from . import cos_capture, cos_capture_parser
+    from . import cos_operations, cos_operations_parser
+
+    _COS_PARSERS = (cos_capture_parser, cos_operations_parser)
+    _COS_RUNTIME = (cos_capture, cos_operations)
 
 
 @dataclass(frozen=True)
@@ -37,8 +48,7 @@ PARSER_GROUPS = (
     versioning_parser,
     navigation_parser,
     owner_workflow_parser,
-    cos_capture_parser,
-    cos_operations_parser,
+    *_COS_PARSERS,
     index_storage_parser,
     ingest_storage_parser,
     presentation_parser,
@@ -54,8 +64,7 @@ RUNTIME_GROUPS = (
     versioning,
     navigation,
     owner_workflow,
-    cos_capture,
-    cos_operations,
+    *_COS_RUNTIME,
     index_storage,
     ingest_storage,
     presentation,

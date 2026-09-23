@@ -21,6 +21,12 @@ paths:
 | **Cowork Linux VM** (sandbox, EDR-blind) | `search`, `get`, `recent`, `draft_capture` (full VM_ALLOWED list: `init, doctor, alerts, search, hybrid-search, diagnose, grep, bases-query, graph-expand, get, read, recent, status, draft-capture, capture, brief, digest, cos-propose, provision-request` — `diagnose` is read-only and applies the same egress gate; `alerts` is the degradation digest every harness runs at session start (§9), file-reads only, and names the host-home sources the VM cannot reach instead of skipping them; `cos-propose` is an UNSIGNED drop into a proposal-drop dir `sync` never reads; only the host broker's owner-inbox gate can move it toward signing; `provision-request` (PRV-10) stages a NEW-VAULT request marker — a plain-file drop, no key, no launchd, no registry — that the host's `provision-drain` completes, see the protocol below) | sign, index-commit, WAL write, snapshot, `write_note`, `ingest`, `ingest-transcript`, `supersede`, `unsupersede`, `graphify`, every other `cos-*` verb (broker/correct/evidence/priority-map/hold) |
 | **HOST broker** (macOS/Windows, EDR-visible, holds the audit key) | everything: `write_note`, audit signing, WAL writes, snapshot generation, index commit, plus the ADR-0003 host-only verbs `ingest`/`ingest-transcript` (drop-zone → signed `raw/`, originals archived immutably), `supersede`/`unsupersede` (both sides of a version chain, and its audited undo), `graphify` (bounded monthly link-discovery build) | — |
 
+**`supersede`/`unsupersede` over the broker is still the HOST writing (SUP-01,
+2026-09-18).** The table above is about WHO SIGNS, and nothing moved: the
+`brain-mcp` broker is a host process holding the audit key, a Cowork session
+only ASKS it, and a `role=vm` broker refuses both tools. What bounds the ask is
+the guard in §5 — visibility, then relatedness, else a CUR-01 proposal.
+
 **Why:** the Cowork VM is ephemeral, EDR-blind, and not audit-logged — it must
 never be the thing that signs the audit chain or mutates the canonical index.
 The VM is a **read + draft** surface only; the host is the **only writer**.

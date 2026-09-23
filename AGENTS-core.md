@@ -137,8 +137,6 @@ the mount, quote the captured text — see AGENTS.md §5.
 
 ## 8 · Before you commit
 
-## 8 · Before you commit
-
 Run the validator from the repo root:
 
 ```bash
@@ -149,13 +147,22 @@ python3 tools/validate.py vault --okf      # also run the optional OKF lint prof
 
 A clean validate (exit 0) is the conventions gate.
 
+Before you hand in a plan session, also run the whole-repo rule tests plus every
+test file that asserts the behaviour you changed (~40 s; why: AGENTS.md §8):
+
+```bash
+.venv/bin/python -B -m pytest -q \
+  tests/test_client_name_gate_splits_identifiers.py tests/test_export_cleanroom.py \
+  tests/test_cos_pathguard_census.py tests/test_cowork_skill_verbs.py
+```
+
 ---
 
 ## Where the rest lives
 
 This file is the ≤200-line core, imported by `CLAUDE.md` (`@AGENTS-core.md`).
-`AGENTS.md` stays the full, unmodified canonical file for Codex/Gemini/the
-Desktop Code tab. Claude Code loads the rest of AGENTS.md's content
+`AGENTS.md` stays the full, unmodified canonical file for Codex and Gemini.
+Claude Code, the Desktop Code tab included, loads the rest of AGENTS.md's content
 CONDITIONALLY, only when a matching file is touched, from:
 
 | File | Loads when touching | Covers |

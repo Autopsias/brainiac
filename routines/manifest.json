@@ -13,7 +13,6 @@
       "id": "brain-nightly",
       "display_name": "brain-nightly (THE maintenance umbrella — hourly)",
       "folds": [
-        "chief-of-staff-nightly",
         "daily-check (daily branch)",
         "recommendations-aging (daily branch, unconditional file scan)",
         "health (Monday branch)",

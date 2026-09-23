@@ -6,6 +6,7 @@ from typing import Any
 
 from .context import MaintenanceRun
 from .. import maintenance
+from .. import _optional
 from ..lock import WriterLockBusy
 
 
@@ -20,8 +21,9 @@ class DailyFoldsMixin:
         self.future_artifact_fold(run)
         self.workspace_sweep_fold(run)
         self.provision_drain_fold(run)
-        self.cos_ingest_sweep_fold(run)
-        self.cos_broker_summary_fold(run)
+        if _optional.cos_available():
+            self.cos_ingest_sweep_fold(run)
+            self.cos_broker_summary_fold(run)
         try:
             self.sync_reconcile_fold(run)
             # AFTER the sync and BEFORE the publish, and both halves matter.

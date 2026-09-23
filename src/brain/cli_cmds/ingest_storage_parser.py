@@ -38,7 +38,11 @@ def _add_ingest_transcript(sub) -> None:
         "--document-date",
         default=None,
         dest="document_date",
-        help="YYYY-MM-DD the underlying meeting/recording happened (optional)",
+        help="when the underlying meeting/recording happened (optional): "
+        "YYYY-MM-DD, or a full ISO datetime YYYY-MM-DDTHH:MM:SS. A datetime "
+        "stamps document_date with the DATE and the time-of-day into a "
+        "separate recorded_at field — document_date is a valid-time key the "
+        "As Of view compares as a plain date",
     )
     sp.add_argument("--classification", default="Internal", choices=cls.TIERS)
     sp.add_argument("--json", action="store_true")

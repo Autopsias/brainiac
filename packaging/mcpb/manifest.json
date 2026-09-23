@@ -96,6 +96,14 @@
     {
       "name": "capture",
       "description": "Save content as a draft note. Host-side staging: the caller sends content, the broker stages it — signed+indexed immediately on the host, unsigned and untrusted pending host drain on the VM leg."
+    },
+    {
+      "name": "supersede",
+      "description": "Retire note old_id in favour of new_id (a new version). Host-only. Applied only when the vault itself relates the pair (a wikilink, replaces:, or a shared document name); otherwise staged as a proposal for the owner's nightly question. reason is required."
+    },
+    {
+      "name": "unsupersede",
+      "description": "Undo one supersession link, both sides, through the same audited path. Host-only. reason is required."
     }
   ],
   "user_config": {

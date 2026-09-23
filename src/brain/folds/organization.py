@@ -57,6 +57,11 @@ class OrganizationFoldsMixin:
                 result.get("ingest", {}), Path(self.vault)
             )
         )
+        # SUP-01: an owner-declared supersession that could not be applied
+        # leaves the old version LIVE in search — reported the run it happens.
+        from .. import supersede_declared
+        run.action_required.extend(
+            supersede_declared.findings(result.get("ingest", {}), Path(self.vault)))
 
     def version_chain_fold(self, run: MaintenanceRun) -> None:
         """Stamp explicit version families without overriding manual links."""

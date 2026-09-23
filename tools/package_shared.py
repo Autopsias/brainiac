@@ -13,6 +13,20 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
+# ADR 0013: the public export leaves the COS (the private email assistant) out,
+# `src/brain/cos/` included. A tree without it packages no COS skill, tool
+# mirror or asset; this private tree keeps every one of them, unchanged.
+COS_PRESENT = (REPO_ROOT / "src" / "brain" / "cos" / "__init__.py").is_file()
+
+
+def without_cos(names: list[str], shape: str = "{}") -> list[str]:
+    """``names`` unchanged where the COS is present, else minus every name whose
+    path (``shape`` filled with it) is a COS path per the exporter's list."""
+    if COS_PRESENT:
+        return names
+    from export_cleanroom import is_cos_path  # a sibling in tools/
+    return [n for n in names if not is_cos_path(shape.format(n))]
+
 PLUGINS_DIR = REPO_ROOT / "plugins"
 DIST_DIR = REPO_ROOT / "dist"
 PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"

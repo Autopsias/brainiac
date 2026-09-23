@@ -12,8 +12,15 @@
 #   enabled = false
 #
 # AGENTS.md is Codex's native project-instructions file (read automatically,
-# no config needed) — it is the canonical conventions doc; CLAUDE.md and
-# .gemini/settings.json both import/point at the same file (INT-01).
+# no config needed) — it is the canonical conventions doc. .gemini/settings.json
+# points at it too; Claude Code imports AGENTS-core.md plus the path-scoped
+# .claude/rules/ copies, guarded by tests/test_agents_md_rules_copies.py (INT-01).
+
+# Codex cuts project AGENTS.md at 32,768 bytes by default; this file is far
+# larger. Raise the budget so every section reaches Codex. Honoured only when
+# this checkout is trusted in a config FILE, not via `-c` trust. Guarded by
+# tests/test_agents_md_fits_codex.py. See docs/adr/0012-agents-md-fits-every-harness.md.
+project_doc_max_bytes = 262144
 
 # Interactive default: pause before running generated commands.
 approval_policy = "on-request"

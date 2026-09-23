@@ -258,6 +258,28 @@ except ImportError:  # pragma: no cover - exercised via degraded-deps test
 _OCR_LANG: str | None = None
 _OCR_LANG_PROBED = False
 
+#: Where a package manager puts the binary when the process PATH cannot reach it.
+_TESSERACT_FALLBACKS = ("/opt/homebrew/bin/tesseract", "/usr/local/bin/tesseract")
+
+
+def _point_at_tesseract() -> None:
+    """Give pytesseract an absolute binary when PATH cannot find one.
+
+    launchd runs the hourly job with ``PATH=/usr/bin:/bin:/usr/sbin:/sbin``, so a
+    Homebrew tesseract was invisible to it and every scanned PDF quarantined as
+    "no local OCR engine is installed" while the binary sat in
+    ``/opt/homebrew/bin`` (measured 2026-09-15: 5 files, all scans). An explicit
+    ``tesseract_cmd`` that already resolves is left alone."""
+    import os
+    import shutil
+
+    if shutil.which(str(pytesseract.pytesseract.tesseract_cmd)):
+        return
+    for candidate in _TESSERACT_FALLBACKS:
+        if os.access(candidate, os.X_OK):
+            pytesseract.pytesseract.tesseract_cmd = candidate
+            return
+
 
 def ocr_available() -> bool:
     """True iff the local OCR engine (binding + tesseract binary) answers."""
@@ -282,6 +304,7 @@ def ocr_lang() -> str | None:
     elif not _HAS_PYTESSERACT:
         _OCR_LANG = None
     else:
+        _point_at_tesseract()
         try:
             installed = set(pytesseract.get_languages(config=""))
         except Exception:  # no tesseract binary, or it refused to answer

@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 # check. The IMPORT package stays `brain` and the console script stays
 # `brain` — only the distribution/project name changes.
 name = "brainiac-cli"
-version = "0.20.38"
+version = "0.20.39"
 description = "Brainiac — local any-LLM second-brain core engine + brain CLI (Markdown truth, derived SQLite index)."
 readme = "README.md"
 license = "Apache-2.0"
@@ -200,7 +200,7 @@ exclude = ["_plans", "_archive", "_evidence", "_assets"]
 # quality ratchets (size, function length, complexity) and a formatter would
 # churn every file for no defect caught. What was MISSING was the one class of
 # check that finds code which cannot run: the s16/s18 module splits left
-# `tools/cos_mutate_evidence.py` calling `evidence_stages.e17_block()`,
+# a private tool calling `evidence_stages.e17_block()`,
 # `subprocess.run()` and `json.loads()` with none of the three names in scope,
 # and `src/brain/invariants.py` re-exporting two names twice. Nothing in the
 # repo could see either one. Hence pyflakes (F) plus E9 (syntax/IO errors),
@@ -222,7 +222,7 @@ select = ["F", "E9", "E722"]
 # The s15-s18 splits left behind modules whose entire job is to re-export: a
 # `_shared.py` holds one family's imports and every sibling does
 # `from ._shared import *`; `cos_runverify.py` binds ~60 names that
-# `cos_runverify_io.py` and `tools/cos_judge.py` then read back OFF IT, which
+# `cos_runverify_io.py` and a private tool then read back OFF IT, which
 # the doctrine text pins by name. To this rule every one of those imports is
 # "unused" — the consumer is another module, which pyflakes cannot see.
 #
@@ -257,22 +257,6 @@ ignore = ["F403", "F405"]
 # real F811s all live outside tests/.
 "tests/**" = ["F811"]
 
-# THE COS CARVE-OUT — TEMPORARY, and it lifts when The Porter Finishes lands.
-# These two paths are under active edit on plan/porter-finishes-2026-09-04.
-# Aliasing their re-exports on master would collide with that branch on every
-# merge, so the 2026-09-05 alias pass skipped them by agreement with the
-# session running that plan. 81 F401 findings live here and nowhere else:
-# 46 in cos_runverify.py, 35 under cos/. When the plan merges, run the same
-# alias pass over both and delete this block; nothing else about the rule
-# changes.
-#
-# It listed NINE paths for one day. Seven were dead on arrival — five named
-# files that exist only on the plan branch, and two named files with no F401
-# at all. The list was the peer session's set of files under edit, not a
-# measurement of what the rule reported. tests/test_ruff_per_file_ignores_are_live.py
-# now re-measures every entry here and fails naming any that suppresses nothing.
-"src/brain/cos/**" = ["F401"]
-"src/brain/cos_runverify.py" = ["F401"]
 
 [tool.pytest.ini_options]
 # Scope collection to tests/ so pytest never descends into a local model venv

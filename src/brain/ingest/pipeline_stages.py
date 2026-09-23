@@ -9,6 +9,7 @@ from typing import Any, Callable
 from . import deliverables as DLV
 from . import handlers as H
 from . import tierguard as TG
+from .. import _optional
 from .handlers.base import NO_TEXT_MARKER
 from .pipeline_duplicates import prior_extraction_failed, record_duplicate
 from .pipeline_injection import apply_injection_assessment, injection_scan_stage
@@ -103,17 +104,13 @@ def nofollow_read_stage(record: ClaimRecord) -> ClaimRecord:
     """Read the claimed inode once without following a swapped name."""
     if record.terminal:
         return record
-    from .. import cos as COS
     from . import pipeline as facade
 
     assert record.claimed is not None
     try:
         # INT-04.6: the size cap is enforced on this no-follow descriptor.
-        original_bytes = COS.read_nofollow(
-            record.claimed,
-            max_bytes=facade.MAX_INGEST_BYTES,
-        )
-    except COS.ApprovedTooLarge as exc:
+        original_bytes = facade.read_nofollow(record.claimed, max_bytes=facade.MAX_INGEST_BYTES)
+    except facade.ReadTooLarge as exc:
         facade._quarantine(
             record.claimed,
             record.drain.quarantine_dir,
@@ -123,7 +120,7 @@ def nofollow_read_stage(record: ClaimRecord) -> ClaimRecord:
         record.append("quarantined", {"file": record.claimed.name, "reason": "file_too_large"})
         record.terminal = True
         return record
-    except COS.ApprovedRefused as exc:
+    except facade.ReadRefused as exc:
         facade._quarantine(
             record.claimed,
             record.drain.quarantine_dir,
@@ -142,6 +139,8 @@ def acceptance_anchor_stage(record: ClaimRecord) -> ClaimRecord:
     """Verify accepted bytes against the off-mount host-signed anchor."""
     if record.terminal:
         return record
+    if not _optional.cos_available():
+        return record  # ADR 0013: no COS, no attachment anchors; a drop is a drop.
     from .. import cos as COS
     from . import pipeline as facade
 

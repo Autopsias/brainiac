@@ -14,6 +14,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from . import _optional
 from .interview import (EXPIRE_DAYS, OPTIONS, SKIP, OPEN, blocked,
                         question_key)
 
@@ -39,13 +40,14 @@ def rel_path(vault: Any, path: str) -> str:
 
 def _row(shape: str, *, evidence: list[dict[str, str]], target: dict[str, str],
          question: str, change: str, today: _dt.date,
-         options: list[tuple[str, str]] | None = None) -> dict[str, Any]:
+         options: list[tuple[str, str]] | None = None,
+         context: str = "") -> dict[str, Any]:
     opts = options if options is not None else OPTIONS[shape]
     return {
         "key": question_key(shape, [e["id"] for e in evidence]),
         "shape": shape, "asked_on": today.isoformat(),
         "expires_on": (today + _dt.timedelta(days=EXPIRE_DAYS)).isoformat(),
-        "question": question, "evidence": evidence,
+        "question": question, "evidence": evidence, "context": context,
         "options": [{"action": a, "label": lbl} for a, lbl in opts],
         "default": SKIP, "target": target, "change": change,
         "answer": "", "note": "", "status": OPEN,
@@ -92,7 +94,11 @@ def _tension_candidates(core: Any, state: dict[str, Any], today: _dt.date,
                   for s in sweep.get("sources") or []}
         mine = next((x for x in sweep.get("decisions") or []
                      if str(x.get("id")) == did), None)
-        tensions = list((mine or {}).get("tensions") or [])
+        # The interview's OWN record is not new evidence: it quotes the
+        # question, so every answer made the next night's tension (measured
+        # 2026-09-22: 3 of 3 tensions on the loop's decisions were records).
+        tensions = [t for t in (mine or {}).get("tensions") or []
+                    if "owner-interview" not in str(t.get("id") or "")]
         if not tensions:
             continue
         tensions.sort(key=lambda t: str(t.get("date") or ""), reverse=True)
@@ -100,8 +106,14 @@ def _tension_candidates(core: Any, state: dict[str, Any], today: _dt.date,
                      "title": titles.get(str(t["id"]), "")} for t in tensions[:4]]
         newest = evidence[0]
         when = str((mine or {}).get("date") or d.get("updated") or "")[:10]
-        yield _row("tension", evidence=evidence, today=today,
-                   target={"id": did, "path": rel_path(core.vault, str(d.get("path") or "")),
+        dpath = rel_path(core.vault, str(d.get("path") or ""))
+        said = note_excerpt(core.vault, dpath, 300)
+        against = note_excerpt(core.vault, note_path(core, newest["id"]), 300)
+        context = "\n".join(
+            ([f"The decision: {said}"] if said else [])
+            + ([f"The newest source ({newest['id']}): {against}"] if against else []))
+        yield _row("tension", evidence=evidence, today=today, context=context,
+                   target={"id": did, "path": dpath,
                            "title": str(d.get("title") or did)},
                    question=(f"You decided [[{did}]] on {when}: "
                              f"{d.get('title') or did}. {len(tensions)} newer "
@@ -121,6 +133,7 @@ def _decision_candidates(core: Any, state: dict[str, Any], today: _dt.date):
             continue
         phrase = str(c.get("phrase") or "").strip()
         yield _row("decision", today=today,
+                   context=f"…{c.get('snippet') or phrase}…",
                    evidence=[{"id": sid, "date": str(c.get("date") or ""),
                               "title": sid}],
                    target={"id": sid, "path": note_path(core, sid), "title": sid},
@@ -132,7 +145,10 @@ def _decision_candidates(core: Any, state: dict[str, Any], today: _dt.date):
 
 
 def _late_candidates(core: Any, state: dict[str, Any], today: _dt.date):
-    """Commitments past their date (the commitment-spine radar)."""
+    """Commitments past their date (the commitment-spine radar). The spine is
+    COS's; without it there are none (ADR 0013)."""
+    if not _optional.cos_available():
+        return
     from . import spine  # noqa: PLC0415
     for c in spine.radar(core.vault).get("late") or []:
         cid = str(c.get("id") or "")
@@ -143,7 +159,10 @@ def _late_candidates(core: Any, state: dict[str, Any], today: _dt.date):
                 else f"{who} owes you")
         age = int(float(c.get("age_days") or 0))
         text = re.sub(r"\s+", " ", str(c.get("text") or "")).strip()[:140]
-        yield _row("late", today=today,
+        source_ref = str(c.get("source_ref") or "")
+        context = (note_excerpt(core.vault, note_path(core, source_ref), 300)
+                   if source_ref else "")
+        yield _row("late", today=today, context=context,
                    evidence=[{"id": cid, "date": str(c.get("due") or "")[:10],
                               "title": text}],
                    target={"id": cid, "path": "", "title": text},
@@ -199,6 +218,7 @@ def _orphan_candidates(core: Any, state: dict[str, Any], today: _dt.date,
         if not links:
             continue
         yield _row("orphan", today=today, options=links + OPTIONS["orphan"],
+                   context=note_excerpt(core.vault, rel_path(core.vault, str(c.get("path") or "")), 300),
                    evidence=[{"id": sid, "date": str(c.get("created") or ""),
                               "title": title}],
                    target={"id": sid, "path": rel_path(core.vault, str(c.get("path") or "")),
@@ -223,6 +243,7 @@ def _stale_candidates(core: Any, state: dict[str, Any], today: _dt.date,
         taken += 1
         age = int(float(r.get("age_days") or 0))
         yield _row("stale", today=today,
+                   context=note_excerpt(core.vault, rel_path(core.vault, str(r.get("path") or "")), 300),
                    evidence=[{"id": nid, "date": str(r.get("updated") or "")[:10],
                               "title": str(r.get("title") or nid)}],
                    target={"id": nid, "path": rel_path(core.vault, str(r.get("path") or "")),

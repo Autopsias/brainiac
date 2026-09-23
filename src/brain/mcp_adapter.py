@@ -103,6 +103,7 @@ from .mcp_mediation import (  # re-exported: the mediation boundary lives there
 )
 from .mcp_capture_verbs import CaptureRecordError, dispatch_capture
 from .mcp_housekeeping_verbs import dispatch_alerts, dispatch_exceptions
+from .mcp_supersede_verbs import dispatch_supersede
 from .mcp_verbs import (
     DEFAULT_EGRESS_CEILING_TIER,
     EGRESS_CEILING_ENV_VAR,
@@ -165,7 +166,7 @@ READ_TOOLS = (
 #: which stages an unsigned draft host-side (see :mod:`brain.mcp_capture_verbs`)
 #: rather than folding into the read allow-list, which is exactly the quiet
 #: drop this note exists to prevent.
-WRITE_TOOLS: tuple[str, ...] = ("capture",)
+WRITE_TOOLS: tuple[str, ...] = ("capture", "supersede", "unsupersede")  # SUP-01: host-only
 
 #: What the broker exposes at all. Never the stop list: the 28 verbs the s01
 #: survey scores ``host_only_never`` (``write``, ``rebuild``, ``maintain``,
@@ -215,6 +216,7 @@ _HANDLERS = {
     "exceptions": dispatch_exceptions,
     "inbox": dispatch_exceptions,  # alias — see dispatch_exceptions' docstring
     "capture": dispatch_capture,
+    "supersede": dispatch_supersede, "unsupersede": dispatch_supersede,
 }
 
 

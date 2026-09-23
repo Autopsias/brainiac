@@ -33,7 +33,11 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from export_public_copies import write_public_copies  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -122,6 +126,56 @@ EXCLUDE_PREFIXES = (
 # never ship it. (Root-cause fix accompanies scrubbing the tracked files.)
 EXCLUDE_SUFFIXES = ("-evidence.md",)
 
+# ADR 0013 (2026-09-22, owner decisions): the public product is the second
+# brain. The COS (Chief of Staff — the private email assistant: nightly
+# mailbox run, drafts, morning sheet, read-back, email bridge) stays private.
+# One tree carries both; THIS list is the one place that says which files are
+# the COS, and every export drops them. `tools/export_check_no_cos.py` reads
+# it from here and proves the result. Each prefix was checked against every
+# tracked path: nothing that is not COS starts with any of them.
+# NOT COS: `src/brain/ingest/handlers/email.py`, the generic `.eml` file
+# handler — a saved email dropped in inbox/ is ingested like any other file.
+COS_EXCLUDES = (
+    "src/brain/cos/",
+    "src/brain/cos_",
+    "src/brain/cli_cmds/cos_",
+    "src/brain/core/_cos_facade.py",
+    "src/brain/folds/cos.py",
+    # ADR 0013 §5: the commitment spine writes into COS folders and feeds its
+    # grounding pack; core reaches it only through guarded calls (s03).
+    "src/brain/spine.py",
+    "src/brain/spine_render.py",
+    "src/brain/_assets/tools/cos_",
+    "src/brain/_assets/cos/",
+    "src/brain/_assets/overlay/template/cos/",
+    "tools/cos_",
+    "tools/launchd/com.brainiac.cos-",
+    "tools/launchd/install-cos-jobs.sh",
+    "tools/launchd/reload-cos-nightly.sh",
+    "scripts/cos-",
+    "overlay/template/cos/",
+    "docs/cos-",
+    "docs/adr/0013-public-export-excludes-cos.md",
+    "eval/cos_",
+    "eval/configs/cos-",
+    "eval/fixtures/build_cos_corpus_synthetic.py",
+    "eval/fixtures/cos-",
+    ".claude/skills/chief-of-staff/",
+    ".claude/skills/cos-nightly/",
+    ".agents/skills/chief-of-staff/",
+    "plugins/brainiac-extras/skills/chief-of-staff/",
+    # ADR 0013 §5 rulings applied in s04: the pre-commit guard that stops a
+    # commit while a COS night runs, and the COS sheet-listener ADR.
+    "tools/check_no_live_nightly.sh",
+    "docs/adr/0012-sheet-session-listener.md",
+)
+
+
+def is_cos_path(rel: str) -> bool:
+    """True when a repo-relative path is COS by the rule set above."""
+    return rel.startswith(COS_EXCLUDES)
+
+
 def tracked_files(repo_root: Path) -> list[str]:
     out = subprocess.run(
         ["git", "-C", str(repo_root), "ls-files", "-z"],
@@ -131,10 +185,16 @@ def tracked_files(repo_root: Path) -> list[str]:
     paths = [p for p in out.decode("utf-8").split("\0") if p]
     return [p for p in paths
             if not p.startswith(EXCLUDE_PREFIXES)
-            and not p.endswith(EXCLUDE_SUFFIXES)]
+            and not p.endswith(EXCLUDE_SUFFIXES)
+            and not is_cos_path(p)]
 
 
 def export(repo_root: Path, output_dir: Path) -> list[str]:
+    # Refuse a folder that already holds files: the copy below never deletes,
+    # so an old export's COS files (or any file dropped since) would survive
+    # into this one and ship.
+    if output_dir.exists() and (not output_dir.is_dir() or any(output_dir.iterdir())):
+        raise SystemExit(f"FAIL: --output {output_dir} is not empty; export into a new or empty folder")
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest: list[str] = []
 
@@ -145,6 +205,8 @@ def export(repo_root: Path, output_dir: Path) -> list[str]:
         shutil.copy2(src, dst)
         manifest.append(rel)
 
+    # Shared files whose private copy must keep COS get a COS-free public copy.
+    write_public_copies(repo_root, output_dir, set(manifest), is_cos_path)
     assert_exported_version_stamp(output_dir)
 
     manifest.sort()

@@ -24,10 +24,30 @@ def _grep_whole_word(escaped: str) -> str:
     return f"(?<!\\w){escaped}(?!\\w)"
 
 
+def _grep_fts_query(pattern: str, terms: list[str], multi: bool, regex: bool) -> str | None:
+    """An FTS5 query matching a SUPERSET of a literal grep's notes, else None.
+
+    Measured 2026-09-18, reference vault: regex-scanning all 5,846 bodies cost
+    ``grep gama`` 5.6 s; FTS5 names the candidate bodies first and it is 1.5 s,
+    output byte-identical — the regex still decides every match. Superset
+    because a whole-word literal hit is its tokens adjacent and in order (an
+    FTS5 phrase), split by the SAME tokenizer as the body; FTS5 is only ever
+    broader (folds diacritics, spans line breaks).
+
+    ponytail: no ASCII letter/digit in a part -> None (full scan), since the
+    phrase could tokenize to nothing. Ceiling: IGNORECASE equates İ ı ſ K with
+    i/s/k and FTS5 may not; full-scan non-ASCII patterns if that ever matters.
+    """
+    parts = terms if multi else [pattern]
+    if regex or not all(any(c.isascii() and c.isalnum() for c in p) for p in parts):
+        return None
+    return "body : (" + " OR ".join('"' + p.replace('"', '""') + '"' for p in parts) + ")"
+
+
 class _ToolMixin:
     """Index tool-query methods."""
 
-    def _grep_rows(self, include_retired: bool = False) -> list[Any]:
+    def _grep_rows(self, include_retired: bool = False, fts_q: str | None = None) -> list[Any]:
         """Every LIVE note as
         ``(id,title,classification,zone,path,body,concealment,frontmatter,is_latest_version)``.
 
@@ -48,12 +68,18 @@ class _ToolMixin:
         ``RETIRED_PREDICATE``, a module constant. No caller input reaches the
         SQL text. See ``_schema._concealment_sql``.
         """
-        where = "" if include_retired else f" WHERE NOT {RETIRED_PREDICATE}"
-        return self.conn.execute(  # nosec B608
-            "SELECT n.id,n.title,n.classification,n.zone,n.path,n.body,"
-            f"{self._concealment_sql()},{self._frontmatter_sql()},"
-            f"n.is_latest_version FROM notes AS n{where}"
-        ).fetchall()
+        live = "1" if include_retired else f"NOT {RETIRED_PREDICATE}"
+        sql = ("SELECT n.id,n.title,n.classification,n.zone,n.path,n.body,"
+               f"{self._concealment_sql()},{self._frontmatter_sql()},"
+               f"n.is_latest_version FROM notes AS n WHERE {live}")
+        if fts_q is not None:  # BOUND, never interpolated
+            try:
+                return self.conn.execute(  # nosec B608
+                    sql + " AND n.rowid IN (SELECT rowid FROM notes_fts"
+                    " WHERE notes_fts MATCH ?)", (fts_q,)).fetchall()
+            except sqlite3.OperationalError:
+                pass  # no FTS table / unparseable phrase: the full scan is always correct
+        return self.conn.execute(sql).fetchall()  # nosec B608
 
     def _grep_snippet(self, line: str, rxs: list[Any], n: int = 160) -> str:
         """The matched line, windowed AROUND the actual match — not just the
@@ -147,7 +173,7 @@ class _ToolMixin:
             except _re.error:
                 rx = _re.compile(_re.escape(pattern), flags)
             rxs = [rx]
-        rows = self._grep_rows(include_retired)  # retired dropped pre-match
+        rows = self._grep_rows(include_retired, _grep_fts_query(pattern, terms, multi, regex))
         if max_tier is not None:
             allows = cls_mod.ClassificationFilter(max_tier=max_tier).allows
             rows = [r for r in rows if allows(r[2])]

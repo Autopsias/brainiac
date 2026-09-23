@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .. import classification as CLS
+from .. import supersede_declared as SUP
 
 if TYPE_CHECKING:  # the stage record; a runtime import here would be a cycle
     from .pipeline_stages import ClaimRecord
@@ -97,7 +98,8 @@ def scan(inbox: Path) -> dict[Path, str | None]:
 
 
 def _ingestable(path: Path) -> bool:
-    return path.is_file() and not path.is_symlink()
+    return (path.is_file() and not path.is_symlink()
+            and not path.name.endswith(SUP.SIDECAR_SUFFIX))  # SUP-01: a control file
 
 
 def control_file(path: Path, inbox: Path) -> Path | None:
@@ -166,6 +168,7 @@ def declare_tier(record: "ClaimRecord") -> None:
     """
     record.meta["classification"] = record.requested_classification
     record.meta["provenance.produced_by"] = PRODUCED_BY
+    SUP.stamp(record)
 
 
 def open_journal(record: "ClaimRecord") -> None:
@@ -187,7 +190,8 @@ def anchor_for(record: "ClaimRecord", entry: dict[str, Any]) -> None:
         entry["deliverable_anchor"] = write_anchor(record.drain.core, _payload(record))
     except Exception as exc:  # noqa: BLE001 — reported, and retried next run
         entry["deliverable_anchor"] = f"deferred:{type(exc).__name__}: {exc}"
-        return
+        return SUP.note_declaration(record, entry)
+    SUP.note_declaration(record, entry)
     entry["project"] = record.project
     journal_close(record.drain.vault, record.slug)
 

@@ -229,7 +229,7 @@ def corpus_invariants(conn: Any, vault: Path, *, cap: int = SAMPLE_CAP) -> dict[
         "subfloor_families": lambda: subfloor_families(conn, cap=cap),
         "unreachable_gold": lambda: unreachable_gold(vault),
         "unsigned_notes": lambda: unsigned_notes(conn, vault, cap=cap),
-        **_deliverable_computers(vault, cap=cap),
+        **_deliverable_computers(vault, cap=cap, conn=conn),
     }
     for name in INVARIANT_METRICS:
         try:

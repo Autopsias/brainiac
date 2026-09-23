@@ -462,7 +462,7 @@ sys.modules.setdefault("tools.publish_public", sys.modules[__name__])
 # monkeypatch on publish_public._run (etc.) keeps governing them.
 from tools.publish_public_checks import (  # noqa: E402,F401
     _RELEASE_ENV_EXEMPT_GROUPS, _load_denylist_terms, _release_env_groups,
-    _scan_tree, assert_interpreter_can_run_the_suite, phase_build,
+    _scan_tree, assert_dist_has_no_cos, assert_interpreter_can_run_the_suite, phase_build,
     phase_export, phase_tests, phase_windows_ci, pytest_failure_summary,
     scanner_self_test, suite_parallel_args, worktree_sha)
 from tools.publish_public_uploads import (  # noqa: E402,F401

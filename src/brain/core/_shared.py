@@ -9,7 +9,6 @@ from .. import classification as classification, config as config, frontmatter
 from ..audit import AuditChain as AuditChain, KeyUnavailable as KeyUnavailable
 from ..draft_drain import DraftDrainMixin as DraftDrainMixin
 from ..folds import (
-    CosFoldsMixin as CosFoldsMixin,
     DailyFoldsMixin as DailyFoldsMixin,
     DeliverablesFoldsMixin as DeliverablesFoldsMixin,
     GraphFoldsMixin as GraphFoldsMixin,

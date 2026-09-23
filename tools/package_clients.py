@@ -60,7 +60,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from package_shared import (  # noqa: E402,F401
     DIST_DIR, FRONTMATTER_RE, PLUGINS_DIR, PYPROJECT_PATH, REPO_ROOT,
     ValidationError, _log, _mini_yaml_parse, parse_skill_frontmatter,
-    validate_json_file, validate_skill_md)
+    validate_json_file, validate_skill_md, without_cos)
 from package_clients_config import (  # noqa: E402,F401
     validate_claude_settings, validate_codex_config, validate_marketplace)
 from package_versions import (  # noqa: E402,F401
@@ -90,6 +90,7 @@ EXTRAS_SKILLS = [
     "autoresearch",
     "chief-of-staff",
 ]
+EXTRAS_SKILLS = without_cos(EXTRAS_SKILLS, ".claude/skills/{}/SKILL.md")  # ADR 0013
 ALL_SKILLS = KERNEL_SKILLS + EXTRAS_SKILLS
 
 # brainiac-manager: host lifecycle skills (own plugin, own sync target).
@@ -215,6 +216,7 @@ ENGINE_ASSET_FILES = [
     # everything else here is static (CSS/JS/WebGL viewer).
     "assets/graph-explorer-template.html",
 ]
+ENGINE_ASSET_FILES = without_cos(ENGINE_ASSET_FILES)
 ENGINE_ASSET_DIRS = [
     "templates",
     "overlay/template",
@@ -224,9 +226,9 @@ ENGINE_ASSET_DIRS = [
 # ``importlib.resources`` by an installed engine.  The mirror sync must still
 # know about them or its stale-file pruning silently deletes them (S11 found
 # this with the S07 morning-sheet template).
-ENGINE_NATIVE_ASSET_FILES = [
+ENGINE_NATIVE_ASSET_FILES = without_cos([
     "cos/sheet-template.html",
-]
+], "src/brain/_assets/{}")
 
 
 def _require_native_assets() -> set[Path]:

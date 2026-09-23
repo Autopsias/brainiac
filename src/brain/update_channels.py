@@ -16,6 +16,11 @@ from .doctor import (
     CHANNEL_PYPI_UV,
     CHANNEL_VENV_WHEEL,
 )
+from .update_cos_guard import (
+    cos_guard_refusal as _cos_guard_refusal,
+    new_source_carries_cos as _new_source_carries_cos,
+    target_carries_cos as _target_carries_cos,
+)
 
 
 #: A workspace re-stage runs a REAL vault sync, and the shared runner's
@@ -119,6 +124,16 @@ def refresh_engine_channel(
     channel = detect_channel(brain_bin) if brain_bin else CHANNEL_EDITABLE
     old_version = _read_installed_version(brain_bin, run)
     has_checkout = engine_src is not None and (engine_src / "pyproject.toml").exists()
+
+    # OW-01: decide BEFORE any channel dispatches an install command — the
+    # editable channel's own "no checkout resolved" refusal a few lines down
+    # already changes nothing and reports a config problem unrelated to COS,
+    # so it keeps priority over this guard.
+    if not (channel == CHANNEL_EDITABLE and not has_checkout):
+        target_had_cos = _target_carries_cos(brain_bin)
+        new_has_cos = _new_source_carries_cos(channel, engine_src, has_checkout)
+        if target_had_cos and not new_has_cos:
+            return _cos_guard_refusal(old_version, channel, brainiac_home)
 
     if channel == CHANNEL_PYPI_UV:
         install_out = upgrade_uv_tool(run)

@@ -41,10 +41,20 @@ SENT_KEY = "provenance.sent"
 CONVERSATION_KEY = "provenance.conversation_id"
 SUBJECT_KEY = "provenance.subject"
 
+#: Who else the mail reached (2026-09-13, the Archive backfill): `To` and
+#: `Cc` as "addr; addr" strings, and the mailbox FOLDER the thread was read
+#: from (`inbox`, `archive`, `sentitems`). Claims like the four above —
+#: sanitized and scrubbed on capture, never verified by the VM lane.
+RECIPIENTS_KEY = "provenance.recipients"
+CC_KEY = "provenance.cc"
+FOLDER_KEY = "provenance.folder"
+
 #: short field names, as used in manifest lines / the provenance store / kwargs
-FIELDS: tuple[str, ...] = ("sender", "sent", "conversation_id", "subject")
+FIELDS: tuple[str, ...] = ("sender", "sent", "conversation_id", "subject",
+                           "recipients", "cc", "folder")
 #: the frontmatter key for each field, in the same order
-CLAIM_KEYS: tuple[str, ...] = (SENDER_KEY, SENT_KEY, CONVERSATION_KEY, SUBJECT_KEY)
+CLAIM_KEYS: tuple[str, ...] = (SENDER_KEY, SENT_KEY, CONVERSATION_KEY, SUBJECT_KEY,
+                               RECIPIENTS_KEY, CC_KEY, FOLDER_KEY)
 _KEY_BY_FIELD: dict[str, str] = dict(zip(FIELDS, CLAIM_KEYS))
 #: every recognised dotted provenance key (validator + OKF profile share this)
 KEYS: tuple[str, ...] = CLAIM_KEYS + (TRUST_KEY, VERIFIED_KEY)

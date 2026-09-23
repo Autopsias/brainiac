@@ -70,10 +70,14 @@ DELIVERABLE_METRICS = (
     "unshelved_deliverables",
     "stale_shelf_entries",
     "unanchored_deliverable_payloads",
+    # SUP-01 — not a shelf counter, registered here because `invariants.py`
+    # sits at the file-size ratchet; computed by `supersede_declared`.
+    "supersede_declared_failed",
 )
 
 
-def computers(vault: Path, *, cap: int = SAMPLE_CAP) -> dict[str, Callable[[], Any]]:
+def computers(vault: Path, *, cap: int = SAMPLE_CAP,
+              conn: Any = None) -> dict[str, Callable[[], Any]]:
     """The three metric thunks, sharing ONE census + ledger read.
 
     Shaped like ``invariants.corpus_invariants``' own memoized
@@ -91,7 +95,16 @@ def computers(vault: Path, *, cap: int = SAMPLE_CAP) -> dict[str, Callable[[], A
         "stale_shelf_entries": lambda: stale_shelf_entries(state(), cap=cap),
         "unanchored_deliverable_payloads":
             lambda: unanchored_deliverable_payloads(vault, cap=cap),
+        # an index metric: absent when a caller asks for the shelf thunks alone
+        **({"supersede_declared_failed": lambda: _declared_failed(conn, cap=cap)}
+           if conn is not None else {}),
     }
+
+
+def _declared_failed(conn: Any, *, cap: int) -> dict[str, Any]:
+    from . import supersede_declared
+
+    return supersede_declared.declared_failed(conn, cap=cap)
 
 
 def shelf_state(vault: Path) -> dict[str, Any]:

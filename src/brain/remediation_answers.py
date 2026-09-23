@@ -125,7 +125,12 @@ def accept_pair(core: Any, meta: Mapping[str, Any]) -> str:
     if not rel:
         return f"{meta['low_id']!r} is no longer in the index"
     try:
-        text = (Path(core.vault) / rel).read_text(encoding="utf-8")
+        # Read EXACTLY as `audited_write` will: `read_text` translates CRLF to
+        # LF, so a note captured with Windows line endings produced a "new"
+        # body that differed from the on-disk one in nothing but its newlines,
+        # and the body-change guard refused every raise on it forever
+        # (measured live 2026-09-14: one note with 43 CRLF lines).
+        text, _ = _rf.read_nofollow(Path(core.vault) / rel)
         now, _body = _fm.parse_text(text)
         if _classification.is_default_denied(now.get("classification")):
             # Same rule from the other side: an unlabelled low copy outranks

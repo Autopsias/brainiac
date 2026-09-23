@@ -1,6 +1,7 @@
 """Capture lifecycle methods for BrainCore."""
 from __future__ import annotations
 
+from .. import _optional
 from ._capture_staging import stage_draft_unique as _stage_draft_unique
 from ._shared import (
     Any,
@@ -64,17 +65,19 @@ class _CoreCaptureMixin:
         # approved queue, which is the only copy of owner-accepted content until
         # it is signed. Rebuild guidance ("just delete it and rebuild") is
         # exactly the habit that would destroy it, so never let it be silent.
-        try:
-            from .. import cos as _cos_q
+        waiting = anchors = 0
+        if _optional.cos_available():  # ADR 0013: both live only in COS
+            try:
+                from .. import cos as _cos_q
 
-            waiting = len(_cos_q.approved_pending(self.vault))
-            # INT-04: the SECOND non-disposable item in this dir. An armed
-            # acceptance anchor is the only thing holding its inbox file at the
-            # email-derived MNPI floor; lose it and the file ingests at
-            # `Internal`, silently. Same warning surface, same reason.
-            anchors = _cos_q.attachment_anchors_awaiting_drain(self.vault)
-        except Exception:  # noqa: BLE001 — never fail a rebuild on the check
-            waiting = anchors = 0
+                waiting = len(_cos_q.approved_pending(self.vault))
+                # INT-04: the SECOND non-disposable item in this dir. An armed
+                # acceptance anchor is the only thing holding its inbox file at the
+                # email-derived MNPI floor; lose it and the file ingests at
+                # `Internal`, silently. Same warning surface, same reason.
+                anchors = _cos_q.attachment_anchors_awaiting_drain(self.vault)
+            except Exception:  # noqa: BLE001 — never fail a rebuild on the check
+                waiting = anchors = 0
         if waiting or anchors:
             # A `progress_note` here was a TTY-gated whisper: a headless
             # launchd rebuild — the exact context that would then delete the
@@ -196,20 +199,21 @@ class _CoreCaptureMixin:
         path. Verifying per item instead would turn every key outage into a
         pile of security-worded refusals over perfectly good owner-approved
         work."""
-        from .. import cos as _cos_mod
-
         out: list[tuple[Path, bool, Any]] = []
         refusals: list[dict[str, str]] = []
-        try:
-            queue = _cos_mod.approved_queue_root(self.vault)
-            out.append((queue, True, _cos_mod.approved_verify_key(self.vault)))
-        except _cos_mod.ApprovedQueueUnsafe as exc:
-            refusals.append({"draft": "(approved queue)", "source": "approved-queue",
-                             "reason": f"not drained (fail-closed): {exc}"})
-        except _cos_mod.ApprovedKeyUnavailable as exc:
-            refusals.append({"draft": "(approved queue)", "source": "approved-queue",
-                             "reason": f"no-signing-key (fail-closed): the approved "
-                                       f"queue was left untouched ({exc})"})
+        if _optional.cos_available():  # ADR 0013: the approved queue is COS's
+            from .. import cos as _cos_mod
+
+            try:
+                queue = _cos_mod.approved_queue_root(self.vault)
+                out.append((queue, True, _cos_mod.approved_verify_key(self.vault)))
+            except _cos_mod.ApprovedQueueUnsafe as exc:
+                refusals.append({"draft": "(approved queue)", "source": "approved-queue",
+                                 "reason": f"not drained (fail-closed): {exc}"})
+            except _cos_mod.ApprovedKeyUnavailable as exc:
+                refusals.append({"draft": "(approved queue)", "source": "approved-queue",
+                                 "reason": f"no-signing-key (fail-closed): the approved "
+                                           f"queue was left untouched ({exc})"})
         out += [(d, False, None) for d in self._draft_sources()]
         return out, refusals
     def ingest_dropzone(self, *, dry_run: bool = False) -> dict[str, Any]:
@@ -284,6 +288,8 @@ class _CoreCaptureMixin:
             )
             idx_res["drain"] = drain_res
             idx_res["ingest"] = ingest_res
+            from .. import supersede_declared  # SUP-01: after the reconcile, same lock
+            supersede_declared.apply_pending(self, ingest_res)
             if publish:
                 idx_res["snapshot"] = self.publish_snapshot()
             return idx_res
@@ -410,9 +416,10 @@ class _CoreCaptureMixin:
             if ddir.is_dir():
                 n += len(list(ddir.glob("*.md")))
         if self.role == config.ROLE_HOST:
-            from .. import cos as _cos_q
+            if _optional.cos_available():  # ADR 0013: the approved queue is COS's
+                from .. import cos as _cos_q
 
-            n += len(_cos_q.approved_pending(self.vault))
+                n += len(_cos_q.approved_pending(self.vault))
         return n
     def write_note(
         self, rel_path: str, content: str, reason: str = "", *,

@@ -570,6 +570,37 @@ proposal is not a covered note). The per-run engagement line is
 `<vault>/.brain/cos/host/proposals/version-links/runs.jsonl` (host-only,
 gitignored, never indexed).
 
+**An owner DECLARATION is the third auto-apply tier (SUP-01, 2026-09-18).**
+DDP-01 and VER-01 apply what the ENGINE can prove; CUR-01 proposes what it can
+only deduce. A third case is neither: the owner SAYS a new document replaces an
+old one. Until this change that statement could only be typed on the Mac
+(`brain supersede`), which a Cowork session cannot do — measured the day it
+shipped, an email attachment (`…-base-completa-copy`) and the final deliverable
+that replaced it both sat live, and plain search answered with the stale copy.
+Three surfaces now carry the declaration, all through ONE engine path
+(`brain.supersede_declared` → `core.supersede`, same audited write, same
+single-writer lock, same crash journal): **(1) the drop lane** — beside a file
+in `vault/inbox/_deliverables/<project>/`, an optional `<filename>.supersedes`
+sidecar lists the old id(s), one per line, bare or `[[wikilink]]`; a dropped
+`.md` may carry `replaces:` in its own frontmatter instead. It is applied
+AFTER payload and anchor land and the index reconciles — DLV-01's
+all-or-nothing is untouched — and when the old id was itself a drop-lane
+deliverable its ANCHOR is retired under the new anchor too, so the shelf shows
+one version. **(2) the broker verbs** `supersede` / `unsupersede` (§5).
+**(3) the broker's `capture`**, when the captured frontmatter carries
+`replaces:`. **A declaration that cannot be applied never fails the ingest and
+is never silent:** unknown old id, old already superseded, old == new — the
+document lands, and the failure is reported as `supersede_declared_failed` in
+the maintain results, on `brain alerts` and the exceptions page (counts only —
+that feed is VM-readable), and as a `corpus_invariants` metric of the same name
+(rule 6): live notes whose `replaces:` names a note not retired under them.
+It keys on `replaces:` alone — measured on the reference vault, 127 of 2,055
+`previous_version` links have no reciprocal against 0 of 2 `replaces:`, so the
+wider key would open at 127 and measure a different defect. **Stated limit:**
+`replaces:` is scalar, so a sidecar naming several ids stamps the FIRST; every
+id is applied and every failure is reported on the run, but only the first
+keeps counting in the metric.
+
 **A final output produced FROM vault content is a deliverable, and it is
 captured like anything else (DLV-01/DLV-09, 2026-08-24).** When you finish a
 deck, a memo or an analysis for an audience, save it through the normal
@@ -931,6 +962,27 @@ reciprocity (the malformed chains are the ones that most need repair), accepts
 either documented predecessor form (`previous_version` or the `replaces`
 alias, bare id or `[[wikilink]]`), and leaves the successor's own
 `is_latest_version` exactly as found.
+
+**The broker serves both verbs, and "supersede is host-only" stays true
+(SUP-01, 2026-09-18).** `brain-mcp` RUNS ON THE HOST, as the owner, holding the
+audit key — the broker IS the host broker, so its `supersede(old_id, new_id,
+reason)` and `unsupersede(old_id, new_id, reason)` tools call the same
+`core.supersede` the CLI does, and a broker started under `role=vm` refuses
+them exactly like the CLI. What the broker cannot do is tell the owner's typing
+from a prompt-injected session's (A-05), so the tool is GUARDED where the CLI
+is not, in this order: both ids must exist and be VISIBLE at the caller's
+egress tier — one refusal for "absent" and "above your tier", because a verb
+that retires what you cannot read is an existence oracle; `new_id` must not
+itself be retired; `reason` is required. Then the **relatedness guard**: the
+link is APPLIED only when the vault itself relates the pair — the successor (or
+its deliverable anchor) wikilinks or `replaces:` the old id, or the two ids
+form a name family per `versionlink_stages`. An UNTRUSTED successor
+(`status: draft` / `provenance.trust: untrusted` — everything broker `capture`
+writes) never relates a pair by its own say-so, or the guard would be one
+`capture` call from empty. Anything else is NOT applied: it is staged into the
+CUR-01 proposal batch (default reject, never re-asked once decided) and the
+tool returns `{applied: false, proposed: true}`. Every answer carries both
+sides' `is_latest_version` / `superseded_by` / `previous_version`.
 
 **The body-size floor (ENF-01).** Two notes are never judged the SAME document
 on a body too short to carry evidence of anything. `$BRAIN_FAMILY_MIN_BODY`
@@ -1484,6 +1536,12 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
 | **Cowork Linux VM** (sandbox, EDR-blind) | `search`, `get`, `recent`, `draft_capture` (full VM_ALLOWED list: `init, doctor, alerts, search, hybrid-search, diagnose, grep, bases-query, graph-expand, get, read, recent, status, draft-capture, capture, brief, digest, cos-propose, provision-request` — `diagnose` is read-only and applies the same egress gate; `alerts` is the degradation digest every harness runs at session start (§9), file-reads only, and names the host-home sources the VM cannot reach instead of skipping them; `cos-propose` is an UNSIGNED drop into a proposal-drop dir `sync` never reads; only the host broker's owner-inbox gate can move it toward signing; `provision-request` (PRV-10) stages a NEW-VAULT request marker — a plain-file drop, no key, no launchd, no registry — that the host's `provision-drain` completes, see the protocol below) | sign, index-commit, WAL write, snapshot, `write_note`, `ingest`, `ingest-transcript`, `supersede`, `unsupersede`, `graphify`, every other `cos-*` verb (broker/correct/evidence/priority-map/hold) |
 | **HOST broker** (macOS/Windows, EDR-visible, holds the audit key) | everything: `write_note`, audit signing, WAL writes, snapshot generation, index commit, plus the ADR-0003 host-only verbs `ingest`/`ingest-transcript` (drop-zone → signed `raw/`, originals archived immutably), `supersede`/`unsupersede` (both sides of a version chain, and its audited undo), `graphify` (bounded monthly link-discovery build) | — |
 
+**`supersede`/`unsupersede` over the broker is still the HOST writing (SUP-01,
+2026-09-18).** The table above is about WHO SIGNS, and nothing moved: the
+`brain-mcp` broker is a host process holding the audit key, a Cowork session
+only ASKS it, and a `role=vm` broker refuses both tools. What bounds the ask is
+the guard in §5 — visibility, then relatedness, else a CUR-01 proposal.
+
 **Why:** the Cowork VM is ephemeral, EDR-blind, and not audit-logged — it must
 never be the thing that signs the audit chain or mutates the canonical index.
 The VM is a **read + draft** surface only; the host is the **only writer**.
@@ -1640,6 +1698,25 @@ python3 tools/validate.py vault --okf      # also run the optional OKF lint prof
 
 A clean validate (exit 0) is the conventions gate.
 
+### Before you hand in a plan session: the whole-repo rule tests
+
+These four files check rules that apply to EVERY change, far from the code you
+touched. Run them, plus every test file that asserts the behaviour you changed
+(grep `tests/` for the function or sentence you edited — an old test that pins
+the old rule fails the gate too). About 40 seconds:
+
+```bash
+.venv/bin/python -B -m pytest -q \
+  tests/test_client_name_gate_splits_identifiers.py tests/test_export_cleanroom.py \
+  tests/test_cos_pathguard_census.py tests/test_cowork_skill_verbs.py
+```
+
+*Why:* between 2026-09-10 and 2026-09-14, 6 of 31 agentic_build sessions failed
+the full-suite gate (`gate:pytest-brain-here`) on their first attempt. The
+failures were these rule tests (a client name, a home path, an unlisted file
+reader, a stale skill hash) or an old test the session never ran. Each one cost a
+rework round and a 4–10 minute suite re-run.
+
 ### Running the test suite
 
 Run the full suite in PARALLEL. Sequentially it takes ~15 minutes; with eight
@@ -1697,6 +1774,13 @@ is a check that cannot fail.
 
 While working, run only the tests you changed. Run the whole suite ONCE, at the
 gate.
+
+After a run with ONE failure you have diagnosed and fixed, re-run that test
+alone and count the suite as green. Do not run the suite "once more for a
+clean reading", and do not retry a kill at fewer workers: on 2026-09-05 one
+session ran it six times between review passes (12:51, 18:37, killed,
+32:02 at `-n 4`, 10:18, 8:45), 82 minutes, on a tree whose only red was
+explained each time.
 
 ### The quality ratchet at commit time
 

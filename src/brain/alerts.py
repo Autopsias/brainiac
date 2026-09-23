@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config as _config
+from . import _optional
 from .alerts_staging import (  # noqa: F401 — re-exported for callers/tests
     _UNTRIAGED_FALLBACK,
     _UNTRIAGED_PREFIX_FALLBACK,
@@ -228,14 +229,20 @@ def vault_alerts(
     # OUT-OF-BAND: reads only the sheet directory's newest mtime, so a dead
     # job cannot hide by failing to write its own ledger. Imported through the
     # facade (which re-exports sheet_heartbeat) to avoid an import cycle.
-    from . import cos_runverify as _cos_alerts                 # noqa: PLC0415
-    heartbeat = _cos_alerts.sheet_heartbeat(
-        vault,
-        now=datetime.datetime.combine(
-            today, datetime.time(12, 0), tzinfo=datetime.timezone.utc),
-    )
-    if heartbeat.get("firing"):
-        out.append(_alert("cos:sheet-heartbeat", heartbeat["text"], name))
+    if _optional.cos_available():
+        from . import cos_runverify as _cos_alerts             # noqa: PLC0415
+        heartbeat = _cos_alerts.sheet_heartbeat(
+            vault,
+            now=datetime.datetime.combine(
+                today, datetime.time(12, 0), tzinfo=datetime.timezone.utc),
+        )
+        if heartbeat.get("firing"):
+            out.append(_alert("cos:sheet-heartbeat", heartbeat["text"], name))
+    elif (vault / "cos-ops").is_dir() or _config.cos_ops_dir(vault).is_dir():
+        # COS ran here but this engine has none: say so, or the nightly dies silently.
+        out.append(_alert("cos:code-missing", "this vault runs the COS nightly, but the "
+                          "installed engine has no COS code — reinstall the private build",
+                          name))
     if role != "vm":
         # Host-only: the capture inbox and the fix (`brain sync`/`brain write`)
         # are host-side; a VM zero here would be fabricated.

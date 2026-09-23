@@ -75,6 +75,30 @@ def _decode_transcript(raw_bytes: bytes) -> str | None:
     return None
 
 
+def _split_document_date(value: str) -> tuple[str, str]:
+    """Split a caller's ``--document-date`` into (document_date, recorded_at).
+
+    ``document_date`` is a TMP-02 valid-time key and the As Of view compares
+    it LEXICALLY in SQL (``COALESCE(...) <= ?`` in ``index/_tools.py``). So a
+    full datetime stored there sorts AFTER the plain date of the same day:
+    a note stamped ``2026-09-10T14:43:04`` would drop out of
+    ``--as-of 2026-09-10``, its OWN recording day. The date therefore stays a
+    date, and the time-of-day rides in a separate ``recorded_at`` field.
+
+    Anything that is not an ISO datetime with a time part passes through
+    untouched — this route never validated the value and must not start now,
+    or an existing caller's odd-but-accepted string becomes a hard failure.
+    """
+    head, sep, tail = value.partition("T")
+    if not sep or not tail:
+        return value, ""
+    try:
+        _dt.datetime.fromisoformat(value)
+    except ValueError:
+        return value, ""
+    return head, value
+
+
 def _transcript_meta(
     *,
     slug: str,
@@ -97,7 +121,10 @@ def _transcript_meta(
     if language:
         meta["language"] = language
     if document_date:
-        meta["document_date"] = document_date
+        day, recorded_at = _split_document_date(document_date)
+        meta["document_date"] = day
+        if recorded_at:
+            meta["recorded_at"] = recorded_at
     return meta
 
 

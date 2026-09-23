@@ -171,6 +171,16 @@ def promote_scan_finding_key(candidates: list[dict[str, Any]]) -> str:
     return hashlib.sha256("\n".join(ids).encode("utf-8")).hexdigest()[:12]
 
 
+def regressions_finding_key(regressions: list[dict[str, Any]]) -> str:
+    """Content hash of the corpus-invariants regression set, for the hot.md
+    idempotency key — same treatment as ``promote_scan_finding_key``:
+    identical findings share a key, a changed set still logs."""
+    if not regressions:
+        return "none"
+    body = json.dumps(regressions, sort_keys=True, default=str)
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:12]
+
+
 def render_curation_hot_entry(
     stale_links: list[dict[str, Any]], revisit_sample: list[dict[str, Any]],
     today: datetime.date,

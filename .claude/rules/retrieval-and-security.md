@@ -280,6 +280,27 @@ either documented predecessor form (`previous_version` or the `replaces`
 alias, bare id or `[[wikilink]]`), and leaves the successor's own
 `is_latest_version` exactly as found.
 
+**The broker serves both verbs, and "supersede is host-only" stays true
+(SUP-01, 2026-09-18).** `brain-mcp` RUNS ON THE HOST, as the owner, holding the
+audit key — the broker IS the host broker, so its `supersede(old_id, new_id,
+reason)` and `unsupersede(old_id, new_id, reason)` tools call the same
+`core.supersede` the CLI does, and a broker started under `role=vm` refuses
+them exactly like the CLI. What the broker cannot do is tell the owner's typing
+from a prompt-injected session's (A-05), so the tool is GUARDED where the CLI
+is not, in this order: both ids must exist and be VISIBLE at the caller's
+egress tier — one refusal for "absent" and "above your tier", because a verb
+that retires what you cannot read is an existence oracle; `new_id` must not
+itself be retired; `reason` is required. Then the **relatedness guard**: the
+link is APPLIED only when the vault itself relates the pair — the successor (or
+its deliverable anchor) wikilinks or `replaces:` the old id, or the two ids
+form a name family per `versionlink_stages`. An UNTRUSTED successor
+(`status: draft` / `provenance.trust: untrusted` — everything broker `capture`
+writes) never relates a pair by its own say-so, or the guard would be one
+`capture` call from empty. Anything else is NOT applied: it is staged into the
+CUR-01 proposal batch (default reject, never re-asked once decided) and the
+tool returns `{applied: false, proposed: true}`. Every answer carries both
+sides' `is_latest_version` / `superseded_by` / `previous_version`.
+
 **The body-size floor (ENF-01).** Two notes are never judged the SAME document
 on a body too short to carry evidence of anything. `$BRAIN_FAMILY_MIN_BODY`
 (default 1024, **UTF-8 bytes** — at every site that consults it, never Unicode
@@ -315,10 +336,12 @@ rules, in order:
    `--max-tier Restricted`** (or `MNPI` for the most sensitive) — the
    human-gated elevation — instead of concluding the vault has nothing and
    web-searching to compensate. **On `--role vm` this elevation is NOT
-   self-serve:** the VM leg clamps `--max-tier` to a hard ceiling
-   (`$BRAIN_VM_MAX_EGRESS_TIER`, default `Internal`), so a typed higher tier is
-   silently capped and the elevation hint is suppressed — raising a VM's ceiling
-   is a host-operator action, not something the model does on its own.
+   self-serve:** the VM leg clamps `--max-tier` to a hard ceiling — the
+   HOST-SIGNED `vm-egress-tier.signed` file, default `Internal` — so a typed
+   higher tier is silently capped, the elevation hint is suppressed, and an
+   env-exported `$BRAIN_VM_MAX_EGRESS_TIER` is IGNORED (the session's own
+   shell can set it; VULN-3386). Raising a VM's ceiling is a host-operator
+   action (`brain vm-egress-tier <TIER>`, signed), never the model's own.
 
 3. **Ask it in every language the vault holds — the VARIANT CONTRACT
    (CON-01) — and paraphrase within your own.** The cross-language half is a
@@ -630,11 +653,26 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
 > `brain-mcp` adapter. Full table: `docs/harness-wiring.md`.
 >
 > **Cowork-Windows VM (PRIMARY surface):** Cowork is Claude Desktop's Linux VM
-> sandbox execution mode (`docs/glossary.md`). Run `brain --role vm` (or
-> `export BRAIN_ROLE=vm`). The VM is **read + draft only** — it reads ONLY the
-> published read-only snapshot in `.brain/snapshot/` (never WAL), captures via
-> `brain draft-capture` into `.brain/capture-inbox/`, and never resolves a signing
-> key; the host drains + signs + indexes + republishes the snapshot. Install +
+> sandbox execution mode (`docs/glossary.md`). **Two shapes exist, and which
+> one a given workspace runs depends on whether it has been through Closed
+> Stacks s07's cutover (2026-08-27 → 2026-08-30, VULN-3385).** Pre-cutover /
+> co-located: run `brain --role vm` (or `export BRAIN_ROLE=vm`) — the VM is
+> **read + draft only**, reading ONLY the published read-only snapshot in
+> `.brain/snapshot/` (never WAL), capturing via `brain draft-capture` into
+> `.brain/capture-inbox/`, never resolving a signing key; the host drains +
+> signs + indexes + republishes the snapshot. **Post-cutover (a relocated
+> workspace):** the vault is not attached to the VM's mount at all — `brain`
+> is not on the session's `PATH`, and there is no local snapshot to read —
+> every read reaches the vault only through the host `brain-mcp` broker,
+> which applies the same classification filter and now writes a fail-closed
+> audit record before returning content. The broker's ceiling for this leg is
+> still the same full-vault default the host itself uses (no per-caller tier
+> narrowing is configured). **VULN-3385 is CLOSED (2026-09-01):** the bypass is
+> fixed, and an agent reading a high-tier note THROUGH the broker is
+> functionality, not the finding (A-01). The live residual is indirect prompt
+> injection — what can LEAVE without the owner deciding — tracked at A-06.
+> Full posture: `docs/install/cowork.md`,
+> `docs/security/vuln-3385-risk-reduction.md`. Install +
 > per-session PATH/model re-export: `docs/cowork-windows-install.md`.
 >
 > **Where the kernel skills live per client:** the ten
@@ -679,15 +717,17 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
   to set it is to narrow the gate, so a typo must never return more than was
   asked for. The trifecta break is unchanged and still lives at the `role=vm`
   boundary, never on the owner's own host.
-- **A vault MAY raise its own Cowork ceiling (owner ruling 2026-08-17).** The
-  shipped `role=vm` default stays `Internal`; an owner who wants THIS vault's
-  sandbox to read every tier stages a one-line `<vault>/.brain/vm-egress-tier`
-  file, which `cowork_session_bootstrap.sh` reads into
-  `$BRAIN_VM_MAX_EGRESS_TIER`. **Stated limit, because it is not a guard:**
-  that file sits on the VirtioFS mount, which the VM can write, so it RECORDS
-  an owner decision rather than ENFORCING one. Acceptable only because the
-  decision it carries is "this owner's own sandbox may read this owner's own
-  vault"; a vault whose owner has not made it has no file and keeps the cap.
+- **A vault MAY raise its own Cowork ceiling — but only through a HOST-SIGNED
+  file (VULN-3386, external pentest 2026-08).** The shipped `role=vm` default
+  stays `Internal`. The enforcement chain: `brain vm-egress-tier <TIER>` on
+  the HOST signs tier + vault_id under the audit key into
+  `<vault>/.brain/vm-egress-tier.signed`; the VM leg verifies it against the
+  pinned anchor (`pinned-verify.json`, staged at install) before trusting,
+  and anything missing, malformed, or badly signed fails CLOSED to `Internal`.
+  The previous mechanisms — an env var the session can export itself, and an
+  unsigned mount file the VM can write — no longer raise a VM ceiling (the
+  unsigned `vm-egress-tier` file and `$BRAIN_VM_MAX_EGRESS_TIER` are inert
+  for VM elevation; re-stage any prior opt-in with the signed verb).
 - **Classification gate, role-split defaults (owner decision 2026-07-10).**
   `search/get/recent` filter by `classification`. A note with a missing or
   unrecognised `classification` ranks as the most-restrictive tier (MNPI).

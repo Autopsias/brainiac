@@ -3,9 +3,21 @@
 @AGENTS-core.md
 
 > **AGENTS.md is canonical; AGENTS-core.md is its ≤200-line Claude Code core.**
-> Codex, Gemini CLI, and the Desktop Code tab all still read the full,
-> unmodified `AGENTS.md` — that stays ONE source of truth for the note shape,
-> link style, capture rules, the four interactions, and the security posture.
+> Codex and Gemini CLI read the unmodified `AGENTS.md`. Codex reads ALL of it
+> only because `.codex/config.toml` raises its 32,768-byte cut
+> (`project_doc_max_bytes`), and only in a checkout trusted in
+> `~/.codex/config.toml`. Three cases still get the first 32,768 bytes,
+> silently: trust passed with `codex exec -c`, an untrusted clone, and
+> `codex exec --ignore-user-config` or a `CODEX_HOME` pointed elsewhere, unless
+> the command also passes `-c project_doc_max_bytes=262144` — the plan-execute
+> Codex lane does since gearbox `755624fa` (2026-09-19). Gemini CLI's limit is
+> unmeasured.
+> The Desktop Code tab runs Claude Code, so it loads this file and
+> `AGENTS-core.md` like the CLI (not probed by ADR 0012's plan). See
+> `docs/adr/0012-agents-md-fits-every-harness.md`; the guard is
+> `tests/test_agents_md_fits_codex.py`. `AGENTS.md` stays ONE source of
+> truth for the note shape, link style, capture rules, the four interactions,
+> and the security posture.
 > Claude Code alone imports the smaller `AGENTS-core.md` instead, to keep base
 > context down; the rest of AGENTS.md's content loads CONDITIONALLY from
 > `.claude/rules/*.md` (path-scoped — see AGENTS-core.md's pointer table) only
@@ -29,6 +41,14 @@ default cap = full vault, `--role vm` default = Internal; narrow with
 the published read-only snapshot and never signs — see
 `docs/cowork-windows-install.md`.
 
+**Every File Reaches the Vault CLOSED and MERGED 2026-09-16** as `73ef5d99` — 10 of 10 sessions terminal, acceptance **10 of 10 criteria ACHIEVED**. `_plans/attachment-lane-2026-09-13`. s01/s03/s04/s05/s06/s07/s08/s09/s10 DONE, s02 WONTFIX (its Inbox-only fetch was superseded by s07's Archive scan). Suite on the merged tree **7217 passed, 0 failed**; ratchets 0 BLOCKING on all three; baselines NOT re-recorded because the merge warned about no inherited debt. `land` parked `default-unresolved` as always, so the merge is by hand and recorded in the plan's `LAND_NOTICE.txt`. Review: `_evidence/attachment-lane/acceptance-review.md`, one-pager `acceptance-onepager.png`.
+
+**What is live on `master`:** a real document makes a thread ingest-relevant (owner ruling 2026-09-13); the bridge honours that lane and settles per file; the gate releases a body that errors on three DISTINCT nights — counting a night whose other child batches never drew the thread (s09, measured 56 of 168 error nights were such mixed nights and had been resetting the count); the backfill re-assesses every owed file against the WHOLE Archive (s07) and cannot stamp `aged-out` without a checked Archive census (s08); and **a draft-flagged Archive thread counts as PRESENT (s10)** — `isDraft` is a THREAD stamp the page script writes on every item of a conversation that has a draft (`tools/cos_driver_page.js:781`), so dropping flagged items before the fold erased four real Archive threads and stamped their files `aged-out`. The fresh census reports `threads_draft_flagged_only: 75`.
+
+**The historical backfill is FINISHED — do NOT re-run it, and do not re-run `~/Desktop/run-s02-backfill.command`.** This file said to run it once more; that run happened on 2026-09-15 (`2026-09-15-backfill1`, exit 0) against a 4,823-item Archive census. Of the 17 frozen targets: **10 signed in the vault, 4 `attachment-gone`, 3 `item-attachment`, 0 `aged-out`, 0 `not-observed`**. All four re-fetch attempts returned `item-attachment-has-no-bytes`. **Owner ruling 2026-09-16: a dated `attachment-gone` and a live-probed `item-attachment` are TERMINAL** — neither is a pending state and both are re-decided every run — and building an item-attachment fetch path was declined (at most 3 files, only if Outlook exposed bytes it has already refused four times). Owner choice 2026-09-14 still stands: released body-error threads are cleared from the Inbox BY HAND; do not re-raise.
+
+**Two things are open and were handed to review, not fixed.** Why they are not defects-in-waiting: both score nothing and hold nothing today. (1) System-notification rows read ingest-relevant with no manifest line on run321 and run323 — measured, the file is never requested. (2) The `broker-failed` exit 14 stop on run322 was a concurrent `brain sync` holding the vault writer lock, the third occurrence, with no file lost. The 2026-09-14 local `/code-review max` of s01+s03+s04 and of s07 found 18 confirmed defects, all fixed in s08/s09 (read the two sessions' prompts in `sessions/`). **`/code-review ultra` over the plan branch is OWED and only the owner can start it** — he chose it on 2026-09-16 and it had not run when the plan closed.
+
 **One Email, One Note closed and LANDED 2026-09-11** as `518bc8c1` — 7 of 7
 sessions DONE, 11 of 11 items DONE. The acceptance review scores **4 ACHIEVED,
 0 GAP, 3 NOT-YET-MEASURABLE**:
@@ -45,19 +65,48 @@ the review's recommended `ultrareview` before the merge. Suite on the merged tre
 clean. `run.py land` parked `default-unresolved` as always; the hand merge is in
 the plan's `LAND_NOTICE.txt`.
 
-**The index format on `master` is now 5, and both live indexes stay 4 until the
-owner rebuilds them.** Nothing rebuilds by itself yet: the hourly jobs run the
-engine installed in `~/.brainiac/venv`, which stays the old one until
-`pip install --force-reinstall --no-deps` of this checkout (the version number did
-not change, so a plain upgrade skips it). The installed engine's `sync` rebuilds a
-format-4 index the moment it is the new code, so the install IS the start of the
-rebuild — do it only in the window, with the two hourly nightlies and
-`com.brainiac.cos-nightly` booted out. The COS night runs this checkout's code
-directly; the new write path degrades on a format-4 index rather than failing, and
-it is NOT measured whether that night reaches `sync`, so keep it booted out until
-`brain --vault <v> status --json` reads `index.schema_version` = `5` on both
-vaults. **Re-dispatch s07 after the rebuild and the first judged night on the
-merged code (earliest 2026-09-12).**
+**Both live indexes read format 5 since 2026-09-11 17:50 — the rebuild window is
+DONE, do not redo it.** Read it back from `brain --vault <v> status --json`
+(`index.schema_version` = `5` on both vaults), never from here. The installed
+engine in `~/.brainiac/venv` is `b11124c2`, all three jobs are loaded again, and
+both Cowork snapshots were republished (generations 610 and 1567).
+**A format-4 index no longer needs a rebuild** (`b11124c2`): `sync` upgrades it in
+place — adds `notes.frontmatter`, fills it from every unchanged note, stamps
+version 5 — in 35 s on the reference vault, where the full rebuild the earlier
+text prescribed was estimated at 13 hours and had produced chunks identical to the
+old index's. Only an older format still escalates to a full rebuild. The public
+v0.20.38 shipped format 5 WITHOUT this fix, so installed vaults on that release
+still rebuild on their first sync until the next release carries it.
+**s07 ran three times and the plan grew an s08, all on 2026-09-12 — do not redo
+any of it.** Run 3 (after the first scheduled night on the landed code, run285,
+and the owner-ruled duplicate cleanup at 08:05: 56 retired, 0 live duplicates
+left) scores **6 ACHIEVED / 1 GAP / 0 NOT-YET-MEASURABLE**:
+`_plans/one-email-one-note-2026-09-10/_evidence/one-email-one-note/s07/acceptance-onepager-r3.png`.
+The GAP was a cause, not a calendar: the already-ingested rule stepped aside for
+any thread naming an attachment (9 of 9 re-filed threads carried one, 0 of 10
+settled did), and the cleanup's `is_latest_version` stamp made 185 of 280 kept
+notes invisible to the rule. **s08 fixed both and is on `master` as `f8d2d2ab`**
+(owner picked option A, then "merge now"): a thread settles when every file it
+names has a settled manifest line (`cos.attachment_lane_pending`),
+`_bridge_settled` accepts `already-ingested`, and a restamped keeper is proved
+through the host audit chain for bridge-shaped notes only. Gates: suite 7059
+passed, LLM review passed on rework 2 (two reproduced blockers fixed). Measured
+read-only: a `--dry-run` of run285 reads 3 dropped / 63 already-ingested against
+33 / 33 before. **A full night ran BY HAND on the fixed code the same evening
+(the owner authorized it), and it proves the fix live.** run286, 17:52-18:39 UTC,
+with the scheduled job's exact environment: `ingest bridge` reads candidates 45,
+already_ingested 42, dropped 3, quarantined 0, signed_conversations 214, status
+ok — against run285's 67 / 10 / 56 / 1 / 90. Zero duplicate groups on the vault.
+E-checks 10/10 PASS, batch record judged 84 of 84 with unreconciled 0, batch stop
+`backlog-empty`, so no open proposal batch can kill the next night (that is what
+killed 2026-09-06). **s07 run 4 is DONE 2026-09-13 — do not redo it.** The 2026-09-13 02:00
+SCHEDULED night (run287) read candidates 31, already_ingested 28, dropped 3,
+quarantined 0, and each of its 3 new notes is the only live note for its thread
+and text. The review now scores **7 ACHIEVED / 0 GAP / 0 NOT-YET-MEASURABLE**:
+`_plans/one-email-one-note-2026-09-10/_evidence/one-email-one-note/s07/acceptance-onepager-r4.png`.
+The plan owes nothing.** If a later night files a copy for an unchanged thread,
+`tools/cos_bridge_retire_duplicates.py --dry-run` then `--apply` resets the
+count; it is reversible with `--undo`.
 
 **The Porter Finishes closed and LANDED 2026-09-06** as `5ddf5480` — 12 of 12
 sessions terminal, 16 of 16 items DONE. The acceptance review scores its seven

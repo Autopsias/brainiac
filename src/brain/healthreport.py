@@ -248,6 +248,7 @@ _INVARIANT_LABELS = {
     "unshelved_deliverables": "deliverables missing from the shelf",
     "stale_shelf_entries": "shelf entries whose note is gone",
     "unanchored_deliverable_payloads": "dropped payloads with no anchor note",
+    "supersede_declared_failed": "owner-declared supersessions not applied",
 }
 
 

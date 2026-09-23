@@ -8,6 +8,8 @@ import subprocess
 from pathlib import Path
 from typing import Any as Any, Callable, Optional
 
+from . import _optional
+
 # knowing which of two surfaces to look at. Getting that wrong produced two
 # false freeze alarms (runs 37 and 55): a pin ahead of the deployment silently
 # freezes every gated phase, and a readback pointed at the non-executing
@@ -16,14 +18,17 @@ from typing import Any as Any, Callable, Optional
 # with (`brain.cos_deploy`) — never a second copy of the rules.
 # --------------------------------------------------------------------------
 
-def check_cos_deployed_skill() -> dict:
+def check_cos_deployed_skill() -> dict | None:
     """Lane-aware: what the next COS nightly will load, or why we can't tell.
 
     NEVER gates the exit code. Most installs have no chief-of-staff deployment
     at all, and an unresolved lane there is the correct, healthy answer — a
     gating status would turn every such host falsely DEGRADED (the 2026-07-20
-    field failure this project has already paid for once).
+    field failure this project has already paid for once). ``None`` (no row)
+    when the engine carries no COS code at all (ADR 0013).
     """
+    if not _optional.cos_available():
+        return None
     surface = "COS deployed skill (executing lane)"
     try:
         from . import cos_deploy

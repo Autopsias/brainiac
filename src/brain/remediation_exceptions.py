@@ -65,6 +65,9 @@ from .remediation_exceptions_store import (  # re-exported: the store is one pla
     _record, _write_proposal, decided_pair_keys, exceptions_dir, ledger,
     pair_key, read_pending, retire as _retire, stale_pending,
 )
+from .remediation_converged import (  # re-exported: split for the size bound
+    CONVERGED_STATE as CONVERGED_STATE, retire_converged,
+)
 
 #: The staged-but-unasked backlog, as ONE banner finding. Declared in the
 #: registry (``remediation.py``) as ``banner`` so it does not render UNTRIAGED.
@@ -433,6 +436,9 @@ def apply_batches(
         # left behind — never counted in `unlabelled`, since a stale record's
         # STORED tier is exactly what this refuses to believe.
         stale = retire_stale_schema(vault, today)
+        # …and retire what an earlier raise already settled, before `known`
+        # and the counts are taken off `pending`.
+        converged = retire_converged(core, today)
         merged = {**pairs, UNANSWERABLE_STATE: refused}
         unlabelled = unlabelled_finding(
             merged, write_unlabelled_ids(vault, merged))
@@ -443,13 +449,14 @@ def apply_batches(
         expired = expire_due(core, today)
         asked = ask_pending(core, today, hold=deferred_holds(decisions, today))
         pending = read_pending(vault)
-        if convertible or pending or expired or refused or stale:
+        if convertible or pending or expired or refused or stale or converged:
             _append(exceptions_dir(vault) / RUNS_FILENAME, vault, {
                 "event": RUN_EVENT, "at": today.isoformat(),
                 "keys": sorted(k for k, _t in convertible),
                 "staged": len(staged), "asked": len(asked),
                 "expired": len(expired), "pending": len(pending),
-                "unanswerable": len(refused), "stale_schema": len(stale)})
+                "unanswerable": len(refused), "stale_schema": len(stale),
+                "converged": len(converged)})
         return deferred + unlabelled + unasked_finding(core, pending)
     except Exception:  # noqa: BLE001 — an unusable store must banner, not vanish
         return deferred + unlabelled + convertible

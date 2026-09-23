@@ -34,6 +34,11 @@
       }
     ]
   },
+  "enabledPlugins": {
+    "brainiac-manager@brainiac": true,
+    "brainiac-kernel@brainiac": true,
+    "brainiac-extras@brainiac": true
+  },
   "extraKnownMarketplaces": {
     "brainiac": {
       "source": {

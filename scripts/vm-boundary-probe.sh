@@ -104,6 +104,11 @@ case "$(uname -s)" in
           say "!! NOTHING about the physical host/VM boundary."; say "";;
 esac
 
+# The public engine carries no COS (ADR 0013): its parser rejects every cos-
+# verb as "invalid choice" BEFORE the role gate, so a cos- probe could only
+# score INVALID. Ask once; `--help` exits during parsing, under any role.
+if brain cos-propose --help >/dev/null 2>&1; then HAS_COS=1; else HAS_COS=0; fi
+
 say "### A. host-broker verbs must ALL refuse BEFORE any mutation"
 must_refuse "index commit"          brain sync
 must_refuse "signed write"          brain write brain/resources/vm-boundary-probe.md --content "probe"
@@ -112,24 +117,6 @@ must_refuse "ingest drain"          brain ingest
 must_refuse "transcript ingest"     brain ingest-transcript /nonexistent.md \
                                         --origin verbal
 must_refuse "link-discovery build"  brain graphify
-must_refuse "cos run manifest"      brain cos-run-begin --run-id 2026-01-01-run1 \
-                                        --lane codex-automation
-must_refuse "cos broker fold"       brain cos-broker
-must_refuse "cos corpus check"      brain cos-corpus-check --run-id 2026-01-01-run1
-must_refuse "cos corpus append"     brain cos-corpus-append --run-id 2026-01-01-run1 \
-                                        --bodyless "<probe@example.com>"
-must_refuse "cos corpus close"      brain cos-corpus-close --run-id 2026-01-01-run1
-must_refuse "cos corpus reopen"     brain cos-corpus-reopen --run-id 2026-01-01-run1
-must_refuse "cos correction store"  brain cos-correct --round 1 --msg-key probe \
-                                        --bucket NOISE --tier P3
-must_refuse "cos evidence"          brain cos-evidence verify
-must_refuse "cos priority map"      brain cos-priority-map
-must_refuse "cos calibration report" brain cos-report
-must_refuse "cos commitment spine"  brain cos-spine radar
-must_refuse "cos hold"              brain cos-hold list
-must_refuse "cos standing approval" brain cos-standing-approval
-must_refuse "cos downloads sweep"   brain cos-ingest-sweep
-must_refuse "cos owner feedback"    brain cos-feedback --from-sheet /nonexistent-sheet.html
 must_refuse "audit chain query"     brain verify-audit
 must_refuse "index rebuild"         brain rebuild
 must_refuse "snapshot publish"      brain snapshot
@@ -137,6 +124,28 @@ must_refuse "maintenance umbrella"  brain maintain
 must_refuse "owner inbox"           brain inbox
 must_refuse "retro fold"            brain retro
 must_refuse "filtered projection"   brain project --dest /tmp/vm-boundary-probe-dest
+if [ "$HAS_COS" = 1 ]; then
+  must_refuse "cos run manifest"      brain cos-run-begin --run-id 2026-01-01-run1 \
+                                          --lane codex-automation
+  must_refuse "cos broker fold"       brain cos-broker
+  must_refuse "cos corpus check"      brain cos-corpus-check --run-id 2026-01-01-run1
+  must_refuse "cos corpus append"     brain cos-corpus-append --run-id 2026-01-01-run1 \
+                                          --bodyless "<probe@example.com>"
+  must_refuse "cos corpus close"      brain cos-corpus-close --run-id 2026-01-01-run1
+  must_refuse "cos corpus reopen"     brain cos-corpus-reopen --run-id 2026-01-01-run1
+  must_refuse "cos correction store"  brain cos-correct --round 1 --msg-key probe \
+                                          --bucket NOISE --tier P3
+  must_refuse "cos evidence"          brain cos-evidence verify
+  must_refuse "cos priority map"      brain cos-priority-map
+  must_refuse "cos calibration report" brain cos-report
+  must_refuse "cos commitment spine"  brain cos-spine radar
+  must_refuse "cos hold"              brain cos-hold list
+  must_refuse "cos standing approval" brain cos-standing-approval
+  must_refuse "cos downloads sweep"   brain cos-ingest-sweep
+  must_refuse "cos owner feedback"    brain cos-feedback --from-sheet /nonexistent-sheet.html
+else
+  say "-- cos- verbs: SKIP — this engine carries no COS (nothing to refuse)"
+fi
 
 say "### B1. host-private state: readability over the mount (observation only)"
 observe_readability "owner inbox queue"      "$BRAIN_RUNTIME_DIR/memory/inbox.jsonl"
@@ -321,32 +330,36 @@ else
   say "   DEGRADED — a snapshot is present but the VM cannot read it"
   DEGRADED=$((DEGRADED+1))
 fi
-say "-- proposal drop (unsigned, into a dir \`sync\` never reads)"
-# This leaves a real file in the drop dir for as long as it takes to delete it.
-# The host broker fold runs hourly, so the window is tiny but not zero — the id
-# and title are deliberately unmistakable, and a failed cleanup is reported
-# loudly rather than left for the owner to find as a mystery batch item.
-PROBE_ID="vm-boundary-probe-delete-me"
-DROP_OUT="$(printf -- '---\nid: %s\ntitle: "VM boundary probe — safe to reject"\ntype: note\nclassification: Internal\ncreated: 2026-01-01\nupdated: 2026-01-01\n---\nAutomated boundary probe. Not real content. Reject.\n' "$PROBE_ID" \
-  | brain cos-propose --id "$PROBE_ID" --json 2>&1)"
-printf '%s\n' "$DROP_OUT" | sed 's/^/   | /'
-case "$DROP_OUT" in
-  *dropped*) say "   PASS — unsigned drop accepted, nothing signed";;
-  *)         say "   DEGRADED — the VM cannot even drop a proposal"; DEGRADED=$((DEGRADED+1));;
-esac
-# Delete the file the engine actually reported, not one this script guesses at
-# — a guessed path that has drifted cleans up nothing and says it did.
-PROBE_FILE="$(printf '%s' "$DROP_OUT" | sed -n 's/.*"proposal"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
-[ -n "$PROBE_FILE" ] || PROBE_FILE="$BRAIN_RUNTIME_DIR/cos/drop/proposal-drop/$PROBE_ID.md"
-rm -f "$PROBE_FILE" 2>/dev/null
-if [ -e "$PROBE_FILE" ]; then
-  say "   DEGRADED — could not clean up $PROBE_FILE; delete it before the next"
-  say "              broker fold or it becomes an owner-batch question."
-  say "              (A Cowork shell has deletion blocked by policy, so this"
-  say "              is expected there — remove it from the host instead.)"
-  DEGRADED=$((DEGRADED+1))
+if [ "$HAS_COS" = 1 ]; then
+  say "-- proposal drop (unsigned, into a dir \`sync\` never reads)"
+  # This leaves a real file in the drop dir for as long as it takes to delete it.
+  # The host broker fold runs hourly, so the window is tiny but not zero — the id
+  # and title are deliberately unmistakable, and a failed cleanup is reported
+  # loudly rather than left for the owner to find as a mystery batch item.
+  PROBE_ID="vm-boundary-probe-delete-me"
+  DROP_OUT="$(printf -- '---\nid: %s\ntitle: "VM boundary probe — safe to reject"\ntype: note\nclassification: Internal\ncreated: 2026-01-01\nupdated: 2026-01-01\n---\nAutomated boundary probe. Not real content. Reject.\n' "$PROBE_ID" \
+    | brain cos-propose --id "$PROBE_ID" --json 2>&1)"
+  printf '%s\n' "$DROP_OUT" | sed 's/^/   | /'
+  case "$DROP_OUT" in
+    *dropped*) say "   PASS — unsigned drop accepted, nothing signed";;
+    *)         say "   DEGRADED — the VM cannot even drop a proposal"; DEGRADED=$((DEGRADED+1));;
+  esac
+  # Delete the file the engine actually reported, not one this script guesses at
+  # — a guessed path that has drifted cleans up nothing and says it did.
+  PROBE_FILE="$(printf '%s' "$DROP_OUT" | sed -n 's/.*"proposal"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+  [ -n "$PROBE_FILE" ] || PROBE_FILE="$BRAIN_RUNTIME_DIR/cos/drop/proposal-drop/$PROBE_ID.md"
+  rm -f "$PROBE_FILE" 2>/dev/null
+  if [ -e "$PROBE_FILE" ]; then
+    say "   DEGRADED — could not clean up $PROBE_FILE; delete it before the next"
+    say "              broker fold or it becomes an owner-batch question."
+    say "              (A Cowork shell has deletion blocked by policy, so this"
+    say "              is expected there — remove it from the host instead.)"
+    DEGRADED=$((DEGRADED+1))
+  else
+    say "   cleanup: probe drop removed ($PROBE_FILE)"
+  fi
 else
-  say "   cleanup: probe drop removed ($PROBE_FILE)"
+  say "-- proposal drop: SKIP — this engine carries no COS (no cos-propose)"
 fi
 say ""
 

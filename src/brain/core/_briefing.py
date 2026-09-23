@@ -11,6 +11,7 @@ from ._shared import (
     source_repo_root,
     vault_writer_lock,
 )
+from .. import _optional
 
 
 class _CoreBriefingMixin:
@@ -158,8 +159,9 @@ class _CoreBriefingMixin:
         cos_liveness: dict[str, Any] | None = None
         if self.role == config.ROLE_HOST:
             try:
-                from .. import cos as cos_mod
-                cos_liveness = cos_mod.batch_liveness(self.vault)
+                if _optional.cos_available():
+                    from .. import cos as cos_mod
+                    cos_liveness = cos_mod.batch_liveness(self.vault)
             except Exception:  # noqa: BLE001 — a liveness read never breaks the brief
                 cos_liveness = None
 

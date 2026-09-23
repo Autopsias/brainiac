@@ -87,6 +87,18 @@ repos:
         # ENGINE_ASSET_FILES from drifting apart again.
         files: '^(pyproject\.toml|AGENTS\.md|CLAUDE\.md|README\.md|src/brain/_version\.py|src/brain/_assets/.*|packaging/npm/.*|\.claude/skills/.*|\.agents/skills/.*|plugins/.*|tools/.*|scripts/.*|routines/.*|assets/.*)$'
 
+      # ADR 0013 drift guard: shared engine code must not grow an UNGUARDED
+      # import of the COS (the private email assistant) or a `cos_` call on
+      # the core, or the public package breaks. A pure AST scan, no export.
+      # Measured 1.1 s with python3 under a load average of 12.7 (2026-09-23),
+      # so it stays here; above 2 s it belongs in quality-ratchet.yml instead.
+      - id: export-no-cos-static
+        name: shared engine code keeps the COS optional
+        entry: python3 tools/export_check_no_cos.py --static
+        language: system
+        pass_filenames: false
+        files: '^src/brain/.*\.py$'
+
       # The quality ratchet, second iteration. The first (--project . at
       # commit time) died in two days: whole-project judgment refused a
       # one-file commit for 25 files it never touched, and the only local way
@@ -120,16 +132,6 @@ repos:
         entry: python3 tools/check_client_names.py
         language: system
         pass_filenames: false
-
-      # A commit that lands while a night is running kills it: bash reads the
-      # script incrementally, so shifted offsets become a syntax error on a
-      # valid line (run176, 2026-08-23). See the script's own header.
-      - id: no-live-nightly
-        name: no COS night is running against the script being committed
-        entry: bash tools/check_no_live_nightly.sh
-        language: system
-        pass_filenames: false
-        files: '^tools/cos_nightly\.sh$'
 
       - id: file-size-ratchet
         name: no staged file grows past the size limit (baseline only shrinks)

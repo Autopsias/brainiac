@@ -26,15 +26,15 @@
     "staged_bundles_dir": "<workspace>/vault/.brain/skills",
     "staged_bundle_hashes_omitted_reason": "a .skill zip's sha256 is not a content identity: zip headers carry per-file mtimes and cowork_workspace_install.sh re-runs the packager on every install, so the same content hashes differently (measured: 3a4923e17aa626d4 vs f80581dcfacd36dd). skill_md_git_blob and content_sha256 below are the content anchors; s07's drift check must use those, not a zip sha.",
     "content_anchor_recipe": "Both per-bundle anchors below are defined by tests/test_cowork_skill_verbs.py::derive_bundles, which is their normative definition; s07 must reproduce these values, not invent its own. content_sha256: take every file under the bundle directory (Path.rglob('*'), is_file(), NO suffix filter -- the packager filters nothing either), sorted by absolute path (equivalently by relative path -- every file shares the bundle prefix); feed one sha256 in that order with, per file, the file's path RELATIVE to the bundle dir as POSIX text, then a single NUL byte (b'\\0'), then the file's raw bytes; the hex digest is the bundle's content_sha256. No zip, no mtime, no subprocess, so it is stable across re-packaging. skill_md_git_blob: the git blob sha1 of SKILL.md's raw bytes, i.e. sha1(b'blob <len>\\0' + data), computed in-process (helper _git_blob_sha1).",
-    "cli_subcommand_count": 79,
+    "cli_subcommand_count": 62,
     "cli_subcommand_count_note": "73 when S01 recorded this survey on 2026-08-27; 74 from 2026-08-28, when S05 added the host-only `authorize-original` subcommand. This number is DERIVED from the live parser by tests/test_cowork_skill_verbs.py::derive, so any session adding or removing a CLI subcommand must re-record it here in the same commit or two committed tests go red. 75 from 2026-08-30, when one-command-per-vault S01 added the host-only `provision-local` subcommand (CMD-01). 77 from 2026-09-01: the survey caught up with the host-only `cos` (attended sheet group) and `cos-feedback` (owner-feedback pen) subcommands, added 2026-08-26 by f00b2db WITHOUT the same-commit re-record this note requires — recorded late by the night-porter archive-ruling commit. 78 from the same day's merge of master: release 0.20.35 added the host-only `check-egress` subcommand (the outbound term guard); master recorded 76 for it, and this row is the union of the two lineages, re-derived on the merged tree.",
     "staged_bundles_dir_note": "the concrete host path is in docs/operations/closed-stacks-s01-transcripts-evidence.md; it is not recorded here because this file IS scanned by tools/check_client_names.py and the host workspace directory carries a denylisted client name."
   },
-  "bundles_scanned": 14,
-  "files_scanned": 15,
-  "raw_matches": 250,
-  "distinct_tokens": 73,
-  "cli_parser_choices": 79,
+  "bundles_scanned": 13,
+  "files_scanned": 13,
+  "raw_matches": 166,
+  "distinct_tokens": 51,
+  "cli_parser_choices": 62,
   "mcp_registered_tools": [
     "alerts",
     "bases_query",
@@ -50,6 +50,8 @@
     "read",
     "recent",
     "search",
+    "supersede",
+    "unsupersede",
     "vault_languages"
   ],
   "present_on_broker": [
@@ -59,23 +61,10 @@
     "graph-expand",
     "grep",
     "inbox",
-    "read",
     "search"
   ],
   "missing_from_broker": [
     "anchor",
-    "cos-broker",
-    "cos-corpus-append",
-    "cos-corpus-check",
-    "cos-corpus-close",
-    "cos-corpus-reopen",
-    "cos-correct",
-    "cos-evidence",
-    "cos-hold",
-    "cos-priority-map",
-    "cos-propose",
-    "cos-report",
-    "cos-run-begin",
     "curate",
     "doctor",
     "draft-capture",
@@ -98,9 +87,9 @@
   ],
   "disposition_counts": {
     "add_read": 2,
-    "already_served": 8,
-    "host_only_never": 27,
-    "undecided": 3
+    "already_served": 7,
+    "host_only_never": 16,
+    "undecided": 2
   },
   "vm_allowed_dispositions": {
     "alerts": "already_served",
@@ -131,6 +120,7 @@
     "alerts",
     "brief",
     "check-egress",
+    "cos-propose",
     "diagnose",
     "digest",
     "dossier",
@@ -138,14 +128,14 @@
     "hybrid-search",
     "mcp-config",
     "provision-request",
+    "read",
     "recent"
   ],
   "candidates": [
     {
       "token": "already",
-      "count": 2,
+      "count": 1,
       "bundles": [
-        "chief-of-staff",
         "kb-curator"
       ],
       "kind": "not_a_verb"
@@ -157,14 +147,6 @@
         "kb-curator"
       ],
       "kind": "cli_verb"
-    },
-    {
-      "token": "and",
-      "count": 1,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "kind": "not_a_verb"
     },
     {
       "token": "bases-query",
@@ -188,14 +170,6 @@
       "count": 1,
       "bundles": [
         "kb-curator"
-      ],
-      "kind": "not_a_verb"
-    },
-    {
-      "token": "call",
-      "count": 1,
-      "bundles": [
-        "chief-of-staff"
       ],
       "kind": "not_a_verb"
     },
@@ -224,102 +198,6 @@
       "kind": "not_a_verb"
     },
     {
-      "token": "cos-broker",
-      "count": 2,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "kind": "cli_verb"
-    },
-    {
-      "token": "cos-corpus-append",
-      "count": 4,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "kind": "cli_verb"
-    },
-    {
-      "token": "cos-corpus-check",
-      "count": 2,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "kind": "cli_verb"
-    },
-    {
-      "token": "cos-corpus-close",
-      "count": 1,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "kind": "cli_verb"
-    },
-    {
-      "token": "cos-corpus-reopen",
-      "count": 1,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "kind": "cli_verb"
-    },
-    {
-      "token": "cos-correct",
-      "count": 2,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "kind": "cli_verb"
-    },
-    {
-      "token": "cos-evidence",
-      "count": 1,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "kind": "cli_verb"
-    },
-    {
-      "token": "cos-hold",
-      "count": 3,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "kind": "cli_verb"
-    },
-    {
-      "token": "cos-priority-map",
-      "count": 3,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "kind": "cli_verb"
-    },
-    {
-      "token": "cos-propose",
-      "count": 6,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "kind": "cli_verb"
-    },
-    {
-      "token": "cos-report",
-      "count": 7,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "kind": "cli_verb"
-    },
-    {
-      "token": "cos-run-begin",
-      "count": 6,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "kind": "cli_verb"
-    },
-    {
       "token": "curate",
       "count": 6,
       "bundles": [
@@ -338,9 +216,8 @@
     },
     {
       "token": "draft-capture",
-      "count": 4,
+      "count": 2,
       "bundles": [
-        "chief-of-staff",
         "kb-curator",
         "vault-ingestion"
       ],
@@ -415,14 +292,6 @@
       "kind": "cli_verb"
     },
     {
-      "token": "grounding",
-      "count": 3,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "kind": "not_a_verb"
-    },
-    {
       "token": "health",
       "count": 4,
       "bundles": [
@@ -433,9 +302,8 @@
     },
     {
       "token": "health-report",
-      "count": 2,
+      "count": 1,
       "bundles": [
-        "chief-of-staff",
         "graph-explorer"
       ],
       "kind": "cli_verb"
@@ -475,9 +343,8 @@
     },
     {
       "token": "ingest",
-      "count": 8,
+      "count": 6,
       "bundles": [
-        "chief-of-staff",
         "vault-ingestion"
       ],
       "kind": "cli_verb"
@@ -492,9 +359,8 @@
     },
     {
       "token": "init",
-      "count": 3,
+      "count": 1,
       "bundles": [
-        "chief-of-staff",
         "overlay-style"
       ],
       "kind": "cli_verb"
@@ -509,14 +375,6 @@
       "kind": "cli_verb"
     },
     {
-      "token": "is",
-      "count": 6,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "kind": "not_a_verb"
-    },
-    {
       "token": "knowledge",
       "count": 1,
       "bundles": [
@@ -525,18 +383,9 @@
       "kind": "not_a_verb"
     },
     {
-      "token": "lexical",
-      "count": 2,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "kind": "not_a_verb"
-    },
-    {
       "token": "maintain",
-      "count": 7,
+      "count": 4,
       "bundles": [
-        "chief-of-staff",
         "curation",
         "task-registrar",
         "vm-doctor"
@@ -569,43 +418,10 @@
     },
     {
       "token": "note",
-      "count": 7,
+      "count": 2,
       "bundles": [
-        "chief-of-staff",
         "promote",
         "save-conversation"
-      ],
-      "kind": "not_a_verb"
-    },
-    {
-      "token": "notes",
-      "count": 2,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "kind": "not_a_verb"
-    },
-    {
-      "token": "only",
-      "count": 1,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "kind": "not_a_verb"
-    },
-    {
-      "token": "read",
-      "count": 2,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "kind": "cli_verb"
-    },
-    {
-      "token": "reads",
-      "count": 1,
-      "bundles": [
-        "chief-of-staff"
       ],
       "kind": "not_a_verb"
     },
@@ -636,9 +452,8 @@
     },
     {
       "token": "search",
-      "count": 12,
+      "count": 10,
       "bundles": [
-        "chief-of-staff",
         "promote",
         "save-conversation",
         "vault-eval",
@@ -672,11 +487,10 @@
     },
     {
       "token": "status",
-      "count": 30,
+      "count": 27,
       "bundles": [
         "autoresearch",
         "brain-inbox",
-        "chief-of-staff",
         "curation",
         "graph-explorer",
         "improve",
@@ -702,9 +516,8 @@
     },
     {
       "token": "sync",
-      "count": 14,
+      "count": 13,
       "bundles": [
-        "chief-of-staff",
         "kb-curator",
         "promote",
         "save-conversation",
@@ -753,14 +566,6 @@
       "kind": "cli_verb"
     },
     {
-      "token": "vm",
-      "count": 5,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "kind": "not_a_verb"
-    },
-    {
       "token": "write",
       "count": 9,
       "bundles": [
@@ -802,114 +607,6 @@
       "disposition": "already_served"
     },
     {
-      "verb": "cos-broker",
-      "count": 2,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "on_broker": false,
-      "disposition": "host_only_never"
-    },
-    {
-      "verb": "cos-corpus-append",
-      "count": 4,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "on_broker": false,
-      "disposition": "host_only_never"
-    },
-    {
-      "verb": "cos-corpus-check",
-      "count": 2,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "on_broker": false,
-      "disposition": "host_only_never"
-    },
-    {
-      "verb": "cos-corpus-close",
-      "count": 1,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "on_broker": false,
-      "disposition": "host_only_never"
-    },
-    {
-      "verb": "cos-corpus-reopen",
-      "count": 1,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "on_broker": false,
-      "disposition": "host_only_never"
-    },
-    {
-      "verb": "cos-correct",
-      "count": 2,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "on_broker": false,
-      "disposition": "host_only_never"
-    },
-    {
-      "verb": "cos-evidence",
-      "count": 1,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "on_broker": false,
-      "disposition": "host_only_never"
-    },
-    {
-      "verb": "cos-hold",
-      "count": 3,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "on_broker": false,
-      "disposition": "host_only_never"
-    },
-    {
-      "verb": "cos-priority-map",
-      "count": 3,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "on_broker": false,
-      "disposition": "host_only_never"
-    },
-    {
-      "verb": "cos-propose",
-      "count": 6,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "on_broker": false,
-      "disposition": "undecided"
-    },
-    {
-      "verb": "cos-report",
-      "count": 7,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "on_broker": false,
-      "disposition": "host_only_never"
-    },
-    {
-      "verb": "cos-run-begin",
-      "count": 6,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "on_broker": false,
-      "disposition": "host_only_never"
-    },
-    {
       "verb": "curate",
       "count": 6,
       "bundles": [
@@ -930,9 +627,8 @@
     },
     {
       "verb": "draft-capture",
-      "count": 4,
+      "count": 2,
       "bundles": [
-        "chief-of-staff",
         "kb-curator",
         "vault-ingestion"
       ],
@@ -1000,9 +696,8 @@
     },
     {
       "verb": "health-report",
-      "count": 2,
+      "count": 1,
       "bundles": [
-        "chief-of-staff",
         "graph-explorer"
       ],
       "on_broker": false,
@@ -1019,9 +714,8 @@
     },
     {
       "verb": "ingest",
-      "count": 8,
+      "count": 6,
       "bundles": [
-        "chief-of-staff",
         "vault-ingestion"
       ],
       "on_broker": false,
@@ -1038,9 +732,8 @@
     },
     {
       "verb": "init",
-      "count": 3,
+      "count": 1,
       "bundles": [
-        "chief-of-staff",
         "overlay-style"
       ],
       "on_broker": false,
@@ -1058,24 +751,14 @@
     },
     {
       "verb": "maintain",
-      "count": 7,
+      "count": 4,
       "bundles": [
-        "chief-of-staff",
         "curation",
         "task-registrar",
         "vm-doctor"
       ],
       "on_broker": false,
       "disposition": "host_only_never"
-    },
-    {
-      "verb": "read",
-      "count": 2,
-      "bundles": [
-        "chief-of-staff"
-      ],
-      "on_broker": true,
-      "disposition": "already_served"
     },
     {
       "verb": "rebuild",
@@ -1089,9 +772,8 @@
     },
     {
       "verb": "search",
-      "count": 12,
+      "count": 10,
       "bundles": [
-        "chief-of-staff",
         "promote",
         "save-conversation",
         "vault-eval",
@@ -1111,11 +793,10 @@
     },
     {
       "verb": "status",
-      "count": 30,
+      "count": 27,
       "bundles": [
         "autoresearch",
         "brain-inbox",
-        "chief-of-staff",
         "curation",
         "graph-explorer",
         "improve",
@@ -1133,9 +814,8 @@
     },
     {
       "verb": "sync",
-      "count": 14,
+      "count": 13,
       "bundles": [
-        "chief-of-staff",
         "kb-curator",
         "promote",
         "save-conversation",
@@ -1183,8 +863,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "9dacd8cf1f9d0415b8d2b14381c644dcd64257ad",
-      "content_sha256": "96feff245da0717ced271859d2335eb87e4504a6fc50a9dc7a2e4f90c648f795"
+      "skill_md_git_blob": "fcf887f6915d56e1dc727c9a5f150eb77f9a0ef7",
+      "content_sha256": "9cbd7971d14688e7286688a5967c5fd16a2c168f4c06e5daad1b6d1ff15075d7"
     },
     {
       "skill": "brain-inbox",
@@ -1192,18 +872,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "b1a78376c4f9fcf4057d7d7e85695301ed32ccb6",
-      "content_sha256": "479fa147dd07d77c0020a620504e710f51d5fd45d47c4d5249e9ee56cd7cdb52"
-    },
-    {
-      "skill": "chief-of-staff",
-      "canonical_source": ".claude/skills/chief-of-staff",
-      "files": [
-        "DOCTRINE.md",
-        "SKILL.md"
-      ],
-      "skill_md_git_blob": "f538c297f51330bca12348d0b8dab2c16e38cff4",
-      "content_sha256": "6fc1c063dcc0e2572c0e715254259c2fa017c7071176de128b0fc74bc5901c9c"
+      "skill_md_git_blob": "cd486b33541f50e13e2e938ec0a03d1eacc6037c",
+      "content_sha256": "c3d181c05bbf60130c092914d8cdfd3f7d2167e91db91d72ef1ab771f05f35ee"
     },
     {
       "skill": "curation",
@@ -1211,8 +881,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "83f6c601684d7a043f1c9d1638a775a38062c555",
-      "content_sha256": "428e0952c6eaccbb8e5a65103d77e60eb442eafc338b63d3bab3e1ff62d2654e"
+      "skill_md_git_blob": "f590cbc6b0d41eecf5d4e5051347b7b5812c68e6",
+      "content_sha256": "c9239db6fd7ce734774bcb9268723022818d5284bbcea43beafb68468fd45156"
     },
     {
       "skill": "graph-explorer",
@@ -1220,8 +890,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "cafeb1c15ca955322e67a92702d4a72415468464",
-      "content_sha256": "95519ea45b68052c18a9c6f27dad639e0b14406481f223ceb4d8435292a944bb"
+      "skill_md_git_blob": "78d802cf08c51b4665038129afff5722dddfd54e",
+      "content_sha256": "fbbf6bb915547c3edd7d840481bcb2ff9ea9bdcf287d041fdfacae35c9b488ed"
     },
     {
       "skill": "improve",
@@ -1229,8 +899,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "edaf71094727cf909ad10a6729e52d3e2a28ed2b",
-      "content_sha256": "3c52d6d2a056a5e721323fffeefca019093163d9c19df772ff9c0c3d8baa5ec7"
+      "skill_md_git_blob": "810998e161f7b448dda059153bee23e0e01ac2c1",
+      "content_sha256": "45514cc19f51bdcd4c12f7caf3e0cbf1760978651c9877d6d60f4022ecc0ee70"
     },
     {
       "skill": "kb-curator",
@@ -1238,8 +908,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "e83d998ed7d41a8ce04f5e6641a991f03e51f729",
-      "content_sha256": "bc2a1511f6b8ae540fa8fceeedf3add9a416a6757287e96568f1528775c65019"
+      "skill_md_git_blob": "06c5f4c464d1ffc224f410196375757cb53adc0d",
+      "content_sha256": "72d77138fdb945d5a8b4c39238ac26379af5d169787358a607c564602015c1bb"
     },
     {
       "skill": "overlay-style",
@@ -1247,8 +917,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "eb1b7d879eae1d0bbc08834c2b34fdeb7b025790",
-      "content_sha256": "772f25db21865430555d295bec6f8a60cc0c0afdbeee625bf8a436e1706396bb"
+      "skill_md_git_blob": "2b59a35c5828bfd7bfdb40268323f7f5c2e9bfa9",
+      "content_sha256": "97d2f272a9e7fbacbba373e1a0e6215ace004eeda896c25a91e7783cbe0b7684"
     },
     {
       "skill": "promote",
@@ -1256,8 +926,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "02f495786d824cc57323b8526a81f88603fcdae4",
-      "content_sha256": "b4a2f2dd0376a29bab05a2eb15ffb981b86cb036c55e612de4d33ce9eac6650f"
+      "skill_md_git_blob": "d87b628d732f807344f3e76e65e8864323b44332",
+      "content_sha256": "8f353ce91f4d07ad5a3d819e1402393b761c22b767591c85751ce07433609137"
     },
     {
       "skill": "save-conversation",
@@ -1265,8 +935,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "b9d3af5758c3d2d787875fc0f760b676c240fe5e",
-      "content_sha256": "f8120ee7f97b93e247169a6086bf15125e45a98c6fcdb6e3975739bbd8275df5"
+      "skill_md_git_blob": "17ee3aa2587c5000c8ab084ff57a060ef45a98aa",
+      "content_sha256": "2dc3e676821b25b5120d914dbb4c26a41d75705189f15da848e564b896fd4a93"
     },
     {
       "skill": "task-registrar",
@@ -1274,8 +944,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "3f001522e2d3f4c88f9d0e8dc21c7e52804e1c66",
-      "content_sha256": "d7956e40fd7df95ddefe63c7272c97c3a6bcd1ab6d5be9df4e6abe47853bc3af"
+      "skill_md_git_blob": "1430f3e9105df6323f93e16a108175afee0ba969",
+      "content_sha256": "20d723cb7f75f6a08b7cd7ae0fa0fd6a12975b49435982cac22bb5e84ab60d17"
     },
     {
       "skill": "vault-eval",
@@ -1283,8 +953,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "ae31f3cdbadc5f035efcc550e8ffb0fc5f526d73",
-      "content_sha256": "74e08708c107be6b5c7f4ec5aa04b049a74925f066f2e98ecdfdd2d10c7256f8"
+      "skill_md_git_blob": "e63e8a488043bfd96c144673cebd60cecb13b565",
+      "content_sha256": "ac417b93a393373f9786f35d717d4045670adabc94318359eca0e313160fa935"
     },
     {
       "skill": "vault-ingestion",
@@ -1292,8 +962,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "0101ed94e21834de0f65f0fe62c115032c00f0e8",
-      "content_sha256": "b9df055f3d90cb0a84e932f15f5ea0ffc30a7b65b68bd6884264dd91eab7c3d7"
+      "skill_md_git_blob": "4c6dfc14fb5ba535bccca05adacf74e4635b4504",
+      "content_sha256": "820ad3d4d0896b50a89a459daf2696be2de2a9b1c14b454aa6ff32d047ca5cb8"
     },
     {
       "skill": "vm-doctor",
@@ -1301,8 +971,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "41eb54d3652664a1b0d2c4c049301a829e086560",
-      "content_sha256": "c434bcc8b3b578322f917832b5fde907a3552ac35a3be4cb391cd0e3bc7021ab"
+      "skill_md_git_blob": "dd025db754e722e0c1dad5f09cc48aca13c58a92",
+      "content_sha256": "ab68d2c7f2c991dec2b179d82335b99c7ffff6c6607a6e58436a3a94101c4efd"
     }
   ],
   "s02_update": {
@@ -1349,39 +1019,23 @@
   },
   "superseded_pattern_reconciliation": {
     "why_this_moved_here": "S01 pinned this reconciliation as literals INSIDE tests/test_cowork_skill_verbs.py (259/75 and a seven-token delta map). S06B REWROTE the bundle corpus those numbers were measured over, so they are no longer reproducible and re-recording them in the test would have turned a real check into one that confirms whatever the corpus says. The numbers moved into this oracle instead, where re-recording is the visible, reviewable act it is for every other count here. The PROPERTY s01 established is unchanged and still measured: the superseded pattern MISSES the quoted, path-qualified invocation, so the two patterns differ by a NET rather than by a pure loss. Read the `delta` map beside this line for the shape of that net -- it is currently 7 losses and 1 gain (status). s01 recorded SIX losses and one gain; that was true of the pre-DESK-07 corpus and is no longer, because `doctor` joined the losses (20 -> 6) when the shared desk block replaced vm-doctor's bootstrap. The count in this sentence is derived from the map, never carried forward.",
-    "superseded_raw": 269,
-    "superseded_distinct": 74,
-    "current_raw": 250,
-    "current_distinct": 73,
-    "net": -19,
+    "superseded_raw": 182,
+    "superseded_distinct": 51,
+    "current_raw": 166,
+    "current_distinct": 51,
+    "net": -16,
     "delta": {
       "conventions": [
         2,
         1
       ],
-      "cos-corpus-reopen": [
-        2,
-        1
-      ],
-      "cos-propose": [
-        7,
-        6
-      ],
-      "data": [
-        1,
-        0
-      ],
       "doctor": [
-        20,
+        19,
         6
       ],
       "search": [
-        13,
-        12
-      ],
-      "status": [
-        29,
-        30
+        11,
+        10
       ],
       "substrate": [
         3,
@@ -1473,5 +1127,6 @@
     "also_re_derived": [],
     "note_on_derived_columns": "candidates, verbs and disposition_counts are UNCHANGED: the edit added and removed no `brain <token>` and renamed no bundle. Only the two content anchors moved."
   },
-  "interview_lane_update": "2026-09-09 (INT-01): the host CLI grew the host-only `interview` subcommand (the owner-interview lane: the vault asks the owner on the morning sheet; docs/cos-interview.md). cli_parser_choices 78 -> 79. It is NOT in cli.VM_ALLOWED and appears in no skill bundle — the callers are the nightly's chain_finish and the repo-local /brain-grill skill, which is not a packaged bundle — so candidates, verbs, dispositions and the broker columns are byte-unchanged."
+  "interview_lane_update": "2026-09-09 (INT-01): the host CLI grew the host-only `interview` subcommand (the owner-interview lane: the vault asks the owner on the morning sheet; docs/cos-interview.md). cli_parser_choices 78 -> 79. It is NOT in cli.VM_ALLOWED and appears in no skill bundle — the callers are the nightly's chain_finish and the repo-local /brain-grill skill, which is not a packaged bundle — so candidates, verbs, dispositions and the broker columns are byte-unchanged.",
+  "public_copy": "Regenerated at export time by tools/export_public_copies.py from the COS-free tree: every derived column above is measured on the public skills and CLI. The dated notes keep their original wording."
 }

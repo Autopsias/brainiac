@@ -24,3 +24,11 @@
 # merely MOVES stays pinned while a second one here still refuses. Keep the
 # number current anyway: gitleaks' own -i is still line-exact.
 src/brain/embed.py:generic-api-key:144
+
+# tests/test_cos_sheet_questions.py — three parametrize rows that pass a made-up
+# interview question key to a validator. Test data, not a credential; the rule
+# fires on the key's entropy. Read and approved by the owner on 2026-09-23
+# (plan public-brain-without-cos, s01 review gate).
+tests/test_cos_sheet_questions.py:generic-api-key:128
+tests/test_cos_sheet_questions.py:generic-api-key:129
+tests/test_cos_sheet_questions.py:generic-api-key:130

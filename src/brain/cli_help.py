@@ -229,6 +229,16 @@ examples:
   brain --vault ./vault supersede arctic-embed-choice e5-small-choice --reason "switched embedder"
   brain --vault ./vault project --dest /tmp/vm-workspace --max-tier Internal
 
+owner-declared supersession (SUP-01) — the same audited supersede, no terminal:
+  drop lane:  beside inbox/_deliverables/<project>/<file>, a `<file>.supersedes`
+              sidecar lists the old id(s), one per line (bare or [[wikilink]]);
+              a dropped .md may carry `replaces:` instead. Applied after payload
+              + anchor land; a failure never fails the ingest and is reported as
+              `supersede_declared_failed` (maintain, alerts, corpus invariants).
+  brain-mcp:  tools `supersede` / `unsupersede` (old_id, new_id, reason). Applied
+              only when the vault relates the pair; otherwise PROPOSED to the
+              owner ({applied: false, proposed: true}). Refused on --role vm.
+
 egress filter (deny-by-default below the cap):
   tiers low->high: Public < Internal < Confidential < Restricted < MNPI
   default --max-tier: full vault (MNPI) on host, Internal on --role vm;

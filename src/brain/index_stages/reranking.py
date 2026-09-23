@@ -46,7 +46,8 @@ def _warn_failure(index: Any, reranker: Any, detail: str) -> None:
     index._rerank_failure_logged = True
     print(
         f"brain: WARNING — reranker {reranker.model_id!r} {detail}; falling back "
-        "to unreranked order for this and all further queries this session.",
+        "to unreranked order for this query. Later failures in this session are "
+        "not logged again; count them from `rerank_applied` in the trace.",
         file=sys.stderr,
     )
 

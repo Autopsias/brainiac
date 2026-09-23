@@ -97,7 +97,13 @@ fi
   # This explicit call stays as defense-in-depth: idempotent, cheap, and it
   # keeps the drain floor if maintain's internal block ever regresses.
   # NON-FATAL: a broker failure must never cost the vault its capture-drain floor.
-  "$BRAIN_BIN" cos-broker --json || echo "brain-brief: cos-broker fold failed (non-fatal), continuing to maintain"
+  # The public engine carries no COS (ADR 0013): its parser rejects the verb,
+  # so the probe fails and the step is skipped with one line, never an error.
+  if "$BRAIN_BIN" cos-broker --help >/dev/null 2>&1; then
+    "$BRAIN_BIN" cos-broker --json || echo "brain-brief: cos-broker fold failed (non-fatal), continuing to maintain"
+  else
+    echo "brain-brief: cos-broker SKIP — this engine carries no COS"
+  fi
   # maintain: sync --publish (drain pending captures + reconcile index +
   # republish snapshot) + brief, THEN whichever of health/integrity/digest is
   # due today (date-gated). graphify is documented-only (no build invoked --

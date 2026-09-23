@@ -369,6 +369,13 @@ def pair_key(a: str, b: str) -> str:
 
 # -- similarity ---------------------------------------------------------------
 _SIGNATURE_CUT_RE = re.compile(r"^\s*(?:--\s*|__+|-{5,})$")
+# Copy of `cos._FORWARD_WRAPPER_RE`; `tests/test_core_without_cos.py` pins them equal.
+_FORWARD_WRAPPER_RE = re.compile(
+    r"^(?:-{2,}\s*(?:original message|forwarded message)\s*-{2,}"
+    r"|begin forwarded message:"
+    r"|(?:from|sent|to|cc|bcc|subject|date|reply-to)\s*:.*"
+    r"|on\b.{0,160}\bwrote:)$",
+    re.IGNORECASE)
 
 
 def similarity_text(body: str) -> str:
@@ -379,11 +386,9 @@ def similarity_text(body: str) -> str:
     those lines (correct for a content fingerprint, wrong here): email
     boilerplate otherwise dominates cosine between any two messages in one
     thread, and two unrelated one-line replies under a long quoted chain score
-    ~0.996. The forward-header pattern is shared with that function so the two
-    stay aligned.
+    ~0.996. The forward-header pattern is a copy of that function's (ADR 0013:
+    core does not import COS); a test keeps the two identical.
     """
-    from .cos import _FORWARD_WRAPPER_RE
-
     kept: list[str] = []
     for raw in str(body or "").splitlines():
         if _SIGNATURE_CUT_RE.match(raw):

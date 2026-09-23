@@ -220,6 +220,10 @@ class _MaintenanceStateMixin:
         path.parent.mkdir(parents=True, exist_ok=True)
         for root in {str(self.vault), str(Path(self.vault).resolve())}:
             entry_md = entry_md.replace(root.rstrip(_os.sep) + _os.sep, "")
+        # Paths OUTSIDE the vault (a plan worktree, a log) still leak the host
+        # home (retro signature ``absolute-paths``, run263 in the field): ~/.
+        for home in {str(Path.home()), str(Path.home().resolve())}:
+            entry_md = entry_md.replace(home.rstrip(_os.sep) + _os.sep, "~/")
         marker = f"<!-- idempotency-key: {key} -->"
         existing = path.read_text(encoding="utf-8") if path.exists() else ""
         if marker in existing:
@@ -320,3 +324,54 @@ class _MaintenanceStateMixin:
         from .. import inbox as ibx
         self._require_host("read the owner question queue")
         return ibx.open_questions(self._read_inbox())
+    def _engine_feedback_dir(self) -> Path:
+        return config.brain_runtime_dir(self.vault) / "engine-feedback"
+    def retro(self, *, today: Any = None) -> dict[str, Any]:
+        """Retro fold: scan this vault's own maintenance output for engine
+        FAILURE SIGNATURES (future dates, absolute-path leakage, duplicate
+        findings, future artifacts, hot.md bloat) and write a ready-to-run
+        engine-repo prompt into ``.brain/engine-feedback/`` for each. Host-only,
+        idempotent (one file per signature per day). Returns the signature ->
+        evidence map plus the feedback files written."""
+        from .. import retro as rmod
+        import datetime as _dt
+        import re
+        self._require_host("run the retro fold")
+        d = today or _dt.date.today()
+
+        hot_path = self._hot_md_path()
+        hot_text = hot_path.read_text(encoding="utf-8") if hot_path.exists() else ""
+        hot_bytes = hot_path.stat().st_size if hot_path.exists() else 0
+        findings = rmod.scan(hot_text, config.brief_dir(self.vault), d, hot_md_bytes=hot_bytes)
+
+        written: list[str] = []
+        fb_dir = self._engine_feedback_dir()
+        # De-dup on the EVIDENCE FINGERPRINT across both the open queue and
+        # resolved/ — not on the dated filename. hot.md is append-only, so the
+        # entries proving a signature never disappear; keying the file on the
+        # run date re-filed an already-fixed, already-resolved defect under a
+        # fresh name every run (measured 2026-07-27). A fingerprint already
+        # sitting in resolved/ is a defect the operator has closed: never
+        # re-open it. Genuinely new evidence yields a new fingerprint and files.
+        seen = {
+            m.group(1)
+            for p in list(fb_dir.glob("*.md")) + list((fb_dir / "resolved").glob("*.md"))
+            for m in [re.search(r"-([0-9a-f]{12})\.md$", p.name)] if m
+        }
+        for signature, evidence in findings.items():
+            fp = rmod.evidence_fingerprint(signature, evidence)
+            if fp in seen:
+                continue
+            slug, md = rmod.render_engine_feedback(signature, evidence, d)
+            fpath = fb_dir / f"{slug}.md"
+            if not fpath.exists():
+                fb_dir.mkdir(parents=True, exist_ok=True)
+                fpath.write_text(md, encoding="utf-8")
+                written.append(fpath.name)
+                seen.add(fp)
+        return {"date": d.isoformat(), "findings": findings, "feedback_written": written}
+    def pending_engine_feedback(self) -> list[str]:
+        """Filenames of engine-feedback prompts waiting to be fired at the repo
+        (surfaced by the SessionStart hook)."""
+        fb_dir = self._engine_feedback_dir()
+        return sorted(f.name for f in fb_dir.glob("*.md")) if fb_dir.is_dir() else []

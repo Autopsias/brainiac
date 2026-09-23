@@ -66,6 +66,50 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+class ReadRefused(RuntimeError):
+    """The entry is not a regular file we may read. Never ingest it."""
+
+
+class ReadTooLarge(ReadRefused):
+    """The entry is bigger than the caller's cap; the read stopped at it."""
+
+
+def read_nofollow(path: Path, *, max_bytes: int | None = None) -> bytes:
+    """Read a regular file WITHOUT following a symlink at the final component.
+
+    A core copy of ``cos._read_nofollow`` (ADR 0013: ingest runs without COS),
+    kept separate for the reason ``core._durability`` gives for its own copy of
+    the atomic writer. ``O_NOFOLLOW`` refuses a swapped-in symlink at the
+    syscall; Windows has no such flag, so ``is_symlink`` carries it there. The
+    cap is enforced on the OPEN DESCRIPTOR, never on a ``stat()`` of the name,
+    so every decision is made about the one object actually read (INT-04).
+    """
+    import stat as _stat
+
+    if path.is_symlink():
+        raise ReadRefused(f"{path.name} is a symlink — refused")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        raise ReadRefused(f"{path.name} unreadable: {type(exc).__name__}") from None
+    try:
+        if not _stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ReadRefused(f"{path.name} is not a regular file — refused")
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            b = os.read(fd, 1 << 16)
+            if not b:
+                return b"".join(chunks)
+            total += len(b)
+            if max_bytes is not None and total > max_bytes:
+                raise ReadTooLarge(f"{path.name} exceeds the {max_bytes}-byte cap")
+            chunks.append(b)
+    finally:
+        os.close(fd)
+
+
 def content_key(path: Path) -> str:
     """Return the stable content key for retry accounting across renames."""
     return sha256_bytes(path.read_bytes())

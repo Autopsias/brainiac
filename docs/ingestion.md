@@ -161,6 +161,33 @@ A duplicate top-level archive (identical bytes to something already
 ingested) is never re-expanded — its members were already processed the
 first time, by construction of the content-hash dedup manifest.
 
+### Ingesting a mail thread the porter cannot read (2026-09-12)
+
+Some Inbox threads never reach the vault through the COS night, and the
+morning sheet names them under **Threads the porter cannot read**. Three causes
+(`cos.sheet_threads.BODY_NEVER_READABLE`), and only the third was ever fixable:
+an encrypted `message.rpmsg` that only the owner's own credentials decrypt, a
+server that answers the request and hands back no item at all, and — until
+2026-09-12 — a meeting invitation whose substance lives in calendar fields
+rather than in a body. Full measurement:
+`docs/cos-feedback-record.md` §12.
+
+For the first two the drop zone IS the path, and it needs nothing new:
+
+1. In Outlook, drag the mail to Finder — that writes a `.eml`. (For a
+   rights-protected message, open it and print to PDF instead: the `.eml`
+   carries only the encrypted attachment.)
+2. Move the file into `<vault>/inbox/`.
+3. Wait. `brain maintain` runs hourly and drains the drop zone; `brain ingest`
+   does it immediately.
+
+**Verified end to end on 2026-09-12** against a throwaway vault, with a `.eml`
+carrying ordinary headers: the note was signed into `raw/`, the original
+archived under `raw/originals/<date>-<slug>/`, `provenance.sender`,
+`provenance.sent` and `provenance.subject` were read from the headers,
+the note classified `MNPI`, the injection scan recorded `clean`, and the text
+came back from `brain grep` after an index build. No step needed a flag.
+
 ## `brain ingest-transcript` — transcript provenance (ING-04)
 
 Meeting transcripts are produced externally (the transcriber MCP/CLI — never

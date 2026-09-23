@@ -26,5 +26,6 @@ def invariant_health_history_fields(
         "invariant_stale_shelf_entries": values.get("stale_shelf_entries"),
         "invariant_unanchored_deliverable_payloads": values.get(
             "unanchored_deliverable_payloads"),
+        "invariant_supersede_declared_failed": values.get("supersede_declared_failed"),
         "invariant_age_days": age_days,
     }

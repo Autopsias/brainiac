@@ -1,6 +1,9 @@
-"""Expose BrainCore maintenance-fold mixins."""
+"""Expose BrainCore maintenance-fold mixins.
 
-from .cos import CosFoldsMixin
+The COS folds (``.cos``) are not re-exported: ``brain.core`` mixes them in
+only when COS is installed (ADR 0013).
+"""
+
 from .context import MaintenanceRun
 from .daily import DailyFoldsMixin
 from .deliverables import DeliverablesFoldsMixin
@@ -19,7 +22,6 @@ from .watchdogs import WatchdogFoldsMixin
 from .weekly import WeeklyFoldsMixin
 
 __all__ = [
-    "CosFoldsMixin",
     "DailyFoldsMixin",
     "DeliverablesFoldsMixin",
     "GraphFoldsMixin",

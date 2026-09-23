@@ -96,6 +96,29 @@ the one metric that can still see a failure after marking stops entirely).
 run, and an edited payload turns into a `diverged` row that stops the fold from
 maintaining that entry at all. Change the note, not the copy.
 
+### 3.1 Declaring that a drop replaces an older version (SUP-01, 2026-09-18)
+
+A new version is a supersede, never an edit. To declare it without a terminal,
+put a sidecar beside the file in the drop folder:
+
+```
+vault/inbox/_deliverables/<project>/ASR-2026-final.xlsx
+vault/inbox/_deliverables/<project>/ASR-2026-final.xlsx.supersedes
+```
+
+The sidecar's body is the old note id, bare or as `[[wikilink]]`; one per line,
+`#` starts a comment. A dropped `.md` may carry `replaces: <id>` in its own
+frontmatter instead. The next ingest lands payload and anchor as always, then
+retires each old id under the new one through the audited `supersede`. When
+the old id was itself a drop-lane deliverable, its anchor is retired too, so
+the shelf shows one version. The sidecar is consumed; it is never ingested.
+
+A declaration that cannot be applied (unknown id, already superseded, the new
+note itself) does not fail the ingest. It is reported as
+`supersede_declared_failed` — in the maintain results, in `brain alerts`, on
+the exceptions page, and as a corpus invariant. Repair it on the host with
+`brain supersede <old-id> <new-id>`. Full contract: AGENTS.md §4.
+
 ## 4 · The accepted trade-off: Spotlight and Finder show both
 
 The shelf holds **copies**, so macOS indexes the vault note *and* its shelf copy

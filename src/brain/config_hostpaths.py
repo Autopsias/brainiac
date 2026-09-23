@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
+
+from . import _optional
 
 class HostPathUnsafe(RuntimeError):
     """A path that must be host-private resolves somewhere a Cowork VM can see.
@@ -197,15 +200,18 @@ def warn_if_lock_dir_fallback(vault: str | os.PathLike[str] | None = None) -> No
     if key in _LOCK_FALLBACK_REPORTED:
         return
     _LOCK_FALLBACK_REPORTED.add(key)
+    message = (
+        f"$BRAIN_INDEX_DIR is on the mount, so the writer lock fell back to "
+        f"the app-data base: {reason} The INDEX itself did NOT move — it is "
+        f"still the VM-writable path — so repoint $BRAIN_INDEX_DIR at a "
+        f"host-only directory.")
     try:
-        from . import cos
+        if _optional.cos_available():
+            from . import cos
 
-        cos.log_defect(
-            vault, "host-lock-dir-fallback",
-            f"$BRAIN_INDEX_DIR is on the mount, so the writer lock fell back to "
-            f"the app-data base: {reason} The INDEX itself did NOT move — it is "
-            f"still the VM-writable path — so repoint $BRAIN_INDEX_DIR at a "
-            f"host-only directory.")
+            cos.log_defect(vault, "host-lock-dir-fallback", message)
+        else:  # no COS defect log in this engine (ADR 0013): say it on stderr
+            sys.stderr.write(f"brain: host-lock-dir-fallback: {message}\n")
     except Exception:  # noqa: BLE001 — diagnosis must never break the lock path
         pass
 

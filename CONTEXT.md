@@ -297,6 +297,18 @@ is graduable, which is the bug).
 
 ## COS run evidence
 
+**Candidate** vs **ingest-relevant** vs **withheld** — three different questions on one
+thread, answered by three different pieces of code, and conflating them is how the 2026-09-13
+Inbox jam happened. A *candidate* is the staging pass's substance answer (`disposition ==
+candidate`: a decision, commitment, position or number with a span). *Ingest-relevant* is the
+judge's derived `ingest.relevant` field (`tools/cos_judge_ingest.py ingest_field`), the ONE
+predicate the bridge uses to offer a thread; since the owner ruling of 2026-09-13 a real
+document attachment also makes a thread relevant. *Withheld* is the archive gate's verdict
+(`cos.attachment_lane_pending`): the thread names a file that is not joined, declined or
+withdrawn. Only an offered thread gets a manifest line, and only a manifest line makes the
+fetch lane ask Outlook for a file, so a thread that is withheld but not relevant is held for a
+file nobody will fetch.
+
 **Ledger** vs **counter** — a *ledger* is the per-row append-only record of what the run
 did (`_cos_verdict_ledger_*.jsonl`, `_cos_ingestion_ledger_*.jsonl`,
 `_chip_reeval_*.jsonl`); a *counter* is the aggregate written to the metrics row. They are

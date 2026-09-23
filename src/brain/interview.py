@@ -61,6 +61,12 @@ ROW_KEYS = frozenset({
     "key", "shape", "asked_on", "expires_on", "question", "evidence",
     "options", "default", "target", "change", "answer", "note", "status",
 })
+#: The source passage the question is about, shown under it on the sheet.
+#: Optional so a row asked before 2026-09-15 (and a sheet already published
+#: with one) still validates. Owner, 2026-09-15: "you're not including enough
+#: detail for me to make a decision" — a question naming only note ids and a
+#: two-word quote cannot be answered.
+OPTIONAL_ROW_KEYS = frozenset({"context"})
 OPEN, ANSWERED, EXPIRED, SKIPPED = "open", "answered", "expired", "skipped"
 _KEY_RE = re.compile(r"^iq-[0-9a-f]{12}$")
 _ACTION_RE = re.compile(r"^[a-z]+(:[A-Za-z0-9._-]{1,120})?$")
@@ -224,7 +230,9 @@ def phrase_prompt(vault: Any, rows: list[dict[str, Any]]) -> str:
         "You phrase questions a personal knowledge vault asks its owner on a",
         "morning sheet. For each question below, rewrite QUESTION as at most",
         "two plain sentences a busy person can answer at a glance: name the",
-        "note, the date, and exactly what is in doubt. Keep every [[note-id]]",
+        "note, the date, and exactly what is in doubt. Say WHAT was decided",
+        "or what the note is about, in the words of the PASSAGE — never only",
+        "that \"something\" was approved or decided. Keep every [[note-id]]",
         "exactly as given. Reword each option LABEL to fit the question, at",
         "most 12 words, keeping its action code and its meaning. Never add,",
         "drop or reorder options. Never state a fact the evidence does not",
@@ -245,6 +253,8 @@ def phrase_prompt(vault: Any, rows: list[dict[str, Any]]) -> str:
         excerpt = note_excerpt(vault, t.get("path") or "")
         if excerpt:
             parts.append(f"excerpt of the target note: {excerpt}")
+        if r.get("context"):
+            parts.append(f"passage: {r['context']}")
         parts.append(f"current question: {r['question']}")
         parts.append("options: " + "; ".join(
             f"action={o['action']} label={o['label']}" for o in r["options"]))
@@ -298,7 +308,8 @@ def apply_phrasing(vault: Any, answers: list[Any]) -> dict[str, Any]:
 # the sheet's view
 # --------------------------------------------------------------------------
 def sheet_rows(state: dict[str, Any]) -> list[dict[str, Any]]:
-    return [{k: r.get(k, "") for k in ROW_KEYS} for r in open_rows(state)]
+    return [{k: r.get(k, "") for k in ROW_KEYS | OPTIONAL_ROW_KEYS}
+            for r in open_rows(state)]
 
 
 def sheet_block(vault: Any) -> dict[str, Any]:
@@ -315,9 +326,11 @@ def validate_rows(rows: Any) -> None:
     if not isinstance(rows, list):
         raise ValueError("questions.rows must be a list")
     for i, r in enumerate(rows):
-        if not isinstance(r, dict) or set(r) != ROW_KEYS:
+        if not isinstance(r, dict) or not ROW_KEYS <= set(r) <= ROW_KEYS | OPTIONAL_ROW_KEYS:
             raise ValueError(f"questions.rows[{i}] must carry exactly "
-                             f"{sorted(ROW_KEYS)}")
+                             f"{sorted(ROW_KEYS)}, plus an optional context")
+        if not isinstance(r.get("context", ""), str):
+            raise ValueError(f"questions.rows[{i}].context must be a string")
         if not _KEY_RE.fullmatch(str(r["key"])):
             raise ValueError(f"questions.rows[{i}].key is not an interview key")
         if r["shape"] not in SHAPES or not str(r["question"]).strip():
@@ -338,7 +351,7 @@ def validate_rows(rows: Any) -> None:
 
 __all__ = ["SCHEMA", "STATE_RELPATH", "MAX_PER_DAY", "MAX_OPEN", "EXPIRE_DAYS",
            "SUPPRESS_DAYS", "QUIET_AFTER_DAYS", "SHAPES", "SKIP", "OPTIONS",
-           "ROW_KEYS", "OPEN", "ANSWERED", "EXPIRED", "SKIPPED", "state_path",
+           "ROW_KEYS", "OPTIONAL_ROW_KEYS", "OPEN", "ANSWERED", "EXPIRED", "SKIPPED", "state_path",
            "read_state", "write_state", "question_key", "open_rows", "expire",
            "blocked", "day_budget", "generate", "phrase_prompt",
            "apply_phrasing", "sheet_rows", "sheet_block", "validate_rows"]

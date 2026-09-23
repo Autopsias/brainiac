@@ -992,6 +992,210 @@ bypasses `egress.apply_gate` and so carries no marker.
 
 ---
 
+## A-15 · The sheet's build session keeps outbound network, and its merges run in the nightly
+
+**Raised as:** the owner's own ruling, 2026-09-18 (plan *The Sheet Talks
+Back*). A headless Claude Code session may talk to him on the COS morning sheet
+and build changes to this repository. It reads text strangers wrote (mail
+subjects and sender names reach the sheet), it edits files, and it runs
+commands. The design is `docs/adr/0012-sheet-session-listener.md`.
+
+**What bounds it.** The operating system, not a prompt — with one hole that is
+named in item 5 rather than papered over.
+
+**The profile DENIES BY DEFAULT** (owner ruling 2026-09-18, part A; it was
+`(allow default)` plus a deny list until then, and every adversarial pass
+found the next channel nobody had named). `(deny default)` is the first rule
+and the measured allow list is the whole of the rest: fork, `sysctl-read`,
+outbound IP plus the one unix socket name resolution runs over
+(`/private/var/run/mDNSResponder`), file reads with the denies below on top,
+writes to the two folders named next, and execution of exactly ONE folder —
+the one holding the installed `claude` binaries. The allow list was derived by
+running the real thing and reading the sandbox violation log, not by guessing.
+
+**The session has NO code execution at all**, by two independent rules.
+Part A: no shell, no `git`, no `ruff`, no `python3`, no `/usr/bin/security`,
+no `/usr/bin/shortcuts` — nothing outside that one folder can start. Part B
+(the same ruling): `Bash` is off the tool list, on `--tools` and
+`--allowedTools` both. Measured live on 2026-09-18, judged on the filesystem
+rather than on what the model said: asked to create a file with `touch`, the
+session under the production profile WITH `Bash` granted answered "No suitable
+shell found" and created nothing; under a control whose exec allow is wide and
+`Bash` granted it created the file; under that same wide control with the
+session's own tool list it created nothing.
+
+It can write its own session folder and its own transcript folder, and nothing
+else. It cannot CHOOSE those two: both are
+the paths the launcher computed, and a launch is refused the moment either
+stops resolving to itself, so a session that swaps its folder for a symlink
+gets no launch instead of a grant on the link's target. Reads of the vault's whole workspace
+folder (vault-derived copies such as the deliverables shelf live beside the
+vault), the vault, the overlay, the app-data base, `~/.brainiac`, `~/.brain`,
+the other Claude Code transcripts, `/tmp/claude-<uid>` (Claude Code's own
+scratch base, which holds every other project's session files), `~/.ssh`,
+`~/.aws`, `~/.config/gh`, `~/Library/Keychains` and `~/Library/LaunchAgents`
+are refused, each at its resolved path. The session's environment is an allow-list, so the audit key's
+custody variables (`BRAIN_AUDIT_KEY_PEM`, `BRAIN_AUDIT_KEY_CMD`) never reach
+it. The listener's loopback port
+is refused. **It cannot start a job**, which would run outside the sandbox as
+the owner — and since part A that is true twice over. MEASURED 2026-09-18:
+`/bin/launchctl`, `/usr/bin/open`, `/usr/bin/osascript` and
+`/usr/bin/shortcuts` all fail to start under the production profile even with
+their NAMED denies taken out, because the default refuses every exec the allow
+list does not cover. The named denies and the LaunchServices / Apple Event
+Mach denies are KEPT as defence in depth, and each still bites under a profile
+whose exec allow is wide — which is how the probe proves them. Item 5 below
+carries what none of this closes. Each of these was
+shown refused against a known positive that wrote, read or connected without
+the sandbox
+(`tools/cos_sheet_session_probe.py`; transcript in the plan's
+`_evidence/sheet-talks-back/s01-boundary-probe.txt`).
+
+**What is accepted, stated plainly.**
+
+1. **Outbound network is open to a session that reads outsider text.** The
+   model needs the network, and Seatbelt cannot filter by host name. A prompt
+   injection in a mail subject can therefore make the session send anything
+   it can READ to anywhere. It is IP-only now, plus the single unix socket
+   name resolution runs over: a bare `(allow network-outbound)` also permitted
+   AF_UNIX connects, and adversarial pass 3 reached a socket in
+   `/private/tmp/cc-socks` through exactly that (MEASURED both ways,
+   2026-09-18). What it can read is bounded by the read list
+   above; it can still read the rest of the owner's home folder outside
+   those roots and this repository's source. Named because they are the ones
+   that matter most: **two settings files stay READABLE**, and either can
+   hold MCP server settings with API keys in them — **`~/.claude.json`**
+   (about 265 KB — every Claude Code session rewrites it, so the exact size
+   moves within hours and no number here stays true) and the Claude Desktop config,
+   **`~/Library/Application Support/Claude/claude_desktop_config.json`**
+   (27,516 bytes, measured 2026-09-19; both are mode 0600 and under no denied
+   root). Writing either
+   is refused, and that is the escape this profile was built to stop; reading
+   them is not.
+
+   **One read surface was BOUNDED on 2026-09-19** (adversarial pass 4). The
+   deny list stopped at the home folder, and Claude Code's own scratch base
+   does not live there: `/tmp/claude-<uid>` holds one folder per PROJECT and
+   session, and pass 4 read 66,338 bytes of ANOTHER project's scratchpad file
+   out of it while `~/.claude/projects` was denied. That whole base is
+   read-denied now, at its resolved path, derived from the running uid rather
+   than hard-coded. Nothing under it is carved back out, because the client
+   asks for nothing there: measured against a matched control without the
+   deny, `claude -p` started, authenticated and answered identically, and the
+   sandbox violation log carried ZERO lines naming that base. The session
+   keeps a scratch area of its own — `CLAUDE_CODE_TMPDIR` puts that base
+   inside the session folder — and the probe proves both halves
+   (`claude-tmp-base:other-session-scratchpad` refused,
+   `claude-tmp-base:own-scratch-still-reads` reads).
+2. **Merged code runs unsandboxed in the next nightly.** The nightly executes
+   `tools/` from the main checkout at 02:00, as the owner, against the live
+   mailbox. Once a change is merged, no sandbox applies to it. The only
+   controls are the gate (listener code, policy from `master`, run sandboxed on
+   the merge result) and the owner reading the diff before Merge enables.
+3. **A child process can outlive its session.** A child started in its own
+   session survived a process-group kill (measured 2026-09-18), and macOS has
+   no container short of a separate user. So every later step consumes
+   immutable hashes, every gate run gets a never-reused path, and the merge
+   tree and the diff come from the listener's own review repository.
+
+4. **The session's Claude token can leak; the signing key cannot be reached.**
+   Owner ruling 2026-09-18, option A. The session never uses the keychain
+   login, because that login runs `/usr/bin/security`, the same tool that
+   reads the audit signing key (`src/brain/audit.py:_pem_from_keychain`). It
+   logs in with a `claude setup-token` token that the launcher, outside the
+   sandbox, reads from its own keychain item and hands over on a pipe
+   (`CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR`): never argv, environment or a
+   file. The profile refuses executing `security`, reading
+   `~/Library/Keychains` and looking up the keychain daemons. What is
+   accepted: the claude process holds the token, so a session in full control
+   of it could send the token out. A leaked token is revocable and can only
+   make model requests. The signing key is not revocable that way. It is out
+   of reach of everything measured here — but read item 5 before treating that
+   as absolute: a session that starts a job escapes the sandbox entirely, and
+   one route to starting one is closed only by an unmeasured rule. Detail and the measurements:
+   `docs/adr/0012-sheet-session-listener.md`, "The keychain: closed by token
+   login".
+
+5. **The bootstrap port is still there, and `(deny job-creation)` is still
+   unmeasured — but nothing in the session can now reach either.** Raised by
+   `gate:llm-review-high` on 2026-09-18, and part A shrank it to a residual of
+   a different shape. What IS closed: every job-starting binary fails to
+   start, twice over (the default, and the named deny that still bites under a
+   wide exec allow); a symlink to `launchctl` is refused as well, and a copy
+   of it cannot run at all (code signing, outside the sandbox too); both
+   LaunchServices Mach services read `kr=1100` under a wide-exec profile where
+   the matched control reads `kr=0`. What is NOT closed, stated exactly:
+   `launchctl` talks to launchd on the BOOTSTRAP PORT, a task special port,
+   not a looked-up service, so no `mach-lookup` rule can reach that path —
+   measured, `(deny mach-lookup)` on every name left `launchctl print`
+   answering back when a shell could still run. So a client written in
+   PROCESS, rather than a binary that is started, is stopped only by
+   `(deny job-creation)`, **and that rule is unmeasured**: proving it means
+   submitting a real launchd job, which no plan session may do.
+   `(deny appleevent-send)` is unmeasured for the same kind of reason. Both
+   load and break nothing; that is the whole claim. What makes this a residual
+   rather than a hole is that writing such a client needs code execution, and
+   the session has none — `claude` is the one program that runs, and it has no
+   shell tool. The reasoning chain is: no execution, therefore no client,
+   therefore the unmeasured rule is never the only thing standing.
+   **The complete fix is still a separate macOS user account for the session**
+   (ADR 0012, "Considered options"). It was not chosen, and this is its cost.
+
+**Still to prove, owner-run.** The auto-mode harness refused the keychain
+probes to the session that built this, and a refusal is not worked around.
+`python3 <checkout>/tools/cos_sheet_session_probe.py --keychain-arm` proves
+the keychain rules on THROWAWAY keychains, and fails closed (a crash or an
+unrecognised result is a FAIL). Each row proves one rule:
+`keychain-security` the exec deny; `keychain-file` and `keychain-library` the
+`~/Library/Keychains` read deny; `keychain-library-mach` the Mach-service
+denies alone, because its keychain sits outside every denied folder; and
+`keychain-mach` each Mach-service deny directly. The two rows whose ONLY
+barrier is a Mach deny also run under a matched control — the same profile
+with the Mach denies taken out — and must SUCCEED there, so a refusal caused
+by some other rule cannot read as a pass. And the keychain library counts as
+refused only on one of four documented denial statuses from Apple's
+`SecBase.h`, never on "it failed": a status meaning ABSENT, or one nobody has
+documented, is a FAIL. `errSecInteractionRequired` (-25315) is deliberately
+not one of them — it says the call NEEDS a prompt, which is a request rather
+than a refusal. Until the plan lands,
+`<checkout>` is the plan worktree,
+`.plan-worktrees/the-sheet-talks-back-2026-09-18` under the repository root. The
+model arms (a real token login, `--resume`, the Edit arm, the three Bash
+rows, the token hidden from the session's commands) read `PEND` until the
+owner stores a token. **Two of them were rebuilt on 2026-09-19** after
+adversarial pass 4 found they could not fail: the Edit arm now exercises the
+session's production tool list (`Edit`, not `Write`) against files it
+pre-creates with a canary named for that run, and a target the model never
+attempted FAILS instead of passing; the Bash rows are three, and the
+granted-`Bash` control now runs under the exec-widened profile, where a shell
+can actually start, so the control can succeed. Neither had ever run, because
+no token was stored.
+Until both have passed, item 4 rests partly on reasoning, and this entry says
+so.
+
+**What would reopen it:** the profile losing `(deny default)` or growing an
+`(allow default)` — the self-test's `deny-by-default` row and a test both fail
+on that, because no behavioural arm can see it; `Bash` reappearing on either
+tool list; the exec allow widening past the folder holding the installed
+`claude`; `tools/cos_sheet_session_probe.py` showing any
+protected root accepting a write, or its `unix-socket:sandboxed` row reading
+`connected`, or its `claude-tmp-base:other-session-scratchpad` row reading
+`read` while `claude-tmp-base:own-scratch-still-reads` no longer does, or any
+keychain row reading `LEAKED` or
+`FOUND`, or any `launch-*` row failing (including a matched control that stops
+answering — a control that refuses proves nothing), or the token visible to the
+session's own commands, or the
+self-test reporting `init-failure`
+(Apple has marked `sandbox-exec` deprecated), or a Claude Code or macOS
+upgrade that the probe was not re-run after. **Re-run the probe after every
+such upgrade**; the allow-list is a measurement of one binary version: derived
+on 2.1.275, whole probe re-passed on 2.1.276, and RE-DERIVED from the
+violation log on **2.1.277** when the default flipped to deny. The launcher
+carries that version as `MEASURED_CLAUDE_VERSION` and the sheet says so when
+the running binary differs.
+
+---
+
 ## Not accepted, and deliberately absent
 
 The synthesis sign-drain finding ("Synthesis sign-drain signs untrusted

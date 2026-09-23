@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__, config
+from . import _optional
 from .embed import ONNX_MODEL_SIZE_HINT, model_cache_ready
 from .index import SCHEMA_VERSION
 from .snapshot import snapshot_status
@@ -72,8 +73,12 @@ def _query_capture_status(core: Any) -> dict[str, Any]:
         }
 
 
-def _cos_status(core: Any) -> dict[str, Any]:
-    """Read COS queue observability without crashing the status surface."""
+def _cos_status(core: Any) -> dict[str, Any] | None:
+    """Read COS queue observability without crashing the status surface.
+
+    ``None`` when the engine carries no COS code: no block, not a fake one."""
+    if not _optional.cos_available():
+        return None
     try:
         from . import cos
 
@@ -124,6 +129,8 @@ class StatusOpsMixin:
         out["query_capture"] = _query_capture_status(self)
         out["maintain_heartbeat"] = self._maintain_heartbeat_summary(today=today)
         out["graph"] = self._graph_status()
-        out["cos"] = _cos_status(self)
+        cos_block = _cos_status(self)
+        if cos_block is not None:
+            out["cos"] = cos_block
         out["deliverables"] = _deliverables_status(self)
         return out

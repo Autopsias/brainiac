@@ -312,6 +312,23 @@ def scanner_self_test(terms: list[str], scan=_scan_tree) -> None:
                 "releasing anything")
 
 
+def _no_cos_gate(checker: Path, args: list[str], cwd: Path, what: str) -> None:
+    """ADR 0013: the public release carries no COS (the private email assistant).
+    `export_check_no_cos.py` is the one judge; a missing checker fails too."""
+    proc = _pp._run([sys.executable, str(checker), *args], cwd=cwd)
+    if proc.returncode != 0:
+        tail = "\n".join(f"{proc.stdout or ''}\n{proc.stderr or ''}".strip().splitlines()[-40:])
+        raise _pp.PublishError(f"{what} carries the COS (exit {proc.returncode}) — "
+                               f"hard gate, no override:\n{tail}")
+
+
+def assert_dist_has_no_cos(export_dir: Path, artifacts: list[Path]) -> None:
+    """The built wheel and sdist: no COS path, import or call. Runs after the
+    build AND again before the first upload, so a resumed run re-checks too."""
+    _no_cos_gate(export_dir / "tools" / "export_check_no_cos.py",
+                 ["--dist", *map(str, artifacts)], export_dir, "the built wheel/sdist")
+
+
 def phase_export(worktree: Path, scratch: Path, denylist: Path) -> Path:
     """Clean-room export FROM THE TAG WORKTREE + contamination hard gate,
     with the scanner self-test run first."""
@@ -326,6 +343,8 @@ def phase_export(worktree: Path, scratch: Path, denylist: Path) -> Path:
         raise _pp.PublishError(
             f"contamination scan found {hits} hit(s) in the export tree — "
             f"hard gate, no override; scrub the tracked files and re-tag")
+    _no_cos_gate(worktree / "tools" / "export_check_no_cos.py",
+                 ["--export-dir", str(export_dir)], worktree, "the export tree")
     return export_dir
 
 
@@ -368,6 +387,7 @@ def phase_build(export_dir: Path, version: str, denylist: Path) -> list[Path]:
         raise _pp.PublishError(
             f"contamination scan found {hits} hit(s) INSIDE the built sdist — "
             f"the tree scan missed something the artifact carries; hard gate")
+    _pp.assert_dist_has_no_cos(export_dir, artifacts)
     return artifacts
 
 

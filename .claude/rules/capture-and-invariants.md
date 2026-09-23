@@ -258,6 +258,37 @@ proposal is not a covered note). The per-run engagement line is
 `<vault>/.brain/cos/host/proposals/version-links/runs.jsonl` (host-only,
 gitignored, never indexed).
 
+**An owner DECLARATION is the third auto-apply tier (SUP-01, 2026-09-18).**
+DDP-01 and VER-01 apply what the ENGINE can prove; CUR-01 proposes what it can
+only deduce. A third case is neither: the owner SAYS a new document replaces an
+old one. Until this change that statement could only be typed on the Mac
+(`brain supersede`), which a Cowork session cannot do — measured the day it
+shipped, an email attachment (`…-base-completa-copy`) and the final deliverable
+that replaced it both sat live, and plain search answered with the stale copy.
+Three surfaces now carry the declaration, all through ONE engine path
+(`brain.supersede_declared` → `core.supersede`, same audited write, same
+single-writer lock, same crash journal): **(1) the drop lane** — beside a file
+in `vault/inbox/_deliverables/<project>/`, an optional `<filename>.supersedes`
+sidecar lists the old id(s), one per line, bare or `[[wikilink]]`; a dropped
+`.md` may carry `replaces:` in its own frontmatter instead. It is applied
+AFTER payload and anchor land and the index reconciles — DLV-01's
+all-or-nothing is untouched — and when the old id was itself a drop-lane
+deliverable its ANCHOR is retired under the new anchor too, so the shelf shows
+one version. **(2) the broker verbs** `supersede` / `unsupersede` (§5).
+**(3) the broker's `capture`**, when the captured frontmatter carries
+`replaces:`. **A declaration that cannot be applied never fails the ingest and
+is never silent:** unknown old id, old already superseded, old == new — the
+document lands, and the failure is reported as `supersede_declared_failed` in
+the maintain results, on `brain alerts` and the exceptions page (counts only —
+that feed is VM-readable), and as a `corpus_invariants` metric of the same name
+(rule 6): live notes whose `replaces:` names a note not retired under them.
+It keys on `replaces:` alone — measured on the reference vault, 127 of 2,055
+`previous_version` links have no reciprocal against 0 of 2 `replaces:`, so the
+wider key would open at 127 and measure a different defect. **Stated limit:**
+`replaces:` is scalar, so a sidecar naming several ids stamps the FIRST; every
+id is applied and every failure is reported on the run, but only the first
+keeps counting in the metric.
+
 **A final output produced FROM vault content is a deliverable, and it is
 captured like anything else (DLV-01/DLV-09, 2026-08-24).** When you finish a
 deck, a memo or an analysis for an audience, save it through the normal

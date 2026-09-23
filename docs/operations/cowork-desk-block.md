@@ -24,8 +24,9 @@ shell out for note content, and do not open a note file.
 | `diagnose` | `diagnose` |
 | `alerts`, `exceptions`, `inbox` | `alerts`, `exceptions`, `inbox` |
 | `draft-capture` (stage an unsigned note) | `capture` |
+| `supersede`, `unsupersede` (owner-declared; a pair the vault does not relate is PROPOSED to the owner, not applied) | `supersede`, `unsupersede` |
 
-Those fifteen names are the whole desk, and they are the only route to note
+Those seventeen names are the whole desk, and they are the only route to note
 CONTENT this session may use. **"Not on the desk" is not the same as "refused
 here"**, and conflating the two is how a session talks itself into a workaround:
 measured 2026-08-28, nine of the CLI's 22 VM-allowed verbs have no desk tool

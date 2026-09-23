@@ -54,6 +54,7 @@ PROVENANCE_BOOL_KEYS = ("provenance.verified",)
 PROVENANCE_KEYS = set(PROVENANCE_DATE_KEYS) | set(PROVENANCE_BOOL_KEYS) | {
     "provenance.trust", "provenance.sender", "provenance.conversation_id",
     "provenance.subject",
+    "provenance.recipients", "provenance.cc", "provenance.folder",  # To/Cc, source folder (claims)
     # DLV-09 — the producing surface that created this note
     # (`inbox-deliverables`, or a kernel skill's name). Stamped automatically
     # and INDEPENDENTLY of `deliverable:`, which is the judgment step: the
@@ -281,7 +282,6 @@ def check_bitemporal_note(rel: str, meta: dict) -> None:
     carrying none of them is untouched by this function."""
     if not (BITEMPORAL_KEYS & set(meta)):
         return
-
     for key in BITEMPORAL_DATE_KEYS:
         val = meta.get(key)
         if val is not None and not ISO_DATE.match(str(val)):

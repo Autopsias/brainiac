@@ -453,11 +453,17 @@ def decision_capture_scan(
     # every sibling of a versioned deck repeats the same decision language —
     # only the family head is a meaningful capture candidate (live run
     # 2026-07-11: retired 6pager versions crowded the candidate cap).
+    # Owner-interview transcripts (`interview_apply.record_text`) are excluded
+    # too: they quote each asked question verbatim, so a question about
+    # decision language re-carries that language into the vault as a fresh
+    # source, and this scan would flag its own transcript forever (owner,
+    # 2026-09-22 — "you're just speaking jibberish").
     rows = conn.execute(
         "SELECT id, type, body, "
         "COALESCE(NULLIF(effective_date,''), NULLIF(document_date,''), created) "
         "FROM notes WHERE type != 'decision' AND created >= ? "
         "AND COALESCE(is_latest_version,'') != 'false' "
+        "AND id NOT LIKE '%owner-interview%' "
         "ORDER BY created DESC", (since,)).fetchall()
     out: list[dict[str, Any]] = []
     for nid, ntype, body, vdate in rows:

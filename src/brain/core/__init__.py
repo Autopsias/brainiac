@@ -5,7 +5,7 @@ import os as os
 from pathlib import Path
 
 from ._shared import (
-    Any as Any, AuditChain, BrainIndex, CosFoldsMixin, DailyFoldsMixin,
+    Any as Any, AuditChain, BrainIndex, DailyFoldsMixin,
     DeliverablesFoldsMixin, DraftDrainMixin,
     GoldenFoldsMixin, GoldenOpsMixin, GraphFoldsMixin, GraphOpsMixin, Hit as Hit,
     IntakeFoldsMixin,
@@ -39,8 +39,19 @@ from ._audit import _CoreAuditMixin
 from ._briefing import _CoreBriefingMixin
 from ._health import _CoreHealthMixin
 from ._maintenance_state import _MaintenanceStateMixin
-from ._cos_facade import _CosFacadeMixin
 from ._maintenance import _MaintenanceMixin
+from .. import _optional
+
+# The COS mixins join BrainCore only in a COS build (ADR 0013), each at the
+# place it always held, so the method resolution order is unchanged there.
+_COS_FACADE: tuple[type, ...] = ()
+_COS_FOLDS: tuple[type, ...] = ()
+if _optional.cos_available():
+    from ._cos_facade import _CosFacadeMixin
+    from ..folds.cos import CosFoldsMixin
+
+    _COS_FACADE = (_CosFacadeMixin,)
+    _COS_FOLDS = (CosFoldsMixin,)
 
 class BrainCore(
     _CoreRetrievalMixin,
@@ -51,10 +62,10 @@ class BrainCore(
     _CoreBriefingMixin,
     _CoreHealthMixin,
     _MaintenanceStateMixin,
-    _CosFacadeMixin,
+    *_COS_FACADE,
     _MaintenanceMixin,
     DraftDrainMixin,
-    CosFoldsMixin,
+    *_COS_FOLDS,
     DailyFoldsMixin,
     DeliverablesFoldsMixin,
     GoldenOpsMixin,

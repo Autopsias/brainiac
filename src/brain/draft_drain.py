@@ -6,9 +6,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import autolink, cos, draft_update, frontmatter, provenance
+from . import _optional, autolink, draft_update, frontmatter, provenance
 from .audit import KeyUnavailable
 from .notes import note_from_text, safe_slug
+
+# ADR 0013: COS owns the approved queue and the proposal gate. Without it the
+# approved queue is never a drain source and no proposal awaits the owner.
+if _optional.cos_available():
+    from . import cos
 
 
 
@@ -212,6 +217,8 @@ def _owner_gate_allows(
     source_name: str,
 ) -> bool:
     """Quarantine a proposal-bypass attempt and fail closed on gate errors."""
+    if not _optional.cos_available():
+        return True  # ADR 0013: no COS, no proposal queue, nothing awaits the owner.
     try:
         if not approved and note_id in cos.undecided_proposal_ids(run.core.vault):
             destination = cos.quarantine_gate_bypass(run.core.vault, draft)

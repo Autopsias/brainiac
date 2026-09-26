@@ -82,10 +82,14 @@ terminal). Do not proceed until this passes.
 ## 2 · Install the engine — Claude Code plugin path (preferred inside Claude Code)
 
 ```text
-/plugin marketplace add Autopsias/brainiac
-/plugin install brainiac-manager@brainiac
+/plugin install brainiac-manager --marketplace Autopsias/brainiac
 /brainiac-install <workspace>          # does §1+§4+§5+§6 in one command
 ```
+
+The first line adds the marketplace and installs the plugin in one step. It needs
+Claude Code 2.1.275 or later. On an older version, run
+`/plugin marketplace add Autopsias/brainiac`, then
+`/plugin install brainiac-manager@brainiac`.
 
 If `/brainiac-install` completed successfully, skip to §Q3/Q4 — it already
 initialized the vault, registered maintenance, and provisioned the audit key.
@@ -131,8 +135,9 @@ tiers and an `egress` block. Empty results on a non-empty vault ⇒ you skipped
 
 - The plugin path already did this. The script path on macOS/Linux registers
   it during `brain init --full`; **verify, never assume**:
-  `brain doctor --check-registry` — it must show a `brain-nightly` task
-  covering this vault.
+  `brain doctor --check-registry` — it must show the maintenance task
+  covering this vault (`com.brainiac.nightly.<id>` on macOS,
+  `brain-daily-brief-<id>` on Windows).
 - **Windows:** the umbrella task needs the explicit step
   `.\scripts\install-brief-windows.ps1 -VaultPath <folder>\vault` (from a repo
   clone). The weekly `brain-synthesis` task is NOT auto-registered on Windows
@@ -184,7 +189,7 @@ Tell the human, in plain language, one line each:
 1. Engine version + install channel (`brain --version`, which of uv/pipx/pip).
 2. Where their notes live (`<folder>/vault`) and where the index lives
    (per-user app-data dir; it's a disposable cache — `brain rebuild` recreates it).
-3. Maintenance: the `brain-nightly` task name + vault it covers — or exactly
+3. Maintenance: the maintenance task's name + the vault it covers — or exactly
    what was NOT registered and what the human must decide (never silent).
 4. Embedder state: `ready` or `pending` (+ what triggers the download).
 5. The three commands they'll want next: `brain search "…" --json`,
@@ -201,7 +206,7 @@ Tell the human, in plain language, one line each:
 | PyPI unreachable | §3 dev fallback |
 | `init --import-from` refused | you're on a VM/sandbox leg — imports are host-only (§0 applies) |
 | registrar skipped / no signing key | §5 — provision the key, re-run `brain init --full`; never leave it silent |
-| Windows: task not visible | run PowerShell step in §5 from a repo clone; check Task Scheduler for the brain-nightly label |
+| Windows: task not visible | run PowerShell step in §5 from a repo clone; check Task Scheduler for the `brain-daily-brief-<id>` task |
 
 Any other error: show the human the exact error text, fix the root cause,
 re-run the gate you were on. Never mark the install done with a failing gate.

@@ -28,10 +28,12 @@ def _ocr_pictures(slide: object) -> str:
 
     texts = []
     for shape in slide.shapes:  # type: ignore[attr-defined]
-        blob = getattr(getattr(shape, "image", None), "blob", None)
-        if blob is None:
-            continue
         try:
+            # A LINKED picture has no bytes: python-pptx raises ValueError
+            # ("no embedded image"), which getattr's default does not catch.
+            blob = getattr(getattr(shape, "image", None), "blob", None)
+            if blob is None:
+                continue
             from PIL import Image
 
             with Image.open(io.BytesIO(blob)) as img:

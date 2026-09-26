@@ -74,7 +74,7 @@ you, say so on the issue; it is a reasonable objection and worth hearing.
 
 Every change passes, in the private tree, before it can reach a release:
 
-- the full test suite (`pytest`, roughly 4,800 tests);
+- the full test suite (`pytest`; 7,664 tests collected on 2026-09-26);
 - `ruff` for correctness lint, and `semgrep` for Python, secrets and workflow
   rules;
 - `shellcheck` at error severity on every shell script;
@@ -92,6 +92,28 @@ inspect the individual review steps — only their outcome, and the artifacts
 they produced. If you need per-change auditability, this project does not offer
 it today. Say so in an issue if it matters to you; the model is a documented
 trade-off, not a conviction.
+
+## The development loop
+
+```bash
+git clone https://github.com/Autopsias/brainiac.git && cd brainiac
+python3 -m venv .venv && .venv/bin/pip install -e '.[mcp,dev]'
+.venv/bin/python -m pytest -q tests/test_doctor.py  # one file while you work
+.venv/bin/ruff check src tests tools               # lint
+python3 tools/validate.py vault                    # the sample vault's conventions
+```
+
+Run the whole suite once, before you hand the change over:
+
+```bash
+.venv/bin/python -m pytest -n 8 --dist loadfile --timeout 300 -q tests
+```
+
+**Docs travel with the change.** If a change alters what a user sees or types,
+update the document that describes it in the same change: `README.md` for the
+front door, `docs/install/` for install steps, `CHANGELOG.md` under
+`[Unreleased]` for every user-visible change. A reviewer treats a stale
+instruction the way they treat a bug.
 
 ## Conventions, if you are writing code
 

@@ -417,6 +417,13 @@ def phase_local_deploy(version: str, elf_build: "subprocess.Popen | None" = None
         raise PublishError(
             f"brain update produced no parseable JSON (exit {proc.returncode}):\n"
             f"{(proc.stdout or '')[-800:]}\n{(proc.stderr or '')[-400:]}")
+    if "before_after_rendered" not in report:
+        # An update that stops early (e.g. a failed plugin step) never
+        # re-stages the workspaces and writes no table — so the stale-line
+        # scan below found nothing and v0.20.39 "deployed" 0.20.38.
+        raise PublishError(
+            "brain update stopped before re-staging the workspaces: "
+            f"{str(report.get('notes') or 'no before/after table')[:800]}")
     residual = [str(s) for s in report.get("residual_human_steps") or []]
     # `ok: False` with ONLY residual human steps is the expected end state —
     # the Desktop store always needs the owner. Any OTHER stale surface means

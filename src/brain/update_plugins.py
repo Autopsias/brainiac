@@ -109,6 +109,7 @@ def decide_plugin_action(installed: Optional[str], marketplace: Optional[str]) -
 
 def apply_plugin_action(
     action: str, plugin_name: str, marketplace_name: str, run: Runner = _default_runner,
+    targets: Optional[list[dict]] = None,
 ) -> dict:
     """Execute the decided action. ROLLBACK-safe ordering (HARDEN:claude-MEDIUM):
     for "reinstall", uninstall ONLY after we've confirmed we're about to run
@@ -133,9 +134,23 @@ def apply_plugin_action(
         # update` is the subcommand that actually moves the installed
         # version forward. Verified live against v0.10.0's `claude plugin`
         # CLI: install no-ops, update reports "updated from X to Y".
-        out = run([claude_bin, "plugin", "update", spec])
-        ok = out.returncode == 0
-        return {"action": "update", "ok": ok, "detail": (out.stdout or out.stderr or "").strip()}
+        if not targets:
+            out = run([claude_bin, "plugin", "update", spec])
+            ok = out.returncode == 0
+            return {"action": "update", "ok": ok, "detail": (out.stdout or out.stderr or "").strip()}
+        # One run per stale copy. The CLI defaults to user scope, so a
+        # project-scope copy needs `--scope project` run FROM that project
+        # (verified live 2026-09-23: it then reports "updated from X to Y").
+        details, ok = [], True
+        for target in targets:
+            scope = target.get("scope") or "user"
+            cwd = target.get("project_path") if scope in ("project", "local") else None
+            out = run([claude_bin, "plugin", "update", spec, "--scope", scope],
+                      **({"cwd": cwd} if cwd else {}))
+            ok = ok and out.returncode == 0
+            details.append(f"[{scope}{' ' + cwd if cwd else ''}] "
+                           + (out.stdout or out.stderr or "").strip()[-200:])
+        return {"action": "update", "ok": ok, "detail": "; ".join(details)}
 
     if action == "reinstall":
         uninstall_out = run([claude_bin, "plugin", "uninstall", spec])

@@ -45,7 +45,9 @@ two never diverge — both build the MCP entry from the same
 
 ```
 AGENTS.md                ← CANONICAL conventions + the brain-usage paragraph (§5)
-CLAUDE.md                ← `@AGENTS.md` (Claude Code expands the import at startup)
+CLAUDE.md                ← `@AGENTS-core.md` (Claude Code expands the import at startup;
+                           the core is the short half of AGENTS.md, and the rest loads
+                           from .claude/rules/ when a matching file is touched — ADR 0012)
 .gemini/settings.json    ← { "contextFileName": "AGENTS.md" }
 <cowork-ws>/CLAUDE.md    ← INLINE copy of AGENTS.md in a marked BRAIN-CONTRACT
                            block, re-synced by tools/cowork_workspace_install.sh
@@ -65,8 +67,8 @@ reaches that same paragraph; none re-states it.
 | Harness | Reads | How it calls brain |
 |---|---|---|
 | **Codex** | `AGENTS.md` natively (its startup convention) | shell: `brain search … --json` |
-| **Claude Code (CLI)** | `CLAUDE.md` → `@AGENTS.md` import | Bash tool: `brain …` |
-| **Claude Desktop — Code tab** | `CLAUDE.md` → `@AGENTS.md` (same repo file) | its shell: `brain …` |
+| **Claude Code (CLI)** | `CLAUDE.md` → `@AGENTS-core.md` import (+ `.claude/rules/`) | Bash tool: `brain …` |
+| **Claude Desktop — Code tab** | `CLAUDE.md` → `@AGENTS-core.md` (same repo file) | its shell: `brain …` |
 | **Gemini CLI** | `.gemini/settings.json` sets `contextFileName=AGENTS.md` | shell: `brain …` |
 | **Cowork (Desktop VM)** | workspace-root `CLAUDE.md` auto-loaded at session start; contract INLINED in the marked BRAIN-CONTRACT block (@imports don't expand in Cowork). Probe: send `contract?` → `[brain contract loaded] [contract inlined]` = healthy; session-prompt paste = fallback | VM shell: `brain --role vm …` |
 | **Claude Desktop — Chat tab** | (cannot run a command) | OPTIONAL thin MCP adapter — see below |
@@ -108,11 +110,12 @@ re-exported per session — see `cowork-windows-install.md`.
 The Chat tab is the single surface that **cannot run a shell command**, so it
 gets a thin, **optional, deletable** MCP bridge: `src/brain/mcp_adapter.py`
 (~50 lines) wraps the SAME `BrainCore` + the SAME deny-by-default
-`ClassificationFilter` and exposes the read verbs plus ONE quasi-write,
-`capture` (0.20.32): the broker stages the caller's content through the
-host's draft lane, so an existing id is refused (`duplicate-id`) and the
-note lands marked `status: draft`, `provenance.trust: untrusted` — never
-`write`, `rebuild`, `ingest` or any other host-broker verb
+`ClassificationFilter` and exposes the read verbs plus THREE non-read tools:
+`capture` (0.20.32) stages the caller's content through the host's draft
+lane, so an existing id is refused (`duplicate-id`) and the note lands marked
+`status: draft`, `provenance.trust: untrusted`; `supersede` and `unsupersede`
+(0.20.39, SUP-01) retire or restore a note version — never `write`, `rebuild`,
+`ingest` or any other host-broker verb
 (`docs/security-acceptances.md` A-06, "The inbound mirror"). **MCP is never the
 foundation** — delete the adapter and every other harness still works. It's
 already included in a normal PyPI install (`brainiac-cli[mcp]`, what

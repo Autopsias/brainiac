@@ -1,12 +1,14 @@
 {
   "name": "brainiac-manager",
   "displayName": "Brainiac Manager — host lifecycle",
-  "description": "Host lifecycle skills for Brainiac: /brainiac-install (one-command host install + nightly registration + audit-key provisioning), /brainiac-update (refresh engine + workspaces + nightly after a marketplace update), /brainiac-uninstall (teardown), /brainiac-health (one-command doctor+status+trend+heartbeat readout with a HEALTHY/DEGRADED/BROKEN verdict). Separate from brainiac-kernel/brainiac-extras so daily-use skills never pull in host-only commands.",
-  "version": "0.20.39",
+  "description": "Installs, updates, checks and removes the Brainiac engine on your machine, and stages a Cowork workspace for your vault.",
+  "version": "0.20.40",
   "author": {
     "name": "Brainiac maintainers"
   },
   "license": "Apache-2.0",
+  "homepage": "https://github.com/Autopsias/brainiac#readme",
+  "repository": "https://github.com/Autopsias/brainiac",
   "keywords": [
     "second-brain",
     "brain-cli",

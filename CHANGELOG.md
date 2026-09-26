@@ -7,6 +7,49 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.40] — 2026-09-26
+### Fixed
+- **`brain interview` asks questions again.** The nightly interview asked
+  nothing from 2026-09-23 on: the stale-note finder sampled 10 notes and
+  found 9 undated ones, which it skips, and the orphan finder spent its
+  three-question budget on the first three notes with nowhere to link. Stale
+  now samples 60, and orphans count questions and searches separately. A dry
+  run on the reference vault asks 3 questions where it asked 0.
+- **A linked picture no longer quarantines a whole `.pptx`.** `python-pptx`
+  raises `ValueError` for a picture linked to an external file, and the
+  handler caught only `AttributeError`, so one linked shape quarantined a real
+  8-slide deck four nights running. The read now sits inside the per-picture
+  guard.
+- **`brain update` updates every project copy of a plugin, and a stopped
+  update fails the deploy.** A plugin installed at project scope has one
+  registry entry per project; `brain doctor` read only the first and
+  `brain update` ran `claude plugin update` at user scope, which fails when no
+  user-scope copy exists. That stop happened before the workspaces were
+  re-staged, and the release deploy phase passed anyway because a stopped
+  update writes no before/after table (v0.20.39 left both workspaces on
+  0.20.38). The doctor now judges every copy and lists the stale ones, the
+  update runs once per stale copy from its project folder, and a report with
+  no before/after table fails the phase.
+### Changed
+- **Documentation overhaul (2026-09-26).** `README.md` is a front door again
+  (what, why, one install path per surface, first search, update, where next)
+  with absolute links so the PyPI page renders them; `docs/README.md` maps every
+  shipped document by kind (how-to, reference, explanation, walk-through);
+  `docs/install/README.md` is numbered steps per platform, with the explanation
+  moved to `docs/install/new-owner.md`. Fact fixes across the install set:
+  `CLAUDE.md` imports `AGENTS-core.md`, the maintenance task is named by its
+  label, the Chat tab wires through `brain connect` or the `.mcpb`, seven links
+  to files the public export drops are gone, and `CONTRIBUTING.md` carries the
+  measured test count and a docs-with-the-change rule. The plugin manifests and
+  the marketplace carry short, current descriptions plus `homepage` and
+  `repository`; each plugin folder has a README that lists what it runs, sends
+  and fetches; `/brainiac-health` resolves its script through
+  `${CLAUDE_SKILL_DIR}` so it works from a plugin install; `pyproject.toml`
+  carries project URLs. Two closed-stacks s07 walk records under
+  `docs/operations/` (the owner-run protocol and its relayed transcript) no
+  longer ship in the public export; the cutover-and-reversal runbook that
+  `brain doctor` cites still does.
+
 ## [0.20.39] — 2026-09-23
 ### Added
 - **A new version can retire the old one without a Mac terminal (SUP-01).**

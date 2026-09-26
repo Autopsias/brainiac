@@ -145,6 +145,31 @@ def expire(state: dict[str, Any], today: _dt.date) -> int:
     return closed
 
 
+def is_loop_id(note_id: Any) -> bool:
+    """A note the interview lane wrote about ITSELF: an owner-interview record,
+    or a decision minted from an answer about one. Asking the owner about it
+    quotes his own earlier answer back at him (owner, 2026-09-22, 09-24 and
+    09-25: "gibberish", "cryptic", "impossible to answer")."""
+    return "owner-interview" in str(note_id or "")
+
+
+def close_loop_artifacts(state: dict[str, Any], today: _dt.date) -> int:
+    """Close every OPEN tension/decision row whose target or evidence is a
+    loop note, whatever the day it was asked. The detectors no longer mint
+    them; this retires the ones minted before they stopped (the 2026-09-22
+    pair sat on the sheet for four mornings)."""
+    closed = 0
+    for r in state["rows"]:
+        ids = [(r.get("target") or {}).get("id")] + [
+            e.get("id") for e in r.get("evidence") or []]
+        if (r.get("status") == OPEN and r.get("shape") in ("tension", "decision")
+                and any(is_loop_id(i) for i in ids)):
+            r["status"] = SKIPPED
+            r["closed_on"] = today.isoformat()
+            closed += 1
+    return closed
+
+
 def blocked(state: dict[str, Any], key: str, target_id: str,
             today: _dt.date) -> bool:
     """The same evidence is never asked twice; a skip or an expiry silences
@@ -186,6 +211,7 @@ def generate(core: Any, today: _dt.date | None = None) -> dict[str, Any]:
     today = today or _dt.date.today()
     state = read_state(core.vault)
     expired = expire(state, today)
+    expired += close_loop_artifacts(state, today)
     budget = day_budget(state, today)
     asked: list[dict[str, Any]] = []
     errors: list[str] = []
@@ -353,5 +379,6 @@ __all__ = ["SCHEMA", "STATE_RELPATH", "MAX_PER_DAY", "MAX_OPEN", "EXPIRE_DAYS",
            "SUPPRESS_DAYS", "QUIET_AFTER_DAYS", "SHAPES", "SKIP", "OPTIONS",
            "ROW_KEYS", "OPTIONAL_ROW_KEYS", "OPEN", "ANSWERED", "EXPIRED", "SKIPPED", "state_path",
            "read_state", "write_state", "question_key", "open_rows", "expire",
+           "is_loop_id", "close_loop_artifacts",
            "blocked", "day_budget", "generate", "phrase_prompt",
            "apply_phrasing", "sheet_rows", "sheet_block", "validate_rows"]

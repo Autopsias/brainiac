@@ -398,3 +398,51 @@ toolset (above), and `docs/` also uses it for a pipeline stage (the read lane, t
 the file lane). A path a file travels on the owner's own Mac — his Downloads folder — is
 **not** a lane in either sense, and calling it one imports an unattended-execution guarantee it
 does not carry. Say "the Downloads path" and name who writes it.
+
+## Morning sheet conversation
+
+Added 2026-09-18 (plan `the-sheet-talks-back-2026-09-18`), because one of these words caused a
+design error before any code existed.
+
+**Listener** — the small always-on program on the owner's Mac that answers only requests from
+that Mac. It serves the morning sheet, files the marks, carries the conversation, runs the gate
+and performs the merge. It is fixed host code, never a model.
+
+**Session clone** — the headless session's own full copy of the repository, inside the one
+folder it may write. _Avoid_: *session worktree*. A git worktree keeps its index under the main
+checkout's `.git/worktrees/` and runs the main checkout's hooks, so a session denied writes to
+the main checkout could never commit from one, and allowing that folder reopens the hooks. The
+first draft of the plan said "worktree" and was wrong for exactly this reason.
+
+**Gate checkout** — a clone the session can never write to, created fresh for each gate run and
+deleted once its result is stored, where the listener tests the merge result of one fetched
+commit. The rules that judge it (checkers, baselines, linter settings) come from master, never
+from the candidate. The test suite is code the model wrote, so a gate run sits
+inside the write boundary too.
+
+**Review repository** — the listener's own bare copy of master, outside every folder a sandbox
+may write. It imports a candidate commit from a verified bundle and computes the merge result and
+the diff the owner reads (`git merge-tree --write-tree`, which touches no working tree). The main
+checkout fetches a candidate only from here, never from a session clone or a gate checkout.
+
+**Write boundary** — the macOS process sandbox around the whole session and around every gate
+run: writes refused everywhere except one named folder, reads of the vault and the keys refused.
+It is an operating-system control. A working directory, a branch, a git worktree and Claude
+Code's own sandbox settings were each probed on 2026-09-18 and none of them is one.
+
+## Public product
+
+**COS** — the Chief of Staff: the private email assistant (nightly mailbox run, drafts, morning
+sheet, read-back, email bridge into the vault). _Avoid_: *email integration*, *mail features* —
+the owner ruled on 2026-09-22 that ALL mail code is COS, so there is no mail feature outside it.
+
+**Second brain** — everything that is not COS: capture, ingest of dropped files, index, retrieval,
+folds, doctor. It is the only product the public release carries.
+
+**Public export** — the tree `tools/export_cleanroom.py` produces for a release; the public GitHub
+repo and the PyPI `brainiac-cli` package are built from it. _Avoid_: *public repo* when you mean
+the export — the repo is one consumer of it, and the export is where the COS is left out.
+
+**COS guard** — the one check core code uses to ask whether the COS is installed. It must see a
+real module file, never a leftover empty `brain/cos/` folder that Python reads as a namespace
+package after a pip upgrade.

@@ -6,7 +6,16 @@
 > [`docs/install/README.md`](README.md) or
 > [`docs/install-guide.html`](../install-guide.html) instead.
 
-Status: ACCEPTED 2026-07-04 · Contract for sessions s02–s04 · See also `docs/adr/0002-cowork-plugin-skill-delivery.md`.
+Status: ACCEPTED 2026-07-04 · **Partly superseded** · See also `docs/adr/0002-cowork-plugin-skill-delivery.md`.
+
+> **What no longer holds (read before you rely on a section below).** §1 and §3
+> made a `~/brainiac` clone the canonical code copy. Since the PyPI release the
+> engine installs as the `brainiac-cli` package and a clone is needed only for
+> a contributor's editable install and for Cowork staging. §4 left `version`
+> unset in `plugin.json`; ADR 0004 now writes the one release version into
+> every plugin manifest. The workspace registry (§2), the never-touch list (§3)
+> and the per-vault nightly label (§5) still hold. The file stays because three
+> ADRs cite it.
 
 ## 0 · What was actually probed (not assumed)
 

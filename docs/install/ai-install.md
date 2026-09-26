@@ -18,10 +18,15 @@ one Cowork question — all in one command.
 ## The 3 commands
 
 ```text
-claude> /plugin marketplace add Autopsias/brainiac                # public repo — no clone, no creds needed
-claude> /plugin install brainiac-manager@brainiac
+claude> /plugin install brainiac-manager --marketplace Autopsias/brainiac
 claude> /brainiac-install
 ```
+
+The first line adds the public marketplace and installs the plugin in one
+step (Claude Code 2.1.275 or later). On an older version, run
+`/plugin marketplace add Autopsias/brainiac`, then
+`/plugin install brainiac-manager@brainiac`. In Claude Desktop, add the
+marketplace under Customize › Plugins instead.
 
 `/brainiac-install` then asks you one question: *"Do you also use Claude
 Desktop's Cowork and want this brain available there?"* Answer yes and it
@@ -31,8 +36,7 @@ runs `/brainiac-cowork-setup` for you; answer no and you're done.
 **PyPI** (`brainiac-cli` — tries `uv tool install`, then `pipx`, then `pip
 --user`, first success wins) — no clone. A checkout is only needed for two
 things: contributing to Brainiac itself (`--dev`, an editable install) and
-the one-time workspace-registry write (a tracked packaging gap — see
-`docs/install/README.md` Path A step 5).
+Cowork setup, whose staging scripts are not in the wheel yet.
 
 **Fallback (offline / credential-restricted environments):**
 `git clone https://github.com/Autopsias/brainiac.git ~/brainiac` then
@@ -106,7 +110,7 @@ the Cowork question — end to end.
   it the rest.
 - **A new project/vault?** Say: *"Set up a new Brainiac vault at
   ~/vaults/<name> following docs/install/second-vault.md"* — each vault
-  automatically gets its own index and audit chain (0.3.0+), so there is
+  automatically gets its own index and audit chain, so there is
   nothing to configure. If it also wants a Cowork workspace, the one command
   is `brain provision-local <vault> --workspace <workspace>` — see
   `docs/install/second-vault.md`.

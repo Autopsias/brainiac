@@ -1,115 +1,102 @@
-# New owner — the short version
+# New owner — what runs where
 
-You've installed Brainiac on your platform (see the
-[platform picker](./README.md)). This page is the five-minute
-mental model — what actually happens, what runs where, and the one thing
-that still doesn't work. (Unfamiliar term? `docs/glossary.md` has one-line
-definitions for PARA, MNPI, egress gate, Cowork, host-broker, overlay, etc.)
+You have installed Brainiac (see the [platform guide](./README.md)). This page
+is the five-minute mental model: what the setup command does, what runs on
+which machine, where the skills live, and the one surface that still has no
+access. Unfamiliar word? [`docs/glossary.md`](../glossary.md) defines it.
 
-## `brain init` — what it actually does
+## Three parts
 
-`brain init --full` is the one first-run command every client (host or VM)
-runs. It never opens the index or constructs `BrainCore` — it's pure
-filesystem + subprocess, so it works before an index even exists. It does
-three things, in order:
+An install puts three things in place:
 
-1. **Detects the client** from the trust role (`host` → Claude Code CLI /
-   Codex; `vm` → Cowork).
-2. **Scaffolds `overlay/`** — fills only the *empty* personalization
-   categories from the shipped template; a category you've already filled is
-   never clobbered. Then validates the shape.
-3. **Registers scheduled tasks** for that client — host registers the one
-   sanctioned OS task directly (or dry-run probes it); Cowork/VM only ever
-   prints a paste-ready, poke-only prompt (never mutates anything itself —
-   see the host/VM split below).
+1. **The engine.** The `brain` command-line program: search, index, audit.
+   Installed from PyPI as `brainiac-cli`.
+2. **Your vault.** A folder of plain Markdown notes on your own disk. This is
+   the source of truth. The search index is a cache next to it, in your
+   app-data folder, and `brain rebuild` recreates it at any time.
+3. **The skills.** Short instruction files that teach an AI assistant when and
+   how to call `brain`. They install as plugins where a plugin system exists,
+   and load from the repository checkout everywhere else.
 
-Bare `brain init` (no `--full`) still supports the older, narrower
-`--validate-overlay` slice; `--full` is the one to run for a genuinely new
-install.
+The engine and the vault always live on a persistent machine: **the host**. A
+sandboxed surface such as Cowork can hold skills, but nothing inside it
+survives the session, so it can never hold the engine or own the vault.
 
-## The personalization overlay
+## What `brain init --full --apply` does
 
-`overlay/{voice, brand, keywords, people}/` is the layer that makes the
-substrate *yours* — the generic engine plus your specific voice, brand
-language, keyword glossary, and roster of people. It lives at `<vault>/overlay/`
-(a sibling of `vault/raw/` and `vault/brain/`), separate from the kernel
-skills (which never know whose vault they're running against). One starting
-point ships in the repo:
+This is the one setup command every install path runs. It works before an
+index exists, because it only touches files and runs subprocesses. In order:
 
-- `overlay/template/` — empty starter scaffold for a brand-new owner, so you
-  can see the expected shape before writing your own.
+1. **Detects the client** from the trust role: `host` for Claude Code, Codex
+   and Gemini; `vm` for Cowork.
+2. **Scaffolds the overlay.** The overlay at `<vault>/overlay/` holds your
+   voice, brand, keywords and people. The command fills only the empty
+   categories from the shipped template and never overwrites one you filled.
+3. **Seeds and indexes an empty vault.** Three sample notes, then the index,
+   so the first search works. A vault that already holds notes is left as it
+   is; run `brain rebuild` once to index it.
+4. **Provisions the audit signing key** in the OS secret store, only when
+   none exists. It never rotates a key.
+5. **Registers the maintenance task** on the host: a `launchd` job on macOS
+   (`com.brainiac.nightly.<id>`) or a scheduled task on Windows
+   (`brain-daily-brief-<id>`). The `<id>` comes from the vault path, so two
+   vaults never share a job. On Cowork the command prints a prompt instead
+   and changes nothing.
 
-Full schema + how-to: `overlay/README.md`.
+## The host and VM split
 
-## The host/VM split — what runs where
+This is the most load-bearing fact about the whole system. There is no daemon
+and no always-on server. Every client is either `host` (full capability) or
+`vm` (read and draft only, which today means Cowork).
 
-This is the single most load-bearing fact about the whole system. There is
-**no plugin, no daemon, no always-on server** — every client is either
-`host` (full capability) or `vm` (read + draft only, Cowork specifically).
-
-| | Host (Claude Code CLI, Codex, Desktop Code tab, Gemini) | VM (Cowork Linux sandbox) |
+| | Host: Claude Code, Codex, Desktop Code tab, Gemini | VM: the Cowork sandbox |
 |---|---|---|
-| Reads (search/get/bases-query/graph-expand/…) | Yes | Yes (from a read-only published snapshot) |
-| Writes a note | Yes (`brain write`, audited, Ed25519-signed) | **No** — refused before the index even opens (`role_forbidden`, exit 4) |
-| Rebuilds/syncs the index | Yes (`brain rebuild` / `brain sync`) | **No** |
-| Resolves a signing key | Yes | **Never** — the VM `BrainCore` never constructs an audit chain at all |
-| Owns the one OS-scheduled task | Yes — `brain-nightly` (`launchd`/Task Scheduler), the sole persistence entry the whole system uses | **No** — 0 OS-scheduled entries, locked (`routines/manifest.json` `locked_counts`) |
-| Captures a note | Signed, committed immediately | Stages an **unsigned DRAFT** in `capture-inbox/`; drained + signed only by the next host `brain sync` |
+| Reads (`search`, `get`, `bases-query`, `graph-expand`, ...) | Yes | Yes, from a read-only published snapshot |
+| Writes a note | Yes: `brain write`, audited and Ed25519-signed | No. Refused before the index opens (`role_forbidden`, exit 4) |
+| Rebuilds or syncs the index | Yes | No |
+| Holds a signing key | Yes | Never |
+| Owns a scheduled task | Yes: the hourly maintenance task | No. Zero OS-scheduled entries, by contract |
+| Captures a note | Signed and committed at once | Stages an unsigned draft in `capture-inbox/`; the next host `brain sync` signs it |
 
-`brain-nightly` (host-only) is the irreducible heartbeat: it syncs the index,
-drains and signs any VM-staged drafts, republishes the read-only snapshot the
-VM reads, and emits the morning brief — all in one date-gated run, so weekly
-(health/integrity) and monthly (graphify) cadences ride the same single OS
-entry instead of each claiming their own. Full justification:
-`routines/manifest.json` `locked_counts`.
+The hourly maintenance task is the heartbeat. It syncs the index, drains and
+signs any VM-staged drafts, republishes the snapshot the VM reads, applies an
+engine update when one is available and `brain doctor` stays green, and emits
+the morning brief. Weekly and monthly work rides the same single job.
 
-## Where the kernel skills + manifest live
+## Where the skills live
 
 | What | Where | Notes |
 |---|---|---|
-| Kernel skills (canonical copy) | `.claude/skills/<name>/SKILL.md` | 11 skills (10 kernel+extras + `setup-cowork`); this is the one copy you ever hand-edit |
-| Codex mirror | `.agents/skills/<name>/SKILL.md` | Auto-synced by `tools/package_clients.py`; identical set minus `setup-cowork` |
-| Cowork bundles | `dist/cowork-skills/<name>.skill` | 10 zips, one per kernel+extras skill, ready for Cowork's Save-skill upload |
-| Claude Code marketplace (optional) | `.claude-plugin/marketplace.json` + `plugins/brainiac-kernel/` + `plugins/brainiac-extras/` | For installing without cloning the repo |
-| The task manifest | `routines/manifest.json` | Single source of truth for every scheduled/on-invoke task across host + VM; consumed by `scripts/register_tasks.py` and the `task-registrar` skill |
+| Canonical copy | `.claude/skills/<name>/SKILL.md` | The one copy anyone edits by hand |
+| Codex mirror | `.agents/skills/<name>/SKILL.md` | Generated by `tools/package_clients.py` |
+| Claude Code plugins | `plugins/brainiac-kernel/` (9 daily-use skills), `plugins/brainiac-extras/` (optional maintenance skills), `plugins/brainiac-manager/` (5 installer skills) | Generated; listed in `.claude-plugin/marketplace.json` |
+| Cowork bundles | `dist/cowork-skills/<name>.skill` | One zip per kernel and extras skill, for Cowork's Save-skill upload |
+| The task manifest | `routines/manifest.json` | The single list of every scheduled and on-invoke task across host and VM |
 
-**Never hand-edit a mirror.** If a kernel skill changes, edit
-`.claude/skills/<name>/SKILL.md` and re-run
-`python3 tools/package_clients.py` to re-sync the Codex mirror, the
-marketplace plugins, and the Cowork zips in one pass — it also re-validates
-every artifact it touches.
+**Never edit a mirror.** Edit the canonical copy and run
+`python3 tools/package_clients.py`; it regenerates the Codex mirror, the
+plugins and the Cowork zips in one pass and validates each of them.
 
-## The one thing that still doesn't work: claude.ai web chat
+## The one surface with no access: claude.ai web chat
 
-The browser-hosted **claude.ai web chat tab** has no access to `brain` at
-all — **this is an open, acknowledged gap**, not an oversight. Neither
-access path works for it:
+The browser chat at claude.ai cannot reach `brain` at all. This is a known
+gap, not an oversight. A browser tab cannot run a shell command, and the
+`brain-mcp` bridge built for the Desktop Chat tab needs a local process to
+spawn, which a cloud-hosted app does not have. Closing the gap would need a
+remote MCP endpoint, which adds a network listener and an authentication
+surface the design avoids on purpose. If claude.ai web chat is your only
+client, use one of the clients in the platform guide instead.
 
-- Native shell `brain …` — impossible, a browser tab can't run shell commands.
-- The `brain-mcp` stdio adapter (the one MCP exception, built for the
-  Desktop **Chat tab**) — also impossible, because stdio needs a local
-  process the client spawns/pipes, and the web app runs in Anthropic's
-  cloud, not on your machine.
+## A second vault
 
-Closing this gap would require a remote (HTTP/SSE) MCP endpoint — which
-reintroduces a network listener and an authn/egress surface the rest of this
-design deliberately avoids. That's a separate security + hosting decision,
-not something folded into this cutover. **If you only have the claude.ai web
-chat available, you do not yet have KB access from it** — use one of the
-three clients in this directory instead.
-
-## Starting a second vault?
-
-This page assumes your first vault. Adding a second vault/project on the
-same install (same binary, different `$BRAIN_VAULT`) has its own gotchas —
-notably the search index and nightly task are NOT vault-scoped by default.
-See `docs/install/second-vault.md`.
+This page assumes your first vault. A second vault on the same install has
+its own index, audit chain and maintenance task, and one command wires it end
+to end: see [`second-vault.md`](./second-vault.md).
 
 ## Cross-references
 
-- `docs/install/README.md` — pick your client (Claude Code / Codex / Cowork)
-- `AGENTS.md` §6 — the full per-client access matrix (this page summarizes it above)
-- `overlay/README.md` — the personalization layer's full schema
-- `routines/manifest.json` `locked_counts` — the locked 1-host/0-VM scheduling budget
-- `brain --help` — every CLI verb, with the VM-allowlist called out
-- `AGENTS.md` §7 + `docs/dependency-inventory.md` — the not-yet-written cutover-retirement follow-on plan
+- [`README.md`](./README.md) — install steps per platform
+- `AGENTS.md` §6 — the full per-client access matrix this page summarises
+- `overlay/README.md` — the overlay's schema
+- `routines/manifest.json` — the locked scheduling budget (one host job, zero VM jobs)
+- `brain --help` — every command, with the VM-allowed set marked

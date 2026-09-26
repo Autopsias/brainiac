@@ -14,8 +14,12 @@ the vault, the index, or any state file.
 ## Run it
 
 ```bash
-python3 .claude/skills/brainiac-health/scripts/health_report.py
+python3 ${CLAUDE_SKILL_DIR}/scripts/health_report.py
 ```
+
+Claude Code and Cowork replace `${CLAUDE_SKILL_DIR}` with this skill's
+folder, so the command works from any directory. In Codex, the script is
+`scripts/health_report.py` beside this file.
 
 With no arguments it iterates every `target: "host"` entry in
 `~/.brainiac/workspaces.json` (deduplicated by `vault_path`). Pass one or
@@ -23,7 +27,7 @@ more vault paths to check specific vaults instead (useful for a vault that
 isn't registered yet, or to check just one out of several):
 
 ```bash
-python3 .claude/skills/brainiac-health/scripts/health_report.py /path/to/vault
+python3 ${CLAUDE_SKILL_DIR}/scripts/health_report.py /path/to/vault
 ```
 
 **Relay the script's own output.** It already renders the VERDICT line,

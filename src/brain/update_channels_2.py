@@ -80,6 +80,7 @@ def _run_plugin_reinstall(
                 plugin_name,
                 marketplace_name,
                 run=run,
+                **({"targets": raw["stale_copies"]} if raw.get("stale_copies") else {}),
             )
             if action == "update" and applied.get("ok"):
                 refreshed = callbacks.check_installed_cli_plugins(

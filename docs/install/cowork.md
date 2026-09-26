@@ -329,7 +329,7 @@ drive, so a staged filesystem artifact is the only thing a host command can
 promise stays current). Upload them via Cowork's Save-skill flow directly, or
 have `/brainiac-cowork-setup` walk you through it (its final report prints
 the exact upload order). **Order: kernel first, extras optional** (mirrors
-the Claude Code marketplace split in `docs/operations/cutover-s08-evidence.md`):
+the Claude Code marketplace split):
 
 ```
 kernel:  kb-curator.skill  promote.skill  vault-ingestion.skill  vault-eval.skill  save-conversation.skill  overlay-style.skill
@@ -365,9 +365,8 @@ so never trust the click alone).
 
 ## 3 — Register the on-invoke Cowork triggers (paste-ready prompt)
 
-Paste `docs/operations/cowork-task-registrar-prompt.md` (or the file written
-by `--save-cowork-prompt`, or the one already staged at
-`<workspace>/vault/.brain/routines/`) into a Cowork chat session that has the
+Paste the prompt written by `--save-cowork-prompt` (or the one already
+staged at `<workspace>/vault/.brain/routines/`) into a Cowork chat session that has the
 scheduled-tasks MCP tools. It registers exactly **3 poke-only triggers** —
 `brain-promotion-scan`, `brain-autoresearch-cascade`,
 `brain-ingestion-digest-weekly` — following a strict list → create-if-absent
@@ -395,7 +394,7 @@ This is the single most important thing to internalize about the Cowork
 client, and the reason its onboarding differs structurally from Claude Code
 CLI / Codex:
 
-- **No `brain-nightly` here.** The one sanctioned OS-scheduled task lives
+- **No maintenance task here.** The one sanctioned OS-scheduled task lives
   only on the **host** (`launchd` / Task Scheduler) — the VM has no
   scheduler and registers nothing autonomous, ever.
 - **The 3 Cowork triggers are poke-only** (fired by a human, by name, via
@@ -411,7 +410,7 @@ CLI / Codex:
   `tests/test_integration.py`.
 - **Captures are unsigned DRAFTS.** `brain draft-capture` stages a draft in
   `capture-inbox/`; it is drained + Ed25519-signed only by the next **host**
-  `brain sync` (which the host's `brain-nightly` task already runs daily).
+  `brain sync` (which the host's hourly maintenance task already runs).
   There is no capture daemon and no VM-side signing key — ever.
 - **Snapshot staleness is visible, not silent.** `brain status` on the VM
   reports the snapshot's generation and age, so a session can tell whether
@@ -446,7 +445,6 @@ staying silently out of date.
   has no scriptable host-side CLI/config/import)
 - `docs/cowork-windows-install.md` — the full Cowork build/runtime spec (5 load-bearing rules, the capture loop, the install/refresh commands)
 - `AGENTS.md` §6 — full access matrix (all clients)
-- `docs/operations/cowork-task-registrar-prompt.md` — the exact paste-ready prompt
 - `routines/manifest.json` — THE LOCK, `locked_counts` (1 host, 0 VM)
 - `.claude/skills/brainiac-cowork-setup/SKILL.md` — the guided walkthrough of steps 0–2 above (`setup-cowork` retired 2026-08-30, this page is its replacement)
 - `.claude/skills/task-registrar/SKILL.md` — the registrar that generates the paste-prompt

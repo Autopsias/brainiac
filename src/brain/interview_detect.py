@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from . import _optional
-from .interview import (EXPIRE_DAYS, OPTIONS, SKIP, OPEN, blocked,
+from .interview import (EXPIRE_DAYS, OPTIONS, SKIP, OPEN, blocked, is_loop_id,
                         question_key)
 
 _FRONTMATTER_RE = re.compile(r"\A---\n.*?\n---\n", re.S)
@@ -86,7 +86,9 @@ def _tension_candidates(core: Any, state: dict[str, Any], today: _dt.date,
         if swept >= limit:
             return
         did = str(d.get("id") or "")
-        if not did or blocked(state, "", did, today):
+        # A loop note never costs one of the night's `limit` slots: the
+        # interview's own decisions are the newest, and would starve the rest.
+        if not did or is_loop_id(did) or blocked(state, "", did, today):
             continue
         swept += 1
         sweep = core.dossier(str(d.get("title") or did), k=12)
@@ -98,7 +100,7 @@ def _tension_candidates(core: Any, state: dict[str, Any], today: _dt.date,
         # question, so every answer made the next night's tension (measured
         # 2026-09-22: 3 of 3 tensions on the loop's decisions were records).
         tensions = [t for t in (mine or {}).get("tensions") or []
-                    if "owner-interview" not in str(t.get("id") or "")]
+                    if not is_loop_id(t.get("id"))]
         if not tensions:
             continue
         tensions.sort(key=lambda t: str(t.get("date") or ""), reverse=True)
@@ -129,7 +131,8 @@ def _decision_candidates(core: Any, state: dict[str, Any], today: _dt.date):
     from .maintenance_folds_4 import decision_capture_scan  # noqa: PLC0415
     for c in decision_capture_scan(core.index.conn, today):
         sid = str(c.get("id") or "")
-        if not sid or blocked(state, question_key("decision", [sid]), sid, today):
+        if (not sid or is_loop_id(sid)
+                or blocked(state, question_key("decision", [sid]), sid, today)):
             continue
         phrase = str(c.get("phrase") or "").strip()
         yield _row("decision", today=today,
@@ -194,29 +197,35 @@ def _link_targets(core: Any, query: str, sid: str,
 
 
 def _orphan_candidates(core: Any, state: dict[str, Any], today: _dt.date,
-                       per_night: int = 3):
+                       per_night: int = 3, max_searches: int = 10):
     """Sources nothing cites, from the linking lane's own worklist, with the
-    nearest notes offered as the places they could belong."""
+    nearest notes offered as the places they could belong.
+
+    ``per_night`` counts QUESTIONS, ``max_searches`` bounds the searches. Until
+    2026-09-26 one counter did both, so the lane's first three notes, which had
+    nowhere to link, spent the budget every night and the lane asked nothing
+    from 2026-09-23 on while notes 7 and 8 each had three places to go."""
     from .invariant_coverage import LINK_LANE_RELPATH  # noqa: PLC0415
     try:
         lane = json.loads((Path(core.vault) / LINK_LANE_RELPATH)
                           .read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return
-    tried = 0
+    yielded = searched = 0
     for c in lane.get("candidates") or []:
-        if tried >= per_night:
+        if yielded >= per_night or searched >= max_searches:
             return
         sid = str(c.get("id") or "")
         if not sid or blocked(state, question_key("orphan", [sid]), sid, today):
             continue
-        tried += 1
+        searched += 1
         title = str(c.get("title") or sid)
         query = (title + " " + note_excerpt(core.vault, str(c.get("path") or ""),
                                             200)).strip()
         links = _link_targets(core, query, sid)
         if not links:
             continue
+        yielded += 1
         yield _row("orphan", today=today, options=links + OPTIONS["orphan"],
                    context=note_excerpt(core.vault, rel_path(core.vault, str(c.get("path") or "")), 300),
                    evidence=[{"id": sid, "date": str(c.get("created") or ""),
@@ -231,9 +240,14 @@ def _orphan_candidates(core: Any, state: dict[str, Any], today: _dt.date,
 
 def _stale_candidates(core: Any, state: dict[str, Any], today: _dt.date,
                       per_night: int = 2):
-    """Central notes gone stale (curation's revisit sample, PageRank-weighted)."""
+    """Central notes gone stale (curation's revisit sample, PageRank-weighted).
+
+    The sample ranks an UNDATED note as the most overdue on purpose (curation
+    must see it), and this lane skips undated notes, so a sample of 10 was
+    9 undated rows on 2026-09-26 and the lane asked nothing for days. 60 reaches
+    well past the 23 undated notes the reference vault carries."""
     taken = 0
-    for r in core.index.revisit_sample(today=today, k=10):
+    for r in core.index.revisit_sample(today=today, k=60):
         if taken >= per_night:
             return
         nid = str(r.get("id") or "")

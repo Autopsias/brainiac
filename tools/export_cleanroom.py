@@ -43,6 +43,17 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 EXCLUDE_PREFIXES = (
     "_archive/", "_plans/", "_evidence/", "_workspace/",
+    # `docs/worth-adopting/` (2026-09-25) holds /worth-adopting reports: this
+    # machine's judgement of outside sources against the private repo, with
+    # local paths and account details. Internal record, not public docs.
+    "docs/worth-adopting/",
+    # Two closed-stacks s07 WALK RECORDS (2026-09-26): an owner-run protocol for
+    # one plan session and the relayed transcript of that walk. Plan evidence
+    # without the `-evidence.md` suffix, so the suffix rule below missed them.
+    # The sibling `closed-stacks-s07-cutover-and-reversal.md` is a runbook that
+    # `brain doctor` names in a remediation, so it stays public.
+    "docs/operations/closed-stacks-s07-cowork-walk-protocol.md",
+    "docs/operations/closed-stacks-s07-walk-record.md",
     # `_decisions/` joins its siblings above (2026-08-14, found by the 0.20.8
     # contamination gate). It is owner RULING material of exactly the same
     # class as `_plans/` and `_evidence/` — written about the owner's live

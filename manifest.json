@@ -129,9 +129,7 @@
     "docs/okf-lint-profile.md",
     "docs/operations/asr-cfa-design-rules.md",
     "docs/operations/at-rest-posture.md",
-    "docs/operations/closed-stacks-s07-cowork-walk-protocol.md",
     "docs/operations/closed-stacks-s07-cutover-and-reversal.md",
-    "docs/operations/closed-stacks-s07-walk-record.md",
     "docs/operations/commitment-judging-2026-09.html",
     "docs/operations/commitment-judging-2026-09.md",
     "docs/operations/cowork-desk-block.md",
@@ -219,11 +217,13 @@
     "packaging/windows/version_info.txt",
     "packaging/windows/wdac-managed-installer-policy.md",
     "plugins/brainiac-extras/.claude-plugin/plugin.json",
+    "plugins/brainiac-extras/README.md",
     "plugins/brainiac-extras/skills/autoresearch/SKILL.md",
     "plugins/brainiac-extras/skills/curation/SKILL.md",
     "plugins/brainiac-extras/skills/improve/SKILL.md",
     "plugins/brainiac-extras/skills/task-registrar/SKILL.md",
     "plugins/brainiac-kernel/.claude-plugin/plugin.json",
+    "plugins/brainiac-kernel/README.md",
     "plugins/brainiac-kernel/skills/brain-inbox/SKILL.md",
     "plugins/brainiac-kernel/skills/graph-explorer/SKILL.md",
     "plugins/brainiac-kernel/skills/kb-curator/SKILL.md",
@@ -234,6 +234,7 @@
     "plugins/brainiac-kernel/skills/vault-ingestion/SKILL.md",
     "plugins/brainiac-kernel/skills/vm-doctor/SKILL.md",
     "plugins/brainiac-manager/.claude-plugin/plugin.json",
+    "plugins/brainiac-manager/README.md",
     "plugins/brainiac-manager/skills/brainiac-cowork-setup/SKILL.md",
     "plugins/brainiac-manager/skills/brainiac-health/SKILL.md",
     "plugins/brainiac-manager/skills/brainiac-health/references/design-notes.md",
@@ -685,5 +686,5 @@
     "vault/raw/2026-06-27-arctic-vs-e5-benchmark.md",
     "vault/raw/README.md"
   ],
-  "count": 684
+  "count": 685
 }

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+from functools import cmp_to_key
 from pathlib import Path
 from typing import Optional
 
@@ -267,25 +268,39 @@ def check_installed_cli_plugins(
         # semver (it can be a git sha for github-sourced plugins) — read the
         # REAL version from the plugin.json at the recorded installPath, the
         # same on-disk contract as the marketplace copy.
-        entry = plugin_entries[0] if isinstance(plugin_entries, list) else plugin_entries
-        install_path = entry.get("installPath") if isinstance(entry, dict) else None
-        installed_version = None
-        if install_path:
-            installed_pjson = _read_json(Path(install_path) / ".claude-plugin" / "plugin.json")
-            if installed_pjson:
-                installed_version = installed_pjson.get("version")
-        if installed_version is None:
+        # A plugin installed at project scope has one entry PER project, each
+        # at its own version. Judge the oldest copy: reading only the first
+        # entry reported a stale copy current (or the reverse) by list order.
+        entries = plugin_entries if isinstance(plugin_entries, list) else [plugin_entries]
+        copies, unreadable = [], None
+        for entry in entries:
+            install_path = entry.get("installPath") if isinstance(entry, dict) else None
+            pjson = _read_json(Path(install_path) / ".claude-plugin" / "plugin.json") if install_path else None
+            if not (pjson and pjson.get("version")):
+                unreadable = install_path
+                continue
+            copies.append({"scope": entry.get("scope") or "user",
+                           "project_path": entry.get("projectPath"),
+                           "version": pjson["version"]})
+        if unreadable is not None or not copies:
             rows.append(_row(surface, UNKNOWN,
-                             f"installed but version unreadable at {install_path}"))
+                             f"installed but version unreadable at {unreadable}"))
             continue
+        stale_copies = [c for c in copies if _compare(c["version"], mkt_version or "") < 0]
+        # Behind anywhere -> report the oldest copy; otherwise the newest, so a
+        # copy ahead of the marketplace still reads as the downgrade case.
+        pick = min if stale_copies else max
+        installed_version = pick((c["version"] for c in copies), key=cmp_to_key(_compare))
+        where = "" if len(copies) == 1 else f" ({len(stale_copies)} of {len(copies)} copies behind)"
         cmp_ = _compare(installed_version, mkt_version or "")
         if cmp_ == 0:
             rows.append(_row(surface, CURRENT, f"installed {installed_version} == marketplace {mkt_version}",
                              raw={"installed": installed_version, "marketplace": mkt_version}))
         elif cmp_ < 0:
-            rows.append(_row(surface, STALE, f"installed {installed_version} < marketplace {mkt_version}",
+            rows.append(_row(surface, STALE, f"installed {installed_version} < marketplace {mkt_version}{where}",
                              remediation=f"/plugin update {pname}@{marketplace_name}",
-                             raw={"installed": installed_version, "marketplace": mkt_version}))
+                             raw={"installed": installed_version, "marketplace": mkt_version,
+                                  "stale_copies": stale_copies}))
         else:
             # Downgrade condition (Ruling 3 / ADR-0004 Ruling 5): installed >
             # marketplace, e.g. a stale 1.x line meeting a reconciled 0.9.x.

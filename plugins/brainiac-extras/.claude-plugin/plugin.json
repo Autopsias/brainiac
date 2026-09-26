@@ -1,12 +1,14 @@
 {
   "name": "brainiac-extras",
   "displayName": "Brainiac — Extras",
-  "description": "Optional maintenance and admin skills for a brain-substrate second-brain: curation (stale-wikilink + revisit-queue lint), improve (session retrospective against AGENTS.md/CLAUDE.md/installed skills), task-registrar (idempotent scheduled-task registration), autoresearch (bounded self-tuning loop over retrieval parameters).",
-  "version": "0.20.39",
+  "description": "Optional maintenance skills for a Brainiac vault: curation lint, session retrospectives, scheduled-task registration and retrieval self-tuning.",
+  "version": "0.20.40",
   "author": {
     "name": "Brainiac maintainers"
   },
   "license": "Apache-2.0",
+  "homepage": "https://github.com/Autopsias/brainiac#readme",
+  "repository": "https://github.com/Autopsias/brainiac",
   "keywords": [
     "second-brain",
     "brain-cli",

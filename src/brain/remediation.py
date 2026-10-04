@@ -57,6 +57,7 @@ copied.
 """
 
 from __future__ import annotations
+from .remediation_security import security_banners
 
 from .maintenance_retention import _QUARANTINE_REMEDY
 # The ROW TYPE and the rules that judge one live in `remediation_schema`; this
@@ -347,20 +348,7 @@ _EXACT: dict[str, Remedy] = {
         OWNER, note="no cap is enforced on remediation spend; this is a "
                     "trend/floor alert only, never a throttle"),
     # The banner class.
-    "read-log:bulk": Remedy(
-        BANNER, note="SEC-06: review bulk access records; authorized import and "
-                     "maintenance may explain them, but automation must not "
-                     "suppress the evidence or decide an incident is harmless"),
-    "injection:conceal": Remedy(
-        BANNER, note="SEC-05: inspect concealed-instruction findings through "
-                     "the classification-gated integrity report; never "
-                     "automatically retire sources or silence the finding"),
-    "stuck-drafts": Remedy(
-        BANNER, note="UPD-01: capture drafts the drain keeps refusing "
-                     "(>48h in the inbox) — the skip reason names the fix "
-                     "(`brain sync` to read it; `update-needs-owner` applies "
-                     "with `brain write`). No branch may auto-apply refused "
-                     "untrusted bytes, so this may never route to automation"),
+    **security_banners(Remedy, BANNER),
     "blocked": Remedy(BANNER),
     "invariants-liveness": Remedy(BANNER, note="WAT-01 dead-man's switch"),
     "synthesis-watchdog": Remedy(BANNER),

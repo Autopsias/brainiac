@@ -57,6 +57,7 @@ both (Mixed). HTML pages open in a browser; Markdown pages read on GitHub.
 | [`security/`](security/README.md) | reference | What may be published under `docs/security/`, and the worked example |
 | [`session-memory.md`](session-memory.md) · [`ingestion.md`](ingestion.md) · [`deliverables-shelf.md`](deliverables-shelf.md) | reference | Session memory, the ingestion lanes, the deliverables shelf |
 | [`operations/`](operations/) | how-to | Runbooks: macOS notarization, Windows packaging, the owner drain, the off-host watchdog |
+| [`operations/codex-synthesis.md`](operations/codex-synthesis.md) | how-to | Opt-in Codex Sunday source-linking adapter, scope, consent and launchd setup |
 | [`install/plugin-distribution.md`](install/plugin-distribution.md) | explanation | The original plugin-distribution design note (partly superseded; kept for the ADRs that cite it) |
 
 ---

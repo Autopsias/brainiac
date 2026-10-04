@@ -151,7 +151,7 @@ ENGINE_ASSET_FILES = [
     "scripts/install-brief-windows.ps1",
     "scripts/brain-brief-mac.plist",
     "scripts/brain-brief.sh",
-    "scripts/brain-synthesis.sh",
+    "scripts/brain-synthesis.sh", "scripts/brain_synthesis_codex.py",
     "scripts/brain-synthesis-mac.plist",
     # session-start alert hook (placed by brain/session_hook.py) +
     # BOTH Cowork VM probes (staged into every workspace by

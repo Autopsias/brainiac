@@ -87,6 +87,10 @@ Three things to know on day one:
 
 `brain --help` lists every command.
 
+On a Codex-only macOS host, Sunday synthesis can use the
+[opt-in Codex adapter](https://github.com/Autopsias/brainiac/blob/main/docs/operations/codex-synthesis.md).
+It handles new source-derived notes; the stock Claude runner remains the default.
+
 ## Update
 
 ```bash

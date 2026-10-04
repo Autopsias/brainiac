@@ -7,6 +7,12 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+### Added
+- An opt-in Codex Sunday synthesis adapter for hosts without Claude CLI.
+  Structured proposals are locally validated, sanitized, signed, indexed and
+  published; cloud export requires explicit consent and defaults to Internal.
+  See `docs/operations/codex-synthesis.md` for scope and manual launchd setup.
+
 ## [0.20.40] — 2026-09-26
 ### Fixed
 - **`brain interview` asks questions again.** The nightly interview asked

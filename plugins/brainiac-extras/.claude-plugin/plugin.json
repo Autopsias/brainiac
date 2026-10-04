@@ -2,7 +2,7 @@
   "name": "brainiac-extras",
   "displayName": "Brainiac — Extras",
   "description": "Optional maintenance skills for a Brainiac vault: curation lint, session retrospectives, scheduled-task registration and retrieval self-tuning.",
-  "version": "0.20.40",
+  "version": "0.20.41",
   "author": {
     "name": "Brainiac maintainers"
   },

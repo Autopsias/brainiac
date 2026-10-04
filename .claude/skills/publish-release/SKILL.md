@@ -36,7 +36,8 @@ resistance.
 
 ```
 [ ] 1. Preflight: ONE interpreter imports pytest+build+twine, tag exists,
-       denylist present, [Unreleased] non-empty, WIP identified
+       denylist present, [Unreleased] non-empty AND covers every
+       public commit since the last tag, WIP identified
 [ ] 2. Cut: release.py bump → scoped commit → local tag
 [ ] 3. Verify: pipeline --dry-run (full suite, export, canary, build, CI signal)
 [ ] 4. Decision card: owner approves acts (AskUserQuestion, one card, FOUR acts)
@@ -74,6 +75,19 @@ ls ~/brainiac-release-groundtruth.txt    # the denylist
   the two `gh` commands.
 - `CHANGELOG.md` must have real content under `## [Unreleased]` — an empty
   section means there is nothing to release; stop and say so.
+- **The changelog must cover every PUBLIC commit since the last tag.** A
+  non-empty section is not a complete one: 0.20.40 reached the bump with
+  three engine fixes and no line for any of them. List the commits and the
+  public files they touch, then match each fix to a changelog line:
+
+  ```
+  git log $(git describe --tags --abbrev=0)..HEAD --no-merges --format='%h %s'
+  git diff --name-only $(git describe --tags --abbrev=0)..HEAD -- src/ plugins/ packaging/
+  ```
+
+  COS-only commits stay out (ADR 0013). Check again right before the bump:
+  another session can merge in between, as one did on 2026-09-26.
+
 - `git status --short`: identify anything dirty that is NOT release material.
   It stays out of the release commit (Hard rules) — list it to the owner in
   the step-4 card so they know what is deliberately excluded.

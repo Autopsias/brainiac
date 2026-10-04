@@ -112,6 +112,42 @@ class IntakeFoldsMixin:
         self._cos_attachment_join_record(run)
         self._cos_attachment_withheld(run)
         self._cos_unreadable_threads(run)
+        self._cos_night_stopped(run)
+        from ..cos.night_died import night_died_items  # noqa: PLC0415
+        run.action_required.extend(night_died_items(self.vault, run.results))
+        from ..cos._ingest_claim import encrypted_decline_items  # noqa: PLC0415
+        run.action_required.extend(encrypted_decline_items(self.vault))
+
+    def _cos_night_stopped(self, run: MaintenanceRun) -> None:
+        """A NIGHT THAT STOPPED EARLY REACHES `brain alerts` (2026-09-27).
+
+        Run 341 stopped after 2 of 10 planned mailbox changes and no surface
+        said so: not the sheet's top, not `alerts`, not the exceptions page.
+        Derived from the LATEST batch-ledger row on every run, so it clears
+        itself on the first clean night. The words are the sheet banner's own
+        (`cos.sheet_stop`), so the alert and the page cannot disagree.
+        Reported, never fatal, like its siblings.
+        """
+        if not _optional.cos_available():
+            return  # ADR 0013: COS state exists only where COS does.
+        try:
+            from ..cos.sheet_stop import night_stop_finding       # noqa: PLC0415
+
+            found = night_stop_finding(self.vault)
+            run.results["cos_night_stopped"] = found or {"stopped": False}
+            if found:
+                item = maintenance.action_required_item(
+                    found["text"],
+                    "the night did not finish its plan, so part of what it "
+                    "judged was never done; the morning sheet says which",
+                    "open this morning's sheet: its banner says what never "
+                    "ran, and each reply says whether it is in Outlook Drafts",
+                    f"batch_stop.reason = {found['reason']}")
+                item["notify_key"] = found["key"]
+                run.action_required.append(item)
+        except Exception as exc:                                 # noqa: BLE001
+            run.results["cos_night_stopped"] = {
+                "error": f"{type(exc).__name__}: {exc}"[:300]}
 
     def _cos_staging_divergence(self, run: MaintenanceRun,
                                 result: dict) -> None:

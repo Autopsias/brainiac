@@ -83,6 +83,11 @@ def _collect_health_metrics_impl(
 
     selftest_ms: float | None = None
     try:
+        # Untimed warm-up first: the first search in a process loads the
+        # embedder (~2 s cold vs ~0.2 s warm, measured 2026-10-03), and whether
+        # this run's sync already loaded it is chance. Timing the cold call
+        # made the daily median swing 300-2,700 ms and fired trend:selftest_ms.
+        core.hybrid_search("brain", k=1)
         t0 = _time.perf_counter()
         core.hybrid_search("brain", k=1)
         selftest_ms = round((_time.perf_counter() - t0) * 1000, 1)

@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .base import ExtractResult, Handler, density_gate
+from .base import ExtractResult, Handler, density_gate, encrypted_office_gate
 from .tables import rows_to_markdown
 
 try:
@@ -29,6 +29,9 @@ def _open_workbooks(path: Path) -> tuple[Any, Any | None] | ExtractResult:
         size = 0
     if size > MAX_XLSX_BYTES:
         return ExtractResult.quarantine("file_too_large")
+    locked = encrypted_office_gate(path)
+    if locked is not None:
+        return locked
     try:
         values = openpyxl.load_workbook(str(path), data_only=True, read_only=True)
     except Exception as exc:
@@ -103,7 +106,9 @@ def _render_workbooks(values: Any, formulas: Any | None) -> ExtractResult:
 
 
 class XlsxHandler(Handler):
-    extensions = (".xlsx",)
+    # .xlsm is the same package plus a VBA part; openpyxl reads it and never
+    # runs the macros (keep_vba defaults to False).
+    extensions = (".xlsx", ".xlsm")
     dependency_name = "openpyxl"
 
     @classmethod

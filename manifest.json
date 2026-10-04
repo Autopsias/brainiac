@@ -130,6 +130,7 @@
     "docs/operations/asr-cfa-design-rules.md",
     "docs/operations/at-rest-posture.md",
     "docs/operations/closed-stacks-s07-cutover-and-reversal.md",
+    "docs/operations/codex-synthesis.md",
     "docs/operations/commitment-judging-2026-09.html",
     "docs/operations/commitment-judging-2026-09.md",
     "docs/operations/cowork-desk-block.md",
@@ -251,6 +252,7 @@
     "scripts/brain-retrieval-watch.sh",
     "scripts/brain-synthesis-mac.plist",
     "scripts/brain-synthesis.sh",
+    "scripts/brain_synthesis_codex.py",
     "scripts/brainiac-alerts.sh",
     "scripts/brainiac-egress-guard.sh",
     "scripts/ci/eval_gate.sh",
@@ -277,6 +279,7 @@
     "src/brain/_assets/scripts/brain-brief.sh",
     "src/brain/_assets/scripts/brain-synthesis-mac.plist",
     "src/brain/_assets/scripts/brain-synthesis.sh",
+    "src/brain/_assets/scripts/brain_synthesis_codex.py",
     "src/brain/_assets/scripts/brainiac-alerts.sh",
     "src/brain/_assets/scripts/brainiac-egress-guard.sh",
     "src/brain/_assets/scripts/install-brief-mac.sh",
@@ -479,6 +482,7 @@
     "src/brain/ingest/handlers/email.py",
     "src/brain/ingest/handlers/html.py",
     "src/brain/ingest/handlers/image.py",
+    "src/brain/ingest/handlers/ole.py",
     "src/brain/ingest/handlers/pdf.py",
     "src/brain/ingest/handlers/pptx.py",
     "src/brain/ingest/handlers/tables.py",
@@ -532,6 +536,7 @@
     "src/brain/maintenance_invariant_fields.py",
     "src/brain/maintenance_notify.py",
     "src/brain/maintenance_outcomes.py",
+    "src/brain/maintenance_para.py",
     "src/brain/maintenance_recommendations.py",
     "src/brain/maintenance_retention.py",
     "src/brain/maintenance_sweep.py",
@@ -686,5 +691,5 @@
     "vault/raw/2026-06-27-arctic-vs-e5-benchmark.md",
     "vault/raw/README.md"
   ],
-  "count": 685
+  "count": 690
 }

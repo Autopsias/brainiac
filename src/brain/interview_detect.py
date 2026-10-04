@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from . import _optional
+from .frontmatter import normalize_identity, parse_text
 from .interview import (EXPIRE_DAYS, OPTIONS, SKIP, OPEN, blocked, is_loop_id,
                         question_key)
 
@@ -176,11 +177,45 @@ def _late_candidates(core: Any, state: dict[str, Any], today: _dt.date):
                           "date you give.")
 
 
+def _words(text: str) -> list[str]:
+    return re.findall(r"[^\W_]+", normalize_identity(text))
+
+
+def _named_targets(vault: Any, sid: str) -> list[tuple[str, str]]:
+    """Project and area notes whose title or alias NAMES the orphan's topic.
+
+    THE SEARCH NEVER READ ALIASES (sheet 2026-09-30). A workplan source whose
+    id carried its project's name was offered three unrelated topics; the
+    owner skipped and typed the project's name, and the project note carried
+    exactly that name as an alias yet was not in the search's top 20. A name
+    counts when its words, less a leading "project", run in order inside the
+    orphan's id."""
+    have = " " + " ".join(_words(sid)) + " "
+    out: list[tuple[str, str]] = []
+    for area in ("projects", "areas"):
+        for p in sorted((Path(vault) / "brain" / area).glob("*.md")):
+            try:
+                meta, _ = parse_text(p.read_text(encoding="utf-8"))
+            except OSError:
+                continue
+            for name in [meta.get("title")] + list(meta.get("aliases") or []):
+                w = _words(str(name or ""))
+                w = w[1:] if w[:1] == ["project"] and len(w) > 1 else w
+                if w and f" {' '.join(w)} " in have:
+                    hid = str(meta.get("id") or p.stem)
+                    out.append((hid, str(meta.get("title") or hid)))
+                    break
+    return out
+
+
 def _link_targets(core: Any, query: str, sid: str,
                   limit: int = 3) -> list[tuple[str, str]]:
-    """The notes an orphan could belong with: brain-zone notes near it, a
-    project or area note first, never a source and never a mail record."""
-    ranked: list[tuple[int, str, str]] = []
+    """The notes an orphan could belong with: a project or area note that
+    NAMES its topic first, then brain-zone notes near it (project or area
+    first), never a source and never a mail record."""
+    ranked: list[tuple[int, str, str]] = [
+        (-1, hid, title) for hid, title in _named_targets(core.vault, sid)
+        if hid != sid]
     for i, h in enumerate(core.hybrid_search(query, k=20)):
         hd = h.to_dict() if hasattr(h, "to_dict") else dict(h)
         hid = str(hd.get("id") or "")
@@ -192,6 +227,8 @@ def _link_targets(core: Any, query: str, sid: str,
         tier = 0 if path.startswith(("brain/projects/", "brain/areas/")) else 1
         ranked.append((tier * 100 + i, hid, str(hd.get("title") or hid)))
     ranked.sort()
+    seen: set[str] = set()
+    ranked = [r for r in ranked if not (r[1] in seen or seen.add(r[1]))]
     return [(f"link:{hid}", f"Belongs with: {title[:70]}")
             for _, hid, title in ranked[:limit]]
 
@@ -251,7 +288,11 @@ def _stale_candidates(core: Any, state: dict[str, Any], today: _dt.date,
         if taken >= per_night:
             return
         nid = str(r.get("id") or "")
+        # ONLY A brain/ NOTE CAN GO STALE (2026-10-01). The sample also ranks
+        # dated sources; a "current" answer then appended a review section to
+        # four raw/ files, which are never edited. A source is a snapshot.
         if (not nid or r.get("updated_unparseable")
+                or not rel_path(core.vault, str(r.get("path") or "")).startswith("brain/")
                 or blocked(state, question_key("stale", [nid]), nid, today)):
             continue
         taken += 1

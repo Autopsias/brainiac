@@ -135,12 +135,12 @@
     <rect x="398" y="42" width="110" height="26" rx="13" class="b"/><text x="453" y="59" text-anchor="middle" class="ta">Gemini CLI</text>
     <rect x="600" y="12" width="164" height="66" rx="10" class="b2"/>
     <text x="682" y="32" text-anchor="middle" class="tt">2 scheduled tasks</text>
-    <text x="682" y="49" text-anchor="middle" class="ts">brain-nightly (hourly)</text>
+    <text x="682" y="49" text-anchor="middle" class="ts">hourly maintenance (per vault)</text>
     <text x="682" y="63" text-anchor="middle" class="ts">brain-synthesis (weekly)</text>
     <line x1="682" y1="78" x2="682" y2="128" class="a"/><polygon points="678,126 686,126 682,134" class="ah"/>
     <line x1="290" y1="78" x2="290" y2="128" class="a"/><polygon points="286,126 294,126 290,134" class="ah"/>
     <text x="302" y="100" class="ts">runs `brain …` in a shell</text>
-    <text x="302" y="114" class="ts">(Desktop chat tab: read-only MCP bridge)</text>
+    <text x="302" y="114" class="ts">(Desktop chat tab: MCP bridge — read verbs + 3 write tools)</text>
     <rect x="16" y="134" width="748" height="196" rx="10" class="bg"/>
     <text x="28" y="156" class="tt">brain CLI — the engine</text>
     <text x="200" y="156" class="ts">one Python package · no server · no daemon · no API keys</text>
@@ -213,13 +213,15 @@
 │  └── audit chain     every committed write signed + hash-chained        │
 │                                                                         │
 │  Scheduled tasks (the ONLY persistence)                                 │
-│  ├── brain-nightly    hourly umbrella: ingest, sync, snapshot, folds    │
-│  └── brain-synthesis  weekly model-backed curation session              │
+│  ├── hourly maintenance  umbrella: ingest, sync, snapshot, folds        │
+│  │   (launchd com.brainiac.nightly.<id> / Win brain-daily-brief-<id>)   │
+│  └── brain-synthesis     weekly model-backed curation session          │
 │                                                                         │
 │  Integration surfaces                                                   │
 │  ├── shell           AI CLIs call `brain …` directly (primary path)     │
 │  ├── brain connect   one-command wiring of a client to a vault          │
-│  ├── MCP adapter     optional stdio server, READ-ONLY 5 tools           │
+│  ├── MCP adapter     optional stdio server: read verbs + 3 write tools │
+│  │                   (capture, supersede, unsupersede)                 │
 │  └── plugins/skills  Claude Code marketplace + Cowork zip uploads       │
 └─────────────────────────────────────────────────────────────────────────┘</pre>
     <figcaption>Everything runs inside the user's machine; there is no network service anywhere in this picture.</figcaption>
@@ -242,7 +244,7 @@
     <tr><td>Snapshot</td><td><code>snapshot.py</code></td><td>atomic, generation-stamped read-only copy of the index, published for the VM</td></tr>
     <tr><td>Maintenance</td><td><code>maintenance.py</code>, <code>brief.py</code>, <code>golden_probe.py</code></td><td>the hourly umbrella's branch logic, health metrics history, watchdogs, weekly retrieval-regression probe</td></tr>
     <tr><td>Graph layer</td><td><code>graph.py</code>, <code>graphify.py</code>, <code>multihop.py</code></td><td>wikilink graph expansion (discovery-only, never authoritative) + bounded monthly link-discovery build</td></tr>
-    <tr><td>MCP adapter</td><td><code>mcp_adapter.py</code></td><td>optional read-only stdio server (exactly 5 read tools) for clients that can't run a shell</td></tr>
+    <tr><td>MCP adapter</td><td><code>mcp_adapter.py</code></td><td>optional stdio server for clients that can't run a shell: the full set of read verbs plus three non-read tools — <code>capture</code> (stages an unsigned draft), <code>supersede</code> and <code>unsupersede</code></td></tr>
     <tr><td>Client wiring</td><td><code>connect.py</code></td><td><code>brain connect</code> writes per-client config: claude-code, claude-desktop, codex, gemini</td></tr>
     <tr><td>Lifecycle</td><td><code>doctor.py</code>, <code>update.py</code>, <code>backup.py</code>, <code>encryption.py</code></td><td>health checks, self-update, encrypted backup (AES-256-GCM, off by default)</td></tr>
     <tr><td>Conventions validator</td><td><code>tools/validate.py</code></td><td>frontmatter schema, classification presence, link/versioning invariants</td></tr>
@@ -331,7 +333,8 @@
 
   <h3>5.4 Maintenance (the two scheduled tasks)</h3>
   <ul>
-    <li><strong><code>brain-nightly</code> (hourly):</strong> drains the inbox, syncs the index,
+    <li><strong>Hourly maintenance task</strong> (macOS launchd <code>com.brainiac.nightly.&lt;id&gt;</code>;
+      Windows Scheduled Task <code>brain-daily-brief-&lt;id&gt;</code>): drains the inbox, syncs the index,
       republishes the snapshot, and runs date-gated folds — Monday health metrics, Tuesday
       integrity scan, Sunday digest/curation/promotion scan + a golden-set retrieval regression
       probe, monthly drift-gated graph rebuild. All metadata work; it never writes prose.</li>
@@ -402,7 +405,7 @@
     <li><strong>Client wiring:</strong> <code>brain connect &lt;client&gt;</code> writes the per-client
       config (claude-code, claude-desktop, codex, gemini) pointing it at a vault. The
       <code>.mcpb</code> bundle serves Claude Desktop's chat tab (the one surface that cannot run a
-      shell) through the read-only MCP adapter — it spawns the host's <code>brain-mcp</code>, never
+      shell) through the MCP adapter — it spawns the host's <code>brain-mcp</code>, never
       vendoring a second engine.</li>
     <li><strong>Skills/plugins:</strong> curation skills ship as a Claude Code plugin marketplace
       in-repo (<code>brainiac-kernel</code> / <code>brainiac-extras</code> / <code>brainiac-manager</code>),

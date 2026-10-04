@@ -285,7 +285,10 @@ alias, bare id or `[[wikilink]]`), and leaves the successor's own
 audit key — the broker IS the host broker, so its `supersede(old_id, new_id,
 reason)` and `unsupersede(old_id, new_id, reason)` tools call the same
 `core.supersede` the CLI does, and a broker started under `role=vm` refuses
-them exactly like the CLI. What the broker cannot do is tell the owner's typing
+them exactly like the CLI. **The broker's `unsupersede` never undoes (owner,
+2026-09-29):** after the visibility guard it refuses and names `brain
+unsupersede` on the host — relatedness cannot guard an undo, because
+`supersede` itself stamps `previous_version`. What the broker cannot do is tell the owner's typing
 from a prompt-injected session's (A-05), so the tool is GUARDED where the CLI
 is not, in this order: both ids must exist and be VISIBLE at the caller's
 egress tier — one refusal for "absent" and "above your tier", because a verb

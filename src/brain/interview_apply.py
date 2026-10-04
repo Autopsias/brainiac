@@ -193,6 +193,10 @@ def _apply_orphan(core, row, action, note, today, reason):
 
 def _apply_stale(core, row, action, note, today, reason):
     path = row["target"]["path"]
+    if action in ("current", "outdated") and not str(path).startswith("brain/"):
+        # A question drawn before 2026-10-01 may still name a raw/ source,
+        # which is never edited; the interview record keeps the answer.
+        return f"recorded only: {action} (a source is never edited)"
     if action == "current":
         append_section(core, path, "## Owner review", [
             f"- {today}: reviewed by the owner, still current."], today, reason)

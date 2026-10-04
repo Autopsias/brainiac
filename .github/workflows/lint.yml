@@ -38,6 +38,9 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+          cache: pip
+          # No requirements file here (tools are pinned inline), so key on this workflow.
+          cache-dependency-path: .github/workflows/lint.yml
 
       - name: Install ruff
         # Pinned to the same version as the pre-commit hook's `rev:`, so a

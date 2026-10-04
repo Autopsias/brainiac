@@ -179,6 +179,16 @@ NOTE_CREATION_POLICIES: dict[str, dict[str, str]] = {
                   "no autolink pass — the one link that matters is the "
                   "owner-confirmed anchor, and the daily folds link the rest",
     },
+    "_assets.scripts.brain_synthesis_codex.commit": {
+        "path": "_assets/scripts/brain_synthesis_codex.py commit (the opt-in "
+                "Codex Sunday synthesis: a NEW brain/resources/ source-derived "
+                "note from a validated model proposal)",
+        "kind": "counted",
+        "reason": "anchored to every cited raw source by `source: [[raw/id]]` "
+                  "and the host refuses a body whose [[links]] differ from "
+                  "those ids; no autolink pass, so links to other brain/ "
+                  "notes fall to the daily folds and the orphan watch",
+    },
 }
 
 _VALID_KINDS = {"autolinked", "chained", "exempt", "counted"}

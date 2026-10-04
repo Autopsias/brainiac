@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from . import concealment
-from .base import ExtractResult, Handler, density_gate, ooxml_expansion_gate
+from .base import (ExtractResult, Handler, density_gate, encrypted_office_gate,
+                   ooxml_expansion_gate)
 from .tables import rows_to_markdown
 
 try:
@@ -25,6 +26,9 @@ def _open_document(path: Path) -> Any | ExtractResult:
         size = 0
     if size > MAX_DOCX_BYTES:
         return ExtractResult.quarantine("file_too_large")
+    locked = encrypted_office_gate(path)
+    if locked is not None:
+        return locked
     # ...and the size on disk is not the size extraction has to hold: a .docx
     # is a zip, and a 110 KB one measured 278:1 (M-8, 2026-09-02).
     bomb = ooxml_expansion_gate(path)

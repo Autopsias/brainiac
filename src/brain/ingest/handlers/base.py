@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+import struct
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -105,8 +106,6 @@ def _declared_member_count(path) -> int | None:
     post-construction check, which is still correct — just not cheap. Never
     raises.
     """
-    import struct
-
     try:
         size = path.stat().st_size
         with open(path, "rb") as fh:
@@ -231,6 +230,31 @@ def ooxml_expansion_gate(
     except (zipfile.BadZipFile, OSError):
         return None
     return None
+
+
+#: The quarantine reason for an ENCRYPTED Office file (2026-09-27). Same
+#: vocabulary as ``pdf.py``'s ``pdf_encrypted``, one word for the three OOXML
+#: handlers. Like ``zip_bomb_suspected`` it carries NO entry in
+#: ``maintenance_retention._QUARANTINE_REMEDY``: a test pins that table's keys
+#: EQUAL to ``remediation.ALLOWED_MECHANICAL_QUARANTINE_REASONS``, the
+#: extract_retry allow-list, and retrying an encrypted file never converges.
+OFFICE_ENCRYPTED_REASON = "office_encrypted"
+
+from .ole import OOXML_SUFFIXES, is_encrypted_office  # noqa: E402,F401  (re-exported)
+
+
+def encrypted_office_gate(path: Path) -> "ExtractResult | None":
+    """Quarantine an encrypted Office file under its own reason, or ``None``.
+
+    Words are SOURCE-NEUTRAL: a hand-dropped file came from no mailbox."""
+    if not is_encrypted_office(path):
+        return None
+    return ExtractResult.quarantine(OFFICE_ENCRYPTED_REASON, warnings=[
+        "this Office file is ENCRYPTED (password- or rights-protected): an "
+        "OLE container holding an EncryptedPackage stream, so the vault "
+        "cannot read it",
+        "nothing to retry: keep the original where it came from, and save an "
+        "unlocked copy into inbox/ only if its text should be in the vault"])
 
 
 def density_gate(markdown: str, *, min_chars: int = MIN_CONTENT_CHARS) -> str | None:

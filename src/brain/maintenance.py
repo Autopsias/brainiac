@@ -166,6 +166,11 @@ from .maintenance_retention import (  # noqa: E402,F401  (facade re-export)
     retention_fold as retention_fold,
 )
 
+from .maintenance_para import (  # noqa: E402,F401  (facade re-export)
+    auto_para as auto_para,
+    auto_para_apply as auto_para_apply,
+    auto_para_plan as auto_para_plan,
+)
 from .maintenance_folds_4 import (  # noqa: E402,F401  (facade re-export)
     DECISION_CAPTURE_LOOKBACK_DAYS as DECISION_CAPTURE_LOOKBACK_DAYS,
     DECISION_CAPTURE_MAX_CANDIDATES as DECISION_CAPTURE_MAX_CANDIDATES,
@@ -178,7 +183,6 @@ from .maintenance_folds_4 import (  # noqa: E402,F401  (facade re-export)
     _body_bytes as _body_bytes,
     _floor_bytes as _floor_bytes,
     _normalize_body_for_hash as _normalize_body_for_hash,
-    auto_para as auto_para,
     auto_version_chains as auto_version_chains,
     autodedup_max_per_run as autodedup_max_per_run,
     body_sha256 as body_sha256,

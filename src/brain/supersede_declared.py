@@ -200,10 +200,12 @@ def apply_pending(core: Any, ingest_report: dict[str, Any]) -> None:
         for decl in pending:
             decl["applied"] = []
             if not decl.get("anchored"):
+                # Nothing re-queues a deferred declaration, so its sidecar is
+                # consumed here too (review 2026-09-29) — left behind, it
+                # declared a supersession for the NEXT file of that name.
                 _fail(ingest_report, decl, decl["old_ids"][0],
                       "anchor deferred — the deliverable did not finish landing")
-                continue
-            for old_id, new_id in _pairs(core, decl):
+            for old_id, new_id in (_pairs(core, decl) if decl.get("anchored") else []):
                 if _link((_meta(core, old_id) or {}).get("superseded_by")) == new_id:
                     continue  # a re-drop, or a recovered run: already done
                 try:
@@ -271,7 +273,12 @@ def declared_failed(conn: Any, *, cap: int = 10) -> dict[str, Any]:
         "  OR '[[' || o.id || ']]' = json_extract(n.frontmatter, '$.replaces') "
         "WHERE json_extract(n.frontmatter, '$.replaces') IS NOT NULL "
         "  AND n.is_latest_version != 'false'").fetchall()
-    failed = sorted(f"{r[0]} -> {r[1]}" for r in rows if _link(r[2]) != str(r[0]))
+    from .ingest import deliverables as DLV
+
+    # A brain-zone old side is retired under the new source's ANCHOR, not the
+    # source itself (`_pairs`), and that is a success (review 2026-09-29).
+    failed = sorted(f"{r[0]} -> {r[1]}" for r in rows
+                    if _link(r[2]) not in (str(r[0]), DLV.anchor_id(str(r[0]))))
     return {"value": len(failed), "population": len(rows),
             "declared": len(rows), "sample": failed[:cap]}
 
@@ -327,7 +334,8 @@ def guarded(core: Any, old_id: str, new_id: str, *, reason: str, max_tier: str,
        your tier", naming neither id, so the verb is not an existence oracle
        and nobody retires a note they cannot read;
     3. ``new_id`` is not itself retired; 4. a reason;
-    5. relatedness — else the pair is STAGED as a CUR-01 proposal."""
+    5. ``unsupersede`` is REFUSED here, naming the host command;
+    6. relatedness — else the pair is STAGED as a CUR-01 proposal."""
     from . import egress
 
     core._require_host("supersede notes through the broker")
@@ -341,9 +349,13 @@ def guarded(core: Any, old_id: str, new_id: str, *, reason: str, max_tier: str,
         return _refused("reason-required")
     try:
         if undo:
-            core.unsupersede(old_id, new_id, reason=f"{declared_by}: {reason}")
-            return {"applied": True, "proposed": False, "undone": True,
-                    **sides(core, old_id, new_id)}
+            # NO BROKER UNDO (owner, 2026-09-29). Relatedness cannot guard it —
+            # `supersede` stamps `previous_version`, so every linked pair reads
+            # related — and a session that read injected text could otherwise
+            # bring an owner-retired version back into search. The owner's
+            # terminal keeps the verb.
+            return _refused("undo-needs-the-owner: run `brain unsupersede "
+                            f"{old_id} {new_id} --reason ...` on the host")
         why = related(core, old_id, new_id)
         if why is None:
             if _optional.cos_available():

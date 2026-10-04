@@ -151,7 +151,7 @@ ENGINE_ASSET_FILES = [
     "scripts/install-brief-windows.ps1",
     "scripts/brain-brief-mac.plist",
     "scripts/brain-brief.sh",
-    "scripts/brain-synthesis.sh",
+    "scripts/brain-synthesis.sh", "scripts/brain_synthesis_codex.py",
     "scripts/brain-synthesis-mac.plist",
     # session-start alert hook (placed by brain/session_hook.py) +
     # BOTH Cowork VM probes (staged into every workspace by
@@ -197,7 +197,7 @@ ENGINE_ASSET_FILES = [
     "tools/cos_mutate_page.js", "tools/cos_capture_hook.js",
     "tools/cos_mutate_gates.py", "tools/cos_mutate_ledger.py", "tools/cos_mutate_passes.py",
     "tools/cos_mutate_plan.py", "tools/cos_mutate_plan_aged.py", "tools/cos_mutate_plan_budget.py", "tools/cos_mutate_plan_marks.py", "tools/cos_mutate_plan_noise.py", "tools/cos_mutate_plan_rulings.py", "tools/cos_mutate_plan_stale.py", "tools/cos_mutate_policy.py", "tools/cos_mutate_rehearsal.py",
-    "tools/cos_mutate_selfcheck.py", "tools/cos_mutate_shapes.py", "tools/cos_mutate_shapestore.py",
+    "tools/cos_mutate_selfcheck.py", "tools/cos_mutate_shapes.py", "tools/cos_mutate_shapestore.py", "tools/cos_mutate_retry.py",
     "tools/cos_cdp_capture.py", "tools/cos_driver.py", "tools/cos_driver_accounting.py",
     "tools/cos_driver_ledger_row.py",
     "tools/cos_driver_capture.py", "tools/cos_driver_categories.py", "tools/cos_driver_cli.py",

@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import concealment
-from .base import (ExtractResult, Handler, density_gate, ocr_available, ocr_image,
-                   ooxml_expansion_gate)
+from .base import (ExtractResult, Handler, density_gate, encrypted_office_gate,
+                   ocr_available, ocr_image, ooxml_expansion_gate)
 from .tables import rows_to_markdown
 
 try:
@@ -59,6 +59,9 @@ def _open_presentation(path: Path) -> "Presentation | ExtractResult":
         size = 0
     if size > MAX_PPTX_BYTES:
         return ExtractResult.quarantine("file_too_large")
+    locked = encrypted_office_gate(path)
+    if locked is not None:
+        return locked
     bomb = ooxml_expansion_gate(path)
     if bomb is not None:
         return bomb

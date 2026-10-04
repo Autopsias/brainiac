@@ -99,7 +99,8 @@
         <li>Single-user, MDM-managed laptops (macOS / Windows).</li>
         <li>Vaults holding <strong>only data the user is entitled to</strong>, up to Confidential.</li>
         <li>Host-role CLI use by approved AI assistants (see §4.5).</li>
-        <li>The read-only MCP surface, capped per §3.</li>
+        <li>The MCP surface — read verbs plus <code>capture</code>/<code>supersede</code>/<code>unsupersede</code>
+          (never <code>write</code>/rebuild/ingest) — capped per §3.</li>
         <li>The <strong>Cowork / sandbox-VM leg</strong> in its read+draft role, under §3.9a–c.</li>
       </ul>
     </div>
@@ -176,8 +177,9 @@
       reviews recommended severing this leg as the simplest path; deploying it is a deliberate scope
       choice and is the part of this memo that most wants the reviewer's own judgment.</td>
       <td><span class="pill open">ORG</span> <span class="pill gate">GATE</span></td></tr>
-    <tr><td>3.10</td><td><strong>Parser sandboxing (defense-in-depth).</strong> The five document parsers
-      are the main third-party attack surface; run ingestion in a low-privilege worker where feasible.</td>
+    <tr><td>3.10</td><td><strong>Parser sandboxing (defense-in-depth).</strong> The document/format parsers
+      (docx, email, html, image, pdf, pptx, tables, text, xlsx, zip) are the main third-party attack
+      surface; run ingestion in a low-privilege worker where feasible.</td>
       <td><span class="pill open">ORG</span> recommended, not blocking</td></tr>
   </table>
 
@@ -230,8 +232,8 @@
   </div>
 
   <table class="metatable">
-    <tr><td>Evidence base</td><td><code>docs/security-overview.html</code> · <code>docs/architecture-overview.html</code> · in-repo tests <code>tests/test_security_hardening_2026_07.py</code> (12 cases) · full suite 1091 passed</td></tr>
-    <tr><td>Hardening commits</td><td><code>65a2bb8</code> (correctness + doc corrections) · <code>c79d8a9</code> (supply chain)</td></tr>
+    <tr><td>Evidence base</td><td><code>docs/security-overview.html</code> · <code>docs/architecture-overview.html</code> · in-repo tests <code>tests/test_security_hardening_2026_07.py</code> (12 cases) · full suite (7,667 tests collected as of 2026-09-26; see CI on <code>master</code> for current pass/fail)</td></tr>
+    <tr><td>Hardening commits</td><td><code>65a2bb8</code> (correctness + doc corrections) · <code>c79d8a9</code> (supply chain: hash-pinned lock, CVE gate, SBOM, model pin, managed mode) · see <code>CHANGELOG.md</code> for later changes</td></tr>
     <tr><td>Reviews</td><td>in-house + independent cross-family (Codex gpt-5.6-sol), both source-verified</td></tr>
     <tr><td>Status</td><td>Draft for approver sign-off — not an authorization until signed above</td></tr>
   </table>

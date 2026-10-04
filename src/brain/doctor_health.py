@@ -260,12 +260,15 @@ def check_audit_content_drift(vault: Path) -> dict:
                 raw={"total": total, "unexplained": 0, "coverage": cov})
 
 
-#: Quarantine buckets whose cause is an operator action on THIS host, not a
-#: judgement call about the file. Named in the row so the fix is one step away.
+#: Quarantine buckets with a known one-step fix, named in the row: an
+#: operator action on THIS host, or an unlocked copy of the file.
 _RECOVERABLE_BUCKETS = {
     "pdf_no_text_layer": "scanned PDF — needs the local OCR engine",
     "empty_or_low_text_density": "no text found — often a picture-only deck, needs OCR",
     "pdf_encrypted": "needs a password (a permissions-only file now opens by itself)",
+    "office_encrypted": "encrypted Office file — the vault cannot read it; "
+                        "keep the original where it came from (save an "
+                        "unlocked copy to ingest it)",
 }
 
 

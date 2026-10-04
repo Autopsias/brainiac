@@ -204,6 +204,21 @@ _QUARANTINE_REMEDY = {
         "the PDF is password-protected. Save an unlocked copy into `inbox/`",
 }
 
+#: Reasons whose file can NEVER be read on this host, with the words the
+#: finding uses. Kept OUT of `_QUARANTINE_REMEDY` on purpose (2026-09-27): a
+#: test pins that table's keys EQUAL to
+#: `remediation.ALLOWED_MECHANICAL_QUARANTINE_REASONS`, the extract_retry
+#: allow-list, and the generic fallback below — "move it back to `inbox/`" —
+#: is wrong advice for a file no retry can open. SOURCE-NEUTRAL: ingest also
+#: takes hand drops, and the public build has no mail lane.
+_QUARANTINE_TERMINAL = {
+    "office_encrypted":
+        "encrypted — the vault cannot read it; keep the original where it "
+        "came from. Nothing to retry: save an unlocked copy into `inbox/` only "
+        "if its text should be in the vault, else move the file to "
+        "`_quarantine/_resolved/`",
+}
+
 
 def ingest_quarantine_findings(
     ingest_report: dict[str, Any], vault: Path
@@ -246,7 +261,7 @@ def ingest_quarantine_findings(
             f"open the directory below to see them)",
             "a quarantined file never reaches `raw/` and is never retrievable — "
             "it is not in the vault, and nothing else reports this within the month",
-            _QUARANTINE_REMEDY.get(
+            _QUARANTINE_REMEDY.get(reason) or _QUARANTINE_TERMINAL.get(
                 reason, "inspect the file and its `.reason.txt` sidecar, fix the "
                         "cause, then move it back to `inbox/` and run `brain sync`"),
             str(vault / "inbox" / "_quarantine" / reason),

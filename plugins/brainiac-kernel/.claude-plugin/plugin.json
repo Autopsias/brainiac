@@ -2,7 +2,7 @@
   "name": "brainiac-kernel",
   "displayName": "Brainiac — Kernel Skills",
   "description": "Daily-use skills for a Brainiac vault: search, capture, curate, promote and style-check notes in a local Markdown second brain.",
-  "version": "0.20.40",
+  "version": "0.20.41",
   "author": {
     "name": "Brainiac maintainers"
   },

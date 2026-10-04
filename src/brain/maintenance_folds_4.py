@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import datetime
 import re
-from pathlib import Path
 from typing import Any
 import hashlib
 import os
@@ -321,100 +320,6 @@ def render_autodedup_hot_entry(result: dict[str, Any], today: datetime.date) -> 
     return "\n".join(lines) + "\n"
 
 
-def auto_para(vault: Path, audit: Any | None = None) -> dict[str, Any]:
-    """PAR-01: file brain/ notes into their PARA zone by METADATA, not by a
-    human dragging files. Two deliberately small rules:
-
-    - ``type: project``          -> ``brain/projects/``
-    - ``is_latest_version: false`` (retired by a supersession chain)
-                                  -> ``brain/archive/``
-
-    Generated views (``type: index``/``moc``) and everything else stay where
-    they are. Moves are by-id-safe: wikilinks target ids, not paths, and the
-    next index sync reconciles paths.
-
-    THE MOVE IS AUDITED (2026-08-18). The audit chain is keyed on PATH, so a
-    bare ``rename`` broke a correctly-signed note in two directions at once:
-    ``content_drift`` reported the old path ``missing`` (unexplained drift, so
-    the health verdict went DEGRADED) and ``unsigned_notes`` counted the new
-    path as never signed (an absolute ratchet, so the invariant regressed and
-    stayed regressed). Measured on a live reference vault, where one note written
-    through ``brain write`` was reported unsigned by the same engine that had
-    just signed it. "The next sync reconciles paths" was true of the INDEX and
-    false of the CHAIN.
-
-    ``audit`` is the host's ``AuditChain``. Signing happens BEFORE the rename
-    and a key failure SKIPS the move (fail closed, exactly like ``write_note``)
-    — a fold that cannot sign must never produce an unsigned note. Called
-    without a chain (tests, the VM leg) it reports every candidate as skipped
-    rather than moving unsigned."""
-    from . import frontmatter as fm
-    from .audit import KeyUnavailable
-    from .notes import sha256_file
-
-    brain_dir = vault / "brain"
-    report: dict[str, Any] = {"moved": [], "errors": [], "skipped_unsigned": []}
-    if not brain_dir.is_dir():
-        return report
-    for p in sorted(brain_dir.rglob("*.md")):
-        if p.name in ("backlinks.md", "catalog.md", "index.md"):
-            continue
-        try:
-            text = p.read_text(encoding="utf-8")
-            meta, _ = fm.parse_text(text)
-        except Exception as exc:  # noqa: BLE001
-            report["errors"].append({"file": str(p), "error": str(exc)})
-            continue
-        ntype = str(meta.get("type") or "")
-        if ntype in ("index", "moc"):
-            continue
-        retired = str(meta.get("is_latest_version")).lower() == "false"
-        dest_zone = ("archive" if retired
-                     else "projects" if ntype == "project" else None)
-        if dest_zone is None or p.parent.name == dest_zone:
-            continue
-        dest_dir = brain_dir / dest_zone
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / p.name
-        if dest.exists():
-            report["errors"].append({"file": str(p), "error": f"collision at {dest}"})
-            continue
-        old_rel = p.relative_to(vault).as_posix()
-        new_rel = dest.relative_to(vault).as_posix()
-        note_id = str(meta.get("id") or p.stem)
-        if audit is None:
-            report["skipped_unsigned"].append(
-                {"id": note_id, "reason": "no audit chain — refusing to move "
-                                          "a signed note to an unsigned path"})
-            continue
-        # Sign the destination FIRST. If this raises, nothing moved.
-        # `sha256_file(p)`, NOT `sha256_text(text)` (M-7, 2026-09-02):
-        # `text` came through `read_text()`, which strips every `\r`, and
-        # `content_drift` compares the RAW BYTES. The rename does not
-        # rewrite the file, so the source path's bytes ARE the destination's
-        # — signing the text hash made a CRLF note report permanent
-        # UNEXPLAINED drift the moment this fold correctly filed it.
-        try:
-            audit.append(verb="write", path=new_rel,
-                         reason=f"auto-para: filed {note_id} into {dest_zone}/",
-                         content_sha256=sha256_file(p))
-        except KeyUnavailable as exc:
-            report["skipped_unsigned"].append({"id": note_id, "reason": str(exc)})
-            continue
-        try:
-            p.rename(dest)
-        except OSError as exc:
-            audit.append(verb="write_failed", path=new_rel,
-                         reason=f"auto-para rename failed: {type(exc).__name__}: {exc}")
-            report["errors"].append({"file": str(p), "error": str(exc)})
-            continue
-        # Retire the old path so content_drift stops reporting it `missing`.
-        audit.append(verb="delete", path=old_rel,
-                     reason=f"auto-para: {note_id} moved to {new_rel}")
-        report["moved"].append({"id": note_id, "to": f"brain/{dest_zone}/"})
-    return report
-
-
 # ---------------------------------------------------------------------------
 # Decision-capture nudge (DEC-01, 2026-07-11). Measured failure, G&P
 # benchmark round 6: a real perimeter decision lived FIVE DAYS in a slide
@@ -463,10 +368,12 @@ def decision_capture_scan(
         "COALESCE(NULLIF(effective_date,''), NULLIF(document_date,''), created) "
         "FROM notes WHERE type != 'decision' AND created >= ? "
         "AND COALESCE(is_latest_version,'') != 'false' "
-        "AND id NOT LIKE '%owner-interview%' "
         "ORDER BY created DESC", (since,)).fetchall()
+    from .interview import is_loop_id
     out: list[dict[str, Any]] = []
     for nid, ntype, body, vdate in rows:
+        if is_loop_id(nid):
+            continue
         m = _DECISION_LANGUAGE_RE.search(body or "")
         if not m:
             continue

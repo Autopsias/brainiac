@@ -174,10 +174,17 @@ def promote_scan_finding_key(candidates: list[dict[str, Any]]) -> str:
 def regressions_finding_key(regressions: list[dict[str, Any]]) -> str:
     """Content hash of the corpus-invariants regression set, for the hot.md
     idempotency key — same treatment as ``promote_scan_finding_key``:
-    identical findings share a key, a changed set still logs."""
+    identical findings share a key, a changed set still logs.
+
+    Hashes only the fields the hot.md entry renders. ``summary`` is left out:
+    the lane-health regression embeds a live backlog count in it, so the key
+    changed every run while the rendered entry stayed identical (retro
+    signature ``duplicate-findings``, 2026-09-14 in the field)."""
     if not regressions:
         return "none"
-    body = json.dumps(regressions, sort_keys=True, default=str)
+    shown = [{k: r.get(k) for k in ("metric", "value", "floor", "tolerance")}
+             for r in regressions]
+    body = json.dumps(shown, sort_keys=True, default=str)
     return hashlib.sha256(body.encode("utf-8")).hexdigest()[:12]
 
 

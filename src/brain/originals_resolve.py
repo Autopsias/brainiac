@@ -122,6 +122,9 @@ ORIGINALS_REL = ("raw", "originals")
 DOCUMENT_SUFFIXES = frozenset({
     ".md", ".docx", ".html", ".pdf", ".pptx", ".png",
     ".xlsx", ".txt", ".csv", ".jpeg", ".eml", ".zip",
+    # Ingest reads .xlsm since 2026-10-03 (macro-enabled Excel from the COS
+    # attachment lane), so its archived original must resolve too.
+    ".xlsm",
 })
 
 #: The ``cmd`` this module writes into the SEC-06 log. Names the EVENT, not an

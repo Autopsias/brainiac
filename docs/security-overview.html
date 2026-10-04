@@ -347,7 +347,7 @@
   <table>
     <tr><th>Surface</th><th>Exposure</th><th>Notes</th></tr>
     <tr><td><code>brain</code> CLI</td><td>local shell only</td><td>no network listener; argv/env are the input surface</td></tr>
-    <tr><td>MCP adapter (<code>brain-mcp</code>)</td><td>stdio, spawned by the AI client</td><td><strong>read verbs plus one quasi-write</strong> — 14 read tools (<code>search</code>, <code>get</code>, <code>recent</code>, <code>dossier</code>, <code>grep</code>, … — the allow-list is <code>mcp_adapter.READ_TOOLS</code>) and <code>capture</code> (0.20.32), which stages the caller's content through the host's draft lane: an existing id is refused as <code>duplicate-id</code>, the note lands marked <code>status: draft</code>, <code>provenance.trust: untrusted</code> (<code>docs/security-acceptances.md</code> A-06, “The inbound mirror”). <code>write</code>, <code>rebuild</code>, <code>ingest</code>, <code>sync</code>, <code>snapshot</code> are never reachable; an egress ceiling clamps any requested tier on the read leg</td></tr>
+    <tr><td>MCP adapter (<code>brain-mcp</code>)</td><td>stdio, spawned by the AI client</td><td><strong>read verbs plus three write-adjacent tools</strong> (updated — was one) — 14 read tools (<code>search</code>, <code>get</code>, <code>recent</code>, <code>dossier</code>, <code>grep</code>, … — the allow-list is <code>mcp_adapter.READ_TOOLS</code>) and <code>capture</code> (0.20.32), <code>supersede</code>, <code>unsupersede</code> (added 0.20.39, SUP-01) — see <code>mcp_adapter.WRITE_TOOLS</code>. <code>capture</code> stages the caller's content through the host's draft lane: an existing id is refused as <code>duplicate-id</code>, the note lands marked <code>status: draft</code>, <code>provenance.trust: untrusted</code> (<code>docs/security-acceptances.md</code> A-06, “The inbound mirror”). <code>supersede</code>/<code>unsupersede</code> retire or restore a note version, host-only-signed, and apply the link only when the vault itself relates the two ids — an unrelated pair is staged as an owner proposal, never applied silently. <code>write</code>, <code>rebuild</code>, <code>ingest</code>, <code>sync</code>, <code>snapshot</code> are never reachable; an egress ceiling clamps any requested tier on the read leg (default: the full vault, same as the host CLI — see §6.3)</td></tr>
     <tr><td>Scheduled tasks (2)</td><td>launchd / Task Scheduler</td><td>fixed argv, no user input; the only persistence</td></tr>
     <tr><td>VirtioFS shared mount</td><td>host↔VM file sharing</td><td>the VM sees the vault folder; containment for sensitive tiers is <code>brain project</code> (a filtered copy that physically omits them) — the gate alone is an egress <em>decision</em>, not containment</td></tr>
     <tr><td>Inbox ingestion</td><td>file parsing</td><td>PDF/DOCX/PPTX/XLSX/image parsers run on untrusted files (§6.4); unknown extensions quarantine rather than parse</td></tr>
@@ -441,13 +441,18 @@
       the audit chain (writes are signed), <strong>not</strong> the gate. A deployment needing a
       narrower host default sets <code>$BRAIN_DEFAULT_MAX_TIER</code> per machine — a conscious
       owner policy decision, documented as such.</p>
-    <p>Two corollaries a reviewer should log explicitly: (a) the <strong>MCP read surface is a
-      separate LLM-facing boundary and defaults to Internal</strong> — raise
-      <code>$BRAIN_MAX_EGRESS_TIER</code> only via managed config the AI client cannot edit; and
+    <p>Two corollaries a reviewer should log explicitly: (a) <strong>corrected (was wrong) — the MCP
+      read surface is a separate LLM-facing boundary, but since owner ruling 2026-08-17 it
+      defaults to the FULL VAULT, the same as the host CLI</strong> — it runs on the host, as the
+      owner, over a single-owner vault, so it shares the host's trust context;
+      <code>$BRAIN_MAX_EGRESS_TIER</code> unset means the full vault, and only a SET value narrows it
+      (an unrecognised value fails closed to <code>Internal</code>, never to the permissive default).
+      Narrow it via managed config the AI client cannot edit if a capped MCP surface is wanted; and
       (b) a host caller can still change a narrowed host default with <code>--max-tier</code>, while
       the VM caller is hard-clamped to <code>$BRAIN_VM_MAX_EGRESS_TIER</code>. For the strongest
       untrusted-leg containment, use <code>brain project</code> (physical omission) as well as the
-      cap.</p>
+      cap. (Code: <code>src/brain/mcp_verbs.py:_egress_ceiling_tier</code>,
+      <code>src/brain/classification.py:HOST_MCP_DEFAULT_MAX_TIER</code>.)</p>
   </div>
 
   <div class="risk">
@@ -566,8 +571,8 @@
     <li><strong>Harness tool policy:</strong> review which AI harnesses hold BOTH vault access and
       outbound tools (web search, arbitrary shell) — this is the §6.1/§6.2 residual path and is
       configured <em>outside</em> Brainiac.</li>
-    <li><strong>Dependency posture:</strong> <code>pip audit</code> (or equivalent) on the ~10 runtime
-      deps, with special attention to the five document parsers (§6.4).</li>
+    <li><strong>Dependency posture:</strong> <code>pip audit</code> (or equivalent) on the ~14 runtime
+      deps (<code>pyproject.toml</code>), with special attention to the five document parsers (§6.4).</li>
     <li><strong>Static-scan triage:</strong> <code>docs/SECURITY_NOTES.md</code> records every accepted
       scanner finding with per-site rationale; re-verify rather than re-accept.</li>
   </ol>
@@ -579,7 +584,7 @@
     <tr><td><code>BRAIN_MANAGED=1</code></td><td>corporate lockdown: ignores env/shell key custody (keystore-only), refuses <code>brain update</code> self-update</td><td>off</td></tr>
     <tr><td><code>--role vm</code> / <code>BRAIN_ROLE=vm</code></td><td>read+draft-only mode, snapshot reads, <code>Internal</code> cap</td><td>host role</td></tr>
     <tr><td><code>--max-tier</code> / <code>BRAIN_DEFAULT_MAX_TIER</code> / <code>BRAIN_VM_MAX_EGRESS_TIER</code></td><td>host per-call/default cap; VM requests are hard-clamped to the operator-owned VM ceiling (§2.1)</td><td>host: full vault (MNPI); VM ceiling: Internal</td></tr>
-    <tr><td><code>BRAIN_MAX_EGRESS_TIER</code> (MCP)</td><td>hard server-side ceiling for the MCP read surface; an unset/invalid value fails closed to the default</td><td><strong>Internal</strong> — explicitly raise only for an approved MCP server</td></tr>
+    <tr><td><code>BRAIN_MAX_EGRESS_TIER</code> (MCP)</td><td>hard server-side ceiling for the MCP read surface; unset means the full vault (same as the host CLI, owner ruling 2026-08-17); a set-but-unrecognised value fails closed to <code>Internal</code></td><td><strong>full vault (MNPI)</strong> — narrow to <code>Internal</code> or below for a capped MCP server</td></tr>
     <tr><td><code>BRAIN_AUDIT_KEY_CMD</code></td><td>external signing-key custody command (shell) — disable on managed builds (§6.6)</td><td>Keychain / Credential Manager</td></tr>
     <tr><td><code>BRAIN_ENCRYPTION_KEY_CMD</code> + module enable</td><td>AES-256-GCM — <strong>backups only</strong> today, not the live index/vault (§6.8)</td><td>off (FDE baseline)</td></tr>
     <tr><td><code>BRAIN_EMBEDDER=hash</code></td><td>fully-offline embedder (no model download)</td><td><code>auto</code> (bge-m3-int8)</td></tr>

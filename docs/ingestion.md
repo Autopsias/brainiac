@@ -23,9 +23,9 @@ the JSON report.
 | Extension(s) | Handler | Notes |
 |---|---|---|
 | `.pdf` | pypdf | text extraction; encrypted/no-text-layer PDFs quarantine |
-| `.docx` | python-docx | paragraphs + Markdown tables |
-| `.pptx` | python-pptx | slide text |
-| `.xlsx` | openpyxl | one Markdown table per sheet; cached formula values preferred |
+| `.docx` | python-docx | paragraphs + Markdown tables; an encrypted file quarantines as `office_encrypted` |
+| `.pptx` | python-pptx | slide text; an encrypted file quarantines as `office_encrypted` |
+| `.xlsx` | openpyxl | one Markdown table per sheet; cached formula values preferred; an encrypted file quarantines as `office_encrypted` |
 | `.txt` `.md` `.markdown` `.csv` | stdlib | pass-through |
 | `.png` `.jpg` `.jpeg` `.webp` `.gif` `.bmp` `.tiff` | Pillow (+ optional pytesseract) | metadata always; OCR text ONLY when a local `pytesseract` + tesseract binary are both present — **never cloud OCR**, no cloud code path exists in this kernel at all. Missing OCR degrades to a metadata-only note, never a quarantine. |
 | `.eml` | stdlib `email` | headers + body (`text/plain`, falling back to a stripped `text/html`) + an attachment manifest. Each attachment **re-enters this same dispatcher** as its own ingest candidate (bounded — see Recursion below). |
@@ -33,6 +33,13 @@ the JSON report.
 | `.zip` | stdlib `zipfile` | bounded, Zip-Slip-hardened member expansion (below); each member **re-enters this same dispatcher** |
 
 Any other extension quarantines with reason `no_handler_for_extension`.
+
+**An encrypted Office file is not a broken one (2026-09-27).** A password- or
+rights-protected `.docx`/`.pptx`/`.xlsx` is an OLE container holding an
+`EncryptedPackage` stream, not a zip, so no handler can read it. It quarantines
+as `office_encrypted` with a `.reason.txt` that says so, and nothing retries
+it. Save an unlocked copy into `inbox/` if its text belongs in the vault.
+
 `brain ingest --dry-run --json` (or the drop-zone `capability_report()`)
 shows which handlers are currently available given installed dependencies.
 

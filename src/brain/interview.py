@@ -69,7 +69,10 @@ ROW_KEYS = frozenset({
 OPTIONAL_ROW_KEYS = frozenset({"context"})
 OPEN, ANSWERED, EXPIRED, SKIPPED = "open", "answered", "expired", "skipped"
 _KEY_RE = re.compile(r"^iq-[0-9a-f]{12}$")
-_ACTION_RE = re.compile(r"^[a-z]+(:[A-Za-z0-9._-]{1,120})?$")
+# A `link:` action carries a vault note id, so its bound is the file-name
+# limit, not a guess: 120 refused the 2026-09-29 sheet, whose orphan
+# questions named notes of 133 and 141 characters (the vault's longest: 164).
+_ACTION_RE = re.compile(r"^[a-z]+(:[A-Za-z0-9._-]{1,255})?$")
 
 
 # --------------------------------------------------------------------------
@@ -149,8 +152,19 @@ def is_loop_id(note_id: Any) -> bool:
     """A note the interview lane wrote about ITSELF: an owner-interview record,
     or a decision minted from an answer about one. Asking the owner about it
     quotes his own earlier answer back at him (owner, 2026-09-22, 09-24 and
-    09-25: "gibberish", "cryptic", "impossible to answer")."""
-    return "owner-interview" in str(note_id or "")
+    09-25: "gibberish", "cryptic", "impossible to answer").
+
+    By SHAPE, never a substring (review 2026-09-29): a real source named
+    `...-owner-interview-prep-hr` is evidence, not the lane talking."""
+    return bool(_LOOP_ID_RE.fullmatch(str(note_id or "")))
+
+
+#: `interview_apply._drop_record` names the file `owner-interview-<date>-<HHMMSS>`
+#: (once `<date>` only) and ingest prefixes the note id with its own date; a
+#: decision minted from an answer ABOUT one quotes that id in its slug.
+_LOOP_ID_RE = re.compile(
+    r"(?:\d{4}-\d{2}-\d{2}-)?owner-interview-\d{4}-\d{2}-\d{2}(?:-\d{6})?"
+    r"|decision-.*owner-interview.*")
 
 
 def close_loop_artifacts(state: dict[str, Any], today: _dt.date) -> int:

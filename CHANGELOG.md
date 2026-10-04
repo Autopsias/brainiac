@@ -7,8 +7,59 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.41] — 2026-10-04
+### Added
+- An opt-in Codex Sunday synthesis adapter for hosts without Claude CLI.
+  Structured proposals are locally validated, sanitized, signed, indexed and
+  published; cloud export requires explicit consent and defaults to Internal.
+  See `docs/operations/codex-synthesis.md` for scope and manual launchd setup.
+  (Proposed in public PR #35.)
+
+### Fixed
+- **An encrypted Office file is a terminal negative, not an extraction
+  error.** A rights-protected `.docx`/`.pptx`/`.xlsx` is an OLE container
+  holding an `EncryptedPackage`, not a zip. Ingest now quarantines it as
+  `office_encrypted` once and raises one owner-facing alert, instead of
+  reporting an extraction error on every run. The OLE directory walk follows
+  the DIFAT chain, so a large encrypted file is also recognised.
+- **`.xlsm` workbooks ingest.** They go through the `.xlsx` handler (openpyxl
+  never runs macros), the encryption check covers them, and the originals
+  resolver accepts them. They used to sit in `no_handler_for_extension`.
+- **Two false alerts are gone.** The corpus-invariants entry no longer
+  changes its key with a live backlog count, so the weekly retro stops filing
+  duplicate findings; and the search self-test warms the embedder before it
+  times a query, so `trend:selftest_ms` no longer fires on a cold load.
+- **Auto-PARA moves are filed before the hourly sync and never re-sign
+  changed bytes.** The fold plans outside the writer lock, applies inside it,
+  and moves a note only when its bytes match what the audit chain signed at
+  the old path; anything else stays put and is reported. Invariants no
+  longer judge a moved note at its old path.
+- **The owner interview asks better questions.** The "still current?"
+  question never asks about, or appends to, a `raw/` source; an orphan
+  question offers the project note whose title or alias names its topic
+  first; and a link option may name any note id up to 255 characters (a
+  133-character id refused a whole morning sheet).
+- **Supersession edge cases.** A deferred deliverable anchor consumes its
+  `.supersedes` sidecar, so it cannot declare a supersession for the next
+  file of that name; and the MCP broker's `unsupersede` refuses and names
+  `brain unsupersede` on the host, because relatedness cannot guard an undo.
+- **The Codex synthesis script runs when launchd starts it, and waits out the
+  hourly sync.** As proposed it had no `__main__` entry point and exited 0
+  without working; it also gave up at once on a busy writer lock. It now
+  waits up to 15 minutes for the lock.
+
+### Security
+- `pyjwt` 2.15.1, `urllib3` 2.8.0 and `pypdf` 6.19.0 in both `uv.lock` and the
+  hash-pinned `requirements.lock`, past the advisories `pip-audit` reported
+  (23 findings in 3 packages on the old lock, 0 on the new one).
+
 ## [0.20.40] — 2026-09-26
 ### Fixed
+- **The interview stops asking about its own notes.** A tension or decision
+  row whose target or evidence was an owner-interview note quoted the owner's
+  earlier answer back at him. The detectors no longer mint such rows, and
+  every open one is closed on the next run. (Added after the release: the
+  line was missing from the 0.20.40 notes.)
 - **`brain interview` asks questions again.** The nightly interview asked
   nothing from 2026-09-23 on: the stale-note finder sampled 10 notes and
   found 9 undated ones, which it skips, and the orphan finder spent its

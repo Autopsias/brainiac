@@ -38,8 +38,8 @@ class DailyFoldsMixin:
             self.remediation_fold(run)
             self.version_chain_fold(run)
             self.auto_dedup_fold(run)
-            self.auto_para_fold(run)
-            # AFTER auto_para/navigation and BEFORE the publish: the ring is
+            # auto_para runs inside sync_reconcile_fold, before its sync.
+            # AFTER the first sync and BEFORE the publish: the ring is
             # derived from note frontmatter, so it must see this run's
             # admissions, and the file it writes lives under overlay/ where
             # the snapshot publish picks it up in the same run.

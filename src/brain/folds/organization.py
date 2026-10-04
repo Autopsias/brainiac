@@ -1,4 +1,4 @@
-"""Apply automatic vault organization after sync."""
+"""Apply automatic vault organization around the first sync."""
 
 from __future__ import annotations
 
@@ -6,14 +6,31 @@ from pathlib import Path
 
 from .context import MaintenanceRun
 from .. import maintenance
+from ..lock import vault_writer_lock
 
 
 class OrganizationFoldsMixin:
     """Provide post-sync metadata organization folds."""
 
     def sync_reconcile_fold(self, run: MaintenanceRun) -> None:
-        """Drain and reconcile the writable index before organization folds."""
-        result = self.sync(drain=True, publish=False)
+        """File notes into PARA zones, then drain and reconcile the index.
+
+        auto_para RENAMES notes, so its moves land BEFORE the run's one
+        existing sync, which reconciles them before any later fold reads the
+        index. Measured 2026-09-27: with auto_para AFTER this sync, the same
+        run's `unsigned_notes` judged a moved note by its old path (last
+        chain entry a `delete`) and regressed. The read-only PLAN (one index
+        query; no note file is read) runs OUTSIDE the writer lock; only the
+        APPLY runs inside it, in the same re-entrant
+        acquisition as the sync. So an empty plan adds no lock time, and a
+        busy lock raises before any file is renamed or signed: the daily
+        branch skips cleanly. A note superseded later in this run (drain,
+        version_chain, auto_dedup) is filed on the next run.
+        """
+        plan = self._auto_para_plan(run)
+        with vault_writer_lock(self.vault, verb="sync"):
+            self.auto_para_fold(run, plan)
+            result = self.sync(drain=True, publish=False)
         run.results["sync"] = result
         added = result.get("added", 0)
         updated = result.get("updated", 0)
@@ -185,10 +202,25 @@ class OrganizationFoldsMixin:
                 )
             )
 
-    def auto_para_fold(self, run: MaintenanceRun) -> None:
-        """File notes into PARA zones according to their metadata."""
+    def _auto_para_plan(self, run: MaintenanceRun) -> dict:
+        """Read-only auto-PARA plan; a failure plans nothing and is reported."""
         try:
-            result = maintenance.auto_para(Path(self.vault), audit=self.audit)
+            return maintenance.auto_para_plan(Path(self.vault), self.index.conn)
+        except Exception as exc:
+            run.blocked.append(
+                maintenance.blocked_item(
+                    f"auto-PARA plan failed: {exc}",
+                    "filesystem",
+                    "next maintain run",
+                )
+            )
+            return {"moves": [], "errors": []}
+
+    def auto_para_fold(self, run: MaintenanceRun, plan: dict) -> None:
+        """Apply the planned PARA moves (caller holds the writer lock)."""
+        try:
+            result = maintenance.auto_para_apply(
+                Path(self.vault), plan, audit=self.audit)
             run.results["auto_para"] = result
             if result["moved"]:
                 run.auto_fixed.append(

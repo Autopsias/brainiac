@@ -440,6 +440,18 @@ _PREFIXES: tuple[tuple[str, Remedy], ...] = (
         note="threads whose body the porter can never read, so they are never "
              "archived, drafted or decided. Owner ruling 2026-09-06: they get "
              "their own list he clears by hand in Outlook")),
+    # Keyed by the NIGHT (2026-09-27, died 2026-09-29): each is new, the next
+    # night clears it. BANNER as above: nothing re-runs a night, no options.
+    ("cos-night-stopped:", Remedy(BANNER, note="the latest night stopped "
+        "before finishing its plan; the sheet banner names why and what never ran")),
+    ("cos-night-died:", Remedy(
+        BANNER, note="the latest night died mid-run and recorded nothing")),
+    # Keyed per declined LINE (2026-09-27; oversize 2026-09-30), 7 days. BANNER.
+    ("cos-attachment-encrypted:", Remedy(
+        BANNER, note="encrypted attachments the sweep declined — cannot be "
+                     "read; the original stays in Outlook")),
+    ("cos-attachment-oversize:", Remedy(BANNER, note="attachments above the "
+        "fetch limit, skipped; the original stays in Outlook")),
     ("cos-attachment-withheld:", Remedy(
         BANNER,
         note="ATT-03 holds a thread whose attachment bytes never reached a "

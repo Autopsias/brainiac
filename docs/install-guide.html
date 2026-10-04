@@ -89,7 +89,7 @@ https://raw.githubusercontent.com/Autopsias/brainiac/main/docs/install/LLM-INSTA
     <a href="#which">0 · Which path do I take?</a><br>
     <a href="#new-mac">1 · Brand-new machine (macOS/Linux)</a><br>
     <a href="#windows">2 · Brand-new machine (Windows)</a><br>
-    <a href="#claude">3 · Fastest: 3 commands in Claude Code</a><br>
+    <a href="#claude">3 · Fastest: 2 commands in Claude Code</a><br>
     <a href="#existing">4 · Existing machine → new or existing project</a><br>
     <a href="#model">5 · The embedding model (when the download happens)</a><br>
     <a href="#verify">6 · Verify, update, uninstall</a><br>
@@ -102,7 +102,7 @@ https://raw.githubusercontent.com/Autopsias/brainiac/main/docs/install/LLM-INSTA
     <tr><th>You are…</th><th>Take</th></tr>
     <tr><td>on a new Mac/Linux machine, comfortable with a terminal</td><td><a href="#new-mac">§1</a> — one bootstrap script</td></tr>
     <tr><td>on Windows</td><td><a href="#windows">§2</a> — same script in PowerShell</td></tr>
-    <tr><td>already living in Claude Code</td><td><a href="#claude">§3</a> — 3 slash-commands, everything managed for you</td></tr>
+    <tr><td>already living in Claude Code</td><td><a href="#claude">§3</a> — 2 slash-commands, everything managed for you</td></tr>
     <tr><td>already installed, adding another project/vault</td><td><a href="#existing">§4</a> — no reinstall, ever</td></tr>
     <tr><td>a Node person</td><td><code>npx brainiac-install</code> — same result as §1, zero prerequisites beyond Node</td></tr>
     <tr><td>policy-bound to plain PyPI</td><td><code>uv tool install "brainiac-cli[mcp]"</code> (or pipx/pip) — engine only, see <a href="#matrix">§7</a> for what you wire up yourself</td></tr>
@@ -130,7 +130,7 @@ https://raw.githubusercontent.com/Autopsias/brainiac/main/docs/install/LLM-INSTA
     <rect x="430" y="180" width="320" height="34" rx="8" class="b"/>
     <text x="445" y="202" class="t">Windows</text><text x="740" y="202" text-anchor="end" class="ts">.\install.ps1 (PowerShell)</text>
     <rect x="430" y="222" width="320" height="34" rx="8" class="b"/>
-    <text x="445" y="244" class="t">Inside Claude Code</text><text x="740" y="244" text-anchor="end" class="ts">3 /plugin commands</text>
+    <text x="445" y="244" class="t">Inside Claude Code</text><text x="740" y="244" text-anchor="end" class="ts">2 /plugin commands</text>
     <path d="M180 234 L180 262 L370 262" class="a" fill="none"/>
     <path d="M590 256 L590 262 L410 262" class="a" fill="none"/>
     <line x1="390" y1="262" x2="390" y2="270" class="a"/><polygon points="386,268 394,268 390,276" class="ah"/>
@@ -163,9 +163,14 @@ irm https://raw.githubusercontent.com/Autopsias/brainiac/main/install.ps1 -OutFi
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 # → if it says PATH was updated, open a NEW terminal before continuing
 
-# 2. vault + first search — init also registers the hourly maintenance task
+# 2. vault + first search
 $env:BRAIN_VAULT = 'C:\ws\vault'; brain init --full --apply
-$env:BRAIN_VAULT = 'C:\ws\vault'; brain search "welcome" --json</code></pre>
+$env:BRAIN_VAULT = 'C:\ws\vault'; brain search "welcome" --json
+
+# 3. register the maintenance task — install.ps1 sets up the engine only,
+#    so this is a separate step, once per vault, from a repo clone:
+git clone https://github.com/Autopsias/brainiac.git
+.\brainiac\scripts\install-brief-windows.ps1 -VaultPath C:\ws\vault</code></pre>
   <div class="callout"><strong>Why <code>-ExecutionPolicy Bypass</code>:</strong> Windows ships with
     the default policy <code>Restricted</code>, which refuses to run <em>any</em> <code>.ps1</code>
     file. The flag applies to that one process only — it never changes the machine or user policy.
@@ -174,13 +179,17 @@ $env:BRAIN_VAULT = 'C:\ws\vault'; brain search "welcome" --json</code></pre>
     installer prints the exact directory to add to your User PATH. Open a new terminal first — a
     PATH change never reaches an already-open one.</div>
   <div class="callout"><strong>Known gap on Windows:</strong> the weekly <code>brain-synthesis</code>
-    task is not auto-registered (only the hourly umbrella is). Everything else — capture, search,
-    maintenance folds — is at parity.</div>
+    task has no Windows registration yet. Step 3 above registers the hourly task as a Windows
+    Scheduled Task named <code>brain-daily-brief-&lt;id&gt;</code>. If Claude Code runs on the same machine,
+    <code>/brainiac-install</code> (§3) does all of this, including the task, in one step.</div>
 
-  <h2 id="claude">3 · Fastest path: 3 commands inside Claude Code</h2>
-<pre><code>/plugin marketplace add Autopsias/brainiac
-/plugin install brainiac-manager@brainiac
+  <h2 id="claude">3 · Fastest path: 2 commands inside Claude Code</h2>
+<pre><code>/plugin install brainiac-manager --marketplace Autopsias/brainiac
 /brainiac-install ~/my-brain</code></pre>
+  <p>The one-line install needs Claude Code 2.1.275 or later. On an older version, run
+    <code>/plugin marketplace add Autopsias/brainiac</code>, then
+    <code>/plugin install brainiac-manager@brainiac</code>, before <code>/brainiac-install</code>.
+    In Claude Desktop, add the marketplace under Customize › Plugins instead.</p>
   <p>The manager plugin's install skill does everything §1 does <em>plus</em> the surrounding
     lifecycle: engine install, vault init + index, the hourly maintenance task, audit-key
     provisioning in your OS keychain, and the workspace registry entry. Later:

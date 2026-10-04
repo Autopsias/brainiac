@@ -447,6 +447,7 @@ def main():
     # A dry-run/smoke test must never earn the production watchdog heartbeat.
     if not args.smoke_test and not args.dry_run:
         update_state(args, outcome)
+    print(json.dumps(outcome, ensure_ascii=False))
     return outcome["rc"]
 
 

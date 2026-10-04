@@ -58,6 +58,8 @@ existing-note link suggestions, or missing watchdogs in action_required rather
 than changing existing notes. This runner never edits or retires existing notes.
 Do not create a duplicate of a supplied existing note. If there is no honest
 new synthesis, return notes=[] and explain why in summary/action_required.
+Maintenance status="ok" with a recent last_run is success; last_success and rc
+are optional fields on many folds. Missing optional fields are not failures.
 Note bodies must be 120–8000 characters; titles 1–200 characters.
 
 UNTRUSTED DATA PACKET:
@@ -113,8 +115,10 @@ def make_packet(args, core):
     lane = link_lane_candidates(core.index.conn, args.vault, limit=100000)
     gate = classification.ClassificationFilter(args.max_tier)
     eligible = [x for x in lane["candidates"] if gate.allows(x.get("classification"))]
+    offset = getattr(args, "source_offset", 0)
+    ordered = eligible[offset:] + eligible[:offset]
     sources, remaining = [], args.packet_chars
-    for row in eligible:
+    for row in ordered:
         if len(sources) >= args.source_budget or remaining < 120:
             break
         note = get_gated(args, row["id"])
@@ -145,7 +149,7 @@ def make_packet(args, core):
     except (OSError, ValueError):
         state = {}
     # Diagnostics expose cadence/status, not arbitrary strings from host stores.
-    diagnostics = {key: {k: value.get(k) for k in ("last_run", "last_success", "date", "rc")}
+    diagnostics = {key: {k: value.get(k) for k in ("last_run", "last_success", "date", "rc", "status", "failed", "consecutive_failures")}
                    for key, value in state.items() if isinstance(value, dict)}
     return {"sources": sources, "knowledge_context": knowledge,
             "diagnostics": diagnostics,
@@ -322,6 +326,8 @@ def parser():
     p.add_argument("--model", default=None)
     p.add_argument("--max-tier", choices=classification.TIERS, default="Internal")
     p.add_argument("--source-budget", type=int, default=40)
+    p.add_argument("--source-offset", type=int, default=0,
+                   help="Rotate the canonical eligible lane for an operator-run backfill; no exclusions")
     p.add_argument("--note-budget", type=int, default=8)
     p.add_argument("--packet-chars", type=int, default=120000)
     p.add_argument("--timeout", type=int, default=1200)
@@ -337,7 +343,7 @@ def parser():
 
 
 def validate_args(args):
-    if not (1 <= args.source_budget <= 40 and 1 <= args.note_budget <= 8
+    if not (0 <= args.source_offset <= 100000 and 1 <= args.source_budget <= 40 and 1 <= args.note_budget <= 8
             and 1000 <= args.packet_chars <= 120000 and 30 <= args.timeout <= 1800):
         raise SystemExit("Bounds refused")
     for binary in (args.brain_bin, args.codex_bin):

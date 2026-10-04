@@ -22,6 +22,9 @@ the hourly folds for the wider health picture.
 Defaults: at most 40 sources, 8 new notes, 120,000 source characters (16,000
 per source), 12 knowledge notes (2,500 characters each), and 20 minutes of model
 time. Short extraction stubs are skipped without starving later sources.
+For an operator-run backfill, `--source-offset N` rotates the canonical eligible
+lane without excluding sources or changing coverage counts; the weekly default
+remains worst-first at offset zero.
 Classification ceiling defaults to `Internal`. Export requires the explicit
 `--allow-cloud-synthesis` operator opt-in, including for `--dry-run`.
 `--max-tier MNPI` allows every classification, but must be an informed owner

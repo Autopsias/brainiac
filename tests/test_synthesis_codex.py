@@ -8,6 +8,7 @@ import os
 import sys
 import contextlib
 import io
+import subprocess
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import brain_synthesis_codex as ws
@@ -15,6 +16,12 @@ from brain import frontmatter
 
 
 class SynthesisTests(unittest.TestCase):
+    def test_executable_entrypoint(self):
+        result = subprocess.run([sys.executable, str(Path(ws.__file__)), "--help"],
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("--allow-cloud-synthesis", result.stdout)
+
     def setUp(self):
         self.packet = {"sources": [{"id": "source-a", "body_sha256": "hash-a", "classification": "Internal"},
                                    {"id": "source-b", "body_sha256": "hash-b", "classification": "Confidential"}]}

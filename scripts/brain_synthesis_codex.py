@@ -59,6 +59,8 @@ than changing existing notes. This runner never edits or retires existing notes.
 Do not create a duplicate of a supplied existing note. If there is no honest
 new synthesis, return notes=[] and explain why in summary/action_required.
 Note bodies must be 120–8000 characters; titles 1–200 characters.
+Use each distinct set of source_ids for at most one note. Combine related
+claims from the same source set rather than repeating that set in several notes.
 
 UNTRUSTED DATA PACKET:
 {packet}
@@ -437,3 +439,9 @@ def main():
     # A dry-run/smoke test must never earn the production watchdog heartbeat.
     if not args.smoke_test and not args.dry_run:
         update_state(args, outcome)
+    print(json.dumps(outcome, ensure_ascii=False))
+    return outcome["rc"]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

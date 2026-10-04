@@ -121,6 +121,13 @@ class SynthesisTests(unittest.TestCase):
                 patch.object(ws.config, "maintain_state_path", return_value=Path("/nonexistent/state")):
             packet = ws.make_packet(args, core)
         self.assertEqual([x["id"] for x in packet["sources"]], ["usable"])
+        args.source_offset = 1
+        with patch.object(ws, "link_lane_candidates", return_value=lane), \
+                patch.object(ws, "get_gated", side_effect=get), \
+                patch.object(ws.config, "maintain_state_path", return_value=Path("/nonexistent/state")):
+            rotated = ws.make_packet(args, core)
+        self.assertEqual([x["id"] for x in rotated["sources"]], ["usable"])
+        self.assertEqual(rotated["counts"]["total_unlinked"], 2)
 
     def test_failure_does_not_earn_success_heartbeat(self):
         with tempfile.TemporaryDirectory() as folder:

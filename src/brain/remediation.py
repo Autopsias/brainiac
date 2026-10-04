@@ -347,6 +347,14 @@ _EXACT: dict[str, Remedy] = {
         OWNER, note="no cap is enforced on remediation spend; this is a "
                     "trend/floor alert only, never a throttle"),
     # The banner class.
+    "read-log:bulk": Remedy(
+        BANNER, note="SEC-06: review bulk access records; authorized import and "
+                     "maintenance may explain them, but automation must not "
+                     "suppress the evidence or decide an incident is harmless"),
+    "injection:conceal": Remedy(
+        BANNER, note="SEC-05: inspect concealed-instruction findings through "
+                     "the classification-gated integrity report; never "
+                     "automatically retire sources or silence the finding"),
     "stuck-drafts": Remedy(
         BANNER, note="UPD-01: capture drafts the drain keeps refusing "
                      "(>48h in the inbox) — the skip reason names the fix "

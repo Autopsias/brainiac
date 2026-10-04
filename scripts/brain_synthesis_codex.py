@@ -61,6 +61,8 @@ new synthesis, return notes=[] and explain why in summary/action_required.
 Maintenance status="ok" with a recent last_run is success; last_success and rc
 are optional fields on many folds. Missing optional fields are not failures.
 Note bodies must be 120–8000 characters; titles 1–200 characters.
+Use each distinct set of source_ids for at most one note. Combine related
+claims from the same source set rather than repeating that set in several notes.
 
 UNTRUSTED DATA PACKET:
 {packet}

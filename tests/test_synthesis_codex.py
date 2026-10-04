@@ -66,6 +66,7 @@ class SynthesisTests(unittest.TestCase):
                 ws.validate_response(r, self.packet, 8)
 
     def test_budgets_and_duplicate_groups(self):
+        self.assertIn("each distinct set of source_ids for at most one note", ws.PROMPT)
         r = copy.deepcopy(self.response)
         r["notes"] *= 2
         with self.assertRaises(ValueError):

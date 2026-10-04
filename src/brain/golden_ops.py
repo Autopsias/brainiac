@@ -53,12 +53,27 @@ def _try_codex_probe(
     argv = [
         "codex",
         "exec",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--ephemeral",
         "--skip-git-repo-check",
         "--sandbox",
         "read-only",
         "-C",
         str(core.vault),
         "--json",
+        "-c",
+        'approval_policy="never"',
+        "-c",
+        'mcp_servers={}',
+        "-c",
+        'web_search="disabled"',
+        "--disable",
+        "plugins",
+        "--disable",
+        "apps",
+        "--disable",
+        "hooks",
         prompt,
     ]
     return_code, stdout, stderr = call(argv, timeout)
@@ -75,6 +90,11 @@ def _try_codex_probe(
     shape_error = maintenance.validate_golden_probe_doc(document)
     if shape_error:
         return None, f"invalid golden-probe doc: {shape_error}"
+    if document.get("disposition") == "transient":
+        # Read-only children can be unable to append the mandatory egress
+        # ledger. Retry through the trusted host, never disable that ledger
+        # or give the model write access to the vault to make probes pass.
+        return None, "Codex scorer reported transient retrieval; retry on host"
     return _probe_result(document, runner="codex", degraded=False), None
 
 

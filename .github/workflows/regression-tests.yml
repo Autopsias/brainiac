@@ -27,7 +27,6 @@ jobs:
       PYTHONUNBUFFERED: "1"
       BRAIN_EMBEDDER: hash
       BRAIN_VAULT: ${{ github.workspace }}/vault
-      BRAIN_APP_DATA_DIR: ${{ runner.temp }}/brain-regression
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
     steps:
@@ -44,6 +43,8 @@ jobs:
           python -m pip install --require-hashes -r requirements.lock
           python -m pip install --no-deps .
       - name: Verify tests exist before running the public regression suite
+        env:
+          BRAIN_APP_DATA_DIR: ${{ runner.temp }}/brain-regression
         run: |
           python -c "import pathlib; assert list(pathlib.Path('tests').glob('test_*.py')), 'No regression tests found'"
           python -B -m unittest discover -s tests -p 'test_*.py' -v

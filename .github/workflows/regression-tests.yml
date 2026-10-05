@@ -39,9 +39,16 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.lock
       - name: Install hash-pinned dependencies and package
+        if: matrix.python == '3.13'
         run: |
           python -m pip install --require-hashes -r requirements.lock
           python -m pip install --no-deps .
+      - name: Test normal package resolution on older supported Python
+        if: matrix.python == '3.11'
+        # The audit lock's NumPy 2.5 pin requires Python >=3.12. The package
+        # supports older Python through its declared ranges, not this lock.
+        # Keep that installation path tested rather than dropping this lane.
+        run: python -m pip install .
       - name: Verify tests exist before running the public regression suite
         env:
           BRAIN_APP_DATA_DIR: ${{ runner.temp }}/brain-regression

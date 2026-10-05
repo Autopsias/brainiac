@@ -58,6 +58,11 @@ def detect_install_channel(brain_bin: Optional[Path]) -> str:
     editable install actually leaves behind."""
     if brain_bin is None:
         return CHANNEL_UNKNOWN
+    if brain_bin.is_symlink():
+        try:
+            brain_bin = brain_bin.resolve(strict=True)
+        except (OSError, RuntimeError):
+            return CHANNEL_UNKNOWN
     p = str(brain_bin)
     if re.search(r"\.brainiac[/\\]+venv", p):
         # brain_bin = <venv>/bin/brain (POSIX) or <venv>\Scripts\brain.exe

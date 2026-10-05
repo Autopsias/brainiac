@@ -157,3 +157,16 @@ No global MCP configuration is installed. Its final JSON must equal the
 private host-created measurement artifact; a fabricated or altered score is
 refused. Startup/transient failures retain the explicitly degraded host fallback.
 This is execution of the same deterministic scorer, not independent grading.
+
+## Engine updates on a Codex-only host
+
+Set `BRAIN_UPDATE_ENGINE_ONLY=1` for `brain update` (and the existing hourly
+agent's environment when auto-update is enabled) to skip Claude marketplace,
+plugin and hook mutations. This is explicit opt-in, not inferred from a missing
+Claude binary. Engine refresh retains install-channel, downgrade/COS and
+re-execution guards; distribution/workspace staging and final doctor verification
+remain in the flow. Symlinked launchers resolve to their owning environment,
+so pipx installations are not mistaken for user-site pip installs.
+This mode does not update or claim to update Claude plugins. Existing stale
+surfaces still appear in the final doctor result. Retest after an engine upgrade:
+locally applied repairs may be overwritten until carried into an upstream release.

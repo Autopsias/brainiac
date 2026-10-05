@@ -2,7 +2,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from brain.update_engine_only import run_engine_only_flow
 
 
@@ -42,6 +42,27 @@ class EngineOnlyTests(unittest.TestCase):
         self.assertFalse(result['ok'])
         self.assertNotIn('workspace_restage', result['steps'])
         self.callbacks.rebuild_dist.assert_not_called()
+
+    def test_failed_workspace_staging_cannot_report_success(self):
+        with patch('brain.update_engine_only._run_workspace_restage', return_value=[
+                {'workspace_path': '/fixture/workspace', 'status': 'failed',
+                 'reason': 'staging refused'}]):
+            result = self.execute()
+        self.assertFalse(result['ok'])
+        self.assertIn('workspace re-stage failed', result['notes'])
+        self.assertIn('staging refused', result['notes'])
+
+    def test_stale_doctor_remains_a_failure(self):
+        self.callbacks.run_doctor.return_value = {'rows': [], 'ok': False, 'stale_count': 1}
+        self.assertFalse(self.execute()['ok'])
+
+    def test_dist_failure_stops_before_staging(self):
+        with patch('brain.update_engine_only._run_dist_rebuild', return_value=(
+                {'ok': False, 'detail': 'bundle failed'}, True, '')), \
+             patch('brain.update_engine_only._run_workspace_restage') as staging:
+            result = self.execute()
+        self.assertFalse(result['ok'])
+        staging.assert_not_called()
 
 
 if __name__ == '__main__':

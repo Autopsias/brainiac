@@ -38,4 +38,11 @@ def run_engine_only_flow(*, engine_src, brainiac_home, claude_home, run,
         no_checkout_detail=no_source, callbacks=callbacks)
     after = callbacks.run_doctor(brainiac_home=brainiac_home, claude_home=claude_home)
     _finalize_update(result, table, after, callbacks)
+    failed = [row for row in result['steps']['workspace_restage']
+              if row.get('status') == 'failed']
+    if failed:
+        result['ok'] = False
+        result['notes'] = 'workspace re-stage failed: ' + '; '.join(
+            str(row.get('reason') or row.get('workspace_path') or 'unknown failure')
+            for row in failed)
     return result

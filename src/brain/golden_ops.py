@@ -6,6 +6,7 @@ import json
 import shlex
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
@@ -39,44 +40,40 @@ def _probe_result(
     }
 
 
+def _codex_probe_command(vault: Path, probes_path: Path, timeout: int, result_file: Path) -> list[str]:
+    """Expose one fixed host measurement, not a general retrieval/shell API."""
+    prompt = ('Call the run_golden_probe tool exactly once with empty arguments. '
+              'Return ONLY its JSON measurement verbatim. Do not grade it, '
+              'interpret it, run commands, or call other tools.')
+    executor_args = ['-m', 'brain.golden_executor', '--vault', str(vault),
+                     '--probes', str(probes_path), '--timeout', str(timeout),
+                     '--result-file', str(result_file)]
+    argv = ['codex', 'exec', '--ignore-user-config', '--ignore-rules', '--ephemeral',
+            '--skip-git-repo-check', '--sandbox', 'read-only', '-C', str(result_file.parent), '--json']
+    settings = {'approval_policy': 'never', 'mcp_servers': {}, 'web_search': 'disabled',
+                'mcp_servers.brainiac_golden.command': sys.executable,
+                'mcp_servers.brainiac_golden.args': executor_args,
+                'mcp_servers.brainiac_golden.required': True,
+                'mcp_servers.brainiac_golden.tool_timeout_sec': timeout}
+    for key, value in settings.items():
+        argv.extend(['-c', f'{key}={json.dumps(value)}'])
+    for feature in ('plugins', 'apps', 'hooks', 'shell_tool', 'unified_exec', 'code_mode'):
+        argv.extend(['--disable', feature])
+    return argv + [prompt]
+
+
 def _try_codex_probe(
-    core: Any,
-    probes_path: Path,
-    *,
-    timeout: int,
-    call: RunnerCall,
+    core: Any, probes_path: Path, *, timeout: int, call: RunnerCall,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """Run and strictly validate the cross-family Codex execution leg."""
-    prompt = maintenance.build_codex_golden_prompt(
-        probes_path, Path(core.vault), sys.executable
-    )
-    argv = [
-        "codex",
-        "exec",
-        "--ignore-user-config",
-        "--ignore-rules",
-        "--ephemeral",
-        "--skip-git-repo-check",
-        "--sandbox",
-        "read-only",
-        "-C",
-        str(core.vault),
-        "--json",
-        "-c",
-        'approval_policy="never"',
-        "-c",
-        'mcp_servers={}',
-        "-c",
-        'web_search="disabled"',
-        "--disable",
-        "plugins",
-        "--disable",
-        "apps",
-        "--disable",
-        "hooks",
-        prompt,
-    ]
-    return_code, stdout, stderr = call(argv, timeout)
+    """Require the model response to equal the trusted executor measurement."""
+    with tempfile.TemporaryDirectory(prefix='brain-golden-') as folder:
+        result_file = Path(folder) / 'measurement.json'
+        argv = _codex_probe_command(Path(core.vault), probes_path, timeout, result_file)
+        return_code, stdout, stderr = call(argv, timeout)
+        try:
+            measured = json.loads(result_file.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            measured = None
     if return_code != 0:
         error = (stderr or stdout or "").strip()[:300]
         return None, f"codex exec exited {return_code}: {error}"
@@ -91,10 +88,9 @@ def _try_codex_probe(
     if shape_error:
         return None, f"invalid golden-probe doc: {shape_error}"
     if document.get("disposition") == "transient":
-        # Read-only children can be unable to append the mandatory egress
-        # ledger. Retry through the trusted host, never disable that ledger
-        # or give the model write access to the vault to make probes pass.
         return None, "Codex scorer reported transient retrieval; retry on host"
+    if measured is None or measured != document:
+        return None, "Codex response did not match the trusted host measurement"
     return _probe_result(document, runner="codex", degraded=False), None
 
 

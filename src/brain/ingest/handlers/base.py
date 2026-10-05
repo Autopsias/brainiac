@@ -379,9 +379,8 @@ def ocr_image(img: Any) -> tuple[str, list[str]]:
     if lang is None:
         return "", ["ocr_unavailable: no local tesseract binary / traineddata"]
     try:
-        text = pytesseract.image_to_string(
-            img, lang=lang, timeout=ocr_timeout())
-        return text.strip(), []
+        from .ocr_retry import read_image
+        return read_image(pytesseract, img, lang, ocr_timeout())
     except Exception as exc:
         return "", [f"ocr_unavailable: {type(exc).__name__}: {exc}"]
 

@@ -329,6 +329,11 @@ def run_update(
         compare=_compare,
         reexec_after_engine_move=reexec_after_engine_move,
     )
+    if os.environ.get('BRAIN_UPDATE_ENGINE_ONLY') == '1':
+        from .update_engine_only import run_engine_only_flow
+        return run_engine_only_flow(engine_src=resolved_engine_src, brainiac_home=brainiac_home,
+                                    claude_home=claude_home, run=run, dry_run=dry_run,
+                                    callbacks=callbacks)
     return run_update_flow(
         marketplace_name=marketplace_name,
         engine_src=resolved_engine_src,

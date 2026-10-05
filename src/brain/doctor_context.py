@@ -64,7 +64,10 @@ def resolve_marketplace_dir(claude_home: Path, marketplace_dir: Optional[Path],
 def resolve_registry_entries(repo_root: Path) -> tuple[list[dict[str, Any]], bool]:
     """Load the workspace registry entries, degrading to (entries=[], unavailable)."""
     try:
-        import workspace_registry as _wr                          # noqa: PLC0415
+        # The checkout's tools/workspace_registry.py is only a compatibility
+        # shim. Use the canonical wheel module so pipx installs can check the
+        # real registry without installing a Claude marketplace or checkout.
+        from . import workspaces as _wr                          # noqa: PLC0415
 
         return _wr.list_entries(), False
     except Exception:

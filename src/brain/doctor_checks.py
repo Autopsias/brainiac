@@ -61,6 +61,7 @@ class DoctorChecks:
     mcp_vault_paths: DoctorCheck
     cos_deployed_skill: DoctorCheck
     desktop_plugin_store: DoctorCheck
+    mcp_server_code: DoctorCheck
     cowork_vault_dir: DoctorCheck
     quarantine: DoctorCheck
     ingest_capability: DoctorCheck
@@ -208,7 +209,9 @@ def _terminal_rows(
     rows.extend([checks.mcpb_desktop_collision(context.app_support_dir),
                  *checks.mcp_vault_paths()])
     rows.extend(row for row in [checks.cos_deployed_skill()] if row)
-    rows.extend(checks.desktop_plugin_store(context.app_support_dir, ssot))
+    rows.extend(checks.desktop_plugin_store(context.app_support_dir, ssot,
+                                            registry_entries=context.registry_entries))
+    rows.extend(checks.mcp_server_code())
     from .guard_settings import guard_settings_row as _guard_settings_row
     from .guard_settings import session_state_row as _session_state_row
     from .guard_settings import registry_pin_row as _registry_pin_row

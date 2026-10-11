@@ -258,11 +258,28 @@ def check_installed_cli_plugins(
         mkt_version = mkt_data.get("version")
         installed_json = claude_home / "plugins" / "installed_plugins.json"
         installed_data = _read_json(installed_json) or {}
-        plugin_entries = (installed_data.get("plugins") or {}).get(f"{pname}@{marketplace_name}")
+        all_entries = installed_data.get("plugins") or {}
+        plugin_entries = all_entries.get(f"{pname}@{marketplace_name}")
+        elsewhere = sorted(k for k in all_entries if k.startswith(f"{pname}@") and all_entries[k])
+        if not plugin_entries and elsewhere:
+            # Installed from ANOTHER marketplace (e.g. a Desktop upload). That
+            # copy is not ours to manage: installing @<marketplace_name> beside
+            # it creates a same-name duplicate (measured 2026-10-04).
+            first = all_entries[elsewhere[0]]
+            first = first[0] if isinstance(first, list) else first
+            install_path = first.get("installPath") if isinstance(first, dict) else None
+            pjson = _read_json(Path(install_path) / ".claude-plugin" / "plugin.json") if install_path else None
+            version = (pjson or {}).get("version") or "unknown version"
+            rows.append(_row(surface, NOT_DETECTABLE,
+                             f"installed as {elsewhere[0]} ({version}), not from {marketplace_name} "
+                             f"(marketplace has {mkt_version}) — update it where it was installed",
+                             raw={"installed_elsewhere": elsewhere, "marketplace": mkt_version}))
+            continue
         if not plugin_entries:
             rows.append(_row(surface, NOT_DETECTABLE,
                              f"not installed (marketplace has {mkt_version})",
-                             remediation=f"/plugin install {pname}@{marketplace_name}"))
+                             remediation=f"/plugin install {pname}@{marketplace_name}",
+                             raw={"marketplace": mkt_version}))
             continue
         # installed_plugins.json version field is a cache-dir label, not always
         # semver (it can be a git sha for github-sourced plugins) — read the

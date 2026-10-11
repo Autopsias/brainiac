@@ -11,6 +11,7 @@ keeps working unchanged. Covered by ``tests/test_doctor_workspace.py``.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -124,8 +125,85 @@ def check_mcpb_desktop_collision(
 # manual-required, NEVER gates the exit code — ADR-0005 Ruling 2/4).
 # --------------------------------------------------------------------------
 
+_STAMP = re.compile(rb"<!-- SKILL_VERSION:[^\n]*-->\n?")
+
+# brainiac-manager's skills install/update the HOST and refuse to run in
+# Cowork (brainiac-update is host-only by design), so its absence from the
+# Cowork store is the expected state, not a step the owner owes.
+_OPTIONAL_IN_COWORK = {"brainiac-manager"}
+
+
+def _skill_reference(registry_entries: Optional[list[dict]], ssot: str) -> dict[str, bytes]:
+    """name -> current SKILL.md bytes (version stamp stripped), read from the
+    workspaces' staged ``.skill`` bundles at the SSOT version.
+
+    Cowork's marketplace is a cloud copy that can lag weeks behind GitHub and
+    re-label identical skill text with an old version (measured 2026-10-05:
+    0.20.39 installed, text identical to 0.20.41). Comparing TEXT against the
+    bundles `brain update` just staged is what tells the owner whether to act.
+    """
+    import zipfile
+
+    from .vmstaging import _cowork_staging_root
+
+    ref: dict[str, bytes] = {}
+    for entry in registry_entries or []:
+        if entry.get("target") == "host":
+            continue
+        skills_dir = _cowork_staging_root(entry) / "skills"
+        for bundle in sorted(skills_dir.glob("*.skill")) if skills_dir.is_dir() else []:
+            if bundle.stem in ref:
+                continue
+            try:
+                with zipfile.ZipFile(bundle) as zf:
+                    if zf.read(f"{bundle.stem}/VERSION").decode("utf-8").strip() != ssot:
+                        continue
+                    ref[bundle.stem] = _STAMP.sub(b"", zf.read(f"{bundle.stem}/SKILL.md"))
+            except (OSError, KeyError, UnicodeDecodeError, zipfile.BadZipFile):
+                continue
+    return ref
+
+
+def _content_drift(plugin_dir: Path, reference: dict[str, bytes]) -> Optional[tuple[int, list[str]]]:
+    """(skills compared, names whose text differs), or None when nothing in
+    the installed plugin has a reference to compare against."""
+    skills_root = plugin_dir / "skills"
+    if not skills_root.is_dir():
+        return None
+    names = sorted(p.name for p in skills_root.iterdir()
+                   if p.name in reference and (p / "SKILL.md").is_file())
+    if not names:
+        return None
+    differs = [n for n in names
+               if _STAMP.sub(b"", (skills_root / n / "SKILL.md").read_bytes()) != reference[n]]
+    return len(names), differs
+
+
+def _store_refresh_steps(pname: str, registry_entries: Optional[list[dict]]) -> str:
+    from .vmstaging import _cowork_staging_root
+
+    staged = next((str(_cowork_staging_root(e) / "skills") for e in registry_entries or []
+                   if e.get("target") != "host"), "<workspace>/vault/.brain/skills")
+    return (f"in Cowork: Customize -> Plugins -> refresh the brainiac marketplace, then "
+            f"update {pname}; if it still offers older text, uninstall it and upload "
+            f"the .skill bundles from {staged}; re-run brain doctor on the host to confirm")
+
+
+def _newest_store_copy(sessions_root: Path, pname: str) -> list[tuple[float, Path]]:
+    candidates: list[tuple[float, Path]] = []
+    try:
+        for pjson in sessions_root.glob("*/*/rpm/plugin_*/.claude-plugin/plugin.json"):
+            data = _read_json(pjson)
+            if data and data.get("name") == pname:
+                candidates.append((pjson.stat().st_mtime, pjson))
+    except Exception:
+        return []
+    return sorted(candidates, key=lambda t: t[0], reverse=True)
+
+
 def check_desktop_plugin_store(
     app_support_dir: Path, ssot: str, plugin_dir_names: tuple[str, ...] = PLUGIN_NAMES,
+    registry_entries: Optional[list[dict]] = None,
 ) -> list[dict]:
     """Best-effort read of
     ``.../local-agent-mode-sessions/<uuid>/<uuid>/rpm/plugin_*/.claude-plugin/plugin.json``.
@@ -137,8 +215,14 @@ def check_desktop_plugin_store(
     (not scriptable from here); if multiple candidates tie or none can be
     confidently chosen it reports 'unknown (N candidate sessions)' rather than
     inventing a version.
+
+    When the registered workspaces carry staged bundles at the SSOT version,
+    the verdict is the installed skill TEXT against them, not the label: a
+    match reads `current` (never gating either way, ADR-0005 Ruling 2/4).
+    Every row that needs the owner sets ``raw["action_needed"]``.
     """
     sessions_root = app_support_dir / "local-agent-mode-sessions"
+    reference = _skill_reference(registry_entries, ssot)
     rows = []
     for pname in plugin_dir_names:
         surface = f"Desktop/Cowork plugin store ({pname})"
@@ -148,26 +232,29 @@ def check_desktop_plugin_store(
                              "verify manually in the Cowork/Desktop client",
                              remediation="Open Cowork/Desktop -> Plugins -> check for update"))
             continue
-        candidates: list[tuple[float, Path]] = []
-        try:
-            for pjson in sessions_root.glob("*/*/rpm/plugin_*/.claude-plugin/plugin.json"):
-                data = _read_json(pjson)
-                if data and data.get("name") == pname:
-                    candidates.append((pjson.stat().st_mtime, pjson))
-        except Exception:
-            candidates = []
+        candidates = _newest_store_copy(sessions_root, pname)
+        if not candidates and pname in _OPTIONAL_IN_COWORK:
+            rows.append(_row(surface, UNMANAGED,
+                             "not installed in Cowork — optional: its skills manage the "
+                             "host install and refuse to run in Cowork; nothing to do",
+                             raw={"action_needed": False}))
+            continue
         if not candidates:
             rows.append(_row(surface, MANUAL_REQUIRED,
                              "not found in any session dir — best-effort, "
                              "verify manually in the Cowork/Desktop client",
-                             remediation="Open Cowork/Desktop -> Plugins -> check for update"))
+                             remediation=_store_refresh_steps(pname, registry_entries),
+                             raw={"action_needed": True}))
             continue
-        candidates.sort(key=lambda t: t[0], reverse=True)
         newest_mtime, newest_path = candidates[0]
         data = _read_json(newest_path) or {}
         version = data.get("version")
         if version is None:
             rows.append(_row(surface, UNKNOWN, f"unknown ({len(candidates)} candidate sessions, unparseable)"))
+            continue
+        drift = _content_drift(newest_path.parent.parent, reference)
+        if drift is not None:
+            rows.append(_content_row(surface, pname, str(version), ssot, drift, registry_entries))
             continue
         import datetime
 
@@ -204,7 +291,108 @@ def check_desktop_plugin_store(
             remediation = "looks current — no action needed"
         rows.append(_row(surface, MANUAL_REQUIRED, detail, remediation=remediation,
                          raw={"version": version, "candidates": len(candidates),
-                              "newest_mtime": mtime_str}))
+                              "newest_mtime": mtime_str, "action_needed": skew != 0}))
+    return rows
+
+
+def _content_row(surface: str, pname: str, version: str, ssot: str,
+                 drift: tuple[int, list[str]], registry_entries: Optional[list[dict]]) -> dict:
+    checked, differs = drift
+    raw = {"version": version, "checked": checked, "differs": differs,
+           "action_needed": bool(differs)}
+    if not differs:
+        return _row(surface, CURRENT,
+                    f"{checked} skill(s) match the {ssot} text (Cowork labels it {version}; "
+                    "the label can lag, the text is what runs)", raw=raw)
+    return _row(surface, MANUAL_REQUIRED,
+                f"{len(differs)} of {checked} skill(s) differ from the {ssot} text "
+                f"(Cowork labels it {version}): {', '.join(differs)}",
+                remediation=_store_refresh_steps(pname, registry_entries), raw=raw)
+
+
+# --------------------------------------------------------------------------
+# Claude Desktop's running brain-mcp servers. A Python process keeps the code
+# it imported at start, so after `brain update` reinstalls the engine every
+# server Desktop already started still serves the OLD engine until Desktop is
+# quit and reopened. Measured 2026-10-04: 8 servers started 22:30, engine
+# reinstalled 23:15, nothing reported it.
+# --------------------------------------------------------------------------
+
+def _ps_rows() -> Optional[list[tuple[int, float, str]]]:
+    """(pid, start epoch, command) for every process, or None where `ps` with
+    `lstart` is unavailable (Windows)."""
+    import datetime
+    import os
+    import subprocess
+    import sys
+
+    if sys.platform == "win32":
+        return None
+    try:
+        out = subprocess.run(["ps", "-axo", "pid=,lstart=,command="], capture_output=True,
+                             text=True, timeout=15, env={**os.environ, "LC_ALL": "C"}).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    rows = []
+    for line in out.splitlines():
+        parts = line.split(None, 6)
+        if len(parts) < 7:
+            continue
+        try:
+            start = datetime.datetime.strptime(" ".join(parts[1:6]), "%a %b %d %H:%M:%S %Y")
+            rows.append((int(parts[0]), start.timestamp(), parts[6]))
+        except ValueError:
+            continue
+    return rows
+
+
+def _engine_install(command: str) -> Optional[tuple[float, str]]:
+    """(install time, version) of the engine a `<venv>/bin/brain-mcp` runs."""
+    for stamp in sorted(Path(command).parent.parent.glob("lib/python*/site-packages/brain/_version.py")):
+        match = re.search(r'__version__\s*=\s*"([^"]+)"', stamp.read_text(encoding="utf-8"))
+        return stamp.stat().st_mtime, (match.group(1) if match else "?")
+    return None
+
+
+def check_mcp_server_code(config_path: Optional[Path] = None,
+                          ps_rows: Optional[list[tuple[int, float, str]]] = None) -> list[dict]:
+    """One row per brain-mcp command Desktop launches: are its running
+    servers newer than the engine they would load today? Never gating — a
+    Desktop restart must not hold `brain update` or CI hostage."""
+    import datetime
+
+    from . import connect as _connect
+
+    data = _read_json(config_path or _connect.claude_desktop_config_path()) or {}
+    commands = sorted({str((e or {}).get("command")) for e in (data.get("mcpServers") or {}).values()
+                       if "brain-mcp" in str((e or {}).get("command", ""))})
+    procs = _ps_rows() if ps_rows is None else ps_rows
+    rows = []
+    for command in commands:
+        surface = f"Claude Desktop Brainiac servers ({command})"
+        installed = _engine_install(command)
+        if procs is None or installed is None:
+            rows.append(_row(surface, NOT_DETECTABLE, "cannot read the running servers or the "
+                             "engine they load on this platform", raw={"action_needed": False}))
+            continue
+        at, version = installed
+        when = datetime.datetime.fromtimestamp(at).strftime("%Y-%m-%d %H:%M")
+        starts = [start for _pid, start, cmd in procs if command in cmd]
+        old = [s for s in starts if s < at]
+        if not starts:
+            rows.append(_row(surface, NOT_DETECTABLE,
+                             f"none running — Claude Desktop will load {version} when it starts them",
+                             raw={"action_needed": False}))
+        elif old:
+            rows.append(_row(surface, MANUAL_REQUIRED,
+                             f"{len(old)} of {len(starts)} running process(es) started before the "
+                             f"engine was installed ({version}, {when}) — they still serve the old code",
+                             remediation="quit Claude Desktop completely (Cmd+Q) and reopen it",
+                             raw={"action_needed": True, "version": version}))
+        else:
+            rows.append(_row(surface, CURRENT,
+                             f"{len(starts)} running process(es), all started after the engine "
+                             f"install ({version}, {when})", raw={"action_needed": False}))
     return rows
 
 

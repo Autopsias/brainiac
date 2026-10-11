@@ -7,6 +7,30 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.42] — 2026-10-11
+### Changed
+- **`brain doctor` says whether Claude Desktop runs the current Brainiac.**
+  A new row compares each running `brain-mcp` server with the engine install
+  time: servers started before an update still serve the old code, and the
+  row says to quit and reopen Claude Desktop. The Cowork plugin-store rows
+  now compare the installed skill TEXT with the bundles staged for the
+  current version, so a plugin that Cowork's lagging marketplace labels with
+  an older version reads current when its text matches, and a real
+  difference names the skills and the steps. `brainiac-manager` missing from
+  Cowork is reported as optional. The release's last step prints only the
+  Desktop steps these rows ask for.
+
+### Fixed
+- **Spreadsheet tables no longer carry thousands of empty columns.** A
+  sheet's used range can run far wider than its data (16,147 columns on one
+  real file), and every row carried the blank columns as `|  |` padding: a
+  97K-character sheet became a 9 MB note. The shared table renderer for
+  xlsx, pptx and docx now drops a column that is blank in every row, as it
+  already dropped blank rows. Two real files measured 2,124,686 -> 352,631
+  and 1,258,807 -> 27,532 characters with identical non-empty cells. Notes
+  ingested before this release keep their padding; new and changed files
+  are compact.
+
 ## [0.20.41] — 2026-10-04
 ### Added
 - An opt-in Codex Sunday synthesis adapter for hosts without Claude CLI.

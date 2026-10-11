@@ -68,12 +68,11 @@ def _run_plugin_reinstall(
         marketplace = raw.get("marketplace")
         plugin_name = row["surface"].split("(", 1)[1].rstrip(")")
         action = callbacks.decide_plugin_action(installed, marketplace)
-        if dry_run:
-            applied = {
-                "action": action,
-                "ok": True,
-                "detail": f"[dry-run] would {action}",
-            }
+        if raw.get("installed_elsewhere"):  # another marketplace's copy: never add a duplicate
+            applied = {"action": "skip", "ok": True,
+                       "detail": f"installed as {', '.join(raw['installed_elsewhere'])} — not managed here"}
+        elif dry_run:
+            applied = {"action": action, "ok": True, "detail": f"[dry-run] would {action}"}
         else:
             applied = callbacks.apply_plugin_action(
                 action,
@@ -211,6 +210,28 @@ def _run_workspace_restage(
     )
 
 
+_DESKTOP_SURFACES = ("Desktop/Cowork plugin store", "Claude Desktop Brainiac servers")
+
+
+def _desktop_residual(after_doctor: dict[str, Any], compare: Any) -> list[str]:
+    """One owner step per Desktop row that needs one. Each row states its own
+    verdict in ``raw["action_needed"]`` (the plugin store judges skill TEXT,
+    not Cowork's lagging label); a row without it falls back to the label."""
+    ssot = after_doctor.get("ssot_version") or "0.0.0"
+    steps = []
+    for row in after_doctor["rows"]:
+        if not row["surface"].startswith(_DESKTOP_SURFACES):
+            continue
+        raw = row.get("raw") or {}
+        need = raw.get("action_needed")
+        if need is None:
+            need = bool(raw.get("version")) and compare(str(raw["version"]), ssot) < 0
+        if need:
+            steps.append(f"{row['surface']} is STALE ({row['detail']}) -> "
+                         f"{row.get('remediation') or 'see brain doctor'}")
+    return steps
+
+
 def _finalize_update(
     result: dict[str, Any],
     before_table: dict[str, str],
@@ -219,20 +240,7 @@ def _finalize_update(
 ) -> None:
     """Build the final before/after table and completion note."""
     result["steps"]["doctor_after"] = callbacks.render_human(after_doctor)
-    ssot_after = after_doctor.get("ssot_version") or "0.0.0"
-    desktop_stale = any(
-        row["surface"].startswith("Desktop/Cowork plugin store")
-        and (row.get("raw") or {}).get("version")
-        and callbacks.compare(str((row.get("raw") or {})["version"]), ssot_after) < 0
-        for row in after_doctor["rows"]
-    )
-    if desktop_stale:
-        result["residual_human_steps"].append(
-            "Desktop/Cowork plugin store is STALE and has no external CLI: in a "
-            "Cowork session use /skill-creator to repackage + Save-and-Replace the "
-            "stale skill(s) — /brainiac-update is host-only and refuses in Cowork — "
-            "then re-run `brain doctor` on the host to confirm it took."
-        )
+    result["residual_human_steps"].extend(_desktop_residual(after_doctor, callbacks.compare))
 
     table: list[dict[str, str]] = []
     surfaces = sorted(set(before_table) | {

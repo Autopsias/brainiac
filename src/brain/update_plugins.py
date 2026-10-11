@@ -90,17 +90,18 @@ def refresh_marketplace(marketplace_name: str, run: Runner = _default_runner) ->
 def decide_plugin_action(installed: Optional[str], marketplace: Optional[str]) -> str:
     """Pure decision function (fixture-testable, ADR-0005 Ruling 3):
 
+    - marketplace is None          -> "skip"           (nothing to compare against,
+                                                          nothing to install from)
     - installed is None            -> "install"        (never installed)
-    - marketplace is None          -> "skip"           (nothing to compare against)
     - installed >  marketplace     -> "reinstall"      (reconciliation downgrade,
                                                           uninstall+clean install)
     - installed <  marketplace     -> "update"         (normal forward update)
     - installed == marketplace     -> "skip"           (already current)
     """
-    if installed is None:
-        return "install"
     if marketplace is None:
         return "skip"
+    if installed is None:
+        return "install"
     cmp_ = _update._compare(installed, marketplace)
     if cmp_ == 0:
         return "skip"

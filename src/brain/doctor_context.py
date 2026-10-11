@@ -131,6 +131,7 @@ def build_context_and_checks(
     """
     from . import config as _config
     from . import doctor as _doctor
+    from . import doctor_desktop as _desktop
     from .doctor_checks import DoctorCheckContext, DoctorChecks
 
     context = DoctorCheckContext(
@@ -175,6 +176,7 @@ def build_context_and_checks(
         mcp_vault_paths=_doctor.check_mcp_vault_paths,
         cos_deployed_skill=_doctor.check_cos_deployed_skill,
         desktop_plugin_store=_doctor.check_desktop_plugin_store,
+        mcp_server_code=_desktop.check_mcp_server_code,
         cowork_vault_dir=_doctor._cowork_vault_dir,
         quarantine=_doctor.check_quarantine,
         ingest_capability=_doctor.check_ingest_capability,

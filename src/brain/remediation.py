@@ -369,6 +369,7 @@ _EXACT: dict[str, Remedy] = {
         BANNER,
         note="ADR 0013: this vault has COS folders but the installed engine "
              "has no COS code, so the nightly cannot run; never silent"),
+    "cos-calendar-read-failed": Remedy(BANNER, note="next night retries; a good read clears it"),
     "exceptions": Remedy(
         BANNER, note="EXC-03: the unified 'N exception(s) — open <page>' "
                      "banner, read the SAME way on host and VM from the "

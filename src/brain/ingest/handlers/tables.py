@@ -51,14 +51,15 @@ def rows_to_markdown(rows: list[list[object]], *, label: str = "table",
     rows = [r for r in rows if any(_cell(c) for c in r)]  # drop fully-blank rows
     if not rows:
         return ""
+    ragged = any(len(r) != len(rows[0]) for r in rows[1:])
+    # Drop fully-blank columns too: a sheet's used range can run thousands of
+    # empty columns wide, and every row then carries them as "|  |" padding.
+    width = max(len(r) for r in rows)
+    cols = [i for i in range(width) if any(i < len(r) and _cell(r[i]) for r in rows)]
+    rows = [[r[i] for i in cols if i < len(r)] for r in rows]
     header = [_cell(c) for c in rows[0]]
     ncols = len(header)
-    unparsed = (
-        ncols == 0
-        or not any(header)
-        or len(rows) < 2
-        or any(len(r) != ncols for r in rows[1:])
-    )
+    unparsed = ncols == 0 or not any(header) or len(rows) < 2 or ragged
     if unparsed:
         raw = "\n".join(" | ".join(_cell(c) for c in r) for r in rows)
         keep("chrome", "```table-unparsed")

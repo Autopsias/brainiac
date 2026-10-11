@@ -11,8 +11,7 @@ from .. import _optional, config, maintenance
 # ADR 0013: both constants feed only the COS folds, which never run without COS.
 if _optional.cos_available():
     from ..cos.sheet_threads import BODY_NEVER_READABLE as _BODY_NEVER_READABLE
-    from ..cos._attachment_gate import (
-        BODY_ERROR_NIGHTS as _BODY_ERROR_NIGHTS)
+    from ..cos._attachment_gate import BODY_ERROR_NIGHTS as _BODY_ERROR_NIGHTS
 else:
     _BODY_NEVER_READABLE = frozenset()
     _BODY_ERROR_NIGHTS = 0
@@ -115,8 +114,9 @@ class IntakeFoldsMixin:
         self._cos_night_stopped(run)
         from ..cos.night_died import night_died_items  # noqa: PLC0415
         run.action_required.extend(night_died_items(self.vault, run.results))
-        from ..cos._ingest_claim import encrypted_decline_items  # noqa: PLC0415
-        run.action_required.extend(encrypted_decline_items(self.vault))
+        from ..cos import _ingest_claim, calendar_block  # noqa: PLC0415
+        run.action_required.extend(_ingest_claim.encrypted_decline_items(self.vault))
+        run.action_required.extend(calendar_block.read_failed_items(self.vault))
 
     def _cos_night_stopped(self, run: MaintenanceRun) -> None:
         """A NIGHT THAT STOPPED EARLY REACHES `brain alerts` (2026-09-27).

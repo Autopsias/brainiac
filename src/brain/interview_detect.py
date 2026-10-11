@@ -233,6 +233,34 @@ def _link_targets(core: Any, query: str, sid: str,
             for _, hid, title in ranked[:limit]]
 
 
+_SERIES_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}-")
+_SERIES_NUMBER = re.compile(r"-\d+$")
+
+
+def _series(sid: str) -> str:
+    """`2026-09-14-safety-environment-week-33` -> `safety-environment-week-#`.
+
+    ONLY A TRAILING NUMBER, so `doc-48367-1-signed` stays its own series: a
+    numbered document is not a sibling of another numbered document."""
+    return _SERIES_NUMBER.sub("-#", _SERIES_DATE.sub("", sid))
+
+
+def noise_series(state: dict[str, Any], min_answers: int = 2) -> set[str]:
+    """Numbered series the owner has answered `noise` on at least twice.
+
+    Sheet 2026-10-09: ten `noise` answers on weekly HSSEQ reports (weeks 24-32)
+    and the lane still asked weeks 33, 34 and 36, because each answer silenced
+    one source and a new week arrives every week. Two answers, not one, so a
+    single noise answer never hides a sibling the owner has not seen."""
+    counts: dict[str, int] = {}
+    for r in state["rows"]:
+        if (r.get("shape") == "orphan" and r.get("answer") == "noise"
+                and _SERIES_NUMBER.search(str((r.get("target") or {}).get("id") or ""))):
+            key = _series(str(r["target"]["id"]))
+            counts[key] = counts.get(key, 0) + 1
+    return {k for k, n in counts.items() if n >= min_answers}
+
+
 def _orphan_candidates(core: Any, state: dict[str, Any], today: _dt.date,
                        per_night: int = 3, max_searches: int = 10):
     """Sources nothing cites, from the linking lane's own worklist, with the
@@ -249,11 +277,14 @@ def _orphan_candidates(core: Any, state: dict[str, Any], today: _dt.date,
     except (OSError, ValueError):
         return
     yielded = searched = 0
+    silenced = noise_series(state)
     for c in lane.get("candidates") or []:
         if yielded >= per_night or searched >= max_searches:
             return
         sid = str(c.get("id") or "")
         if not sid or blocked(state, question_key("orphan", [sid]), sid, today):
+            continue
+        if _series(sid) in silenced:
             continue
         searched += 1
         title = str(c.get("title") or sid)

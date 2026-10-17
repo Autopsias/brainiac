@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 # check. The IMPORT package stays `brain` and the console script stays
 # `brain` — only the distribution/project name changes.
 name = "brainiac-cli"
-version = "0.20.42"
+version = "0.20.43"
 description = "Brainiac — local any-LLM second-brain core engine + brain CLI (Markdown truth, derived SQLite index)."
 readme = "README.md"
 license = "Apache-2.0"
@@ -122,7 +122,10 @@ quant-tools = ["onnx>=1.14"]
 # release pipeline's release-asset handshake gate, after it had already shipped).
 # Upgrade path: port the adapter off FastMCP (mcp.server.lowlevel, or the
 # separate `fastmcp` package) and lift the cap — a real migration, not a bump.
-mcp = ["mcp>=1.28.1,<2"]
+# >=1.30.0: CVE-2026-59951 (Streamable HTTP stateful sessions never reclaimed,
+# unbounded memory) is fixed there. The FLOOR, not just the lock, for the same
+# reason as pypdf above: a plain `pip install` reads this, not requirements.lock.
+mcp = ["mcp>=1.30.0,<2"]
 # Timeout-bounded regex engine (mrab-regex) used by BrainIndex.grep's --regex
 # path (RET-04 hardening) as a ReDoS guard: regex.search(text, timeout=...)
 # genuinely bounds catastrophic backtracking, unlike stdlib `re`. Absent ->

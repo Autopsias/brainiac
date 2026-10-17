@@ -7,6 +7,35 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.43] — 2026-10-17
+### Security
+- **`mcp` 1.30.0 or later (CVE-2026-59951).** mcp 1.29.1 never reclaims
+  Streamable HTTP stateful sessions, so memory grows without bound. The
+  `[mcp]` extra's floor and the audited lockfile now require 1.30.0.
+  `brain-mcp` runs over stdio and never started Streamable HTTP, so no
+  install was exposed; a fresh install already resolved to 1.30.0.
+
+### Fixed
+- **The Claude Desktop doctor row counts servers, not wrappers.** Desktop
+  runs each `brain-mcp` server under a helper whose command line names the
+  same path, so 8 servers read "16 of 16 running process(es)". The helper is
+  skipped and the row counts server(s).
+- **Plugins from a local-folder marketplace no longer read stale.** Claude
+  Code reads a project or local copy straight from the marketplace folder,
+  and `claude plugin update` never rewrites that copy's record. The doctor
+  read the old cache path from the record, so every plugin read stale after
+  a release with nothing left to update. Such copies now carry the folder's
+  version.
+- **The pre-compact hook keeps one checkpoint marker in the handoff.** It
+  appended a marker on every compaction and never removed the old ones; one
+  handoff held 19 markers and no state.
+- **`brain update` no longer crashes on a plugin copy for a deleted project.**
+  Claude Code keeps a project-scope plugin entry after its project folder is
+  gone. The doctor counted that copy as stale, and `brain update` then ran
+  `claude plugin update` from the missing folder and stopped with
+  `FileNotFoundError` before it re-staged anything. Such a copy is now
+  ignored, and the doctor row says how many it ignored.
+
 ## [0.20.42] — 2026-10-11
 ### Changed
 - **`brain doctor` says whether Claude Desktop runs the current Brainiac.**

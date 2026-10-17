@@ -237,6 +237,44 @@ def check_plugin_manifests(repo_root: Path, ssot: str) -> list[dict]:
 # marketplace + installed_plugins.json are both local files, no network).
 # --------------------------------------------------------------------------
 
+def _plugin_copies(entries: list, folder_version: Optional[str] = None,
+                   ) -> tuple[list[dict], Optional[str], int]:
+    """Each installed copy of one plugin as (scope, project_path, version),
+    plus the last unreadable installPath and the count of orphaned copies.
+
+    An orphaned copy is a project-scope entry whose project no longer exists
+    (a deleted worktree): Claude Code never loads it, and `brain update`
+    crashed running `claude plugin update` from the missing directory
+    (v0.20.42 deploy, 2026-10-11). It is not a copy to judge or update.
+
+    ``folder_version`` is set when the marketplace is a local folder. Claude
+    Code then reads a project copy straight from that folder ("is read from
+    its folder: nothing to update") and never rewrites its registry record, so
+    the recorded cache path stays at an old version forever: judge the copy
+    by the folder it actually loads (false stale rows after 0.20.42)."""
+    copies, unreadable, orphaned = [], None, 0
+    for entry in entries:
+        if not isinstance(entry, dict):
+            unreadable = None
+            continue
+        project = entry.get("projectPath")
+        if entry.get("scope") in ("project", "local") and project and not Path(project).is_dir():
+            orphaned += 1
+            continue
+        if folder_version and entry.get("scope") in ("project", "local"):
+            copies.append({"scope": entry["scope"], "project_path": project,
+                           "version": folder_version})
+            continue
+        install_path = entry.get("installPath")
+        pjson = _read_json(Path(install_path) / ".claude-plugin" / "plugin.json") if install_path else None
+        if not (pjson and pjson.get("version")):
+            unreadable = install_path
+            continue
+        copies.append({"scope": entry.get("scope") or "user",
+                       "project_path": project, "version": pjson["version"]})
+    return copies, unreadable, orphaned
+
+
 def check_installed_cli_plugins(
     claude_home: Path, ssot: str, marketplace_name: str = "brainiac",
     marketplace_dir: Optional[Path] = None,
@@ -246,6 +284,8 @@ def check_installed_cli_plugins(
     # installLocation, NOT the hardcoded marketplaces/<name> dir — the caller
     # passes the resolved dir; keep the hardcoded guess only as the fallback.
     marketplace_dir = marketplace_dir or (claude_home / "plugins" / "marketplaces" / marketplace_name)
+    known = (_read_json(claude_home / "plugins" / "known_marketplaces.json") or {}).get(marketplace_name)
+    from_folder = ((known or {}).get("source") or {}).get("source") == "directory"
     for pname in PLUGIN_NAMES:
         surface = f"Installed CLI plugin ({pname})"
         mkt_json = marketplace_dir / "plugins" / pname / ".claude-plugin" / "plugin.json"
@@ -289,16 +329,13 @@ def check_installed_cli_plugins(
         # at its own version. Judge the oldest copy: reading only the first
         # entry reported a stale copy current (or the reverse) by list order.
         entries = plugin_entries if isinstance(plugin_entries, list) else [plugin_entries]
-        copies, unreadable = [], None
-        for entry in entries:
-            install_path = entry.get("installPath") if isinstance(entry, dict) else None
-            pjson = _read_json(Path(install_path) / ".claude-plugin" / "plugin.json") if install_path else None
-            if not (pjson and pjson.get("version")):
-                unreadable = install_path
-                continue
-            copies.append({"scope": entry.get("scope") or "user",
-                           "project_path": entry.get("projectPath"),
-                           "version": pjson["version"]})
+        copies, unreadable, orphaned = _plugin_copies(entries, mkt_version if from_folder else None)
+        if orphaned and not copies and unreadable is None:
+            rows.append(_row(surface, NOT_DETECTABLE,
+                             f"installed only for {orphaned} deleted project(s) "
+                             f"(marketplace has {mkt_version})",
+                             raw={"marketplace": mkt_version, "orphaned_copies": orphaned}))
+            continue
         if unreadable is not None or not copies:
             rows.append(_row(surface, UNKNOWN,
                              f"installed but version unreadable at {unreadable}"))
@@ -309,6 +346,8 @@ def check_installed_cli_plugins(
         pick = min if stale_copies else max
         installed_version = pick((c["version"] for c in copies), key=cmp_to_key(_compare))
         where = "" if len(copies) == 1 else f" ({len(stale_copies)} of {len(copies)} copies behind)"
+        if orphaned:
+            where += f" ({orphaned} copy(ies) for deleted projects ignored)"
         cmp_ = _compare(installed_version, mkt_version or "")
         if cmp_ == 0:
             rows.append(_row(surface, CURRENT, f"installed {installed_version} == marketplace {mkt_version}",

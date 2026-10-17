@@ -377,7 +377,11 @@ def check_mcp_server_code(config_path: Optional[Path] = None,
             continue
         at, version = installed
         when = datetime.datetime.fromtimestamp(at).strftime("%Y-%m-%d %H:%M")
-        starts = [start for _pid, start, cmd in procs if command in cmd]
+        # Desktop runs each server under its `disclaimer --pgroup --` helper,
+        # which carries the same command line: count the server, not the
+        # wrapper too (it read "16 processes" for 8 servers, 2026-10-11).
+        starts = [start for _pid, start, cmd in procs
+                  if command in cmd and "/Helpers/disclaimer " not in cmd]
         old = [s for s in starts if s < at]
         if not starts:
             rows.append(_row(surface, NOT_DETECTABLE,
@@ -385,13 +389,13 @@ def check_mcp_server_code(config_path: Optional[Path] = None,
                              raw={"action_needed": False}))
         elif old:
             rows.append(_row(surface, MANUAL_REQUIRED,
-                             f"{len(old)} of {len(starts)} running process(es) started before the "
+                             f"{len(old)} of {len(starts)} running server(s) started before the "
                              f"engine was installed ({version}, {when}) — they still serve the old code",
                              remediation="quit Claude Desktop completely (Cmd+Q) and reopen it",
                              raw={"action_needed": True, "version": version}))
         else:
             rows.append(_row(surface, CURRENT,
-                             f"{len(starts)} running process(es), all started after the engine "
+                             f"{len(starts)} running server(s), all started after the engine "
                              f"install ({version}, {when})", raw={"action_needed": False}))
     return rows
 

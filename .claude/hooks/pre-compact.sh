@@ -17,9 +17,16 @@ TS="$(date -u +%Y-%m-%dT%H:%MZ)"
 
 mkdir -p "$MEMORY_DIR"
 if [ -f "$HANDOFF" ]; then
-  {
-    echo ""
-    echo "<!-- pre-compact checkpoint $TS - context was compacting; in-flight state may be partial -->"
-  } >> "$HANDOFF"
+  # Keep ONE marker: drop earlier checkpoint lines (and the blank line each
+  # older version wrote before it), then append the new one. Appending forever
+  # left a handoff of 19 markers and no state (2026-10-17).
+  TMP="$HANDOFF.tmp.$$"
+  awk '/<!-- pre-compact checkpoint /{held=0; next}
+       /^$/{if (held) print ""; held=1; next}
+       held{print ""; held=0}
+       {print}
+       END{if (held) print ""}' "$HANDOFF" > "$TMP"
+  echo "<!-- pre-compact checkpoint $TS - context was compacting; in-flight state may be partial -->" >> "$TMP"
+  mv "$TMP" "$HANDOFF"
 fi
 exit 0

@@ -80,6 +80,7 @@
     ".gitignore",
     ".gitleaksignore",
     ".pre-commit-config.yaml",
+    ".type-exceptions",
     "AGENTS-core.md",
     "AGENTS.md",
     "CHANGELOG.md",
@@ -634,6 +635,7 @@
     "tools/check_complexity.py",
     "tools/check_file_sizes.py",
     "tools/check_function_lengths.py",
+    "tools/check_types.py",
     "tools/check_workflow_supply_chain.py",
     "tools/code_origin_audit.py",
     "tools/cowork_session_bootstrap.sh",
@@ -691,5 +693,5 @@
     "vault/raw/2026-06-27-arctic-vs-e5-benchmark.md",
     "vault/raw/README.md"
   ],
-  "count": 690
+  "count": 692
 }

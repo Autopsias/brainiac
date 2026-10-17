@@ -7,6 +7,15 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.44] — 2026-10-17
+### Added
+- **A type-error ratchet in CI.** The `quality-ratchet` workflow now runs
+  Astral's `ty` (pinned at 0.0.89) through `tools/check_types.py`. Today's
+  diagnostics are recorded per file and rule in `.type-exceptions`; any new
+  one fails the job, and a fall asks for a re-record. The export re-records
+  the baseline on the public tree, so the public CI judges the files it has.
+  No existing type error is fixed in this release.
+
 ## [0.20.43] — 2026-10-17
 ### Security
 - **`mcp` 1.30.0 or later (CVE-2026-59951).** mcp 1.29.1 never reclaims

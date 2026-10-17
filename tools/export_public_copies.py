@@ -13,11 +13,14 @@ normative derivation (`tests/test_cowork_skill_verbs.py`), so its numbers are
 measured on the public tree, never edited by hand.
 That derivation lives under `tests/`, which never ships, so an export run from a
 tree without it stops and names the missing file rather than ship the private survey.
+The type-error baseline `.type-exceptions` is regenerated the same way: ty
+re-records it on the export, so the public CI judges the public tree's own counts.
 """
 from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -25,6 +28,8 @@ from typing import Callable
 
 SURVEY = "docs/operations/cowork-skill-verb-survey.json"
 SURVEY_DERIVATION = "tests/test_cowork_skill_verbs.py"
+TYPE_BASELINE = ".type-exceptions"
+RATCHET_WORKFLOW = ".github/workflows/quality-ratchet.yml"
 COS_ROUTINE = "chief-of-staff-nightly"
 # A hook's body is every line indented DEEPER than its `- id:`, so the match
 # stops at a sibling hook and at the next `- repo:`, whichever comes first.
@@ -124,6 +129,25 @@ def regenerate_survey(repo_root: Path, output_dir: Path) -> None:
                          f"{(p.stderr or p.stdout).strip()[-1500:]}")
 
 
+def regenerate_type_baseline(output_dir: Path) -> None:
+    """The private baseline counts COS files and imports of modules the export
+    drops, so the public CI would judge the public tree against the wrong
+    numbers. Re-record it ON the export, in the environment that CI judges
+    with: Python 3.12 holding only ty, at the pin the workflow installs."""
+    pin = re.search(r"\bty==[\w.]+", (output_dir / RATCHET_WORKFLOW).read_text(encoding="utf-8"))
+    uv = shutil.which("uv")
+    if not pin or not uv:
+        raise SystemExit(f"FAIL: cannot re-record {TYPE_BASELINE} for the export: "
+                         f"{'uv is not on PATH' if pin else f'no ty pin in {RATCHET_WORKFLOW}'}")
+    env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV" and not k.startswith(("BRAIN", "PYTHON"))}
+    p = subprocess.run([uv, "run", "-q", "--no-project", "--isolated", "--python", "3.12",
+                        "--with", pin.group(0), "python", "tools/check_types.py", "--generate-baseline"],
+                       cwd=output_dir, env=env, capture_output=True, text=True, timeout=300)
+    if p.returncode != 0:
+        raise SystemExit(f"FAIL: re-recording {TYPE_BASELINE} for the export failed:\n"
+                         f"{(p.stderr or p.stdout).strip()[-1500:]}")
+
+
 def write_public_copies(repo_root: Path, output_dir: Path, exported: set[str],
                         is_cos: Callable[[str], bool]) -> list[str]:
     """Rewrite each shared file the export carries; returns the paths rewritten."""
@@ -136,4 +160,7 @@ def write_public_copies(repo_root: Path, output_dir: Path, exported: set[str],
     if SURVEY in exported:
         regenerate_survey(repo_root, output_dir)
         done.append(SURVEY)
+    if TYPE_BASELINE in exported:
+        regenerate_type_baseline(output_dir)
+        done.append(TYPE_BASELINE)
     return done

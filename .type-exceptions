@@ -1,0 +1,924 @@
+{
+  "exceptions": [
+    {
+      "file": "eval/gate.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "eval/harness.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "eval/ne_upgrade_invariants.py",
+      "rule": "deprecated",
+      "count": 1
+    },
+    {
+      "file": "eval/ne_upgrade_invariants.py",
+      "rule": "invalid-assignment",
+      "count": 3
+    },
+    {
+      "file": "eval/pt_leg_attribution.py",
+      "rule": "invalid-argument-type",
+      "count": 1
+    },
+    {
+      "file": "eval/pt_stratum_diagnosis.py",
+      "rule": "invalid-argument-type",
+      "count": 1
+    },
+    {
+      "file": "eval/pt_stratum_diagnosis.py",
+      "rule": "invalid-return-type",
+      "count": 1
+    },
+    {
+      "file": "eval/rebaseline_report.py",
+      "rule": "no-matching-overload",
+      "count": 1
+    },
+    {
+      "file": "eval/rerank_gate_calibration.py",
+      "rule": "not-iterable",
+      "count": 1
+    },
+    {
+      "file": "eval/stats.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "eval/zone_prior_calibration.py",
+      "rule": "invalid-argument-type",
+      "count": 1
+    },
+    {
+      "file": "eval/zone_prior_calibration.py",
+      "rule": "invalid-assignment",
+      "count": 4
+    },
+    {
+      "file": "eval/zone_prior_calibration.py",
+      "rule": "not-iterable",
+      "count": 1
+    },
+    {
+      "file": "packaging/mcpb/smoke_handshake.py",
+      "rule": "invalid-argument-type",
+      "count": 1
+    },
+    {
+      "file": "packaging/mcpb/smoke_handshake.py",
+      "rule": "unresolved-import",
+      "count": 2
+    },
+    {
+      "file": "packaging/stage_model.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "scripts/offhost_watchdog_check.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "src/brain/alerts.py",
+      "rule": "unresolved-attribute",
+      "count": 2
+    },
+    {
+      "file": "src/brain/alerts.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "src/brain/audit.py",
+      "rule": "deprecated",
+      "count": 1
+    },
+    {
+      "file": "src/brain/audit.py",
+      "rule": "unresolved-attribute",
+      "count": 4
+    },
+    {
+      "file": "src/brain/audit.py",
+      "rule": "unresolved-import",
+      "count": 6
+    },
+    {
+      "file": "src/brain/audit_chain.py",
+      "rule": "unresolved-import",
+      "count": 2
+    },
+    {
+      "file": "src/brain/classification.py",
+      "rule": "invalid-argument-type",
+      "count": 1
+    },
+    {
+      "file": "src/brain/cli_cmds/__init__.py",
+      "rule": "unresolved-import",
+      "count": 4
+    },
+    {
+      "file": "src/brain/cli_cmds/eval.py",
+      "rule": "invalid-return-type",
+      "count": 1
+    },
+    {
+      "file": "src/brain/config_hostpaths.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "src/brain/context.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "src/brain/core/__init__.py",
+      "rule": "unresolved-import",
+      "count": 2
+    },
+    {
+      "file": "src/brain/core/_audit.py",
+      "rule": "unresolved-attribute",
+      "count": 21
+    },
+    {
+      "file": "src/brain/core/_briefing.py",
+      "rule": "unresolved-attribute",
+      "count": 32
+    },
+    {
+      "file": "src/brain/core/_briefing.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "src/brain/core/_capture.py",
+      "rule": "unresolved-attribute",
+      "count": 41
+    },
+    {
+      "file": "src/brain/core/_capture.py",
+      "rule": "unresolved-import",
+      "count": 3
+    },
+    {
+      "file": "src/brain/core/_health.py",
+      "rule": "unresolved-attribute",
+      "count": 33
+    },
+    {
+      "file": "src/brain/core/_health.py",
+      "rule": "unresolved-import",
+      "count": 2
+    },
+    {
+      "file": "src/brain/core/_maintenance.py",
+      "rule": "invalid-argument-type",
+      "count": 1
+    },
+    {
+      "file": "src/brain/core/_maintenance_state.py",
+      "rule": "no-matching-overload",
+      "count": 2
+    },
+    {
+      "file": "src/brain/core/_maintenance_state.py",
+      "rule": "unresolved-attribute",
+      "count": 16
+    },
+    {
+      "file": "src/brain/core/_retrieval.py",
+      "rule": "unresolved-attribute",
+      "count": 16
+    },
+    {
+      "file": "src/brain/core/_supersession.py",
+      "rule": "unresolved-attribute",
+      "count": 26
+    },
+    {
+      "file": "src/brain/core/_supersession_journal.py",
+      "rule": "unresolved-attribute",
+      "count": 12
+    },
+    {
+      "file": "src/brain/doctor.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "src/brain/doctor_context.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "src/brain/doctor_health.py",
+      "rule": "invalid-argument-type",
+      "count": 1
+    },
+    {
+      "file": "src/brain/doctor_health.py",
+      "rule": "unresolved-attribute",
+      "count": 15
+    },
+    {
+      "file": "src/brain/doctor_staging.py",
+      "rule": "invalid-argument-type",
+      "count": 1
+    },
+    {
+      "file": "src/brain/doctor_staging.py",
+      "rule": "no-matching-overload",
+      "count": 1
+    },
+    {
+      "file": "src/brain/doctor_staging.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "src/brain/draft_drain.py",
+      "rule": "unresolved-attribute",
+      "count": 2
+    },
+    {
+      "file": "src/brain/draft_drain.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "src/brain/embed.py",
+      "rule": "invalid-return-type",
+      "count": 1
+    },
+    {
+      "file": "src/brain/embed.py",
+      "rule": "unresolved-import",
+      "count": 4
+    },
+    {
+      "file": "src/brain/embed_catalog.py",
+      "rule": "unresolved-import",
+      "count": 3
+    },
+    {
+      "file": "src/brain/embed_onnx.py",
+      "rule": "not-iterable",
+      "count": 1
+    },
+    {
+      "file": "src/brain/embed_onnx.py",
+      "rule": "unresolved-attribute",
+      "count": 2
+    },
+    {
+      "file": "src/brain/embed_onnx.py",
+      "rule": "unresolved-import",
+      "count": 7
+    },
+    {
+      "file": "src/brain/embed_qwen.py",
+      "rule": "unresolved-import",
+      "count": 3
+    },
+    {
+      "file": "src/brain/encryption.py",
+      "rule": "unresolved-import",
+      "count": 4
+    },
+    {
+      "file": "src/brain/exceptions_cli.py",
+      "rule": "unresolved-attribute",
+      "count": 1
+    },
+    {
+      "file": "src/brain/exceptions_verify.py",
+      "rule": "invalid-argument-type",
+      "count": 1
+    },
+    {
+      "file": "src/brain/exceptions_verify.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "src/brain/folds/context.py",
+      "rule": "no-matching-overload",
+      "count": 1
+    },
+    {
+      "file": "src/brain/folds/context.py",
+      "rule": "unresolved-attribute",
+      "count": 1
+    },
+    {
+      "file": "src/brain/folds/daily.py",
+      "rule": "unresolved-attribute",
+      "count": 22
+    },
+    {
+      "file": "src/brain/folds/deliverables.py",
+      "rule": "unresolved-attribute",
+      "count": 2
+    },
+    {
+      "file": "src/brain/folds/golden.py",
+      "rule": "unresolved-attribute",
+      "count": 5
+    },
+    {
+      "file": "src/brain/folds/graph.py",
+      "rule": "unresolved-attribute",
+      "count": 4
+    },
+    {
+      "file": "src/brain/folds/intake.py",
+      "rule": "unresolved-attribute",
+      "count": 14
+    },
+    {
+      "file": "src/brain/folds/intake.py",
+      "rule": "unresolved-import",
+      "count": 9
+    },
+    {
+      "file": "src/brain/folds/invariants.py",
+      "rule": "invalid-argument-type",
+      "count": 4
+    },
+    {
+      "file": "src/brain/folds/invariants.py",
+      "rule": "unresolved-attribute",
+      "count": 10
+    },
+    {
+      "file": "src/brain/folds/orchestrator.py",
+      "rule": "unresolved-attribute",
+      "count": 17
+    },
+    {
+      "file": "src/brain/folds/organization.py",
+      "rule": "invalid-argument-type",
+      "count": 1
+    },
+    {
+      "file": "src/brain/folds/organization.py",
+      "rule": "unresolved-attribute",
+      "count": 18
+    },
+    {
+      "file": "src/brain/folds/preflight.py",
+      "rule": "unresolved-attribute",
+      "count": 1
+    },
+    {
+      "file": "src/brain/folds/publish.py",
+      "rule": "unresolved-attribute",
+      "count": 10
+    },
+    {
+      "file": "src/brain/folds/remediation.py",
+      "rule": "unresolved-attribute",
+      "count": 9
+    },
+    {
+      "file": "src/brain/folds/reporting.py",
+      "rule": "unresolved-attribute",
+      "count": 11
+    },
+    {
+      "file": "src/brain/folds/retention.py",
+      "rule": "unresolved-attribute",
+      "count": 8
+    },
+    {
+      "file": "src/brain/folds/retention.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "src/brain/folds/watchdogs.py",
+      "rule": "unresolved-attribute",
+      "count": 8
+    },
+    {
+      "file": "src/brain/folds/weekly.py",
+      "rule": "invalid-argument-type",
+      "count": 7
+    },
+    {
+      "file": "src/brain/folds/weekly.py",
+      "rule": "unresolved-attribute",
+      "count": 13
+    },
+    {
+      "file": "src/brain/golden_ops.py",
+      "rule": "invalid-argument-type",
+      "count": 1
+    },
+    {
+      "file": "src/brain/golden_probe.py",
+      "rule": "invalid-argument-type",
+      "count": 1
+    },
+    {
+      "file": "src/brain/graph_ops.py",
+      "rule": "unresolved-attribute",
+      "count": 5
+    },
+    {
+      "file": "src/brain/graphreport_sections_2.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "src/brain/healthreport.py",
+      "rule": "not-subscriptable",
+      "count": 1
+    },
+    {
+      "file": "src/brain/healthreport.py",
+      "rule": "unresolved-attribute",
+      "count": 7
+    },
+    {
+      "file": "src/brain/healthreport_sections.py",
+      "rule": "invalid-argument-type",
+      "count": 1
+    },
+    {
+      "file": "src/brain/healthreport_sections.py",
+      "rule": "invalid-return-type",
+      "count": 1
+    },
+    {
+      "file": "src/brain/healthreport_sections.py",
+      "rule": "not-iterable",
+      "count": 1
+    },
+    {
+      "file": "src/brain/healthreport_sections.py",
+      "rule": "unresolved-attribute",
+      "count": 2
+    },
+    {
+      "file": "src/brain/index/_connection.py",
+      "rule": "unresolved-attribute",
+      "count": 1
+    },
+    {
+      "file": "src/brain/index/_connection.py",
+      "rule": "unresolved-reference",
+      "count": 1
+    },
+    {
+      "file": "src/brain/index/_families.py",
+      "rule": "unresolved-attribute",
+      "count": 4
+    },
+    {
+      "file": "src/brain/index/_graph.py",
+      "rule": "invalid-return-type",
+      "count": 2
+    },
+    {
+      "file": "src/brain/index/_graph.py",
+      "rule": "unresolved-attribute",
+      "count": 8
+    },
+    {
+      "file": "src/brain/index/_identity.py",
+      "rule": "unresolved-attribute",
+      "count": 6
+    },
+    {
+      "file": "src/brain/index/_lifecycle.py",
+      "rule": "unresolved-attribute",
+      "count": 14
+    },
+    {
+      "file": "src/brain/index/_models.py",
+      "rule": "invalid-assignment",
+      "count": 3
+    },
+    {
+      "file": "src/brain/index/_planning.py",
+      "rule": "unresolved-attribute",
+      "count": 12
+    },
+    {
+      "file": "src/brain/index/_records.py",
+      "rule": "unresolved-attribute",
+      "count": 3
+    },
+    {
+      "file": "src/brain/index/_schema.py",
+      "rule": "unresolved-attribute",
+      "count": 13
+    },
+    {
+      "file": "src/brain/index/_search.py",
+      "rule": "unresolved-attribute",
+      "count": 22
+    },
+    {
+      "file": "src/brain/index/_settings.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "src/brain/index/_tools.py",
+      "rule": "unresolved-attribute",
+      "count": 38
+    },
+    {
+      "file": "src/brain/index/_zones.py",
+      "rule": "unresolved-attribute",
+      "count": 7
+    },
+    {
+      "file": "src/brain/index_stages/near_duplicates.py",
+      "rule": "unsupported-operator",
+      "count": 1
+    },
+    {
+      "file": "src/brain/index_stages/search_finalization.py",
+      "rule": "unsupported-operator",
+      "count": 1
+    },
+    {
+      "file": "src/brain/ingest/handlers/base.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "src/brain/ingest/handlers/concealment_html.py",
+      "rule": "unsupported-operator",
+      "count": 2
+    },
+    {
+      "file": "src/brain/ingest/handlers/concealment_office.py",
+      "rule": "unresolved-import",
+      "count": 10
+    },
+    {
+      "file": "src/brain/ingest/handlers/concealment_pdf.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "src/brain/ingest/handlers/docx.py",
+      "rule": "invalid-argument-type",
+      "count": 1
+    },
+    {
+      "file": "src/brain/ingest/handlers/docx.py",
+      "rule": "unresolved-import",
+      "count": 3
+    },
+    {
+      "file": "src/brain/ingest/handlers/email.py",
+      "rule": "invalid-return-type",
+      "count": 1
+    },
+    {
+      "file": "src/brain/ingest/handlers/email.py",
+      "rule": "unresolved-attribute",
+      "count": 5
+    },
+    {
+      "file": "src/brain/ingest/handlers/html.py",
+      "rule": "invalid-argument-type",
+      "count": 2
+    },
+    {
+      "file": "src/brain/ingest/handlers/html.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "src/brain/ingest/handlers/image.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "src/brain/ingest/handlers/pdf.py",
+      "rule": "unresolved-attribute",
+      "count": 2
+    },
+    {
+      "file": "src/brain/ingest/handlers/pdf.py",
+      "rule": "unresolved-import",
+      "count": 2
+    },
+    {
+      "file": "src/brain/ingest/handlers/pptx.py",
+      "rule": "unresolved-attribute",
+      "count": 2
+    },
+    {
+      "file": "src/brain/ingest/handlers/pptx.py",
+      "rule": "unresolved-import",
+      "count": 2
+    },
+    {
+      "file": "src/brain/ingest/handlers/xlsx.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "src/brain/ingest/pipeline_run.py",
+      "rule": "unresolved-import",
+      "count": 3
+    },
+    {
+      "file": "src/brain/ingest/pipeline_stages.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "src/brain/ingest/tierguard.py",
+      "rule": "invalid-argument-type",
+      "count": 1
+    },
+    {
+      "file": "src/brain/ingest/tierguard.py",
+      "rule": "redundant-condition",
+      "count": 1
+    },
+    {
+      "file": "src/brain/init_import.py",
+      "rule": "invalid-argument-type",
+      "count": 1
+    },
+    {
+      "file": "src/brain/init_steps.py",
+      "rule": "invalid-argument-type",
+      "count": 1
+    },
+    {
+      "file": "src/brain/interview_apply.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "src/brain/interview_detect.py",
+      "rule": "redundant-condition",
+      "count": 1
+    },
+    {
+      "file": "src/brain/interview_detect.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "src/brain/invariants.py",
+      "rule": "invalid-argument-type",
+      "count": 2
+    },
+    {
+      "file": "src/brain/invariants.py",
+      "rule": "unresolved-attribute",
+      "count": 3
+    },
+    {
+      "file": "src/brain/lock.py",
+      "rule": "deprecated",
+      "count": 2
+    },
+    {
+      "file": "src/brain/maintenance_folds_2.py",
+      "rule": "invalid-argument-type",
+      "count": 5
+    },
+    {
+      "file": "src/brain/maintenance_folds_2.py",
+      "rule": "not-subscriptable",
+      "count": 1
+    },
+    {
+      "file": "src/brain/maintenance_folds_2.py",
+      "rule": "unresolved-attribute",
+      "count": 5
+    },
+    {
+      "file": "src/brain/maintenance_folds_2.py",
+      "rule": "unsupported-operator",
+      "count": 1
+    },
+    {
+      "file": "src/brain/maintenance_folds_4.py",
+      "rule": "invalid-return-type",
+      "count": 1
+    },
+    {
+      "file": "src/brain/maintenance_graphfolds.py",
+      "rule": "unsupported-operator",
+      "count": 1
+    },
+    {
+      "file": "src/brain/mcp_adapter.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "src/brain/mcp_mediation.py",
+      "rule": "deprecated",
+      "count": 1
+    },
+    {
+      "file": "src/brain/pathkey.py",
+      "rule": "deprecated",
+      "count": 2
+    },
+    {
+      "file": "src/brain/provision_stage.py",
+      "rule": "invalid-argument-type",
+      "count": 1
+    },
+    {
+      "file": "src/brain/remediation_exceptions.py",
+      "rule": "invalid-argument-type",
+      "count": 1
+    },
+    {
+      "file": "src/brain/rerank.py",
+      "rule": "unresolved-import",
+      "count": 5
+    },
+    {
+      "file": "src/brain/rerank_onnx.py",
+      "rule": "not-iterable",
+      "count": 1
+    },
+    {
+      "file": "src/brain/rerank_onnx.py",
+      "rule": "unresolved-attribute",
+      "count": 2
+    },
+    {
+      "file": "src/brain/rerank_onnx.py",
+      "rule": "unresolved-import",
+      "count": 8
+    },
+    {
+      "file": "src/brain/retrieval_ops.py",
+      "rule": "unresolved-attribute",
+      "count": 1
+    },
+    {
+      "file": "src/brain/status_ops.py",
+      "rule": "unresolved-attribute",
+      "count": 6
+    },
+    {
+      "file": "src/brain/status_ops.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "src/brain/supersede_declared.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "src/brain/update_channels_2.py",
+      "rule": "no-matching-overload",
+      "count": 1
+    },
+    {
+      "file": "src/brain/update_channels_2.py",
+      "rule": "unsupported-operator",
+      "count": 1
+    },
+    {
+      "file": "src/brain/vectors.py",
+      "rule": "unresolved-import",
+      "count": 2
+    },
+    {
+      "file": "src/brain/workspaces.py",
+      "rule": "deprecated",
+      "count": 1
+    },
+    {
+      "file": "tools/bulk_link_batch.py",
+      "rule": "invalid-argument-type",
+      "count": 1
+    },
+    {
+      "file": "tools/check_backfill_batch_reports.py",
+      "rule": "invalid-parameter-default",
+      "count": 1
+    },
+    {
+      "file": "tools/check_client_names.py",
+      "rule": "unused-type-ignore-comment",
+      "count": 2
+    },
+    {
+      "file": "tools/check_complexity.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "tools/check_file_sizes.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "tools/check_function_lengths.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "tools/check_function_lengths.py",
+      "rule": "unsupported-operator",
+      "count": 1
+    },
+    {
+      "file": "tools/check_workflow_supply_chain.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "tools/export_check_no_cos.py",
+      "rule": "invalid-argument-type",
+      "count": 1
+    },
+    {
+      "file": "tools/export_check_no_cos.py",
+      "rule": "unresolved-attribute",
+      "count": 1
+    },
+    {
+      "file": "tools/export_check_no_cos.py",
+      "rule": "unsupported-operator",
+      "count": 2
+    },
+    {
+      "file": "tools/export_check_no_cos_scan.py",
+      "rule": "invalid-argument-type",
+      "count": 1
+    },
+    {
+      "file": "tools/export_check_no_cos_scan.py",
+      "rule": "unresolved-attribute",
+      "count": 1
+    },
+    {
+      "file": "tools/export_check_no_cos_smoke.py",
+      "rule": "unresolved-import",
+      "count": 2
+    },
+    {
+      "file": "tools/generate_sbom.py",
+      "rule": "unresolved-attribute",
+      "count": 2
+    },
+    {
+      "file": "tools/live_migration_steps.py",
+      "rule": "unresolved-import",
+      "count": 2
+    },
+    {
+      "file": "tools/llm_review_scoped.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "tools/migrate_corpus_steps.py",
+      "rule": "unresolved-import",
+      "count": 2
+    },
+    {
+      "file": "tools/probe_xlingual.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "tools/publish_release_steps.py",
+      "rule": "call-non-callable",
+      "count": 2
+    },
+    {
+      "file": "tools/release.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "tools/validate_invariants.py",
+      "rule": "unsupported-operator",
+      "count": 2
+    }
+  ]
+}

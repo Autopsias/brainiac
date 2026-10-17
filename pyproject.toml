@@ -277,3 +277,19 @@ pythonpath = ["src"]
 # artifact is ever distributed, re-run the code-origin audit gate first; only a
 # recorded Legal clearance for internal-only conveyance may reinstate a fork.
 # ---------------------------------------------------------------------------
+
+[tool.ty.environment]
+# The interpreter quality-ratchet.yml installs. tools/check_types.py passes
+# --python sys.prefix, so imports resolve from that same environment.
+python-version = "3.12"
+# CI runs on ubuntu-latest; pinned so a Mac records the same `sys.platform`
+# branches the runner judges.
+python-platform = "linux"
+
+[tool.ty.src]
+# Authored Python: the package, its tools, the eval harness and the release
+# scripts. `exclude` MIRRORS [tool.claude-quality].exclude above: a bare
+# directory name there matches at any depth, so it is spelled `**/<name>` here.
+# `_assets` is the generated mirror of tools/ + scripts/ inside src/brain/.
+include = ["src", "tools", "eval", "scripts", "packaging"]
+exclude = ["**/_plans", "**/_archive", "**/_evidence", "**/_assets"]

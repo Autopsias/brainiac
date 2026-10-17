@@ -73,3 +73,28 @@ jobs:
 
       - name: Complexity ratchet (whole project)
         run: python tools/check_complexity.py --project .
+
+      - name: Type-error ratchet (whole project)
+        # ty pinned: a bump changes which rules fire, so bump and re-record
+        # .type-exceptions in one commit. The baseline was recorded in THIS
+        # environment (Python 3.12, only ruff and ty installed) -- record it the
+        # same way. Positive control first, exactly as above: a planted error
+        # must block, a recorded one must pass, a rise must block, a fall must
+        # pass, before the repo's own all-clear is trusted.
+        run: |
+          set -euo pipefail
+          python -m pip install ty==0.0.89
+          plant=$(mktemp -d)
+          mkdir "$plant/src"
+          printf '[tool.ty.src]\ninclude = ["src"]\n' > "$plant/pyproject.toml"
+          printf 'x: int = "not an int"\n' > "$plant/src/bad.py"
+          # `! cmd` never trips `set -e`, so assert the exit code itself: 1 is
+          # "a count rose"; 2 (ty missing) must not pass for a block.
+          rc=0; python tools/check_types.py --project "$plant" || rc=$?; test "$rc" -eq 1
+          python tools/check_types.py --project "$plant" --generate-baseline
+          python tools/check_types.py --project "$plant"
+          printf 'x: int = "not an int"\ny: int = "nor this"\n' > "$plant/src/bad.py"
+          rc=0; python tools/check_types.py --project "$plant" || rc=$?; test "$rc" -eq 1
+          printf 'x: int = 1\n' > "$plant/src/bad.py"
+          python tools/check_types.py --project "$plant" | grep -q "below baseline src/bad.py"
+          python tools/check_types.py --project .

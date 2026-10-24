@@ -7,6 +7,18 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.47] — 2026-10-24
+### Fixed
+- **The dependency audit checks the lock again.** `pip-audit` re-resolved
+  `requirements.lock` with pip, which does not see the uv override that lifts
+  fastembed's `pillow<13` cap, so on 0.20.46 it stopped with
+  `ResolutionImpossible` and audited nothing. It now reads the pinned versions
+  as written (`--disable-pip`), in CI and in `make audit`.
+- **The release check accepts a wheel CI built with a newer setuptools.** The
+  check that compares the PyPI wheel with the local build ignores the
+  build-tool version line in `WHEEL` and that file's row in `RECORD`. Any
+  other difference still stops the release.
+
 ## [0.20.46] — 2026-10-24
 ### Security
 - **The parsers that open attachments carry no known vulnerability.** Pillow

@@ -82,7 +82,10 @@ jobs:
       - name: Audit pinned dependencies for known CVEs
         # --no-deps: audit exactly the pinned lines (the lock is the closure).
         # Fails the build on any known vulnerability with a fix available.
-        run: pip-audit -r requirements.lock --no-deps --desc
+        # --disable-pip: read the pins, do not re-resolve them. pip ignores the
+        # uv override that lifts fastembed's pillow<13 cap, so a re-resolve
+        # failed with ResolutionImpossible on 0.20.46 and audited nothing.
+        run: pip-audit -r requirements.lock --no-deps --disable-pip --desc
 
       - name: Generate CycloneDX SBOM
         if: always()

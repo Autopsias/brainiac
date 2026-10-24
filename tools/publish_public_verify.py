@@ -119,7 +119,8 @@ def _archive_members(path: Path) -> dict[str, str]:
         with zipfile.ZipFile(path) as z:
             for info in z.infolist():
                 if not info.is_dir():
-                    out[info.filename] = hashlib.sha256(z.read(info.filename)).hexdigest()
+                    body = _without_generator_noise(info.filename, z.read(info.filename))
+                    out[info.filename] = hashlib.sha256(body).hexdigest()
         return out
     with tarfile.open(path) as tar:
         for member in tar.getmembers():
@@ -131,6 +132,21 @@ def _archive_members(path: Path) -> dict[str, str]:
             rel = member.name.split("/", 1)[-1]
             out[rel] = hashlib.sha256(fh.read()).hexdigest()
     return out
+
+
+def _without_generator_noise(name: str, body: bytes) -> bytes:
+    """Drop the build-tool version from a wheel's WHEEL file, and WHEEL's own
+    row from RECORD. CI builds the PyPI wheel since 2026-08-25, so its setuptools
+    can be newer than the local one (0.20.46: 84.2.1 vs 84.0.0) with every other
+    member identical. RECORD keeps every other row, so a changed file still shows."""
+    if name.endswith(".dist-info/WHEEL"):
+        keep = [ln for ln in body.splitlines(keepends=True) if not ln.startswith(b"Generator:")]
+        return b"".join(keep)
+    if name.endswith(".dist-info/RECORD"):
+        keep = [ln for ln in body.splitlines(keepends=True)
+                if not ln.split(b",", 1)[0].endswith(b".dist-info/WHEEL")]
+        return b"".join(keep)
+    return body
 
 
 def _archive_content_diff(built: Path, served: Path) -> list[str]:

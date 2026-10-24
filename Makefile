@@ -10,7 +10,7 @@ lock:  ## Regenerate the hash-pinned dependency lock from pyproject.toml
 	uv pip compile pyproject.toml $(LOCK_EXTRAS) --generate-hashes -o requirements.lock
 
 audit:  ## Fail on any known CVE in the pinned deps (needs pip-audit)
-	pip-audit -r requirements.lock --no-deps --desc
+	pip-audit -r requirements.lock --no-deps --disable-pip --desc
 
 sbom:  ## Emit a CycloneDX SBOM from the lock (needs cyclonedx-bom)
 	cyclonedx-py requirements requirements.lock -o sbom.cyclonedx.json

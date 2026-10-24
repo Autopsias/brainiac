@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from ._shared import *  # noqa: F401,F403
+from ..model_slot import model_slot
 
 
 class _SearchMixin:
@@ -150,11 +151,14 @@ class _SearchMixin:
 
         Retired versions (``is_latest_version: false``) are hidden unless
         ``include_retired`` — see ``search_ranking.generate_candidates``."""
-        return self._hybrid_search_impl(
-            query, k=k, rrf_k=rrf_k, candidate_factor=candidate_factor,
-            rerank=rerank, reranker=reranker, rerank_top=rerank_top,
-            rerank_gate=rerank_gate, trace=None, include_retired=include_retired,
-        )
+        # The slot is taken HERE, before the reranker's 30 s budget starts, so
+        # a queued search waits instead of silently losing its rerank.
+        with model_slot():
+            return self._hybrid_search_impl(
+                query, k=k, rrf_k=rrf_k, candidate_factor=candidate_factor,
+                rerank=rerank, reranker=reranker, rerank_top=rerank_top,
+                rerank_gate=rerank_gate, trace=None, include_retired=include_retired,
+            )
 
     def hybrid_search_with_trace(
         self,
@@ -187,11 +191,12 @@ class _SearchMixin:
             candidate_limit=n,
             result_limit=max(0, k),
         )
-        hits = self._hybrid_search_impl(
-            query, k=k, rrf_k=rrf_k, candidate_factor=candidate_factor,
-            rerank=rerank, reranker=reranker, rerank_top=rerank_top,
-            rerank_gate=rerank_gate, trace=trace, include_retired=include_retired,
-        )
+        with model_slot():  # see hybrid_search
+            hits = self._hybrid_search_impl(
+                query, k=k, rrf_k=rrf_k, candidate_factor=candidate_factor,
+                rerank=rerank, reranker=reranker, rerank_top=rerank_top,
+                rerank_gate=rerank_gate, trace=trace, include_retired=include_retired,
+            )
         return hits, trace
 
     def _hybrid_search_impl(

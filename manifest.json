@@ -554,6 +554,7 @@
     "src/brain/mcp_tools/retrieval.py",
     "src/brain/mcp_tools/supersession.py",
     "src/brain/mcp_verbs.py",
+    "src/brain/model_slot.py",
     "src/brain/multihop.py",
     "src/brain/notes.py",
     "src/brain/originals_resolve.py",
@@ -693,5 +694,5 @@
     "vault/raw/2026-06-27-arctic-vs-e5-benchmark.md",
     "vault/raw/README.md"
   ],
-  "count": 692
+  "count": 693
 }

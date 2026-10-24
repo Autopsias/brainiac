@@ -7,6 +7,27 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.45] — 2026-10-24
+### Changed
+- **Model work is capped machine-wide, so parallel searches no longer exhaust
+  memory.** At most two processes load or run a model at once
+  (`$BRAIN_MODEL_SLOTS`, default 2); a queued search waits before its rerank
+  budget starts, so it never loses its rerank. Ten `brain search` processes
+  at once had taken a 24 GB Mac to a forced reset; the same replay now peaks
+  at 5.7 GB in total. The reranker also scores in batches of 4
+  (`$BRAIN_RERANK_BATCH`), so a long-lived process such as the MCP server
+  keeps 4.6 GB after 20 searches instead of 12 GB. Scores are unchanged.
+- **The embedder and the reranker use 4 threads by default, not every core.**
+  Measured on a 12-core Mac: the same wall time at about 40% of the CPU.
+  `$BRAIN_EMBED_THREADS` and `$BRAIN_RERANK_THREADS` still override.
+
+### Fixed
+- **`brain update` no longer times out on a slow engine install.** Every
+  install channel (uv, pipx, pip --user, venv wheel, editable) ran under the
+  120-second bound meant for `claude plugin` calls. The 0.20.44 venv install
+  took 6m39s, so the update stopped before it re-staged any workspace. The
+  install now gets 30 minutes, the same bound as the workspace sync.
+
 ## [0.20.44] — 2026-10-17
 ### Added
 - **A type-error ratchet in CI.** The `quality-ratchet` workflow now runs

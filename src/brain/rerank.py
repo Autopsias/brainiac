@@ -40,18 +40,21 @@ import os
 from typing import Protocol, Sequence, runtime_checkable
 
 
+# Measured 2026-10-19: 4 threads match the all-cores wall time at ~40% of the CPU.
+_DEFAULT_THREADS = 4
+
+
 def _ort_threads() -> int | None:
     """Intra-op thread count for the reranker ONNX session (S11 speed fix).
 
-    Default: all physical cores. The reranker cross-encodes the top-N
-    (query, passage) pairs in ONE batched forward pass, so saturating the
-    batch dimension across cores is what keeps query p95 interactive.
+    Default: 4 threads (capped at the core count). More threads spin without
+    cutting wall time; raise it for bulk work.
     Override via ``$BRAIN_RERANK_THREADS``."""
     raw = os.environ.get("BRAIN_RERANK_THREADS")
     if raw and raw.strip().isdigit():
         return int(raw)
     try:
-        return os.cpu_count() or None
+        return min(_DEFAULT_THREADS, os.cpu_count() or _DEFAULT_THREADS)
     except Exception:
         return None
 

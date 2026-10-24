@@ -4,6 +4,8 @@ from __future__ import annotations
 import os
 from typing import Sequence
 
+from .model_slot import model_slot
+
 # --- Fully-open reranker of record (replaces the CC-BY-NC jina-reranker-v2) ---
 # gte-multilingual-reranker-base is Apache-2.0, an XLM-R ENCODER cross-encoder
 # (~306M). It is the best QUALITY among the latency-affordable fully-open
@@ -178,9 +180,10 @@ class OnnxReranker:
                 t = _ort_threads()
                 if t:
                     so.intra_op_num_threads = t
-                self._sess = ort.InferenceSession(
-                    onnx_path, sess_options=so, providers=_ort_providers()
-                )
+                with model_slot():  # this load alone peaks at 3.0 GB
+                    self._sess = ort.InferenceSession(
+                        onnx_path, sess_options=so, providers=_ort_providers()
+                    )
                 self._in_names = [i.name for i in self._sess.get_inputs()]
                 self._tok = Tokenizer.from_file(os.path.join(base, "tokenizer.json"))
                 # Clamp (query, passage) pairs to the cross-encoder's context
@@ -222,6 +225,20 @@ class OnnxReranker:
         if not passages:
             return []
         self._ensure()
+        # Score in small batches, not all passages at once. Working memory
+        # grows with batch x seq^2 (self-attention over 1024-token pairs):
+        # one 15-20 pair batch peaked a search at ~4 GB, a long-lived MCP
+        # server retained 12 GB after 15 searches, and ten parallel searches
+        # froze a 24 GB Mac (2026-10-18). Scores are unchanged: each pad
+        # position is masked out of attention. Override via
+        # $BRAIN_RERANK_BATCH.
+        size = _rerank_batch()
+        scores: list[float] = []
+        for start in range(0, len(passages), size):
+            scores.extend(self._score(query, passages[start:start + size]))
+        return scores
+
+    def _score(self, query: str, passages: Sequence[str]) -> list[float]:
         import numpy as np
 
         enc = self._tok.encode_batch([(query, p) for p in passages])
@@ -236,8 +253,15 @@ class OnnxReranker:
                 feed[nm] = am
             elif "token_type" in low:
                 feed[nm] = np.zeros_like(ii)
-        logits = self._sess.run(None, feed)[0]
+        with model_slot():
+            logits = self._sess.run(None, feed)[0]
         return [float(x[0]) if hasattr(x, "__len__") else float(x) for x in logits]
+
+
+def _rerank_batch() -> int:
+    """Pairs per reranker run (default 4). See `OnnxReranker.rerank`."""
+    raw = os.environ.get("BRAIN_RERANK_BATCH", "")
+    return int(raw) if raw.strip().isdigit() and int(raw) > 0 else 4
 
 # Parent-namespace binds, deferred past this module's own defs (circular-import
 # safety, whichever of brain.rerank / brain.rerank_onnx loads first).

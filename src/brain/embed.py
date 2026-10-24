@@ -50,18 +50,21 @@ ARCTIC_FULL_DIM = 768
 MRL_DIM = 256
 
 
+# Measured 2026-10-19: 4 threads match the all-cores wall time at ~40% of the CPU.
+_DEFAULT_THREADS = 4
+
+
 def _ort_threads() -> int | None:
     """Intra-op thread count for the ONNX session (S11 speed fix).
 
-    Default: all physical cores (Apple Silicon has no SMT, so logical ==
-    physical — on the M4 Pro that is 12). Saturating the batch dimension
-    across cores is the biggest ORT knob for bulk embedding throughput.
+    Default: 4 threads (capped at the core count). More threads spin without
+    cutting wall time; raise it for bulk work.
     Override via ``$BRAIN_EMBED_THREADS``."""
     raw = os.environ.get("BRAIN_EMBED_THREADS")
     if raw and raw.strip().isdigit():
         return int(raw)
     try:
-        return os.cpu_count() or None
+        return min(_DEFAULT_THREADS, os.cpu_count() or _DEFAULT_THREADS)
     except Exception:
         return None
 

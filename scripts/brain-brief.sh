@@ -61,6 +61,21 @@ if [ -z "$BRAIN_BIN" ]; then
   exit 1
 fi
 
+# YIELD TO THE NIGHTLY MAIL RUN (2026-10-19). Both do model work, and the
+# machine runs at most $BRAIN_MODEL_SLOTS (2) model processes at once. On
+# run374 an hourly maintain ran 02:06-03:04 across the run's grounding window
+# and 58 of 72 sender lookups timed out (0 of 122 the night before). The night
+# runs its own broker after its child exits, so skipping an hour loses
+# nothing: the next hourly run catches up. A hung night also stops this job;
+# the WAT-01 stale-feed alert names it after 2 days.
+# ponytail: process-name match, a pid lock if the night ever runs under
+# another name.
+YIELD_TO="${BRAIN_BRIEF_YIELD_TO:-tools/cos_nightly.sh}"
+if pgrep -f "$YIELD_TO" >/dev/null 2>&1; then
+  echo "=== brain-daily-brief / brain-nightly $(date -u +%Y-%m-%dT%H:%M:%SZ) === SKIP: the nightly mail run is running ($YIELD_TO); next hour catches up" >> "$LOG"
+  exit 0
+fi
+
 # The RUN VALIDATOR needs the mutation toolchain, and the wheel does not carry
 # it (2026-08-22). `brain.cos_runverify.check_plan_binding` imports
 # `cos_mutate.load_frozen_plan` to re-hash a run's frozen plan — one definition

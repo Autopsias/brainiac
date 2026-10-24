@@ -277,7 +277,14 @@ def check_staged(project_path: Path, config: dict, exceptions: dict[str, int]) -
     if blocking:
         print(f"\n=== File Size Violations ({len(blocking)} BLOCKING, staged) ===")
         print("\n".join(blocking))
-        print("\nThis commit grows the file past its bound. Shrink it, or split it.")
+        print(
+            "\nThe bound above is a ratchet: it records the largest size this"
+            f" file was\nallowed to reach, so {EXC_FILE} never lets a file"
+            " grow past what it already\nrecorded. Raising the number in"
+            f" {EXC_FILE} is not the fix.\n\nThe fix: extract a cohesive"
+            " group of functions into a new module and import\nit back here."
+            f"\n\nRe-run: python3 {sys.argv[0]} --staged"
+        )
     if inherited:
         print(f"\n=== Inherited debt ({len(inherited)} WARNING, staged) ===")
         print("\n".join(inherited))

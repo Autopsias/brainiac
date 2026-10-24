@@ -8,6 +8,8 @@ import sys as sys
 from dataclasses import dataclass
 from typing import Sequence
 
+from .model_slot import model_slot
+
 # --- Direct-ONNX models (DIST-01: eliminates fastembed) ---------------------
 # Each model owns its pooling, prefixes, dimension and exact file. Keeping the
 # contract here prevents a future model swap from inheriting another model's
@@ -255,9 +257,10 @@ class OnnxEmbedder:
                 t = _ort_threads()
                 if t:
                     so.intra_op_num_threads = t
-                self._sess = ort.InferenceSession(
-                    onnx_path, sess_options=so, providers=_ort_providers()
-                )
+                with model_slot():  # loading peaks well above the weights' size
+                    self._sess = ort.InferenceSession(
+                        onnx_path, sess_options=so, providers=_ort_providers()
+                    )
                 self._in_names = [i.name for i in self._sess.get_inputs()]
                 self._tok = Tokenizer.from_file(os.path.join(base, "tokenizer.json"))
                 # Truncate to the engine's calibrated chunk window BEFORE padding.
@@ -387,7 +390,8 @@ class OnnxEmbedder:
                 feed[nm] = am
             elif "token_type" in low:
                 feed[nm] = np.zeros_like(ii)
-        hidden = self._sess.run(None, feed)[0]  # [batch, seq, dim] float32
+        with model_slot():
+            hidden = self._sess.run(None, feed)[0]  # [batch, seq, dim] float32
         if self._pooling == "cls":
             pooled = hidden[:, 0, :]
         else:

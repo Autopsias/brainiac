@@ -736,6 +736,16 @@
       "count": 1
     },
     {
+      "file": "src/brain/model_slot.py",
+      "rule": "deprecated",
+      "count": 1
+    },
+    {
+      "file": "src/brain/model_slot.py",
+      "rule": "unresolved-attribute",
+      "count": 3
+    },
+    {
       "file": "src/brain/pathkey.py",
       "rule": "deprecated",
       "count": 2

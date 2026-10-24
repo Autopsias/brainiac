@@ -31,6 +31,12 @@ from .update_cos_guard import (
 #: old version — silently, because the crash pre-empted the report.
 WORKSPACE_SYNC_TIMEOUT_S = 1800
 
+#: The engine reinstall is a real pip/uv/pipx install, and it too borrowed the
+#: shared 120s default. Measured 2026-10-17 on the v0.20.44 release: the venv
+#: install of the checkout (new mcp dependency set) took 6m39s, so `brain
+#: update` returned {"error": "TimeoutExpired"} before it re-staged anything.
+ENGINE_INSTALL_TIMEOUT_S = 1800
+
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 ChannelDetector = Callable[[Optional[Path]], str]
 VenvBinResolver = Callable[[Path, str], Path]
@@ -63,12 +69,12 @@ def _read_installed_version(
 
 def upgrade_uv_tool(run: Runner) -> subprocess.CompletedProcess[str]:
     """Upgrade the uv-managed distribution."""
-    return run(["uv", "tool", "upgrade", "brainiac-cli"])
+    return run(["uv", "tool", "upgrade", "brainiac-cli"], timeout=ENGINE_INSTALL_TIMEOUT_S)
 
 
 def upgrade_pipx(run: Runner) -> subprocess.CompletedProcess[str]:
     """Upgrade the pipx-managed distribution."""
-    return run(["pipx", "upgrade", "brainiac-cli"])
+    return run(["pipx", "upgrade", "brainiac-cli"], timeout=ENGINE_INSTALL_TIMEOUT_S)
 
 
 def upgrade_pip_user(
@@ -84,7 +90,7 @@ def upgrade_pip_user(
         "--user",
         "--upgrade",
         "brainiac-cli[mcp]",
-    ])
+    ], timeout=ENGINE_INSTALL_TIMEOUT_S)
 
 
 def upgrade_venv_wheel(
@@ -93,7 +99,7 @@ def upgrade_venv_wheel(
     target: str,
 ) -> subprocess.CompletedProcess[str]:
     """Upgrade a non-editable wheel inside the legacy venv."""
-    return run([str(pip_path), "install", "--upgrade", target])
+    return run([str(pip_path), "install", "--upgrade", target], timeout=ENGINE_INSTALL_TIMEOUT_S)
 
 
 def upgrade_editable(
@@ -102,7 +108,7 @@ def upgrade_editable(
     engine_src: Path,
 ) -> subprocess.CompletedProcess[str]:
     """Upgrade the editable checkout inside the legacy venv."""
-    return run([str(pip_path), "install", "--upgrade", "-e", f"{engine_src}[mcp]"])
+    return run([str(pip_path), "install", "--upgrade", "-e", f"{engine_src}[mcp]"], timeout=ENGINE_INSTALL_TIMEOUT_S)
 
 
 def refresh_engine_channel(

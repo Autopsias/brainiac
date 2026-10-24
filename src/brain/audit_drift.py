@@ -6,6 +6,7 @@ import os
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING
+from .atomic_temp import atomic_temp_path
 
 if TYPE_CHECKING:  # annotation-only; a runtime import here would be a cycle
     from .audit_chain import AuditChain
@@ -32,7 +33,7 @@ def _write_dispositions(path: Path, payload: dict) -> None:
     turn every explained finding back into an unexplained one. `os.replace` is
     atomic within a filesystem, so a reader sees the old file or the new one.
     """
-    tmp = path.with_name(path.name + ".tmp")
+    tmp = atomic_temp_path(path)
     tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     os.replace(tmp, path)
 

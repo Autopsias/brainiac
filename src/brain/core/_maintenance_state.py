@@ -1,5 +1,6 @@
 """Maintenance state methods for BrainCore."""
 from __future__ import annotations
+from ..atomic_temp import atomic_temp_path
 
 from ._shared import (
     Any,
@@ -130,7 +131,7 @@ class _MaintenanceStateMixin:
 
         path = config.maintain_state_path(self.vault)
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp = atomic_temp_path(path)
         tmp.write_text(_json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
         _os.replace(tmp, path)
     def _note_graphify_build_outcome(

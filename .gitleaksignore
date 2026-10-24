@@ -32,3 +32,16 @@ src/brain/embed.py:generic-api-key:144
 tests/test_cos_sheet_questions.py:generic-api-key:129
 tests/test_cos_sheet_questions.py:generic-api-key:130
 tests/test_cos_sheet_questions.py:generic-api-key:131
+
+# History fingerprints (commit:path:rule:line). These are the SAME reviewed
+# false positives as the pins above, as they appeared in older commits; the
+# path:rule:line pins match only the current tree, so `gitleaks git` (history
+# scan) re-reported them. Same files, same non-secret text (a docstring in
+# embed.py, test data in test_cos_sheet_questions.py, an HTML template in eval/).
+7e2f402f1e51842b676c90ae85e2bcc0eb8f2688:tests/test_cos_sheet_questions.py:generic-api-key:117
+7e2f402f1e51842b676c90ae85e2bcc0eb8f2688:tests/test_cos_sheet_questions.py:generic-api-key:118
+7e2f402f1e51842b676c90ae85e2bcc0eb8f2688:tests/test_cos_sheet_questions.py:generic-api-key:119
+538ba77d0fbf575e3d596eb599e84012924624b9:src/brain/embed.py:generic-api-key:142
+c10e27ec39e8216cf5920f7377edec801f9d6096:eval/qrels_console_v2_template.html:generic-api-key:125
+c10e27ec39e8216cf5920f7377edec801f9d6096:src/brain/embed.py:generic-api-key:142
+45597845f409b637ecfcfbee9a8176ec6a89985c:src/brain/embed.py:generic-api-key:141

@@ -78,6 +78,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config as _config
+from .atomic_temp import atomic_temp_path
 
 PINNED_FILENAME = "pinned-verify.json"
 MOUNT_HTML_FILENAME = "exceptions.html"
@@ -372,7 +373,7 @@ def stage_pin(vault: Path, workspace: Path | None = None) -> dict[str, Any]:
     data = {"vault_id": vid, "public_key_pem": pem}
     path = staging_root(vault, workspace) / PINNED_FILENAME
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
+    tmp = atomic_temp_path(path)
     tmp.write_text(json.dumps(data, indent=1, sort_keys=True), encoding="utf-8")
     os.replace(tmp, path)
     return data
@@ -413,6 +414,6 @@ def publish_summary(vault: Path, workspace: Path | None = None) -> None:
         if not src.exists():
             continue
         dest = dest_dir / filename
-        tmp = dest.with_name(dest.name + ".tmp")
+        tmp = atomic_temp_path(dest)
         tmp.write_bytes(src.read_bytes())
         os.replace(tmp, dest)

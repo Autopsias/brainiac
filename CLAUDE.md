@@ -182,8 +182,9 @@ name the vault:**
 
 It renders THREE jobs now, so it rewrites the nightly and remind plists too —
 read all three back from `launchctl print`. It is NOT
-`tools/launchd/reload-cos-nightly.sh`, which ends in `launchctl kickstart` and
-fires a real night against the live mailbox.
+`tools/launchd/reload-cos-nightly.sh`, which only reloads the job (it no longer
+kicks off a night unless you pass `--kickstart`, which fires a real night against
+the live mailbox).
 
 **Owner ruling 2026-09-04: the P0 exemption is retired.** A thread with no action
 for him is archived whatever its priority, P0 included. **s07 lifted every site
@@ -225,10 +226,11 @@ checkout with `tools/launchd/install-cos-jobs.sh` and reloaded by hand. Read
 back from `launchctl print`, never from the file: program is now
 `.../profile-a-brain/tools/cos_nightly.sh`, schedule `{Hour 2, Minute 0}`,
 state `not running` (correct — `RunAtLoad` is false). `cos-remind` re-rendered
-byte-identical. **Trap: `tools/launchd/reload-cos-nightly.sh` ends with
-`launchctl kickstart` and fires a real night against the live mailbox; the name
-does not say so. To swap a path without running anything, use `bootout` then
-`bootstrap` by hand.**
+byte-identical. **Trap (fixed): `tools/launchd/reload-cos-nightly.sh` used to end with
+`launchctl kickstart` and fire a real night against the live mailbox. It now
+reloads only, unless `--kickstart` is given, which does fire a real night. To
+swap a path without running anything, run it with no argument or use `bootout`
+then `bootstrap` by hand.**
 
 **Security Follow-up 2026-09 closed 2026-09-04** and is on `master` as `00360450` (15 sessions, 16 items, all DONE). Suite at the merge: 6010 passed, 0 failed. The automated `land` cannot run in this repo — the sole remote is the push-disabled public export, which has no `master` — so the merge was done by hand and recorded in the plan's `LAND_NOTICE.txt`. Acceptance review: `_plans/security-followup-2026-09-01/_evidence/security-followup/acceptance-review.md` — four of six criteria ACHIEVED, one DEFERRED by s05's own NO-GO, and one that was PENDING on Require-status-checks for the public `main` — **which the owner CLOSED on 2026-09-05 by declining it. Do not re-raise it.**
 

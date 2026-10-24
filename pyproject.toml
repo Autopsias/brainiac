@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 # check. The IMPORT package stays `brain` and the console script stays
 # `brain` — only the distribution/project name changes.
 name = "brainiac-cli"
-version = "0.20.45"
+version = "0.20.46"
 description = "Brainiac — local any-LLM second-brain core engine + brain CLI (Markdown truth, derived SQLite index)."
 readme = "README.md"
 license = "Apache-2.0"
@@ -42,7 +42,7 @@ dependencies = [
     # because requirements.lock is CI/audit-only -- a plain
     # `pip install brainiac-cli` reads THIS constraint, and >=4.0 let the
     # vulnerable 6.14.2 survive an upgrade to 0.20.5 on a real host.
-    "pypdf>=6.15.0",
+    "pypdf>=6.21.2",
     "python-docx>=1.1",
     "python-pptx>=0.6.23",
     "openpyxl>=3.1",
@@ -50,7 +50,10 @@ dependencies = [
     # binary is present — the pytesseract binding itself stays a fully
     # OPTIONAL, NOT-a-pip-dependency probe: OCR degrades gracefully absent
     # it, matching the ADR's "system binaries are never pip deps" rule).
-    "Pillow>=12.3.0",
+    # >=13.0.0 fixes 37 advisories (one a FlashPix heap overflow); 13 needs
+    # Python 3.11+, and no fixed 12.x exists, so 3.10 keeps the old floor.
+    "Pillow>=13.0.0; python_version >= '3.11'",
+    "Pillow>=12.3.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
@@ -94,7 +97,7 @@ yaml = ["PyYAML>=6"]
 # message hints valid even though a default install already has these. Absent,
 # `brain ingest` degrades per-handler (reports which extensions are
 # unavailable) rather than crashing.
-ingest = ["pypdf>=6.15.0", "python-docx>=1.1", "python-pptx>=0.6.23", "openpyxl>=3.1", "Pillow>=12.3.0"]
+ingest = ["pypdf>=6.21.2", "python-docx>=1.1", "python-pptx>=0.6.23", "openpyxl>=3.1", "Pillow>=13.0.0; python_version >= '3.11'", "Pillow>=12.3.0; python_version < '3.11'"]
 # pytest-xdist/-timeout back the documented parallel suite run (AGENTS.md §8,
 # "Running the test suite"): ~15 min sequential -> ~6 min at `-n 8`. Both are
 # pytest-dev org, actively maintained. Declared here so a fresh checkout can
@@ -296,3 +299,20 @@ python-platform = "linux"
 # `_assets` is the generated mirror of tools/ + scripts/ inside src/brain/.
 include = ["src", "tools", "eval", "scripts", "packaging"]
 exclude = ["**/_plans", "**/_archive", "**/_evidence", "**/_assets"]
+
+[tool.uv]
+# Wait 7 days before resolving a newly published version (a new release can be
+# malicious or broken). shortcut: pypdf 6.21.2, filelock 4.2.4 and certifi
+# 2026.10.23 are security fixes under 7 days old on 2026-10-24, so they are
+# exempt; remove the exemptions after 2026-10-31.
+exclude-newer = "7 days"
+exclude-newer-package = { pypdf = false, filelock = false, certifi = false }
+# fastembed (the optional `embed` extra, not installed by default) caps
+# pillow<13 in every release up to 0.9.0, but pillow 13.0.0 is the first
+# release fixing 37 advisories (one a FlashPix heap overflow). fastembed uses
+# pillow only for IMAGE embeddings; this repo embeds text only.
+# shortcut: drop this once a fastembed release allows pillow>=13.
+override-dependencies = [
+    "pillow>=13.0.0; python_version >= '3.11'",
+    "pillow>=12.3.0; python_version < '3.11'",
+]

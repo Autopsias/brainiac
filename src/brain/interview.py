@@ -27,6 +27,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any
+from .atomic_temp import atomic_temp_path
 
 SCHEMA = "brain-interview/1"
 STATE_RELPATH = ".brain/interview/state.json"
@@ -103,7 +104,7 @@ def read_state(vault: Any) -> dict[str, Any]:
 def write_state(vault: Any, state: dict[str, Any]) -> Path:
     p = state_path(vault)
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".json.tmp")
+    tmp = atomic_temp_path(p)
     tmp.write_text(json.dumps(state, ensure_ascii=False, sort_keys=True,
                               indent=1) + "\n", encoding="utf-8")
     os.chmod(tmp, 0o600)

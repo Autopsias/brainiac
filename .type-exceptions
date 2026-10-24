@@ -573,7 +573,7 @@
     {
       "file": "src/brain/ingest/handlers/concealment_pdf.py",
       "rule": "unresolved-import",
-      "count": 1
+      "count": 2
     },
     {
       "file": "src/brain/ingest/handlers/docx.py",
@@ -814,6 +814,11 @@
       "file": "src/brain/vectors.py",
       "rule": "unresolved-import",
       "count": 2
+    },
+    {
+      "file": "src/brain/vmstaging.py",
+      "rule": "deprecated",
+      "count": 1
     },
     {
       "file": "src/brain/workspaces.py",

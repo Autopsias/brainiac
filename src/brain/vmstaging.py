@@ -29,13 +29,30 @@ marker the host can read WITHOUT executing it, or it cannot be checked at all.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import re
 import shutil
+import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 ARCHES = ("x86_64", "aarch64")
+
+
+@contextlib.contextmanager
+def tools_on_path(engine_src: Path) -> Iterator[None]:
+    """Put ``<engine_src>/tools`` on ``sys.path`` for the block, and ALWAYS take
+    it off again, so importing a tools module never leaves the path changed."""
+    entry = str(engine_src / "tools")
+    sys.path.insert(0, entry)
+    try:
+        yield
+    finally:
+        try:
+            sys.path.remove(entry)
+        except ValueError:
+            pass
 
 
 def stage_vm_binaries(brain_dir: Path, dist: Path) -> dict:
@@ -94,12 +111,11 @@ def stage_vm_support_files(brain_dir: Path, engine_src: Path, packaged_script) -
     """
     vendor_status: dict[str, str] = {}
     try:
-        import sys as _sys
-        _sys.path.insert(0, str(engine_src / "tools"))
-        import vendor_semantic_deps as _vsd  # type: ignore
+        with tools_on_path(engine_src):
+            import vendor_semantic_deps as _vsd  # type: ignore
 
-        _vsd.write_shim(brain_dir)                       # vendored-deps-aware shim
-        vendor_status = _vsd.stage_vendor(brain_dir)     # tokenizers + sqlite-vec per arch
+            _vsd.write_shim(brain_dir)                   # vendored-deps-aware shim
+            vendor_status = _vsd.stage_vendor(brain_dir)  # tokenizers + sqlite-vec per arch
     except Exception as exc:  # advisory — a networkless host degrades to lexical
         vendor_status = {"error": f"{type(exc).__name__}: {exc}"}
 

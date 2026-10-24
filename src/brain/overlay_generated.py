@@ -64,6 +64,7 @@ from typing import Any, NamedTuple
 
 from . import frontmatter
 from . import overlay as ov
+from .atomic_temp import atomic_temp_path
 
 #: Sibling of ``keywords/`` — deliberately NOT inside it. See the module
 #: docstring: ``keywords/`` drives ingest classification and this does not.
@@ -223,7 +224,7 @@ def _publish(path: Path, text: str) -> None:
     ``*.md`` glob in :func:`brain.overlay._ring_files` cannot pick a half-written
     temp file up as a ring file of its own.
     """
-    tmp = path.with_name(f".{path.name}.tmp")
+    tmp = atomic_temp_path(path)
     try:
         tmp.write_text(text, encoding="utf-8")
         os.replace(tmp, path)

@@ -10,6 +10,7 @@ import shutil
 import tempfile
 from pathlib import Path
 from typing import Any
+from ..atomic_temp import atomic_temp_path
 
 
 def manifest_path(vault: Path) -> Path:
@@ -32,7 +33,7 @@ def load_manifest(vault: Path) -> dict[str, str]:
 def save_manifest(vault: Path, manifest: dict[str, str]) -> None:
     path = manifest_path(vault)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
+    tmp = atomic_temp_path(path)
     tmp.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
     os.replace(tmp, path)
 
@@ -57,7 +58,7 @@ def load_failures(vault: Path) -> dict[str, int]:
 def save_failures(vault: Path, failures: dict[str, int]) -> None:
     path = failures_path(vault)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
+    tmp = atomic_temp_path(path)
     tmp.write_text(json.dumps(failures, indent=2, sort_keys=True), encoding="utf-8")
     os.replace(tmp, path)
 
@@ -88,7 +89,11 @@ def read_nofollow(path: Path, *, max_bytes: int | None = None) -> bytes:
 
     if path.is_symlink():
         raise ReadRefused(f"{path.name} is a symlink — refused")
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    # O_NONBLOCK: a FIFO planted at the name would otherwise block the open
+    # until a writer arrives, before the S_ISREG check below can refuse it
+    # (same guard as ``cos._io``). It changes nothing for a regular file.
+    flags = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+             | getattr(os, "O_NONBLOCK", 0))
     try:
         fd = os.open(path, flags)
     except OSError as exc:

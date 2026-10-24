@@ -49,6 +49,7 @@ from typing import TYPE_CHECKING, Any
 
 from .. import classification as CLS
 from .. import supersede_declared as SUP
+from ..atomic_temp import atomic_temp_path
 
 if TYPE_CHECKING:  # the stage record; a runtime import here would be a cycle
     from .pipeline_stages import ClaimRecord
@@ -423,7 +424,7 @@ def _store(vault: Any, pending: dict[str, dict[str, Any]]) -> None:
     path = journal_path(vault)
     path.parent.mkdir(parents=True, exist_ok=True)
     config.secure_file_permissions(path.parent, 0o700)
-    tmp = path.with_name(path.name + ".tmp")
+    tmp = atomic_temp_path(path)
     tmp.write_text(json.dumps(pending, indent=2, sort_keys=True), encoding="utf-8")
     config.secure_file_permissions(tmp, 0o600)
     tmp.replace(path)

@@ -60,6 +60,7 @@ from . import maintenance as _maintenance
 from . import maintenance_notify as _notify
 from . import remediation as _rem
 from . import remediation_exceptions as _rex
+from .atomic_temp import atomic_temp_path
 from .exceptions_render import render_page  # re-exported: the page's one
 # renderer, split out on 2026-08-22 when this file hit the 500-line bound.
 
@@ -287,7 +288,7 @@ def maybe_ping(vault: Path, keys: list[str], full_path: Path) -> str | None:
     if not str(out or "").startswith("skipped"):  # a SKIP defers, never spends
         try:
             state_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = state_path.with_name(state_path.name + ".tmp")
+            tmp = atomic_temp_path(state_path)
             tmp.write_text(json.dumps({"hash": current_hash}), encoding="utf-8")
             os.replace(tmp, state_path)
         except OSError:
@@ -364,6 +365,6 @@ def generate(core: Any, today: datetime.date | None = None) -> dict[str, Any]:
 
 
 def _atomic_write(path: Path, text: str) -> None:
-    tmp = path.with_name(path.name + ".tmp")
+    tmp = atomic_temp_path(path)
     tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)

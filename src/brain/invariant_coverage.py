@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .invariant_shared import SAMPLE_CAP
+from .atomic_temp import atomic_temp_path
 
 # ---------------------------------------------------------------------------
 # G12 — the exclusion set, defined ONCE here and imported by every consumer
@@ -437,7 +438,7 @@ def write_link_lane(conn: Any, vault: Path, *, limit: int | None = None) -> dict
     except (OSError, ValueError):
         previous = None
     payload.update(lane_consumption(previous, all_ids, payload["generated"]))
-    tmp = out.with_suffix(".json.tmp")
+    tmp = atomic_temp_path(out)
     tmp.write_text(json.dumps(payload, indent=1), encoding="utf-8")
     tmp.replace(out)
     return {"path": str(out), "written": len(payload["candidates"]),

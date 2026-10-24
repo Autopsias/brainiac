@@ -7,6 +7,24 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.46] — 2026-10-24
+### Security
+- **The parsers that open attachments carry no known vulnerability.** Pillow
+  13.0.0 (37 advisories on 12.3.0, one a heap overflow in the FlashPix
+  decoder), pypdf 6.21.2 (11 on 6.19.0), filelock 4.2.4 and certifi
+  2026.10.23. The `pypdf` floor in the package metadata is now `>=6.21.2`, so
+  an install moves off the vulnerable release. Pillow 13 needs Python 3.11;
+  on Python 3.10 the floor stays at 12.3.0.
+
+### Fixed
+- **The hidden-text scan reads a PDF in full again on pypdf 6.21.** pypdf
+  moved its internal font class, the scan failed to load it, and every PDF
+  read `incomplete`. It now loads the class from either place.
+- **Two writers at once no longer share one temp file.** 24 atomic writes
+  used a fixed `<name>.tmp` before the rename; each now uses a unique name.
+- **A pipe in the drop zone can no longer stop an ingest.** The ingest reader
+  opens files without waiting, as the other safe-file readers already did.
+
 ## [0.20.45] — 2026-10-24
 ### Changed
 - **Model work is capped machine-wide, so parallel searches no longer exhaust

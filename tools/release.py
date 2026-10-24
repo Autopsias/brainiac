@@ -100,7 +100,7 @@ def _version_key(v: str):
         return (0, 0, 0)
 
 
-def list_semver_tags(*, cwd: Path = REPO_ROOT) -> list[str]:
+def list_semver_tags(*, cwd: Path = REPO_ROOT, merged_only: bool = False) -> list[str]:
     """Local ``git tag`` output, unsorted. Split out for test injection so the
     guard's tag-selection logic doesn't require a live git repo fixture per
     case.
@@ -119,13 +119,19 @@ def list_semver_tags(*, cwd: Path = REPO_ROOT) -> list[str]:
     look the same to a guard whose whole job is refusing a version regression —
     an empty answer that means "could not ask" is the shape of a check that
     cannot fail.
+
+    ``merged_only=True`` lists only tags reachable from HEAD (``--merged HEAD``).
+    The commit-time packaging check uses it: a sibling worktree cutting a
+    release tag must not fail every other branch's commit. A real release cut
+    keeps the default and reads ALL local tags.
     """
-    out = subprocess.run(["git", "tag", "-l"], cwd=cwd, check=False, capture_output=True, text=True)
+    cmd = ["git", "tag", "-l", *(["--merged", "HEAD"] if merged_only else [])]
+    out = subprocess.run(cmd, cwd=cwd, check=False, capture_output=True, text=True)
     if out.returncode != 0:
         if not _has_git_repo(cwd):
             return []
         raise subprocess.CalledProcessError(
-            out.returncode, ["git", "tag", "-l"], out.stdout, out.stderr
+            out.returncode, cmd, out.stdout, out.stderr
         )
     return [line.strip() for line in out.stdout.splitlines() if line.strip()]
 
@@ -143,14 +149,20 @@ def _has_git_repo(cwd: Path) -> bool:
     return probe.returncode == 0
 
 
-def monotonic_baseline(current_pyproject_version: str, *, tags: list[str] | None = None, cwd: Path = REPO_ROOT) -> str:
+def monotonic_baseline(
+    current_pyproject_version: str,
+    *,
+    tags: list[str] | None = None,
+    cwd: Path = REPO_ROOT,
+    merged_only: bool = False,
+) -> str:
     """ADR-0005 Ruling 5: the highest SEMVER-SHAPED tag (``^v\\d+\\.\\d+\\.\\d+$``),
     compared via ``packaging.version.Version`` — never string order. Legacy
     opaque tags (``v1``, ``v2``) do not match ``SEMVER_TAG_RE`` and are
     structurally ignored. Falls back to the current pyproject version if no
     semver-shaped tag exists yet."""
     if tags is None:
-        tags = list_semver_tags(cwd=cwd)
+        tags = list_semver_tags(cwd=cwd, merged_only=merged_only)
     semver_versions = [m.group(1) for t in tags if (m := re.match(r"^v(\d+\.\d+\.\d+)$", t))]
     if not semver_versions:
         return current_pyproject_version

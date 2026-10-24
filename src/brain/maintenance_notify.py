@@ -13,6 +13,7 @@ import os
 import platform
 import subprocess
 import hashlib
+from .atomic_temp import atomic_temp_path
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +139,7 @@ def record_current_findings(
     }
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(path.name + ".tmp")
+        tmp = atomic_temp_path(path)
         tmp.write_text(json.dumps(payload, indent=1), encoding="utf-8")
         os.replace(tmp, path)
     except OSError:

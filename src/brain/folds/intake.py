@@ -240,12 +240,12 @@ class IntakeFoldsMixin:
             from .. import cos                                   # noqa: PLC0415
 
             ops = cos.run_ops_dir(self.vault)
-            ledgers = sorted(ops.glob("_cos_ingestion_ledger_*.jsonl"),
+            ledgers = sorted(ops.glob(cos.LEDGER_GLOB),
                              key=self._ledger_order)
             if not ledgers:
                 return
             latest = ledgers[-1]
-            run_id = latest.stem[len("_cos_ingestion_ledger_"):]
+            run_id = cos.ledger_run_id(latest)
             rows, seen = [], set()
             for line in latest.read_text(encoding="utf-8").splitlines():
                 if not line.strip():
@@ -268,7 +268,7 @@ class IntakeFoldsMixin:
         """Sort key for `_cos_ingestion_ledger_<date>-run<N>.jsonl`: the date
         as text, then the run number as an INT. A missing or unparseable run
         number sorts first, which keeps a malformed name from winning."""
-        stem = path.stem[len("_cos_ingestion_ledger_"):]
+        stem = path.stem[len("_cos_ingestion_ledger_"):]  # no COS import: this runs unguarded
         date, _, tail = stem.partition("-run")
         return (date, int(tail) if tail.isdigit() else -1)
 
@@ -355,12 +355,12 @@ class IntakeFoldsMixin:
             from .. import cos                                   # noqa: PLC0415
 
             ops = cos.run_ops_dir(self.vault)
-            ledgers = sorted(ops.glob("_cos_ingestion_ledger_*.jsonl"),
+            ledgers = sorted(ops.glob(cos.LEDGER_GLOB),
                              key=self._ledger_order)
             if not ledgers:
                 return
             latest = ledgers[-1]
-            run_id = latest.stem[len("_cos_ingestion_ledger_"):]
+            run_id = cos.ledger_run_id(latest)
             stuck, seen = {}, set()
             for line in latest.read_text(encoding="utf-8").splitlines():
                 if not line.strip():

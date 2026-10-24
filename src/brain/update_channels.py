@@ -4,11 +4,11 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 from .cowork_snapshot_guard import snapshot_lands_on_the_mount
+from .vmstaging import tools_on_path
 from .doctor import (
     CHANNEL_EDITABLE,
     CHANNEL_PIP_USER,
@@ -233,11 +233,11 @@ def stage_engine_and_skills(
 
     vendor_status: dict[str, str] = {}
     try:
-        sys.path.insert(0, str(engine_src / "tools"))
-        import vendor_semantic_deps as vendor_deps  # type: ignore
+        with tools_on_path(engine_src):
+            import vendor_semantic_deps as vendor_deps  # type: ignore
 
-        vendor_deps.write_shim(brain_dir)
-        vendor_status = vendor_deps.stage_vendor(brain_dir)
+            vendor_deps.write_shim(brain_dir)
+            vendor_status = vendor_deps.stage_vendor(brain_dir)
     except Exception as exc:
         vendor_status = {"error": f"{type(exc).__name__}: {exc}"}
 
@@ -421,8 +421,8 @@ def restage_workspaces(
     resolve_model_source: Callable[[], tuple[Path, str]],
 ) -> list[dict]:
     """Restage every registered Cowork workspace."""
-    sys.path.insert(0, str(engine_src / "tools"))
-    import workspace_registry as workspace_registry_module  # type: ignore
+    with tools_on_path(engine_src):
+        import workspace_registry as workspace_registry_module  # type: ignore
 
     results: list[dict] = []
     model_source: tuple[Path, str] | None = None

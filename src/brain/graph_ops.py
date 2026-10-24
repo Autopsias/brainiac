@@ -14,6 +14,7 @@ from . import classification, config, egress
 from . import graphify as graphify_model
 from .graph import build_graph
 from .progress import progress_note
+from .atomic_temp import atomic_temp_path
 
 
 @dataclass(frozen=True)
@@ -186,7 +187,7 @@ def _publish_graph_artifact(
     day: dt.date,
 ) -> None:
     """Atomically publish validated graph and manifest files."""
-    temporary_graph = paths.graph.with_suffix(paths.graph.suffix + ".tmp")
+    temporary_graph = atomic_temp_path(paths.graph)
     temporary_graph.write_text(
         json.dumps(artifact, indent=2, sort_keys=True), encoding="utf-8"
     )
@@ -197,7 +198,7 @@ def _publish_graph_artifact(
         "built_at": day.isoformat(),
         "notes": manifest,
     }
-    temporary_manifest = paths.manifest.with_suffix(paths.manifest.suffix + ".tmp")
+    temporary_manifest = atomic_temp_path(paths.manifest)
     temporary_manifest.write_text(
         json.dumps(new_state, indent=2, sort_keys=True), encoding="utf-8"
     )

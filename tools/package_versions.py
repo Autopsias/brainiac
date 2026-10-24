@@ -144,14 +144,15 @@ def validate_npm_version_lockstep(version: str) -> None:
 def validate_monotonic_version(version: str) -> None:
     """ADR-0005 Ruling 5 (GV-01): hard-fail if the SSOT version on disk is not
     strictly greater than the release baseline (highest semver-shaped local
-    tag, or itself if no such tag exists — a same-as-baseline version is fine
+    tag REACHABLE FROM HEAD — a sibling worktree's new release tag must not
+    fail this branch's commit — or itself if no such tag exists — a same-as-baseline version is fine
     here, since --validate-only runs on a checkout that may already be AT the
     just-cut version; only a real regression below the baseline must fail).
     Reuses tools/release.py's guard so the rule lives in exactly one place."""
     sys.path.insert(0, str(REPO_ROOT / "tools"))
     import release as _release  # local import: avoid a hard import-time coupling for callers that only need packaging
 
-    baseline = _release.monotonic_baseline(version)
+    baseline = _release.monotonic_baseline(version, merged_only=True)
     if _release._version_key(version) < _release._version_key(baseline):
         raise ValidationError(
             f"pyproject.toml SSOT version {version!r} is lower than the release baseline "

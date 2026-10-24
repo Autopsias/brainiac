@@ -52,6 +52,7 @@ from pathlib import Path
 from typing import Any, Mapping, MutableMapping
 
 from . import maintenance_escalation as _escalation
+from .atomic_temp import atomic_temp_path
 
 #: The host-private root, under ``config.index_dir(vault)``.
 DIRNAME = "remediation"
@@ -128,7 +129,7 @@ def write_state(vault: str | os.PathLike[str], state: Mapping[str, Any]) -> bool
         d = remediation_dir(vault)
         d.mkdir(parents=True, exist_ok=True)
         path = d / STATE_FILENAME
-        tmp = path.with_name(path.name + ".tmp")
+        tmp = atomic_temp_path(path)
         tmp.write_text(json.dumps(payload, indent=1, sort_keys=True), encoding="utf-8")
         os.replace(tmp, path)
         return True

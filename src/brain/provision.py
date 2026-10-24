@@ -47,7 +47,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from . import workspaces
+from . import atomic_temp, workspaces
 # Wire 5 moved to `provision_mcp` (its own module: the Desktop config is a
 # third-party file with a third party still writing to it). Re-exported here
 # because this module is the one every caller already imports.
@@ -94,7 +94,7 @@ def write_request(vault: str | os.PathLike[str], *, role: str) -> dict[str, Any]
     for zone in ("brain", "raw", "inbox"):
         (vault_p / zone).mkdir(exist_ok=True)
     payload = {"version": 1, "requested_at": _now_iso(), "role": role}
-    tmp = marker.with_suffix(".tmp")
+    tmp = atomic_temp.atomic_temp_path(marker)
     tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     os.replace(tmp, marker)
     return {"action": "provision-request", "status": "staged",

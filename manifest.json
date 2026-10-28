@@ -266,6 +266,7 @@
     "scripts/install-brief-windows.ps1",
     "scripts/offhost_watchdog_check.py",
     "scripts/register_tasks.py",
+    "scripts/shorten_long_note_ids.py",
     "scripts/vm-boundary-probe.sh",
     "scripts/vm-selftest.sh",
     "src/brain/__init__.py",
@@ -287,6 +288,7 @@
     "src/brain/_assets/scripts/install-brief-mac.sh",
     "src/brain/_assets/scripts/install-brief-windows.ps1",
     "src/brain/_assets/scripts/register_tasks.py",
+    "src/brain/_assets/scripts/shorten_long_note_ids.py",
     "src/brain/_assets/scripts/vm-boundary-probe.sh",
     "src/brain/_assets/scripts/vm-selftest.sh",
     "src/brain/_assets/templates/company.md",
@@ -586,6 +588,7 @@
     "src/brain/remediation_exceptions_store.py",
     "src/brain/remediation_extract_retry.py",
     "src/brain/remediation_folds.py",
+    "src/brain/remediation_invariants.py",
     "src/brain/remediation_questions.py",
     "src/brain/remediation_routing.py",
     "src/brain/remediation_schema.py",
@@ -694,5 +697,5 @@
     "vault/raw/2026-06-27-arctic-vs-e5-benchmark.md",
     "vault/raw/README.md"
   ],
-  "count": 693
+  "count": 696
 }

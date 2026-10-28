@@ -152,7 +152,7 @@ ENGINE_ASSET_FILES = [
     "scripts/brain-brief-mac.plist",
     "scripts/brain-brief.sh",
     "scripts/brain-synthesis.sh", "scripts/brain_synthesis_codex.py",
-    "scripts/brain-synthesis-mac.plist",
+    "scripts/brain-synthesis-mac.plist", "scripts/shorten_long_note_ids.py",
     # session-start alert hook (placed by brain/session_hook.py) +
     # BOTH Cowork VM probes (staged into every workspace by
     # update.stage_engine_and_skills / cowork_workspace_install.sh): the

@@ -87,6 +87,35 @@ _HIDDEN_STYLE = re.compile(
     r"""color\s*:\s*#?(fff(fff)?|white)\b)""",
     re.I,
 )
+#: An inline ``style`` value: double-quoted, single-quoted or bare, one group
+#: each, so a quote of the OTHER kind inside the value cannot end it early.
+_STYLE_ATTR = re.compile(
+    r"""\bstyle\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"']+))""", re.I)
+
+
+def _hidden_style_offsets(text: str) -> list[int]:
+    """Where hiding styling starts: the literal patterns above, plus any inline
+    ``style=""`` the handler walkers would call hidden — too little contrast on
+    a white page, or below the size floor. ``color:#ffffdd;font-size:2.7px``
+    matched no literal (pentest VULN-3418, 2026-10-28)."""
+    found = {m.start() for m in _HIDDEN_STYLE.finditer(text)}
+    if _STYLE_ATTR.search(text):
+        from .ingest.handlers import concealment as c
+
+        for m in _STYLE_ATTR.finditer(text):
+            if any(m.start() <= f < m.end() for f in found):
+                continue  # a literal already marked this attribute
+            decl = c.declarations("".join(g or "" for g in m.groups()))
+            try:
+                hidden = bool(
+                    c.colour_marker(c.parse_colour(decl.get("color", "")), None)
+                    or c.is_tiny(c.to_px(decl.get("font-size", ""))))
+            except (ValueError, OverflowError):
+                hidden = True  # unparseable: fail closed, the instruction check decides
+            if hidden:
+                found.add(m.start())
+    return sorted(found)
+
 
 # --------------------------------------------------------------------------
 # Instruction: imperative phrasing in the clear. Flagged, never quarantined.
@@ -243,14 +272,14 @@ def _concealment_hits(text: str) -> list[dict[str, Any]]:
                 "offset": m.start(),
                 "excerpt": " ".join(body.split())[:160],
             })
-    for m in _HIDDEN_STYLE.finditer(text):
-        window = text[m.start(): m.start() + 400]
+    for start in _hidden_style_offsets(text):
+        window = text[start: start + 400]
         found = _instruction_hits(window)
         if found:
             out.append({
                 "marker": "hidden_styled_instruction",
                 "revealed": found[0]["marker"],
-                "offset": m.start(),
+                "offset": start,
                 "excerpt": " ".join(window.split())[:160],
             })
     return out

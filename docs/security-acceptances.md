@@ -124,6 +124,17 @@ relays to a third party. Note that a sandboxed agent reading through the broker
 is NOT that case by itself; it becomes that case if the sandbox gains an
 outbound channel the owner does not review (A-06).
 
+**Raised again as VULN-3419 (external pentest, created 2026-10-15, received
+2026-10-28):** "MCP Broker Egress ceiling affects all VM untrusted legs" — a
+Cowork session with a signed VM cap of `Internal` read an MNPI note through the
+broker. This entry is the answer. Its one new point is true: every client of
+one vault's broker entry shares that entry's ceiling, so two Cowork workspaces
+cannot sit at different tiers of the SAME vault; a lower-trust use gets its own
+vault, whose Desktop entry carries its own `BRAIN_MAX_EGRESS_TIER`. What the
+finding fairly caught is that AGENTS.md rule 2 described the signed VM clamp
+without saying it binds only the VM's own CLI, so the Cowork agent reported
+its cap as `Internal`; that paragraph now names the broker's ceiling.
+
 **This ruling superseded the vendor posture register (M-5, 2026-09-04).**
 `docs/harness-allowlist.json` and `docs/operations/egress-provider-posture.md`
 §4 said all three AI harnesses were unverified PENDING and should run only

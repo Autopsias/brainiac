@@ -7,6 +7,41 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.48] — 2026-10-28
+### Fixed
+- **Text too faint or too small to read is now flagged as hidden (pentest
+  VULN-3418).** An HTML payload styled `color:#ffffdd; font-size:2.7px`
+  ingested with no flag: the colour test only caught text within 0x10 of its
+  ground on every channel, and the size floor was 2pt. Text now also counts
+  as hidden below a 1.2:1 contrast ratio with its ground (alpha included),
+  and the size floor is 3pt in every lane (HTML, email, Word, PowerPoint). The
+  text-level scan applies the same rules to an inline `style=""`, reads either
+  quote style, and treats a style it cannot parse as hiding instead of
+  raising. Measured on 1,055 real originals: 0 new quarantines, no detection
+  lost, new labels in 10 documents.
+- **The weekly synthesis no longer fails on a note named after a whole
+  sentence.** On 2026-10-25 the linking lane named 20 notes after sentences of
+  up to 208 characters; the id limit is 180, so none could be signed and the
+  run failed (rc=75). Before signing, the synthesis now shortens such an id to
+  its first words plus 8 hex characters of the old id, rewrites every
+  `[[old-id]]` link to it in the same run's notes, and asks the lane for ids
+  of at most 80 characters. The list of notes is split on newlines only, so a
+  crafted file name cannot become two entries.
+- **AGENTS.md rule 2 names the ceiling a Cowork session actually reads at
+  (pentest VULN-3419).** It described the signed VM clamp without saying it
+  binds only `brain --role vm`; through the host broker a Cowork session
+  reads at the broker entry's ceiling, so the agent reported a cap of
+  `Internal` it did not have.
+- **The monthly retrieval watch measures again, and `brain alerts` shows it.**
+  Since August it crashed every month (it gave the comparison the `eval/qrels`
+  folder instead of `eval/qrels/qrels.json`, and called `gate.py` without
+  `--scorecard`) and reported each crash as "quality regressed" into `hot.md`
+  only. A crash or an undecidable gate now reads ERROR, never FAIL; the baseline
+  rolls forward after each PASS so vault growth cannot make it undecidable; and
+  the verdict lands in `~/.brain/retrieval-watch-state.json`, which `brain
+  alerts` reads (FAIL, ERROR, or no run in 35 days) and shows as a banner,
+  never an untriaged line.
+
 ## [0.20.47] — 2026-10-24
 ### Fixed
 - **The dependency audit checks the lock again.** `pip-audit` re-resolved

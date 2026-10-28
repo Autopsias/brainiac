@@ -12,7 +12,7 @@ identical list.
 
 Two design rules, both learned from earlier failures in this repo:
 
-* **Silence must never be able to mean "could not look."** Two of the five
+* **Silence must never be able to mean "could not look."** Some of the
   inputs live in the HOST home (``~/.brainiac``, ``~/.brain``) and the Cowork
   VM cannot reach them. On ``role=vm`` they are reported in ``unreachable``
   rather than quietly contributing nothing — the same posture ``doctor`` takes
@@ -42,7 +42,7 @@ from .alerts_staging import (  # noqa: F401 — re-exported for callers/tests
     _untriaged,
     _untriaged_key,
     _unwrap_untriaged,
-    host_vaults,
+    host_vaults, retrieval_watch_alerts, RETRIEVAL_WATCH_UNREACHABLE,
     staging_alerts,
 )
 
@@ -443,7 +443,7 @@ def collect(
     """Every alert this role can see, plus what it could not look at.
 
     ``host`` sweeps the workspace registry; ``vm`` reads only its own vault and
-    reports the two host-home sources as unreachable."""
+    reports the host-home sources as unreachable."""
     home = home or Path.home()
     today = today or datetime.date.today()
     alerts: list[dict[str, str]] = []
@@ -454,7 +454,7 @@ def collect(
             "auto-update state (~/.brainiac/update-state.json) — host-only, "
             "run `brain alerts` on the host Mac",
             "weekly synthesis task health (~/.brain/synthesis-state.json) — "
-            "host-only, run `brain alerts` on the host Mac",
+            "host-only, run `brain alerts` on the host Mac", RETRIEVAL_WATCH_UNREACHABLE,
         ]
         vaults = [Path(vault)] if vault else []
         if not vaults:
@@ -467,7 +467,7 @@ def collect(
     else:
         alerts += update_alerts(home, today)
         alerts += staging_alerts(home)
-        alerts += synthesis_alerts(home, today)
+        alerts += synthesis_alerts(home, today) + retrieval_watch_alerts(home, today)
         alerts += wiring_alerts()
         vaults = host_vaults(home)
         if not vaults and vault:

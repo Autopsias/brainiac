@@ -95,7 +95,7 @@ def _add_doctor(sub) -> None:
 def _add_alerts(sub) -> None:
     sp = sub.add_parser(
         "alerts",
-        help="READ-ONLY degradation digest every harness can call: auto-update state, weekly-synthesis task health, engine-feedback backlog, the owner-decision queue, and whatever is degraded RIGHT NOW per the findings feed `brain maintain` rewrites each run. Pure file reads — no index, embedder, network or key. role=vm reads only its own vault and REPORTS the two host-home sources it cannot reach, so silence never means 'could not look'.",
+        help="READ-ONLY degradation digest every harness can call: auto-update state, weekly-synthesis task health, engine-feedback backlog, the owner-decision queue, and whatever is degraded RIGHT NOW per the findings feed `brain maintain` rewrites each run. Pure file reads — no index, embedder, network or key. role=vm reads only its own vault and REPORTS the host-home sources it cannot reach, so silence never means 'could not look'.",
     )
     sp.add_argument("--json", action="store_true")
     sp.add_argument(

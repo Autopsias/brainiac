@@ -345,6 +345,12 @@ rules, in order:
    env-exported `$BRAIN_VM_MAX_EGRESS_TIER` is IGNORED (the session's own
    shell can set it; VULN-3386). Raising a VM's ceiling is a host-operator
    action (`brain vm-egress-tier <TIER>`, signed), never the model's own.
+   That clamp binds the VM's own `brain --role vm` CLI only. A Cowork session
+   that reads through the host broker (`brain-mcp`, the Desktop MCP entry)
+   gets the BROKER's ceiling — the full vault unless `$BRAIN_MAX_EGRESS_TIER`
+   narrows that entry — because the broker receives no caller role (owner
+   ruling, `docs/security-acceptances.md` A-01; pentest VULN-3419). When
+   asked for your cap, report the broker's, never the VM file's.
 
 3. **Ask it in every language the vault holds — the VARIANT CONTRACT
    (CON-01) — and paraphrase within your own.** The cross-language half is a

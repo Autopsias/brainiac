@@ -26,10 +26,13 @@ VAULT="${BRAIN_VAULT:?BRAIN_VAULT must be set (path to your brain vault)}"
 PY="$REPO/.venv/bin/python"
 RUNS="$REPO/eval/runs"
 GOLDEN="$REPO/eval/golden_set.json"
-QRELS="$REPO/eval/qrels"
+QRELS="$REPO/eval/qrels/qrels.json"
 BASE="$RUNS/retrieval-watch-baseline.json"
 TODAY="$(date +%F)"
 OUT="$RUNS/retrieval-watch-$TODAY.json"
+# `brain alerts` reads this; hot.md alone is a log nobody has to open.
+STATE="$HOME/.brain/retrieval-watch-state.json"
+state() { mkdir -p "$(dirname "$STATE")"; printf '{"at": "%s", "verdict": "%s", "run": "%s"}\n' "$TODAY" "$1" "$(basename "$OUT")" > "$STATE"; }
 HOT="$VAULT/.brain/memory/hot.md"
 log() { echo "[retrieval-watch $(date +%H:%M:%S)] $*"; }
 
@@ -43,19 +46,38 @@ BRAIN_VAULT="$VAULT" "$PY" "$REPO/eval/capture_run.py" \
 if [ ! -f "$BASE" ]; then
   cp "$OUT" "$BASE"
   log "first run — baseline established at $BASE"
+  state BASELINE
   exit 0
 fi
 
 log "gating current vs baseline (non-inferiority)"
 VERDICT="$OUT.verdict.txt"
-if "$PY" "$REPO/eval/harness_direct.py" --golden "$GOLDEN" --qrels "$QRELS" \
-     --current "$BASE" --new "$OUT" --out "$OUT.compare.json" \
-   && "$PY" "$REPO/eval/gate.py" "$OUT.compare.json" > "$VERDICT" 2>&1; then
+if ! "$PY" "$REPO/eval/harness_direct.py" --golden "$GOLDEN" --qrels "$QRELS" \
+     --current "$BASE" --new "$OUT" --out "$OUT.compare.json"; then
+  # A comparison that never ran measured nothing: an ERROR, never a regression.
+  log "ERROR — comparison did not run (see stderr log); nothing was measured"
+  state ERROR
+  exit 2
+fi
+GATE_RC=0
+"$PY" "$REPO/eval/gate.py" --scorecard "$OUT.compare.json" > "$VERDICT" 2>&1 || GATE_RC=$?
+if [ "$GATE_RC" -eq 0 ]; then
   log "PASS — retrieval quality non-inferior to baseline"
+  # Roll forward: gate.py refuses a >10% note-count drift, so a fixed baseline
+  # goes undecidable as the vault grows. A FAIL keeps the last good one.
+  cp "$OUT" "$BASE"
+  state PASS
   exit 0
+fi
+if [ "$GATE_RC" -ne 1 ]; then
+  # gate.py exit 2 = undecidable (e.g. a baseline from an older harness).
+  log "ERROR — gate undecidable (rc=$GATE_RC, see $(basename "$VERDICT")); nothing was measured"
+  state ERROR
+  exit 2
 fi
 
 log "FAIL — retrieval quality regressed vs baseline"
+state FAIL
 {
   echo ""
   echo "## $TODAY — retrieval-quality watch: REGRESSION"

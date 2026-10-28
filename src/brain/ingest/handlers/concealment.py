@@ -178,9 +178,9 @@ from .concealment_gate import (AUTHORED, CHROME, COVERED_SOURCES,  # noqa: F401
 
 #: Every marker this module can emit. A run record carries exactly one.
 MARKERS = (
-    "hidden_white_text",       # text the same colour as the ground it sits on
+    "hidden_white_text",       # text too close to its ground to read
     "hidden_transparent_text",  # zero-alpha colour: invisible on any ground
-    "hidden_tiny_text",        # resolved font size below 2pt
+    "hidden_tiny_text",        # resolved font size below TINY_PT
     "hidden_offscreen_text",   # parked far off the page / outside the slide
     "hidden_vanish_run",       # Word w:vanish / w:webHidden
     "hidden_render_mode",      # PDF text render mode 3 or 7 (invisible)
@@ -195,8 +195,18 @@ MARKERS = (
 NEAR = 0xF0
 #: Per-channel distance at which text is "the same colour as its ground".
 GROUND_DELTA = 0x10
-#: Resolved sizes below this many CSS pixels are hidden (design: < 2pt).
-TINY_PX = 2 * 4 / 3
+#: Below this WCAG contrast ratio against its ground, text is hidden too. A
+#: coloured near-white walked past ``GROUND_DELTA`` alone: ``#ffffdd`` on
+#: white is 1.02:1, fainter than the ``#f0f0f0`` (1.14:1) it caught (pentest
+#: VULN-3418, 2026-10-28). Measured on 1,055 real originals that day: 0
+#: convictions at 1.2, 1.3 and 1.5; new labels in 32 documents at 1.5 (mostly
+#: headings and slide labels), 25 at 1.3, 10 at 1.2.
+MIN_CONTRAST = 1.2
+#: Text below this size is hidden. Was 2pt, and 2.7px (2.03pt) text passed it
+#: (VULN-3418). 4pt added 1,805 runs of real 3-4pt slide labels; 3pt added 1.
+#: One value for every lane: the Office walkers take it in points.
+TINY_PT = 3
+TINY_PX = TINY_PT * 4 / 3
 #: An offset at least this far negative is off the page, not a layout nudge.
 OFFSCREEN_PX = 1000.0
 
@@ -306,19 +316,32 @@ def colour_marker(colour: tuple[int, int, int, float] | None,
     """The marker a resolved text colour earns against its resolved ground.
 
     ``hidden_transparent_text`` for a zero alpha (invisible whatever is
-    behind it) and ``hidden_white_text`` when the text is within
-    ``GROUND_DELTA`` of its ground — white-on-white being the case this was
-    measured on. Named for that case because that is what it catches in
-    practice; the test is "the same colour as what is behind it".
+    behind it) and ``hidden_white_text`` when the text, blended over its
+    ground by its alpha, is within ``GROUND_DELTA`` of it on every channel or
+    below ``MIN_CONTRAST``. Named for white-on-white because that is what it
+    catches in practice; the test is "too close to what is behind it to read".
     """
     if colour is None:
         return None
     if colour[3] <= 0.0:
         return "hidden_transparent_text"
     bg = ground if ground is not None and ground[3] > 0.0 else (*WHITE, 1.0)
-    if all(abs(colour[i] - bg[i]) <= GROUND_DELTA for i in range(3)):
+    a = min(colour[3], 1.0)
+    seen = tuple(a * colour[i] + (1 - a) * bg[i] for i in range(3))
+    if (all(abs(seen[i] - bg[i]) <= GROUND_DELTA for i in range(3))
+            or contrast_ratio(seen, bg) < MIN_CONTRAST):
         return "hidden_white_text"
     return None
+
+
+def contrast_ratio(fg: tuple[float, ...], bg: tuple[float, ...]) -> float:
+    """WCAG 2 contrast ratio of two sRGB colours, from 1.0 (same) to 21.0."""
+    def luminance(rgb: tuple[float, ...]) -> float:
+        lin = [c / 255 / 12.92 if c / 255 <= 0.04045
+               else ((c / 255 + 0.055) / 1.055) ** 2.4 for c in rgb[:3]]
+        return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+    hi, lo = sorted((luminance(fg), luminance(bg)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
 
 
 def to_px(value: str) -> float | None:

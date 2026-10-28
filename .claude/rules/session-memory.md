@@ -47,8 +47,9 @@ entry formats in `docs/session-memory.md`. Rules an agent needs at a glance:
   count match the host's; there is nothing enforcing that a session actually
   does it. When `N > 0`, do not tell the owner to go run `/brain-inbox` —
   open the exceptions page yourself and walk them through what is open using
-  `AskUserQuestion`, one at a time. The two host-home sources
-  (`~/.brainiac/update-state.json`, `~/.brain/synthesis-state.json`) stay out
+  `AskUserQuestion`, one at a time. The three host-home sources
+  (`~/.brainiac/update-state.json`, `~/.brain/synthesis-state.json`,
+  `~/.brain/retrieval-watch-state.json`) stay out
   of the VM's reach and are listed under `unreachable` rather than skipped.
   Claude Code and Codex both fire this from a SessionStart hook; run it first
   regardless of harness.
@@ -125,8 +126,8 @@ summary is the one authority for open owner questions on the VM leg now.
 That is the whole point of the first bullet above — until 2026-08-14 this
 logic lived only in a Claude Code hook, so a Cowork session worked for days
 against a vault whose invariants had regressed with no surface that could
-tell it. Only the two HOST-HOME sources (`~/.brainiac/update-state.json`,
-`~/.brain/synthesis-state.json`) are out of the VM's reach, and `alerts`
+tell it. Only the three HOST-HOME sources (`~/.brainiac/update-state.json`,
+`~/.brain/synthesis-state.json`, `~/.brain/retrieval-watch-state.json`) are out of the VM's reach, and `alerts`
 reports those under `unreachable` rather than skipping them. The reads are
 file-reads of counts and two findings files; the VM still never WRITES
 anything here,

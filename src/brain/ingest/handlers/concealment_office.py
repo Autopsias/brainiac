@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from .concealment import colour_marker, normalise, note_degraded, run_record
+from .concealment import TINY_PT, colour_marker, normalise, note_degraded, run_record
 
 #: Theme slots that are white in every stock Office theme. ``pptx.py`` reads no
 #: theme part, so this is a NAME test, not a resolved colour — see the gap list
@@ -170,7 +170,7 @@ def docx_runs(document: Any,
     from docx.shared import Pt
     from docx.text.run import Run
 
-    rgb_type, tiny, run_tag = MSO_COLOR_TYPE.RGB, Pt(2), qn("w:r")
+    rgb_type, tiny, run_tag = MSO_COLOR_TYPE.RGB, Pt(TINY_PT), qn("w:r")
     runs: list[dict[str, Any]] = []
     for index, paragraph in enumerate(_docx_paragraphs(document), start=1):
         container = f"docx:p{index}"
@@ -253,7 +253,7 @@ def pptx_runs(presentation: Any,
 
     runs: list[dict[str, Any]] = []
     width, height = presentation.slide_width, presentation.slide_height
-    style = (MSO_COLOR_TYPE.RGB, Pt(2))
+    style = (MSO_COLOR_TYPE.RGB, Pt(TINY_PT))
     for si, slide in enumerate(presentation.slides, start=1):
         for k, shape in enumerate(slide.shapes):
             offscreen = _shape_offscreen(shape, width, height)

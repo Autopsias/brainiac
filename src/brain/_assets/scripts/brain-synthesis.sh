@@ -82,7 +82,9 @@ note and will be rejected; cite the source in the BODY as [[<bare-id>]], never
 edge, so it inflates the metric while linking nothing); put the [[raw/<id>]]
 form in the note's `source:` frontmatter as usual; set the note's
 classification to at least the HIGHEST classification among the sources it
-cites, read live off each source; and NEVER append these links into an
+cites, read live off each source; give each new note a SHORT kebab-case
+id of at most 80 characters, the same as its file name (a sentence-long id
+is refused at signing and the note stays unsigned); and NEVER append these links into an
 existing hand-curated note — always a new note. Work the list in order; in
 your final summary state HOW MANY of the file's candidates you covered (the
 file's own "consumed_today" field is the fold's count — quote yours beside
@@ -335,6 +337,16 @@ doctor: $DOCTOR_DIAG"
     find "$VAULT/brain" -type f -name '*.md' \
          ! -name 'backlinks.md' ! -name 'catalog.md' \
          -newer "$SIGN_MARKER" > "$SIGN_LIST" 2>/dev/null || true
+    # A sentence-long note name is refused by the drain's safe-id check
+    # (2026-10-25: 20 of 45 notes unsigned, rc=75). Give those a short id
+    # first; anything it cannot shorten safely is left for the drain to refuse.
+    SHORT_LIST="$(mktemp -t brain-synthesis-shortlist)"
+    if python3 "$(dirname "$0")/shorten_long_note_ids.py" "$SIGN_LIST" \
+         > "$SHORT_LIST" 2>>"$LOG"; then
+      mv -f -- "$SHORT_LIST" "$SIGN_LIST"
+    else
+      rm -f -- "$SHORT_LIST"
+    fi
     SIGNED=0; SIGN_FAIL=0
     # fd 3, not stdin: `brain write` reads the note body FROM STDIN, so a
     # plain `while read` loop would feed it the file list instead.

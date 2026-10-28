@@ -26,7 +26,7 @@ UNCHANGED and keep real paths. Both already branch correctly on
 pinned workspace identity, schema, freshness — ``exceptions_verify.verify``,
 called from inside
 ``alerts.exceptions_alerts``/``exceptions_cli.vault_row``) before anything in
-it is trusted, and the two host-home sources
+it is trusted, and the host-home sources
 (``~/.brainiac/update-state.json``, ``~/.brain/synthesis-state.json``) come
 back under ``unreachable`` rather than being silently skipped. That
 verification is NOT reimplemented here — it is the same call the CLI makes,

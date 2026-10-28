@@ -186,3 +186,39 @@ def host_vaults(home: Path) -> list[Path]:
         if path not in seen:
             seen.append(path)
     return seen
+
+
+#: The monthly retrieval watch fires on day 1; past this its silence is the news.
+RETRIEVAL_WATCH_STALE_DAYS = 35
+
+
+def retrieval_watch_alerts(home: Path, today: Any) -> list[dict[str, str]]:
+    """The monthly retrieval-quality watch (``~/.brain/retrieval-watch-state.json``,
+    written by ``scripts/brain-retrieval-watch.sh``). Until 2026-10-27 a FAIL
+    went only to ``hot.md``, a log nobody has to read, and it failed unread on
+    three months running against a baseline from a retired embedder."""
+    from .alerts import _alert, _date, _read_json
+
+    state = _read_json(home / ".brain" / "retrieval-watch-state.json")
+    if not isinstance(state, dict):
+        return []  # never installed on this host — nothing to watch
+    day = _date(state.get("at"))
+    if state.get("verdict") == "FAIL":
+        return [_alert(
+            "retrieval-watch:fail",
+            f"monthly retrieval check FAILED on {state.get('at')} — run /autoresearch, "
+            "or re-baseline if the engine or embedder changed")]
+    if state.get("verdict") == "ERROR":
+        return [_alert(
+            "retrieval-watch:error",
+            f"monthly retrieval check could not run on {state.get('at')} — "
+            "read ~/.brain/logs/launchd-retrievalwatch-stderr.log")]
+    if day is None or (today - day).days > RETRIEVAL_WATCH_STALE_DAYS:
+        return [_alert(
+            "retrieval-watch:stale",
+            f"monthly retrieval check has not run since {state.get('at') or 'never'}")]
+    return []
+
+RETRIEVAL_WATCH_UNREACHABLE = (
+    "monthly retrieval check (~/.brain/retrieval-watch-state.json) — host-only, "
+    "run `brain alerts` on the host Mac")

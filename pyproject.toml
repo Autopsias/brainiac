@@ -130,7 +130,7 @@ quant-tools = ["onnx>=1.14"]
 # reason as pypdf above: a plain `pip install` reads this, not requirements.lock.
 # PyJWT>=2.15.0: the floor mcp pulls in, stated here so a plain install
 # cannot resolve an older PyJWT (public PR #36).
-mcp = ["mcp>=1.30.0,<2", "PyJWT>=2.15.0"]
+mcp = ["mcp>=1.30.0,<3", "PyJWT>=2.15.0"]
 # Timeout-bounded regex engine (mrab-regex) used by BrainIndex.grep's --regex
 # path (RET-04 hardening) as a ReDoS guard: regex.search(text, timeout=...)
 # genuinely bounds catastrophic backtracking, unlike stdlib `re`. Absent ->

@@ -45,16 +45,18 @@ def _fold(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", folded).strip("-")
 
 
-def _typed_notes(vault: Path, types: tuple[str, ...]) -> list[tuple[str, str]]:
-    """[(note_id, folded-title-slug)] for every brain/ note of one of ``types``."""
+def _typed_notes(vault: Path, types: tuple[str, ...], notes=None) -> list[tuple[str, str]]:
+    """[(note_id, folded-title-slug)] for every brain/ note of one of ``types``.
+
+    ``notes`` is an already-scanned vault (one scan shared by both finders)."""
     out: list[tuple[str, str]] = []
-    for note in scan_vault(vault):
+    for note in (scan_vault(vault) if notes is None else notes):
         if note.zone == "brain" and note.type in types:
             out.append((note.id, _fold(note.title)))
     return out
 
 
-def find_person_links(text: str, vault: Path) -> list[str]:
+def find_person_links(text: str, vault: Path, notes=None) -> list[str]:
     """Full-name matches of existing ``type: person`` notes in ``text``.
 
     A person note's title must fold to at least two hyphen-separated parts
@@ -63,7 +65,7 @@ def find_person_links(text: str, vault: Path) -> list[str]:
     ``text`` never links on its own."""
     folded_text = _fold(text)
     hits: list[str] = []
-    for note_id, name_slug in _typed_notes(vault, ("person",)):
+    for note_id, name_slug in _typed_notes(vault, ("person",), notes):
         parts = [p for p in name_slug.split("-") if p]
         if len(parts) < 2:
             continue
@@ -72,7 +74,7 @@ def find_person_links(text: str, vault: Path) -> list[str]:
     return hits
 
 
-def find_project_link(text: str, vault: Path) -> list[str]:
+def find_project_link(text: str, vault: Path, notes=None) -> list[str]:
     """Origin-context match against ``type: project``/``type: moc`` notes.
 
     Returns a match only when exactly one candidate's folded title is a
@@ -80,7 +82,7 @@ def find_project_link(text: str, vault: Path) -> list[str]:
     nothing."""
     folded_text = _fold(text)
     candidates = [
-        note_id for note_id, title_slug in _typed_notes(vault, ("project", "moc"))
+        note_id for note_id, title_slug in _typed_notes(vault, ("project", "moc"), notes)
         if title_slug and title_slug in folded_text
     ]
     return candidates if len(candidates) == 1 else []
@@ -109,8 +111,9 @@ def apply_autolinks(
         return body, []
     try:
         search_text = "\n".join(t for t in (title, body) if t)
-        candidates = list(find_person_links(search_text, vault))
-        candidates.extend(find_project_link("\n".join(t for t in (title, origin) if t), vault))
+        notes = list(scan_vault(vault))  # one scan per record; no cross-record cache
+        candidates = list(find_person_links(search_text, vault, notes))
+        candidates.extend(find_project_link("\n".join(t for t in (title, origin) if t), vault, notes))
         existing = set(parse_wikilinks(body))
         new_ids = [nid for nid in dict.fromkeys(candidates) if nid not in existing]
         if not new_ids:

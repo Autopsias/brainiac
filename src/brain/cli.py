@@ -389,7 +389,10 @@ def _prepare_invocation(args: Any, config: Any) -> str:
         # the session's own shell, so it can never raise a VM ceiling.
         from . import vm_ceiling
 
-        ceiling, _provenance = vm_ceiling.resolved_ceiling()
+        # The ceiling of the vault this command OPENS, not $BRAIN_VAULT's (SEC-04).
+        explicit = getattr(args, "vault", None)
+        ceiling, _provenance = vm_ceiling.resolved_ceiling(
+            config.vault_root(explicit, allow_missing=True) if explicit else None)
         args.max_tier = cls.clamp_to(str(args.max_tier), ceiling)
     config.apply_role_embedder_policy(role)
     return role

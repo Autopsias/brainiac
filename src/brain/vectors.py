@@ -98,7 +98,7 @@ class SqliteVecBackend:
             import sqlite_vec  # noqa: F401
 
             return True
-        except Exception:
+        except Exception:  # fail-open: optional dependency probe; False means unavailable
             return False
 
     @staticmethod
@@ -119,7 +119,7 @@ class SqliteVecBackend:
                 return True
             finally:
                 con.close()
-        except Exception:
+        except Exception:  # fail-open: load probe; False means not loadable
             return False
 
     def load_into(self, conn: sqlite3.Connection) -> None:
@@ -243,6 +243,6 @@ def get_backend(prefer: str = "auto") -> VectorBackend:
     if SqliteVecBackend.available() and SqliteVecBackend.loadable():
         try:
             return SqliteVecBackend()
-        except Exception:
+        except Exception:  # fail-open: falls back to the brute-force backend below
             pass
     return BruteForceBackend()

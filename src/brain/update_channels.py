@@ -62,35 +62,37 @@ def _read_installed_version(
         return "unknown"
     try:
         output = run([str(bin_path), "--version"])
-    except Exception:
+    except Exception:  # fail-open: version probe; 'unknown' is returned
         return "unknown"
     return (output.stdout or output.stderr or "unknown").strip() or "unknown"
 
 
-def upgrade_uv_tool(run: Runner) -> subprocess.CompletedProcess[str]:
-    """Upgrade the uv-managed distribution."""
-    return run(["uv", "tool", "upgrade", "brainiac-cli"], timeout=ENGINE_INSTALL_TIMEOUT_S)
+def _pinned(pin: Optional[str]) -> str:
+    return f"brainiac-cli[mcp]=={pin}"
 
 
-def upgrade_pipx(run: Runner) -> subprocess.CompletedProcess[str]:
-    """Upgrade the pipx-managed distribution."""
-    return run(["pipx", "upgrade", "brainiac-cli"], timeout=ENGINE_INSTALL_TIMEOUT_S)
+def upgrade_uv_tool(run: Runner, pin: Optional[str] = None) -> subprocess.CompletedProcess[str]:
+    """Upgrade via uv; to exactly ``pin`` (the version A-03 verified) when given."""
+    cmd = ["uv", "tool", "install", _pinned(pin)] if pin else ["uv", "tool", "upgrade", "brainiac-cli"]
+    return run(cmd, timeout=ENGINE_INSTALL_TIMEOUT_S)
+
+
+def upgrade_pipx(run: Runner, pin: Optional[str] = None) -> subprocess.CompletedProcess[str]:
+    """Upgrade via pipx; `upgrade` cannot pin and `install --force` failed in a probe."""
+    cmd = (["pipx", "runpip", "brainiac-cli", "install", _pinned(pin)] if pin
+           else ["pipx", "upgrade", "brainiac-cli"])
+    return run(cmd, timeout=ENGINE_INSTALL_TIMEOUT_S)
 
 
 def upgrade_pip_user(
     run: Runner,
     python_executable: str,
+    pin: Optional[str] = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Upgrade the user-site distribution."""
-    return run([
-        python_executable,
-        "-m",
-        "pip",
-        "install",
-        "--user",
-        "--upgrade",
-        "brainiac-cli[mcp]",
-    ], timeout=ENGINE_INSTALL_TIMEOUT_S)
+    """Upgrade the user-site distribution, to exactly ``pin`` when given."""
+    spec = _pinned(pin) if pin else "brainiac-cli[mcp]"
+    return run([python_executable, "-m", "pip", "install", "--user", "--upgrade", spec],
+               timeout=ENGINE_INSTALL_TIMEOUT_S)
 
 
 def upgrade_venv_wheel(
@@ -120,8 +122,10 @@ def refresh_engine_channel(
     venv_bin: VenvBinResolver,
     which_brain: Optional[str],
     python_executable: str,
+    pin_version: Optional[str] = None,
 ) -> dict:
-    """Select one install channel, then run its upgrade command."""
+    """Select one install channel, then run its upgrade command (``pin_version``:
+    exact PyPI release; an editable checkout installs local source and ignores it)."""
     legacy_venv_dir = brainiac_home / "venv"
     legacy_bin = venv_bin(legacy_venv_dir, "brain")
     brain_bin: Optional[Path] = legacy_bin if legacy_bin.exists() else (
@@ -142,14 +146,15 @@ def refresh_engine_channel(
             return _cos_guard_refusal(old_version, channel, brainiac_home)
 
     if channel == CHANNEL_PYPI_UV:
-        install_out = upgrade_uv_tool(run)
+        install_out = upgrade_uv_tool(run, pin_version)
     elif channel == CHANNEL_PIPX:
-        install_out = upgrade_pipx(run)
+        install_out = upgrade_pipx(run, pin_version)
     elif channel == CHANNEL_PIP_USER:
-        install_out = upgrade_pip_user(run, python_executable)
+        install_out = upgrade_pip_user(run, python_executable, pin_version)
     elif channel == CHANNEL_VENV_WHEEL:
         pip_path = venv_bin(legacy_venv_dir, "pip")
-        target = f"{engine_src}[mcp]" if has_checkout else "brainiac-cli[mcp]"
+        target = (f"{engine_src}[mcp]" if has_checkout
+                  else _pinned(pin_version) if pin_version else "brainiac-cli[mcp]")
         install_out = upgrade_venv_wheel(run, pip_path, target)
         brain_bin = legacy_bin
     else:
@@ -326,6 +331,22 @@ def _failed(workspace_path: str, target: Any, reason: str) -> dict:
             "status": "failed", "reason": reason}
 
 
+def _stage_failure(stage_info: dict) -> str | None:
+    """Reason a re-stage landed wrong, or None when it is sound."""
+    if not stage_info["version_ok"]:
+        return (
+            f"staged engine version {stage_info['staged_version']!r} != "
+            f"SSOT {stage_info['ssot_version']!r} after re-stage — "
+            "engine copy landed a missing/stale _version.py stamp"
+        )
+    if not stage_info.get("binaries_ok", True):
+        return stage_info["binaries_detail"]
+    if stage_info["skills_shipped"] == 0:
+        return (f"no .skill bundles found in {stage_info['skills_src_dir']} "
+                "to refresh — run tools/package_clients.py in the checkout")
+    return None
+
+
 def _restage_cowork_workspace(
     entry: dict[str, Any],
     engine_src: Path,
@@ -365,22 +386,9 @@ def _restage_cowork_workspace(
                         "engine/model/skill re-stage failed: "
                         f"{type(exc).__name__}: {exc}"),
                 model_source, model_source_error)
-    failure = None
-    if not stage_info["version_ok"]:
-        failure = (
-            f"staged engine version {stage_info['staged_version']!r} != "
-            f"SSOT {stage_info['ssot_version']!r} after re-stage — "
-            "engine copy landed a missing/stale _version.py stamp"
-        )
-    elif not stage_info.get("binaries_ok", True):
-        failure = stage_info["binaries_detail"]
+    failure = _stage_failure(stage_info)
     if failure is not None:
         return (_failed(workspace_path, target, failure),
-                model_source, model_source_error)
-    if stage_info["skills_shipped"] == 0:
-        return (_failed(workspace_path, target,
-                        f"no .skill bundles found in {stage_info['skills_src_dir']} "
-                        "to refresh — run tools/package_clients.py in the checkout"),
                 model_source, model_source_error)
     snap = entry.get("snapshot_dir", "") or ""
     on_mount = snapshot_lands_on_the_mount(snap, vault_path, workspace_path)

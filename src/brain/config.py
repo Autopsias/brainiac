@@ -442,12 +442,6 @@ def recommendations_open_path(vault: str | os.PathLike[str] | None = None) -> Pa
     return memory_dir(vault) / "recommendations-open.jsonl"
 
 
-def recommendations_log_path(vault: str | os.PathLike[str] | None = None) -> Path:
-    """Resolved-recommendations log (MEM-03) — append-only Markdown, one dated
-    entry per closed recommendation."""
-    return memory_dir(vault) / "recommendations-log.md"
-
-
 def maintain_state_path(vault: str | os.PathLike[str] | None = None) -> Path:
     """Per-branch ``brain maintain`` state (ADR-0003 Ruling 5/d) — ONE file
     serving both the catch-up last-run markers and the heartbeat (last
@@ -497,4 +491,3 @@ from .config_hostpaths import (  # noqa: E402,F401  (facade re-export)
     warn_if_lock_dir_fallback as warn_if_lock_dir_fallback,
     writer_lock_path as writer_lock_path,
 )
-

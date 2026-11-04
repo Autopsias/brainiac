@@ -229,7 +229,7 @@ def _run_check_egress(args, ctx) -> int:
 
     try:
         vault = ctx.config.vault_root(args.vault)
-    except Exception:
+    except Exception:  # fail-open: no resolvable vault; the egress check runs without one
         vault = None
 
     result = egress_terms.check(

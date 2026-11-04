@@ -25,6 +25,7 @@ so a corrupt snapshot is always recoverable by re-publishing.
 """
 from __future__ import annotations
 
+import logging
 import json
 import os
 import shutil
@@ -35,6 +36,8 @@ from pathlib import Path
 
 from . import config
 from .dbretry import with_write_retry
+
+logger = logging.getLogger(__name__)
 
 SNAPSHOT_DB = "index.snapshot.sqlite"
 MANIFEST = "snapshot.manifest.json"
@@ -126,7 +129,8 @@ def read_manifest(dest_dir: Path) -> SnapshotManifest | None:
     try:
         d = json.loads(p.read_text(encoding="utf-8"))
         return SnapshotManifest(**d)
-    except Exception:
+    except Exception:  # fail-open: unreadable manifest reads as no snapshot
+        logger.warning("snapshot manifest unreadable; treated as no snapshot", exc_info=True)
         return None
 
 

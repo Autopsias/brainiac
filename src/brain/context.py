@@ -67,7 +67,7 @@ def _llm():
             verbose=False,
             n_threads=max(1, (os.cpu_count() or 4) // 2),  # don't saturate all cores
         )
-    except Exception:
+    except Exception:  # fail-open: local LLM is optional; None means none loaded
         return None
 
 
@@ -99,10 +99,5 @@ def doc_context(title: str, zone: str, body: str, *, max_body_chars: int = 1600)
         # collapse to a single line and cap length
         text = " ".join(text.split())[:200]
         return text + "." if text and not text.endswith(".") else text
-    except Exception:
+    except Exception:  # fail-open: summary is optional; empty text means no summary
         return ""
-
-
-def contextual_available() -> bool:
-    """True iff the contextual LLM is configured and loadable."""
-    return _llm() is not None

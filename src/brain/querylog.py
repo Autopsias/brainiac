@@ -20,6 +20,7 @@ This module has three small public seams:
 """
 from __future__ import annotations
 
+import logging
 import datetime as _dt
 import hashlib
 import json
@@ -33,6 +34,8 @@ from typing import Any, Iterable as Iterable
 from . import classification as cls  # noqa: F401
 from . import config, egress as egress
 from . import querylog_status as _querylog_status
+
+logger = logging.getLogger(__name__)
 
 
 VERSION = 1
@@ -376,6 +379,7 @@ def prune_expired_months(
     try:
         vault_root, _index_root, log_dir, unsafe = _resolve_location(vault)
     except Exception:
+        logger.debug("query-log location unresolvable; prune skipped", exc_info=True)
         return {"pruned": [], "skipped": "vault_unresolved", "retention_months": _retention_months()}
     months = _retention_months()
     if unsafe:

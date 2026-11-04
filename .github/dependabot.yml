@@ -6,6 +6,9 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    # Same 7-day wait as uv exclude-newer in pyproject.toml.
+    cooldown:
+      default-days: 7
     labels:
       - "dependencies"
       - "python"
@@ -17,6 +20,9 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    # Same 7-day wait as uv exclude-newer in pyproject.toml.
+    cooldown:
+      default-days: 7
     labels:
       - "dependencies"
       - "github-actions"

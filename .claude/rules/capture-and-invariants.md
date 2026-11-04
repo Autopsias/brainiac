@@ -137,7 +137,7 @@ paths:
    signal (`emitter_output`, 2026-08-20).** The paragraph above is right and
    is not weakened: `proposal`, `report`, `analysis` and `review` stay OUT of
    `OPERATIONAL_SOURCE_TYPES` because a human writes those about the
-   business. The gap it leaves is narrower — when `_log_rotation.py` emits
+   business. The gap it leaves is narrower — when a log-rotation script (not tracked here) emits
    `type: proposal` once a day, type says "keep" and nothing else disagrees.
    The reference vault carried **22** daily `Log rotation proposal` files
    from one script, each counted as a source awaiting a note. So the second

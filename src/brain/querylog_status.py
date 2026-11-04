@@ -1,12 +1,15 @@
 """Maintain the query-log status seam."""
 from __future__ import annotations
 
+import logging
 import datetime as _dt
 import json
 import os
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 _SOURCE: Mapping[str, Any] | None = None
@@ -84,7 +87,8 @@ def _prepare_capture_location(
     """Resolve and verify the private query-log directory."""
     try:
         vault_root, _index_root, log_dir, unsafe = source._resolve_location(vault)
-    except Exception:
+    except Exception:  # fail-open: unresolvable location means no query log
+        logger.debug("query-log location unresolvable; no query log written", exc_info=True)
         return None
     if unsafe:
         source._note_failure(vault_root, unsafe, configuration=True)
@@ -97,6 +101,19 @@ def _prepare_capture_location(
         source._note_failure(vault_root, "log_inside_vault", configuration=True)
         return None
     return vault_root, resolved_log
+
+
+def _release_capture(fd: int | None, locked: bool, thread_locked: bool) -> None:
+    """Release the file lock, close the fd and release the thread lock."""
+    if fd is not None:
+        try:
+            if locked:
+                source._release_append_lock(fd)
+            os.close(fd)
+        except OSError:
+            pass
+    if thread_locked:
+        source._APPEND_THREAD_LOCK.release()
 
 
 def capture_post_egress(
@@ -162,15 +179,7 @@ def capture_post_egress(
         source._note_failure(vault_root, "append_failed")
         return False
     finally:
-        if fd is not None:
-            try:
-                if locked:
-                    source._release_append_lock(fd)
-                os.close(fd)
-            except OSError:
-                pass
-        if thread_locked:
-            source._APPEND_THREAD_LOCK.release()
+        _release_capture(fd, locked, thread_locked)
     source._note_success(vault_root)
     return True
 

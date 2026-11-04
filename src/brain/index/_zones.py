@@ -21,6 +21,26 @@ class _ZoneMixin:
         print(f"brain: WARNING — {var} is misconfigured and was not fully "
               f"applied: {'; '.join(problems)}.", file=sys.stderr)
 
+    @classmethod
+    def _zone_factor(cls, key: object, value: object,
+                     problems: list[str]) -> float | None:
+        """One BRAIN_ZONE_WEIGHTS entry as a float, or None (with a problem noted)."""
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            problems.append(f"{key!r}: {value!r} is not a number")
+            return None
+        try:
+            factor = float(value)
+        except (TypeError, ValueError):
+            problems.append(f"{key!r}: {value!r} is not a number")
+            return None
+        if not math.isfinite(factor) or not (
+                cls._ZONE_WEIGHT_MIN <= factor <= cls._ZONE_WEIGHT_MAX):
+            problems.append(
+                f"{key!r}: {value!r} is outside the supported range "
+                f"[{cls._ZONE_WEIGHT_MIN}, {cls._ZONE_WEIGHT_MAX}]")
+            return None
+        return factor
+
     def _zone_weight(self, zone: str) -> float:
         """Authority multiplier for a note's zone (see hybrid_search). Curated
         typed zones get a modest boost over voluminous transcript/source zones;
@@ -49,21 +69,9 @@ class _ZoneMixin:
                     problems.append('must be a JSON object like {"brain": 2.5, "raw": 1.0}')
                     configured = None
                 for key, value in (configured or {}).items():
-                    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
-                        problems.append(f"{key!r}: {value!r} is not a number")
-                        continue
-                    try:
-                        factor = float(value)
-                    except (TypeError, ValueError):
-                        problems.append(f"{key!r}: {value!r} is not a number")
-                        continue
-                    if not math.isfinite(factor) or not (
-                            self._ZONE_WEIGHT_MIN <= factor <= self._ZONE_WEIGHT_MAX):
-                        problems.append(
-                            f"{key!r}: {value!r} is outside the supported range "
-                            f"[{self._ZONE_WEIGHT_MIN}, {self._ZONE_WEIGHT_MAX}]")
-                        continue
-                    weights[str(key)] = factor
+                    factor = self._zone_factor(key, value, problems)
+                    if factor is not None:
+                        weights[str(key)] = factor
                 if problems:
                     self._zone_config_warning("BRAIN_ZONE_WEIGHTS", problems)
             self._zone_weights = weights
@@ -157,8 +165,8 @@ class _ZoneMixin:
             with open(path, "r", encoding="utf-8", errors="replace") as fh:
                 head = fh.read(2048)
             if head.startswith("---"):
-                end = head.find("---", 3)
-                block = head[3:end] if end != -1 else head[3:]
+                parts = frontmatter.split(head)
+                block = parts[0] if parts else head[3:]
                 meta = frontmatter.parse(block)
                 sz = meta.get("source_zone")
                 if isinstance(sz, str) and sz.strip():

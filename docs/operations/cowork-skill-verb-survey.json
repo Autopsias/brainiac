@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "generated": "2026-08-28T21:28:23Z",
+  "generated": "2026-10-31T10:30:49Z",
   "produced_by": "closed-stacks-2026-08-27 / S01 / FND-02 (rework 2, after the second adversarial-review round); derived columns RE-DERIVED by S02 / DESK-02 after the broker grew grep, graph_expand, read, hybrid_search and diagnose; derived columns RE-DERIVED AGAIN by S03 / DESK-03 after the broker grew alerts, exceptions, inbox; derived columns RE-DERIVED AGAIN by S04 / DESK-04 after the broker grew capture; derived columns RE-DERIVED AGAIN by S06B / DESK-07 after the 14 Cowork bundles were migrated onto the broker (consumers changed, seam unchanged); cli_parser_choices RE-DERIVED by one-command-per-vault-2026-08-30 / S01 / CMD-01 after the host CLI grew the host-only `provision-local` subcommand (74 -> 75). No other derived column moved: the verb appears in no skill bundle and is not in cli.VM_ALLOWED, so candidates, verbs, dispositions and the broker columns are byte-unchanged; cli_parser_choices RE-DERIVED by night-porter-2026-08-25 (the 2026-09-01 archive-ruling commit) after the survey caught up with the host-only `cos` and `cos-feedback` subcommands, added 2026-08-26 by f00b2db without the same-commit re-record (75 -> 77); the same pass re-recorded the chief-of-staff bundle content_sha256 after the 2026-09-01 DOCTRINE.md ruling edit. Verbs, tokens and candidates are byte-unchanged: neither new subcommand appears in any skill bundle or in cli.VM_ALLOWED.",
   "consumed_by": [
     "s02 definition of done",
@@ -32,7 +32,7 @@
   },
   "bundles_scanned": 13,
   "files_scanned": 13,
-  "raw_matches": 166,
+  "raw_matches": 161,
   "distinct_tokens": 51,
   "cli_parser_choices": 62,
   "mcp_registered_tools": [
@@ -216,10 +216,9 @@
     },
     {
       "token": "draft-capture",
-      "count": 2,
+      "count": 1,
       "bundles": [
-        "kb-curator",
-        "vault-ingestion"
+        "kb-curator"
       ],
       "kind": "cli_verb"
     },
@@ -452,7 +451,7 @@
     },
     {
       "token": "search",
-      "count": 10,
+      "count": 9,
       "bundles": [
         "promote",
         "save-conversation",
@@ -507,16 +506,15 @@
     },
     {
       "token": "substrate",
-      "count": 2,
+      "count": 1,
       "bundles": [
-        "kb-curator",
-        "vault-ingestion"
+        "kb-curator"
       ],
       "kind": "not_a_verb"
     },
     {
       "token": "sync",
-      "count": 13,
+      "count": 12,
       "bundles": [
         "kb-curator",
         "promote",
@@ -567,7 +565,7 @@
     },
     {
       "token": "write",
-      "count": 9,
+      "count": 8,
       "bundles": [
         "kb-curator",
         "promote",
@@ -627,10 +625,9 @@
     },
     {
       "verb": "draft-capture",
-      "count": 2,
+      "count": 1,
       "bundles": [
-        "kb-curator",
-        "vault-ingestion"
+        "kb-curator"
       ],
       "on_broker": false,
       "disposition": "undecided"
@@ -772,7 +769,7 @@
     },
     {
       "verb": "search",
-      "count": 10,
+      "count": 9,
       "bundles": [
         "promote",
         "save-conversation",
@@ -814,7 +811,7 @@
     },
     {
       "verb": "sync",
-      "count": 13,
+      "count": 12,
       "bundles": [
         "kb-curator",
         "promote",
@@ -844,7 +841,7 @@
     },
     {
       "verb": "write",
-      "count": 9,
+      "count": 8,
       "bundles": [
         "kb-curator",
         "promote",
@@ -917,8 +914,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "2b59a35c5828bfd7bfdb40268323f7f5c2e9bfa9",
-      "content_sha256": "97d2f272a9e7fbacbba373e1a0e6215ace004eeda896c25a91e7783cbe0b7684"
+      "skill_md_git_blob": "bacae77f2b752b7131f2fb4a9ca928537eabae4d",
+      "content_sha256": "e57b2cce815766532177b8484631636a9c3fe17bf226edf4ff883a401fc681e5"
     },
     {
       "skill": "promote",
@@ -962,8 +959,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "4c6dfc14fb5ba535bccca05adacf74e4635b4504",
-      "content_sha256": "820ad3d4d0896b50a89a459daf2696be2de2a9b1c14b454aa6ff32d047ca5cb8"
+      "skill_md_git_blob": "70139d9a23525987a513b3faadf7eb166ea2e610",
+      "content_sha256": "06809534958a20ea83f9aa5c96047db9835dc2d605aa2995f3616e7a4d9fad2b"
     },
     {
       "skill": "vm-doctor",
@@ -1019,9 +1016,9 @@
   },
   "superseded_pattern_reconciliation": {
     "why_this_moved_here": "S01 pinned this reconciliation as literals INSIDE tests/test_cowork_skill_verbs.py (259/75 and a seven-token delta map). S06B REWROTE the bundle corpus those numbers were measured over, so they are no longer reproducible and re-recording them in the test would have turned a real check into one that confirms whatever the corpus says. The numbers moved into this oracle instead, where re-recording is the visible, reviewable act it is for every other count here. The PROPERTY s01 established is unchanged and still measured: the superseded pattern MISSES the quoted, path-qualified invocation, so the two patterns differ by a NET rather than by a pure loss. Read the `delta` map beside this line for the shape of that net -- it is currently 7 losses and 1 gain (status). s01 recorded SIX losses and one gain; that was true of the pre-DESK-07 corpus and is no longer, because `doctor` joined the losses (20 -> 6) when the shared desk block replaced vm-doctor's bootstrap. The count in this sentence is derived from the map, never carried forward.",
-    "superseded_raw": 182,
+    "superseded_raw": 177,
     "superseded_distinct": 51,
-    "current_raw": 166,
+    "current_raw": 161,
     "current_distinct": 51,
     "net": -16,
     "delta": {
@@ -1034,12 +1031,12 @@
         6
       ],
       "search": [
-        11,
-        10
+        10,
+        9
       ],
       "substrate": [
-        3,
-        2
+        2,
+        1
       ]
     },
     "the_gain_is_the_point": "`status` GAINS one under the current pattern: chief-of-staff still carries the string `\"$BRAIN_VAULT/.brain/brain\" --role vm status --json`, now in prose that FORBIDS it rather than in an instruction that uses it. The superseded pattern required `brain` followed immediately by whitespace and so misses it. That single row is what the whole reconciliation is about.",
@@ -1128,5 +1125,6 @@
     "note_on_derived_columns": "candidates, verbs and disposition_counts are UNCHANGED: the edit added and removed no `brain <token>` and renamed no bundle. Only the two content anchors moved."
   },
   "interview_lane_update": "2026-09-09 (INT-01): the host CLI grew the host-only `interview` subcommand (the owner-interview lane: the vault asks the owner on the morning sheet; docs/cos-interview.md). cli_parser_choices 78 -> 79. It is NOT in cli.VM_ALLOWED and appears in no skill bundle — the callers are the nightly's chain_finish and the repo-local /brain-grill skill, which is not a packaged bundle — so candidates, verbs, dispositions and the broker columns are byte-unchanged.",
+  "pr36_description_update": "2026-10-31: public PR #36 shortened the overlay-style and vault-ingestion descriptions to Codex's length limit. The old vault-ingestion description named `brain draft-capture` and other verbs that the new one does not, so the counts moved (raw 250 -> 245, distinct 73 -> 73). Re-derived with derive()/derive_bundles(); the skill BODIES are unchanged.",
   "public_copy": "Regenerated at export time by tools/export_public_copies.py from the COS-free tree: every derived column above is measured on the public skills and CLI. The dated notes keep their original wording."
 }

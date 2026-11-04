@@ -29,6 +29,7 @@ platform-aware function and not `querylog`'s.
 """
 from __future__ import annotations
 
+import logging
 import datetime as _dt
 import json
 import os
@@ -37,6 +38,8 @@ from typing import Any
 
 from . import config
 from . import querylog as _q
+
+logger = logging.getLogger(__name__)
 
 VERSION = 1
 LOG_DIRNAME = "read-log"
@@ -121,7 +124,8 @@ def _log_dir(vault: str | os.PathLike[str] | None) -> tuple[Path, Path] | None:
     """
     try:
         vault_root, _index_root, query_dir, unsafe = _q._resolve_location(vault)
-    except Exception:
+    except Exception:  # fail-open: unresolvable location means no read log
+        logger.debug("read-log location unresolvable; no read log written", exc_info=True)
         return None
     if unsafe:
         return None
@@ -155,6 +159,42 @@ def _secure_and_lock(fd: int) -> tuple[bool, bool]:
     if not _q._try_append_lock(fd):
         return False, False
     return True, True
+
+
+def _append_entry(log_dir: Path, stamp: _dt.datetime, entry: dict[str, Any]) -> bool:
+    """Write one JSON line under the thread lock, the file lock and fsync."""
+    fd: int | None = None
+    thread_locked = False
+    locked = False
+    try:
+        thread_locked = _q._APPEND_THREAD_LOCK.acquire(timeout=_q.APPEND_LOCK_WAIT_S)
+        if not thread_locked:
+            return False
+        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
+        flags |= getattr(os, "O_CLOEXEC", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(str(_q._month_file(log_dir, stamp)), flags, config.SECURE_FILE_MODE)
+        ok, locked = _secure_and_lock(fd)
+        if not ok:
+            return False
+        _q._write_all(
+            fd,
+            (json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8"),
+        )
+        os.fsync(fd)
+    except (OSError, TypeError, ValueError):
+        return False
+    finally:
+        if fd is not None:
+            try:
+                if locked:
+                    _q._release_append_lock(fd)
+                os.close(fd)
+            except OSError:
+                pass
+        if thread_locked:
+            _q._APPEND_THREAD_LOCK.release()
+    return True
 
 
 def record(
@@ -198,38 +238,7 @@ def record(
     if latency_ms is not None:
         entry["latency_ms"] = round(float(latency_ms), 1)
 
-    fd: int | None = None
-    thread_locked = False
-    locked = False
-    try:
-        thread_locked = _q._APPEND_THREAD_LOCK.acquire(timeout=_q.APPEND_LOCK_WAIT_S)
-        if not thread_locked:
-            return False
-        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
-        flags |= getattr(os, "O_CLOEXEC", 0)
-        flags |= getattr(os, "O_NOFOLLOW", 0)
-        fd = os.open(str(_q._month_file(log_dir, stamp)), flags, config.SECURE_FILE_MODE)
-        ok, locked = _secure_and_lock(fd)
-        if not ok:
-            return False
-        _q._write_all(
-            fd,
-            (json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8"),
-        )
-        os.fsync(fd)
-    except (OSError, TypeError, ValueError):
-        return False
-    finally:
-        if fd is not None:
-            try:
-                if locked:
-                    _q._release_append_lock(fd)
-                os.close(fd)
-            except OSError:
-                pass
-        if thread_locked:
-            _q._APPEND_THREAD_LOCK.release()
-    return True
+    return _append_entry(log_dir, stamp, entry)
 
 
 #: The four outcomes of a flush, because ``bool`` cannot tell them apart and

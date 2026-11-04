@@ -51,7 +51,7 @@ def check_cos_deployed_skill() -> dict | None:
         store = cos_deploy.from_skill_store()
         codex = cos_deploy.from_codex_automations()
         support = cos_deploy.cowork_support(store, codex)
-    except Exception:
+    except Exception:  # fail-open: advisory probe; defaults to supported
         support = {"supported": True, "store_versions": []}
     remediation = None
     if not support["supported"]:
@@ -200,7 +200,7 @@ def _latest_git_tag(repo_root: Path) -> Optional[str]:
             ["git", "-C", str(repo_root), "tag", "--list", "v*", "--sort=-v:refname"],
             capture_output=True, text=True, timeout=10,
         )
-    except Exception:
+    except Exception:  # fail-open: no git or no tags: version unknown
         return None
     for line in (out.stdout or "").splitlines():
         line = line.strip()
@@ -221,7 +221,7 @@ def fetch_pypi_latest_version(dist_name: str = "brainiac-cli", timeout: float = 
         with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310 - fixed https host
             data = json.loads(resp.read().decode("utf-8"))
         return data.get("info", {}).get("version")
-    except Exception:
+    except Exception:  # fail-open: offline or PyPI unreachable: version unknown
         return None
 
 

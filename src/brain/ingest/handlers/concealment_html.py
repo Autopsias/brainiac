@@ -132,6 +132,32 @@ def _sheet_style(sheet: dict[str, str], tag: str, attrs: dict[str, Any]) -> str:
     return ";".join(p for p in parts if p)
 
 
+def _apply_paint(out: "_Style", own: dict[str, str]) -> None:
+    """Fold colour, background and font-size declarations into ``out``."""
+    if "color" in own:
+        c = parse_colour(own["color"])
+        if c is not None:
+            out.colour = c
+    for bg in ("background-color", "background"):
+        if bg in own:
+            c = parse_colour(own[bg])
+            if c is not None:
+                out.ground = c
+    if "font-size" in own:
+        px = to_px(own["font-size"])
+        if px is not None:
+            out.size = px
+
+
+def _apply_visibility(out: "_Style", own: dict[str, str]) -> None:
+    # `visibility` is INHERITED and a descendant can turn it back on.
+    vis = own.get("visibility", "").strip().lower()
+    if vis in ("hidden", "collapse"):
+        out.invisible = True
+    elif vis == "visible":
+        out.invisible = False
+
+
 # --------------------------------------------------------------------------
 class _Style:
     """A resolved style, inherited down the element tree."""
@@ -153,30 +179,13 @@ class _Style:
             f"{_sheet_style(sheet or {}, tag, attrs)};{style_attr or ''}")
         out = _Style(self.colour, self.ground, self.size, self.offscreen,
                      self.undisplayed, self.invisible)
-        if "color" in own:
-            c = parse_colour(own["color"])
-            if c is not None:
-                out.colour = c
-        for bg in ("background-color", "background"):
-            if bg in own:
-                c = parse_colour(own[bg])
-                if c is not None:
-                    out.ground = c
-        if "font-size" in own:
-            px = to_px(own["font-size"])
-            if px is not None:
-                out.size = px
+        _apply_paint(out, own)
         for prop in _OFFSET_PROPS:
             px = to_px(own.get(prop, ""))
             if px is not None and px <= -OFFSCREEN_PX:
                 out.offscreen = True
         out.undisplayed = out.undisplayed or _undisplayed(own, attrs)
-        # `visibility` is INHERITED and a descendant can turn it back on.
-        vis = own.get("visibility", "").strip().lower()
-        if vis in ("hidden", "collapse"):
-            out.invisible = True
-        elif vis == "visible":
-            out.invisible = False
+        _apply_visibility(out, own)
         return out
 
     def marker(self) -> str | None:

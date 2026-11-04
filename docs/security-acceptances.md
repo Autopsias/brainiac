@@ -1207,6 +1207,82 @@ the running binary differs.
 
 ---
 
+## A-16 · Python 3.10 keeps Pillow 12.3.0 and filelock 4.1.0
+
+**Raised as:** 47 open Dependabot alerts on the public repo, shown by the
+v0.20.48 push on 2026-10-28 (5 critical, 24 high, 16 moderate, 2 low). Every
+one is against `uv.lock`: 40 for Pillow (fixed in 13.0.0) and 7 for filelock
+(fixed in 4.2.1).
+
+**Ruling:** the owner's, 2026-10-28 — accept and dismiss the alerts with this
+reason, rather than drop Python 3.10.
+
+**Why 3.10 cannot go.** `uv.lock` resolves Pillow 12.3.0 and filelock 4.1.0
+ONLY under `python_full_version < '3.11'`; every 3.11+ install gets Pillow
+13.0.0 and filelock 4.2.4. Neither fixed release supports 3.10, and the one
+consumer of 3.10 is the Cowork VM: its Python is Cowork's, not ours, the VM
+binary is built on `python:3.10-slim` (`tools/build_brain_binary_linux.sh`),
+and its vendored wheels must be cp310/abi3. Dropping 3.10 would stop the next
+release from building the Cowork leg at all.
+
+**Why the residual is small on that leg.**
+- Pillow parses images only during ingest, and `ingest` is not in
+  `cli.VM_ALLOWED`, so the VM never reaches that code.
+- filelock arrives through `huggingface-hub`. All six of its advisories need a
+  SECOND local user to plant a file, symlink or rename beside the lock; the
+  Cowork VM is a single-user sandbox.
+
+**What would reopen it:** Cowork moving its VM to Python 3.11+, a fixed
+Pillow or filelock release for 3.10, or `ingest` (or any image parsing)
+joining `VM_ALLOWED`.
+
+---
+
+## A-17 · A sandbox draft keeps the classification it declares
+
+**Raised as:** the 2026-11-04 health review. `draft_drain.sanitize_untrusted_note`
+fixes the id, strips host-only provenance and stamps `provenance.trust:
+untrusted`, but it does not look at `classification`, and the near-duplicate
+tier guard (`brain.ingest.tierguard`, ENF-04) runs only in the ingest pipeline,
+not in the drain (`grep -n "tierguard\|classification" src/brain/draft_drain.py`
+returns nothing, checked 2026-11-04). So a draft from the Cowork sandbox, or
+from the weekly synthesis sign-drain that shares the sanitizer, is signed at
+whatever tier it declares. A session that read an MNPI note through the desk
+can write the same text into a draft labelled `Public`.
+
+**Ruling:** the owner's, 2026-11-04 — accept and record it, and build nothing.
+Two fixes were offered and declined: running the ENF-04 tier guard on drained
+drafts, and a minimum tier for every untrusted draft (the second would also
+hide the owner's own correct sandbox notes, the same kind of demotion A-07
+refused).
+
+**Why the residual is small today.**
+- A label only matters to a reader with a tier cap. The host CLI and the desk
+  (`brain-mcp`) read the full vault by default (A-01). The capped reader is
+  the VM's own `brain --role vm` CLI (`Internal`), and the leg that would write
+  the low-labelled copy is the same leg, which already reads the full vault
+  through the desk.
+- A deployment that narrows the desk with `$BRAIN_MAX_EGRESS_TIER` is the case
+  where a low label lets text through that the cap would have withheld.
+
+**A second effect, smaller and easy to miss.** The generated egress ring
+(`overlay/keywords-generated/`, SEC-07) harvests `project` notes classified
+`Confidential` or above. A `project` note an untrusted lane writes at a lower
+tier keeps its codename out of that ring, so the web-search guard does not
+refuse it. The hand-written ring is unaffected.
+
+**Not measured:** how many untrusted-authored notes now carry a tier lower
+than the notes they quote. Nothing counts it.
+
+**What would reopen it:** a deployment that narrows the desk with
+`$BRAIN_MAX_EGRESS_TIER`, a new capped reader of the vault, or a measured
+untrusted note that copies higher-tier text at a lower tier. The fix ready to
+build is the first declined one: call the ENF-04 tier guard from the drain, so
+a near-duplicate of a higher-tier note enters at that tier (raise only, never
+lower).
+
+---
+
 ## Not accepted, and deliberately absent
 
 The synthesis sign-drain finding ("Synthesis sign-drain signs untrusted

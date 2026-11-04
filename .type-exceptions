@@ -81,6 +81,11 @@
       "count": 1
     },
     {
+      "file": "scripts/brain_synthesis_codex.py",
+      "rule": "invalid-argument-type",
+      "count": 1
+    },
+    {
       "file": "scripts/offhost_watchdog_check.py",
       "rule": "unresolved-import",
       "count": 1
@@ -216,11 +221,6 @@
       "count": 1
     },
     {
-      "file": "src/brain/doctor_context.py",
-      "rule": "unresolved-import",
-      "count": 1
-    },
-    {
       "file": "src/brain/doctor_health.py",
       "rule": "invalid-argument-type",
       "count": 1
@@ -243,6 +243,11 @@
     {
       "file": "src/brain/doctor_staging.py",
       "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "src/brain/doctor_wiring.py",
+      "rule": "invalid-argument-type",
       "count": 1
     },
     {
@@ -328,7 +333,7 @@
     {
       "file": "src/brain/folds/deliverables.py",
       "rule": "unresolved-attribute",
-      "count": 2
+      "count": 3
     },
     {
       "file": "src/brain/folds/golden.py",
@@ -557,6 +562,11 @@
     },
     {
       "file": "src/brain/ingest/handlers/base.py",
+      "rule": "unresolved-attribute",
+      "count": 1
+    },
+    {
+      "file": "src/brain/ingest/handlers/base.py",
       "rule": "unresolved-import",
       "count": 1
     },
@@ -607,6 +617,11 @@
     },
     {
       "file": "src/brain/ingest/handlers/image.py",
+      "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "src/brain/ingest/handlers/ocr_retry.py",
       "rule": "unresolved-import",
       "count": 1
     },

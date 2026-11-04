@@ -18,6 +18,7 @@ Resolution precedence (first hit wins, all yield identical PEM bytes):
 """
 from __future__ import annotations
 
+import logging
 import base64 as base64
 import contextlib
 import hashlib
@@ -30,6 +31,8 @@ import sys
 from datetime import datetime as datetime, timezone as timezone
 from pathlib import Path
 from typing import Iterator, Optional
+
+logger = logging.getLogger(__name__)
 
 JSONL_FORMAT = "brain-audit-chain-jsonl-v1"
 NULL_PREV_HASH = "0" * 64
@@ -137,7 +140,7 @@ def _pem_from_credential_manager(service: str, account: str) -> Optional[bytes]:
 
         secret = keyring.get_password(service, account)
         return secret.encode("utf-8") if secret else None
-    except Exception:
+    except Exception:  # fail-open: keyring is optional; None means no key from this source
         return None
 
 
@@ -334,7 +337,8 @@ def _exclusive_lock(log_path: Path) -> Iterator[None]:
 
                 msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
                 locked_with = "msvcrt"
-            except Exception:
+            except Exception:  # fail-open: best-effort lock; locked_with=None records that none was taken
+                logger.warning("audit lock not taken (msvcrt locking failed); writing unlocked", exc_info=True)
                 locked_with = None  # best-effort fallback
         yield
     finally:
@@ -348,7 +352,7 @@ def _exclusive_lock(log_path: Path) -> Iterator[None]:
 
                 os.lseek(fd, 0, os.SEEK_SET)
                 msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-            except Exception:
+            except Exception:  # fail-open: unlock failure is harmless, the fd is closed next
                 pass
         os.close(fd)
 

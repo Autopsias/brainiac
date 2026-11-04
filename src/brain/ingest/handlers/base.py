@@ -90,44 +90,69 @@ MAX_OOXML_MEMBERS = 5_000
 OOXML_TOO_MANY_MEMBERS_REASON = "ooxml_too_many_members"
 
 
-def _declared_member_count(path) -> int | None:
-    """Entry count from the zip's own end-of-central-directory record.
+def _declared_member_count(path, limit: int | None = None) -> int | None:
+    """Entry count of a zip, read BEFORE ``zipfile.ZipFile`` builds anything.
 
     WHY THIS EXISTS AT ALL, measured 2026-09-04: the member cap used to be
     checked AFTER ``zipfile.ZipFile(path)``, and that is too late. ZipFile
     reads the whole central directory in its constructor, so 100,001 zero-byte
     members cost their full 59.2 MB peak BEFORE ``len(infolist())`` could be
     asked — identical to the unbounded case. The cap bounded the downstream
-    reader and nothing else. Reading the count from the EOCD record costs one
-    64 KB tail read.
+    reader and nothing else.
 
-    Returns ``None`` when the count cannot be determined (no EOCD found, a
+    Returns the LARGER of the end record's entry count and the number of
+    central-directory headers actually present. The count field alone is not
+    enough (s12 review, 2026-11-02): it is attacker-written, and ZipFile never
+    reads it — it builds one ZipInfo per header in the directory's BYTE RANGE.
+    So the end record is located with zipfile's own ``_EndRecData`` (the same
+    zip64-locator handling) and the headers are walked from the ONE start the
+    running ZipFile uses — 46 bytes each, no objects built — stopping once
+    ``limit`` is passed. A forged count of 1 over 100,000 headers reads as
+    > ``limit`` on 3.10-3.14; a valid archive reads exactly what ZipFile
+    builds (s12 rework 4: a guessed second start over-counted a valid zip
+    whose payload and comments held header-shaped bytes).
+
+    Returns ``None`` when the count cannot be determined (no end record, a
     short file, an OS error). The caller then falls back to the
     post-construction check, which is still correct — just not cheap. Never
     raises.
     """
+    import zipfile
+
     try:
-        size = path.stat().st_size
         with open(path, "rb") as fh:
-            # The EOCD is last, but a trailing comment may follow it, and the
-            # comment length field is 16 bits — so 64 KB plus the record itself
-            # is the whole search space, never more.
-            tail_len = min(size, 65536 + 22)
-            fh.seek(size - tail_len)
-            tail = fh.read(tail_len)
-        at = tail.rfind(b"PK\x05\x06")
-        if at < 0 or len(tail) - at < 22:
-            return None
-        total = struct.unpack_from("<H", tail, at + 10)[0]
-        if total != 0xFFFF:
-            return total
-        # ZIP64: the 16-bit field is saturated and the real count lives in the
-        # zip64 EOCD record, which precedes this one.
-        at64 = tail.rfind(b"PK\x06\x06", 0, at)
-        if at64 < 0 or len(tail) - at64 < 40:
-            return None
-        return struct.unpack_from("<Q", tail, at64 + 32)[0]
-    except (OSError, struct.error):
+            endrec = zipfile._EndRecData(fh)
+            if not endrec:
+                return None
+            declared, size_cd, location = endrec[4], endrec[5], endrec[9]
+            fh.seek(location)
+            at = fh.read(4)
+            # Mirror ZipFile._RealGetContents. For ZIP64, 3.10-3.13.9 leave
+            # `location` on the plain end record and subtract the zip64 record
+            # + locator (56 + 20); 3.13.12+/3.14 move it to where the zip64
+            # record was found (earlier still if it carries extensible data).
+            if at == b"PK\x06\x06":
+                start = location - size_cd
+            elif at == b"PK\x05\x06":
+                start = location - size_cd - (76 if endrec[0] == b"PK\x06\x06" else 0)
+            else:
+                return None
+            if start < 0:
+                return None  # ZipFile raises "Bad offset"; let it say so
+            fh.seek(start)
+            count = seen = 0
+            while seen < size_cd and (limit is None or count <= limit):
+                head = fh.read(46)
+                if len(head) != 46 or head[:4] != b"PK\x01\x02":
+                    break  # ZipFile raises here, having built `count` entries
+                skip = sum(struct.unpack_from("<3H", head, 28))
+                fh.seek(skip, 1)
+                seen += 46 + skip
+                count += 1
+        return max(declared, count)
+    except (OSError, struct.error, zipfile.BadZipFile, AttributeError):
+        # AttributeError: a future Python without `_EndRecData` degrades to
+        # the post-construction cap; the peak tests then fail loudly.
         return None
 
 
@@ -199,7 +224,7 @@ def ooxml_expansion_gate(
     # CHEAP FIRST, and it has to be first: see `_declared_member_count`. The
     # post-construction check below stays as the backstop for an archive whose
     # EOCD cannot be read.
-    declared = _declared_member_count(path)
+    declared = _declared_member_count(path, limit=member_cap)
     if declared is not None and declared > member_cap:
         return ExtractResult.quarantine(
             OOXML_TOO_MANY_MEMBERS_REASON,
@@ -368,19 +393,39 @@ def ocr_timeout() -> int:
         return OCR_TIMEOUT_SECONDS
 
 
-def ocr_image(img: Any) -> tuple[str, list[str]]:
+# Pillow's own DecompressionBombWarning threshold. Pillow only RAISES at twice
+# this, so a small hostile PNG between the two decodes to ~700 MB of pixels.
+MAX_IMAGE_PIXELS = 89_478_485
+
+
+def too_many_pixels(img: Any) -> bool:
+    """True when the header declares more pixels than we decode.
+
+    Reads `img.size` only, which Image.open takes from the header without
+    decoding — so call it BEFORE `load()` or OCR."""
+    width, height = img.size
+    return width * height > MAX_IMAGE_PIXELS
+
+
+def ocr_image(img: Any, retry_blank: bool = False) -> tuple[str, list[str]]:
     """LOCAL-only OCR of one PIL image. Never raises: a missing binding, a
     missing tesseract binary, a timeout, or any engine failure all degrade to
     empty text plus a warning — there is no cloud fallback to reach for, so a
-    failure here is reported, never fatal to the ingest."""
+    failure here is reported, never fatal to the ingest.
+
+    ``retry_blank`` (stand-alone images only): a blank result gets one
+    low-contrast retry whose text is flagged. PDF/PPTX callers drop warnings
+    and OCR every embedded picture, so they keep the single pass."""
     if not _HAS_PYTESSERACT:
         return "", ["ocr_unavailable: pytesseract not installed"]
     lang = ocr_lang()
     if lang is None:
         return "", ["ocr_unavailable: no local tesseract binary / traineddata"]
     try:
-        text = pytesseract.image_to_string(
-            img, lang=lang, timeout=ocr_timeout())
+        if retry_blank:
+            from .ocr_retry import read_image
+            return read_image(pytesseract, img, lang, ocr_timeout())
+        text = pytesseract.image_to_string(img, lang=lang, timeout=ocr_timeout())
         return text.strip(), []
     except Exception as exc:
         return "", [f"ocr_unavailable: {type(exc).__name__}: {exc}"]

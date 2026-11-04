@@ -107,7 +107,10 @@ def _stamp_draft_frontmatter(content: str, note_id: str, is_source: bool) -> str
             f"---\nid: {note_id}\ntype: {dtype}\nstatus: draft\n"
             f"provenance.trust: untrusted\n---\n\n{content.lstrip()}\n"
         )
-    block, after = content.split("---", 2)[1], content.split("---", 2)[2]
+    parts = frontmatter.split(content)
+    if parts is None:
+        return content
+    block, after = parts
     additions = []
     if "id" not in meta:
         additions.append(f"id: {note_id}")

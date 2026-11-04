@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+import os
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -105,6 +108,29 @@ class DraftDrainRun:
         )
 
 
+class _UnsafeDraft(Exception):
+    """A capture-inbox entry that is a symlink or not a regular file."""
+
+
+def _read_text_nofollow(path: Path) -> str:
+    """Read a draft without following a symlink (copy of cos/_io's guard, ADR 0013)."""
+    if path.is_symlink():
+        raise _UnsafeDraft(f"{path.name} is a symlink")
+    # O_NONBLOCK: a planted FIFO must not block the open before the S_ISREG check.
+    flags = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+             | getattr(os, "O_NONBLOCK", 0))
+    fd = os.open(path, flags)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise _UnsafeDraft(f"{path.name} is not a regular file")
+        chunks = []
+        while b := os.read(fd, 1 << 16):
+            chunks.append(b)
+    finally:
+        os.close(fd)
+    return b"".join(chunks).decode("utf-8")
+
+
 def _read_and_hash_candidate(
     run: DraftDrainRun,
     draft: Path,
@@ -125,9 +151,13 @@ def _read_and_hash_candidate(
             run.skip(draft, f"no-signing-key (fail-closed): {exc}", source_name)
             return None
     try:
-        return draft.read_text(encoding="utf-8"), None
+        return _read_text_nofollow(draft), None
     except (OSError, UnicodeDecodeError) as exc:
         run.skip(draft, f"unreadable: {type(exc).__name__}", source_name)
+        return None
+    except _UnsafeDraft as exc:
+        logging.getLogger(__name__).warning("draft refused: %s", exc)
+        run.skip(draft, f"refused: {exc}", source_name)
         return None
 
 
@@ -169,7 +199,8 @@ def _validate_candidate(
     destination = run.core.vault / rel_path
     try:
         already_indexed = run.core.index.get(note_id) is not None
-    except Exception:
+    except Exception as exc:
+        logging.getLogger(__name__).warning("draft_drain: index lookup failed; treating note as not indexed: %s", exc)
         already_indexed = False
     declared_update = str(note.meta.get("updates") or "").strip()
     if already_indexed or destination.exists():

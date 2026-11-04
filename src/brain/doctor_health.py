@@ -62,23 +62,15 @@ def check_embedder_liveness() -> dict:
                 raw={"state": state, "backend": backend})
 
 
-def check_vm_maintain_heartbeat(vault: Path) -> dict:
-    """VM-readable mirror of ``BrainCore._maintain_heartbeat_summary`` (the VM
-    can read the heartbeat file even though only the host ever runs
-    ``brain maintain``)."""
+def _heartbeat_branch_findings(state: dict) -> tuple[list, list, list]:
+    """Sort maintain-state branches into stale / repeatedly-failing / escalated."""
     import datetime as _dt
-
-    from . import config
 
     from . import maintenance as maint
 
-    surface = "Maintain heartbeat (.brain/maintain-state.json)"
-    state = _read_json(config.maintain_state_path(vault))
-    if not state:
-        return _row(surface, NOT_DETECTABLE,
-                    "no maintain-state.json yet — brain maintain (host-only ritual) has not run")
     today = _dt.date.today()
-    stale, repeated = [], []
+    stale: list[str] = []
+    repeated: list[str] = []
     escalated: list[str] = []  # ES-01: liveness + stuck-writer-lock, see maintenance.branch_escalation
     for branch, entry in state.items():
         if str(branch).startswith("_") or not isinstance(entry, dict):
@@ -102,6 +94,21 @@ def check_vm_maintain_heartbeat(vault: Path) -> dict:
         esc = maint.branch_escalation(branch, entry, today)
         if esc["escalate"]:
             escalated.append(f"{branch} ({'; '.join(esc['reasons'])})")
+    return stale, repeated, escalated
+
+
+def check_vm_maintain_heartbeat(vault: Path) -> dict:
+    """VM-readable mirror of ``BrainCore._maintain_heartbeat_summary`` (the VM
+    can read the heartbeat file even though only the host ever runs
+    ``brain maintain``)."""
+    from . import config
+
+    surface = "Maintain heartbeat (.brain/maintain-state.json)"
+    state = _read_json(config.maintain_state_path(vault))
+    if not state:
+        return _row(surface, NOT_DETECTABLE,
+                    "no maintain-state.json yet — brain maintain (host-only ritual) has not run")
+    stale, repeated, escalated = _heartbeat_branch_findings(state)
     if stale:
         return _row(surface, STALE, f"stale branch(es): {stale}",
                     remediation="brain maintain runs host-side only — check the host's nightly scheduler")

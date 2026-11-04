@@ -187,6 +187,16 @@ class CrossTierGuard:
         except Exception as exc:  # noqa: BLE001 — a missing/!built index is not a crash
             self._error = f"{type(exc).__name__}: {exc}"
             return None
+        docs = self._build_docs(rows, floor)
+        if not docs:
+            self._error = _NO_CORPUS_ERROR
+            return None
+        self._docs = docs
+        return docs
+
+    def _build_docs(self, rows: list, floor: int) -> list[tuple[str, int, frozenset[int]]]:
+        """Comparable corpus rows as ``(id, tier_rank, sketch)``, plus the
+        pending (higher-tier-first) documents, which are flushed here."""
         docs: list[tuple[str, int, frozenset[int]]] = []
         for nid, cls, zone, path, ilv, body in rows:
             # The ONE shared exclusion definition (G12). `superseded` is NOT
@@ -205,10 +215,6 @@ class CrossTierGuard:
             docs.append((nid, rk, _ct_sketch(toks)))
             self._tokens[nid] = toks
         self._pending.clear()
-        if not docs:
-            self._error = _NO_CORPUS_ERROR
-            return None
-        self._docs = docs
         return docs
 
     def _tokens_for(self, note_id: str) -> list[str] | None:

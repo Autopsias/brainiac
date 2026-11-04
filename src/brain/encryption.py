@@ -98,7 +98,7 @@ def _key_from_credential_manager(service: str, account: str) -> Optional[bytes]:
 
         secret = keyring.get_password(service, account)
         return secret.encode("utf-8") if secret else None
-    except Exception:
+    except Exception:  # fail-open: keyring is optional; None means no key from this source
         return None
 
 

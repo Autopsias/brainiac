@@ -22,6 +22,10 @@ the hourly folds for the wider health picture.
 Defaults: at most 40 sources, 8 new notes, 120,000 source characters (16,000
 per source), 12 knowledge notes (2,500 characters each), and 20 minutes of model
 time. Short extraction stubs are skipped without starving later sources.
+For an operator-run backfill, `--source-offset N` rotates the canonical eligible
+lane without excluding sources or changing coverage counts; the weekly default
+remains worst-first at offset zero.
+
 Classification ceiling defaults to `Internal`. Export requires the explicit
 `--allow-cloud-synthesis` operator opt-in, including for `--dry-run`.
 `--max-tier MNPI` allows every classification, but must be an informed owner
@@ -140,3 +144,29 @@ in-memory signing key. They never use live vault data, Keychain or model auth.
 The public release mirror omits the private full test suite; maintainers must
 run that suite and the security/export gates before carrying this patch into
 a release. A live production pass is separate evidence from fixture tests.
+
+## Golden-check execution on a read-only Codex host
+
+Golden execution exposes one invocation-scoped host measurement tool. It
+runs only the fixed native `brain.golden_probe` scorer against operator-selected
+paths, and returns scorer metadata, not vault note bodies. Model-supplied
+commands, paths and arguments are refused; repeats return the same measurement.
+The host CLI retains classification gating and mandatory SEC-06 read records.
+The model has no shell, browser, apps, plugins, hooks or vault-write capability.
+No global MCP configuration is installed. Its final JSON must equal the
+private host-created measurement artifact; a fabricated or altered score is
+refused. Startup/transient failures retain the explicitly degraded host fallback.
+This is execution of the same deterministic scorer, not independent grading.
+
+## Engine updates on a Codex-only host
+
+Set `BRAIN_UPDATE_ENGINE_ONLY=1` for `brain update` (and the existing hourly
+agent's environment when auto-update is enabled) to skip Claude marketplace,
+plugin and hook mutations. This is explicit opt-in, not inferred from a missing
+Claude binary. Engine refresh retains install-channel, downgrade/COS and
+re-execution guards; distribution/workspace staging and final doctor verification
+remain in the flow. Symlinked launchers resolve to their owning environment,
+so pipx installations are not mistaken for user-site pip installs.
+This mode does not update or claim to update Claude plugins. Existing stale
+surfaces still appear in the final doctor result. Retest after an engine upgrade:
+locally applied repairs may be overwritten until carried into an upstream release.

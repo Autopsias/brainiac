@@ -189,10 +189,6 @@ MARKERS = (
     "hidden_visibility",       # CSS visibility:hidden / collapse
 )
 
-#: A channel this high counts as white. Exact ``FFFFFF`` and this threshold
-#: select the identical set on the 538-document corpus; the threshold exists
-#: to defeat ``#FEFEFE``.
-NEAR = 0xF0
 #: Per-channel distance at which text is "the same colour as its ground".
 GROUND_DELTA = 0x10
 #: Below this WCAG contrast ratio against its ground, text is hidden too. A
@@ -304,11 +300,6 @@ def _hsl_to_rgb(h: float, s: float, ll: float) -> tuple[int, int, int]:
         return round(val * 255)
 
     return (channel(h + 1 / 3), channel(h), channel(h - 1 / 3))
-
-
-def near_white(rgb: tuple[int, ...] | None) -> bool:
-    """Every channel at or above ``NEAR``. ``None`` is not a colour."""
-    return rgb is not None and all(c >= NEAR for c in rgb[:3])
 
 
 def colour_marker(colour: tuple[int, int, int, float] | None,

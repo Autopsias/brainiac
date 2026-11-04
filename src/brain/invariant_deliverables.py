@@ -77,7 +77,7 @@ DELIVERABLE_METRICS = (
 
 
 def computers(vault: Path, *, cap: int = SAMPLE_CAP,
-              conn: Any = None) -> dict[str, Callable[[], Any]]:
+              conn: Any = None, census: dict[str, Any] | None = None) -> dict[str, Callable[[], Any]]:
     """The three metric thunks, sharing ONE census + ledger read.
 
     Shaped like ``invariants.corpus_invariants``' own memoized
@@ -87,7 +87,7 @@ def computers(vault: Path, *, cap: int = SAMPLE_CAP,
 
     def state() -> dict[str, Any]:
         if "shelf" not in memo:
-            memo["shelf"] = shelf_state(vault)
+            memo["shelf"] = shelf_state(vault, census)
         return memo["shelf"]
 
     return {
@@ -107,7 +107,7 @@ def _declared_failed(conn: Any, *, cap: int) -> dict[str, Any]:
     return supersede_declared.declared_failed(conn, cap=cap)
 
 
-def shelf_state(vault: Path) -> dict[str, Any]:
+def shelf_state(vault: Path, census: dict[str, Any] | None = None) -> dict[str, Any]:
     """``{"entries": [...], "ledger": {...}}`` — the census and the ledger,
     read ONCE for both metrics that need them.
 
@@ -127,7 +127,7 @@ def shelf_state(vault: Path) -> dict[str, Any]:
         assert resolved.refusal is not None
         return {"error": f"shelf unresolved ({resolved.refusal.notify_key})"}
     assert resolved.path is not None
-    taken = sync.census(root)
+    taken = census if census is not None else sync.census(root)
     return {"entries": taken["entries"], "ledger": L.load_ledger(root, resolved.path)}
 
 

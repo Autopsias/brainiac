@@ -19,9 +19,9 @@ import os
 from pathlib import Path
 from typing import Any, Mapping
 
+from .atomic_temp import write_text_atomic
 from . import remediation_state as _rs
 from .remediation_answers import unlabelled_ids
-from .atomic_temp import atomic_temp_path
 
 #: BUMPED (llm-review, s06 HIGH finding). Behaviour changed under this same
 #: string once already: an earlier build of THIS feature normalized a pair's
@@ -128,9 +128,7 @@ def _write_proposal(vault: str | os.PathLike[str], meta: Mapping[str, Any]) -> N
     d = exceptions_dir(vault) / PENDING_DIRNAME
     d.mkdir(parents=True, exist_ok=True)
     path = d / f"{meta['id']}.json"
-    tmp = atomic_temp_path(path)
-    tmp.write_text(json.dumps(dict(meta), indent=1, sort_keys=True), encoding="utf-8")
-    os.replace(tmp, path)
+    write_text_atomic(path, json.dumps(dict(meta), indent=1, sort_keys=True))
 
 
 def read_pending(vault: str | os.PathLike[str]) -> list[dict[str, Any]]:

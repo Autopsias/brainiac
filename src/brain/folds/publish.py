@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import datetime as dt
 import os
 from typing import Any
@@ -32,7 +33,8 @@ class PublishFoldsMixin:
                 )
                 if title:
                     lines.append(f"- {title}")
-        except Exception:
+        except Exception as exc:
+            logging.getLogger(__name__).warning("publish fold: could not read a summary item; skipping it: %s", exc)
             pass
         lines += [
             "",

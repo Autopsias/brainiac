@@ -105,7 +105,7 @@ def resolve_version(source_path: str, vault_root: str | None) -> tuple[str, str]
         if fp.exists():
             try:
                 text = fp.read_text(encoding="utf-8", errors="replace")
-            except Exception:
+            except Exception:  # fail-open: unreadable source reads as empty text
                 text = ""
             if text.startswith("---"):
                 fm = text.split("---", 2)[1] if text.count("---") >= 2 else ""

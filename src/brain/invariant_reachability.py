@@ -8,6 +8,17 @@ from pathlib import Path
 from typing import Any
 
 
+def _bucket(rec: dict[str, Any], reached: dict[str, Any]) -> str:
+    """The exclusive bucket (first match wins) for one unreachable gold doc."""
+    if rec.get("present_in_index") is False:
+        return "absent_from_index"
+    if str(rec.get("stratum") or "") == "multi_hop":
+        return "requires_multi_hop"
+    if reached.get("optin_any_leg"):
+        return "variant_recoverable"
+    return "ranking_gap"
+
+
 def unreachable_gold(vault: Path) -> dict[str, Any]:
     """Count gold documents no ranking leg reaches.
 
@@ -59,14 +70,7 @@ def unreachable_gold(vault: Path) -> dict[str, Any]:
             doc = str(rec.get("doc") or "").strip()
             if doc:
                 docs.append(doc)
-            if rec.get("present_in_index") is False:
-                buckets["absent_from_index"] += 1
-            elif str(rec.get("stratum") or "") == "multi_hop":
-                buckets["requires_multi_hop"] += 1
-            elif reached.get("optin_any_leg"):
-                buckets["variant_recoverable"] += 1
-            else:
-                buckets["ranking_gap"] += 1
+            buckets[_bucket(rec, reached)] += 1
     except (OSError, ValueError, AttributeError) as exc:
         return {"value": None, "available": False, "artifact": str(newest),
                 "generated": None, "age_days": None, "labels": None,

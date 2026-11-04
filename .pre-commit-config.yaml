@@ -133,6 +133,26 @@ repos:
         language: system
         pass_filenames: false
 
+      # AGENTS.md section 8 asks for these two test files before a hand-in;
+      # on 2026-10-31 the rule was missed and six tests failed. Now the commit
+      # runs them, but only when a file they check is staged. They run on the
+      # WORKING TREE, not only the staged content (pytest reads the files on
+      # disk), and use the main checkout's .venv (a plan worktree has none) with
+      # this tree's src first on PYTHONPATH so the committing tree wins.
+      - id: cowork-skill-verbs
+        name: cowork skill-verb survey matches the skill sources
+        entry: bash -c 'PYTHONPATH=src "$(git rev-parse --git-common-dir)/../.venv/bin/python" -m pytest -q -p no:cacheprovider tests/test_cowork_skill_verbs.py'
+        language: system
+        pass_filenames: false
+        files: '^(\.claude/skills/|docs/operations/cowork-skill-verb-survey\.json$|tools/package_clients\.py$)'
+
+      - id: cos-pathguard-census
+        name: every cos path-reading function is classified in the pathguard census
+        entry: bash -c 'PYTHONPATH=src "$(git rev-parse --git-common-dir)/../.venv/bin/python" -m pytest -q -p no:cacheprovider tests/test_cos_pathguard_census.py'
+        language: system
+        pass_filenames: false
+        files: '^src/brain/cos/'
+
       - id: file-size-ratchet
         name: no staged file grows past the size limit (baseline only shrinks)
         entry: python3 tools/check_file_sizes.py --staged

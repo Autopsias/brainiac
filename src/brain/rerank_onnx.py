@@ -45,7 +45,7 @@ def _reranker_weights_cached(hf_repo: str, onnx_file: str, revision: str | None 
             revision=revision,
         )
         return True
-    except Exception:
+    except Exception:  # fail-open: offline cache probe; False means not cached
         return False
 
 
@@ -128,7 +128,7 @@ class OnnxReranker:
         try:
             import onnxruntime  # noqa: F401
             import tokenizers  # noqa: F401
-        except Exception:
+        except Exception:  # fail-open: optional dependency probe; False means unavailable
             return False
         if os.environ.get("BRAIN_RERANKER_ONNX_DIR"):
             return True
@@ -199,7 +199,7 @@ class OnnxReranker:
                     _rt = os.environ.get("BRAIN_RERANK_MAX_TOKENS")
                     if _rt and _rt.strip().isdigit():
                         _rmax = int(_rt)
-                except Exception:
+                except Exception:  # fail-open: truncation env var is a tuning hint; default kept
                     pass
                 self._tok.enable_truncation(max_length=_rmax)
                 # Truncation alone leaves each passage's encoded length free to

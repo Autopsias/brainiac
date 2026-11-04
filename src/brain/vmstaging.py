@@ -95,66 +95,6 @@ def stage_vm_binaries(brain_dir: Path, dist: Path) -> dict:
     return status
 
 
-def stage_vm_support_files(brain_dir: Path, engine_src: Path, packaged_script) -> dict:
-    """The VM-facing extras that ride alongside engine+model+skills.
-
-    Moved here from ``update.py`` on 2026-08-16 (size ratchet) — it is the same
-    concern as the rest of this module: what a Cowork VM reads out of
-    ``.brain/``. ``packaged_script`` is injected rather than imported to keep
-    this module free of a cycle back into ``update``.
-
-    (c/c2/c3) offline semantic stack (DV-04) — the re-stage previously staged
-    ONLY engine+skills, so a `brain update` shipped the fixed engine but left
-    the VM without vendored tokenizers/sqlite-vec and with a stale shim/prompt:
-    semantic search silently stayed on the hash fallback. Stage all three from
-    the SAME shared helper the installer uses, so update == install.
-    """
-    vendor_status: dict[str, str] = {}
-    try:
-        with tools_on_path(engine_src):
-            import vendor_semantic_deps as _vsd  # type: ignore
-
-            _vsd.write_shim(brain_dir)                   # vendored-deps-aware shim
-            vendor_status = _vsd.stage_vendor(brain_dir)  # tokenizers + sqlite-vec per arch
-    except Exception as exc:  # advisory — a networkless host degrades to lexical
-        vendor_status = {"error": f"{type(exc).__name__}: {exc}"}
-
-    # session prompt — the instruction the Cowork agent follows each session.
-    prompt_src = engine_src / "docs" / "install" / "cowork-session-prompt.md"
-    if prompt_src.exists():
-        routines_dst = brain_dir / "routines"
-        routines_dst.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(prompt_src, routines_dst / "cowork-session-prompt.md")
-
-    # conventions contract — the AGENTS.md the session prompt points the agent at
-    # (cowork_workspace_install.sh leg, line ~218). The re-stage previously
-    # SKIPPED it, so an AGENTS.md change (e.g. the retrieval-discipline block)
-    # never reached Cowork on `brain update`: the doctor's staged-version check
-    # reads the engine stamp and is blind to a stale contract. Copy it so
-    # update == install for the contract too.
-    agents_src = engine_src / "AGENTS.md"
-    if agents_src.exists():
-        shutil.copyfile(agents_src, brain_dir / "AGENTS.md")
-
-    # The two VM probes, staged 0755 so a Cowork session can run either one
-    # straight from the workspace root. Both ship in the wheel via
-    # _assets/scripts:
-    #   vm-selftest.sh        the un-fakeable PASS/FAIL retrieval self-test —
-    #                         proves the VM leg WORKS (step 8).
-    #   vm-boundary-probe.sh  the NEGATIVE half — proves it REFUSES everything
-    #                         the host broker holds. It was hand-copied into
-    #                         one workspace on 2026-07-31 and would have
-    #                         vanished on the next re-stage; a boundary claim
-    #                         is only worth what can be re-measured on demand.
-    for script_name in ("vm-selftest.sh", "vm-boundary-probe.sh"):
-        script_src = packaged_script(script_name, engine_src)
-        if script_src is not None:
-            dst = brain_dir / script_name
-            shutil.copyfile(script_src, dst)
-            dst.chmod(0o755)
-    return vendor_status
-
-
 def vm_binaries_verdict(status: dict, ssot: str | None) -> tuple[bool, str]:
     """(ok, human detail) for a staged-binary set.
 
@@ -395,4 +335,3 @@ def check_staged_skill_bundles(registry_entries: list[dict], ssot: str) -> list[
 # dir exists there) — separate row from the version stamp so a version-match
 # with a schema skew is still visible.
 # --------------------------------------------------------------------------
-

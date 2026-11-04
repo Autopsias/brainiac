@@ -169,6 +169,20 @@ def _retry_already_resolved(vault: Path, content_hash: str) -> bool:
     return NO_TEXT_MARKER not in text
 
 
+def _retry_candidates(core: Any, vault: Path) -> list[tuple[str, str, Path, str]]:
+    # (registry key, target identity, bytes to retry, owner exception key)
+    candidates: list[tuple[str, str, Path, str]] = []
+    for key, files in quarantine_retry_targets(vault).items():
+        reason = key.split(":", 1)[1]
+        for rel in files:
+            candidates.append(
+                (key, rel, vault / rel, f"quarantine-exhausted:{reason}"))
+    for nid, original in subfloor_retry_targets(core):
+        candidates.append(
+            (KEY_SUBFLOOR, f"raw/{nid}.md", original, "quarantine-exhausted:subfloor"))
+    return candidates
+
+
 def plan_extract_retry(
     core: Any, cap: int, row: dict[str, Any], today: datetime.date,
 ) -> tuple[BranchOutcome, list[Intent]]:
@@ -194,16 +208,7 @@ def plan_extract_retry(
     out = BranchOutcome(EXTRACT_RETRY, KEY_SUBFLOOR)
     vault = Path(core.vault)
     today_iso = today.isoformat()
-    # (registry key, target identity, bytes to retry, owner exception key)
-    candidates: list[tuple[str, str, Path, str]] = []
-    for key, files in quarantine_retry_targets(vault).items():
-        reason = key.split(":", 1)[1]
-        for rel in files:
-            candidates.append(
-                (key, rel, vault / rel, f"quarantine-exhausted:{reason}"))
-    for nid, original in subfloor_retry_targets(core):
-        candidates.append(
-            (KEY_SUBFLOOR, f"raw/{nid}.md", original, "quarantine-exhausted:subfloor"))
+    candidates = _retry_candidates(core, vault)
 
     by_key: dict[str, list[str]] = {}
     retried_this_run: set[str] = set()

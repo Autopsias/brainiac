@@ -1,6 +1,7 @@
 """Inventory corpus migration steps."""
 from __future__ import annotations
 
+import logging
 import argparse
 import json
 from collections import Counter
@@ -34,7 +35,8 @@ def _inventory(
         zone = relative.split("/", 1)[0]
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
-        except Exception:
+        except Exception as exc:
+            logging.getLogger(__name__).warning("migration: unreadable note, treating as empty: %s", exc)
             text = ""
         frontmatter, body = split_frontmatter(text)
         has_frontmatter = frontmatter is not None

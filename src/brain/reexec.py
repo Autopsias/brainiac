@@ -57,6 +57,6 @@ def reexec_after_engine_move(engine_result: dict, *, dry_run: bool = False) -> N
     # flags (--engine-src, --json), which is a correctness bug.
     # The annotation must sit on the line directly above the call — placed
     # further up it is silently ignored, which is how this first shipped.
-    # nosemgrep: python.lang.security.audit.dangerous-os-exec-tainted-env-args.dangerous-os-exec-tainted-env-args
+    # nosemgrep: python.lang.security.audit.dangerous-os-exec-tainted-env-args.dangerous-os-exec-tainted-env-args  # noqa: ERA001
     os.execve(sys.executable, [sys.executable, "-m", "brain.cli", *sys.argv[1:]],
               {**os.environ, REEXEC_ENV: "1"})

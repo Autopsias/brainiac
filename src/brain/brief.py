@@ -137,7 +137,26 @@ def format_brief(brief: dict[str, Any]) -> str:
     elif brief.get("pending_before_drain", 0) == 0:
         lines.append("  ✓ no pending captures")
 
-    live = brief.get("cos_liveness") or {}
+    lines.extend(_cos_liveness_lines(brief.get("cos_liveness") or {}))
+
+    snap = brief.get("snapshot_age")
+    if snap:
+        lines.append(f"  snapshot age: {snap}")
+
+    if brief.get("recent"):
+        lines.append("  recent:")
+        for n in brief["recent"]:
+            lines.append(
+                f"    {str(n.get('updated', ''))[:10]}  {n.get('id', '')}  "
+                f"({n.get('classification') or 'UNLABELLED'})"
+            )
+
+    return "\n".join(lines)
+
+
+def _cos_liveness_lines(live: dict[str, Any]) -> list[str]:
+    """COS liveness banner lines for the text brief."""
+    lines: list[str] = []
     if live.get("alert"):
         lines.append(f"  ⚠ {live['alert_text']}")
     elif live.get("pending_behind_backpressure"):
@@ -158,20 +177,7 @@ def format_brief(brief: dict[str, Any]) -> str:
     # VALID run. Loud here for the same reason the line above is.
     if live.get("quarantine_text"):
         lines.append(f"  ⚠ {live['quarantine_text']}")
-
-    snap = brief.get("snapshot_age")
-    if snap:
-        lines.append(f"  snapshot age: {snap}")
-
-    if brief.get("recent"):
-        lines.append("  recent:")
-        for n in brief["recent"]:
-            lines.append(
-                f"    {str(n.get('updated', ''))[:10]}  {n.get('id', '')}  "
-                f"({n.get('classification') or 'UNLABELLED'})"
-            )
-
-    return "\n".join(lines)
+    return lines
 
 
 def _maintain_alert_lines(maintain_alert: dict[str, Any] | None) -> list[str]:

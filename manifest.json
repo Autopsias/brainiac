@@ -111,6 +111,7 @@
     "docs/benchmark-results.md",
     "docs/classification-scheme.md",
     "docs/clean-room-log.md",
+    "docs/closed-plans-history.md",
     "docs/cowork-windows-install.md",
     "docs/deliverables-shelf.md",
     "docs/deployment-authorization-memo.html",
@@ -205,6 +206,7 @@
     "packaging/npm/brainiac-install/LICENSE",
     "packaging/npm/brainiac-install/README.md",
     "packaging/npm/brainiac-install/bin/cli.js",
+    "packaging/npm/brainiac-install/bin/proc.js",
     "packaging/npm/brainiac-install/package.json",
     "packaging/npm/brainiac-install/test/cli.test.js",
     "packaging/sbom.cdx.json",
@@ -428,6 +430,7 @@
     "src/brain/folds/watchdogs.py",
     "src/brain/folds/weekly.py",
     "src/brain/frontmatter.py",
+    "src/brain/golden_executor.py",
     "src/brain/golden_ops.py",
     "src/brain/golden_probe.py",
     "src/brain/golden_probe_cases.py",
@@ -486,6 +489,7 @@
     "src/brain/ingest/handlers/email.py",
     "src/brain/ingest/handlers/html.py",
     "src/brain/ingest/handlers/image.py",
+    "src/brain/ingest/handlers/ocr_retry.py",
     "src/brain/ingest/handlers/ole.py",
     "src/brain/ingest/handlers/pdf.py",
     "src/brain/ingest/handlers/pptx.py",
@@ -592,6 +596,7 @@
     "src/brain/remediation_questions.py",
     "src/brain/remediation_routing.py",
     "src/brain/remediation_schema.py",
+    "src/brain/remediation_security.py",
     "src/brain/remediation_state.py",
     "src/brain/rerank.py",
     "src/brain/rerank_onnx.py",
@@ -608,6 +613,7 @@
     "src/brain/update_channels.py",
     "src/brain/update_channels_2.py",
     "src/brain/update_cos_guard.py",
+    "src/brain/update_engine_only.py",
     "src/brain/update_model.py",
     "src/brain/update_ops.py",
     "src/brain/update_plugins.py",
@@ -681,6 +687,7 @@
     "tools/validate_invariants.py",
     "tools/vendor_semantic_deps.py",
     "tools/vendor_verify.py",
+    "tools/vendored_checkers.sha256",
     "tools/workspace_registry.py",
     "uv.lock",
     "vault/brain/archive/catalog.md",
@@ -697,5 +704,5 @@
     "vault/raw/2026-06-27-arctic-vs-e5-benchmark.md",
     "vault/raw/README.md"
   ],
-  "count": 696
+  "count": 703
 }

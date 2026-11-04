@@ -9,10 +9,14 @@ poppler-accelerated large-PDF lane if a real corpus ever needs it.
 """
 from __future__ import annotations
 
+import logging
+import time
 from pathlib import Path
 from typing import Any
 
 from .base import ExtractResult, Handler, density_gate, ocr_available, ocr_image
+
+logger = logging.getLogger(__name__)
 
 try:
     from pypdf import PdfReader
@@ -33,6 +37,16 @@ MAX_PDF_BYTES = 200 * 1024 * 1024  # 200 MB
 # runs on it at all. Images past the cap are reported as un-OCR'd
 # (`ocr_images_skipped`), never silently dropped.
 DEFAULT_OCR_MAX_PAGES = 400
+# SEC-04: a small PDF can share one big compressed stream across thousands of
+# pages, and each page re-inflates it — the drain holds the single-writer lock
+# the whole time. Measured 2026-11-03: a normal 300-page text PDF extracts in
+# ~0.2 s, so 120 s and 3000 pages sit orders of magnitude above real use.
+MAX_PDF_PAGES = 3000
+PDF_WALL_BUDGET_SECONDS = 120.0
+
+
+class _BudgetExceeded(Exception):
+    pass
 
 
 def _ocr_max_pages() -> int:
@@ -44,7 +58,8 @@ def _ocr_max_pages() -> int:
         return DEFAULT_OCR_MAX_PAGES
 
 
-def _ocr_page(page: object, budget: int) -> tuple[str, int, int]:
+def _ocr_page(page: object, budget: int,
+              remaining: float | None = None) -> tuple[str, int, int]:
     """OCR up to ``budget`` of one page's embedded images, by reading the
     page's own rasters — no rasterizer and no system binary beyond the
     optional local tesseract the image handler already uses.
@@ -53,16 +68,21 @@ def _ocr_page(page: object, budget: int) -> tuple[str, int, int]:
     of this page's images were never attempted because the budget was
     already spent, which is what ``ocr_images_skipped`` in the ingest report
     sums across the document (LOW-03: the budget counts images, the cost
-    unit, not pages)."""
+    unit, not pages).
+
+    ``remaining`` is the wall-clock seconds the document has left; once it is
+    spent, the images still to do count as skipped like a spent image budget."""
+    deadline = None if remaining is None else time.monotonic() + remaining
     try:
         images = list(page.images)  # type: ignore[attr-defined]
     except Exception:  # coverage-audit: no OCR text is admitted from this page, so none is claimed
+        logger.warning("PDF page image list unreadable; OCR text for this page skipped", exc_info=True)
         return "", 0, 0
     texts = []
     ocred = 0
     skipped = 0
     for embedded in images:
-        if budget <= 0:
+        if budget <= 0 or (deadline is not None and time.monotonic() >= deadline):
             skipped += 1
             continue
         budget -= 1
@@ -70,6 +90,7 @@ def _ocr_page(page: object, budget: int) -> tuple[str, int, int]:
         try:
             text, _ = ocr_image(embedded.image)
         except Exception:  # coverage-audit: no OCR text is admitted from this image, so none is claimed
+            logger.warning("OCR failed on an embedded PDF image; its text is not admitted", exc_info=True)
             continue
         if text:
             texts.append(text)
@@ -106,7 +127,8 @@ def _open_empty_password(reader: object, note: list[str]) -> bool:
 
 
 def _page_text(page: Any, page_no: int, concealed: list[dict],
-               warnings: list[str], seen: Any = None) -> str:
+               warnings: list[str], seen: Any = None,
+               deadline: float | None = None) -> str:
     """Extract one page's text, watching the text-render-mode operators.
 
     Mode 3 and 7 draw text the reader never sees while
@@ -137,6 +159,11 @@ def _page_text(page: Any, page_no: int, concealed: list[dict],
         # is what stops this page's text reading `full` (V15).
         warnings.append(
             f"concealment_scan_warning: page {page_no}: {type(exc).__name__}: {exc}")
+        if deadline is not None and time.monotonic() >= deadline:
+            warnings.append(
+                f"concealment_scan_warning: page {page_no}: plain-text retry skipped, "
+                "wall-clock budget spent")
+            return ""
         return page.extract_text() or ""
     # The visitor's own per-operator catch is silent to the walk by design;
     # it is not silent to the RECORD (V12, 2026-09-02).
@@ -173,9 +200,18 @@ def _read_pages(
     ocred: list[int] = []
     concealed: list[dict] = []
     images_skipped = 0
+    started = time.monotonic()
+    if len(reader.pages) > MAX_PDF_PAGES:
+        raise _BudgetExceeded(
+            f"pdf budget exceeded: page cap {MAX_PDF_PAGES} (file has {len(reader.pages)} pages)")
     for i, page in enumerate(reader.pages, start=1):
+        if time.monotonic() - started > PDF_WALL_BUDGET_SECONDS:
+            raise _BudgetExceeded(
+                f"pdf budget exceeded: {PDF_WALL_BUDGET_SECONDS:g} s wall-clock budget "
+                f"hit after {i - 1} pages")
         text = _page_text(page, i, concealed, warnings,
-                          admitted.watch("pdf:text_layer")).strip()
+                          admitted.watch("pdf:text_layer"),
+                          started + PDF_WALL_BUDGET_SECONDS).strip()
         if len(text) >= _MIN_PAGE_CHARS:
             admitted.chrome(f"## Page {i}")
             admitted.add("pdf:text_layer", text)
@@ -183,7 +219,8 @@ def _read_pages(
             continue
         ocr_text = ""
         if can_ocr:
-            ocr_text, consumed, skipped = _ocr_page(page, ocr_budget)
+            ocr_text, consumed, skipped = _ocr_page(
+                page, ocr_budget, started + PDF_WALL_BUDGET_SECONDS - time.monotonic())
             ocr_budget -= consumed
             images_skipped += skipped
         if len(ocr_text) >= _MIN_PAGE_CHARS:
@@ -239,6 +276,8 @@ def _render_pdf(reader: Any) -> ExtractResult:
         sections, scanned_pages, ocr_pages, _budget_left, concealed, images_skipped = (
             _read_pages(reader, _ocr_max_pages() if can_ocr else 0, warnings,
                        admitted, can_ocr=can_ocr))
+    except _BudgetExceeded as exc:  # coverage-audit: whole file quarantined with the limit named; no text is admitted, so none is claimed
+        return ExtractResult.quarantine("pdf_budget_exceeded", warnings=[str(exc)])
     except Exception as exc:  # coverage-audit: quarantines; no text is admitted, so none is claimed
         return ExtractResult.quarantine(
             "pdf_extraction_error",

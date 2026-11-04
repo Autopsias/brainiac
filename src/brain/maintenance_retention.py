@@ -102,6 +102,43 @@ def _verify_duplicate_provenance(dup_file: Path, vault: Path, manifest: dict[str
     return True, "verified"
 
 
+def _prune_duplicate(p: Path, vault: Path, manifest: Any, dup_dir: Path,
+                     dry_run: bool, report: dict[str, Any]) -> None:
+    """Verify, then delete, one due duplicate; record the outcome in ``report``."""
+    # Per-candidate isolation (review finding [3]): any unexpected error in
+    # the verify chain skips THIS candidate, never aborts the fold.
+    try:
+        ok, reason = _verify_duplicate_provenance(p, vault, manifest)
+    except Exception as exc:  # noqa: BLE001 — defensive; verify is fail-safe
+        report["skipped"].append(
+            {"file": p.name, "kind": "provenance", "reason": f"verify error: {exc}"})
+        return
+    if not ok:
+        report["skipped"].append({"file": p.name, "kind": "provenance", "reason": reason})
+        return
+    if dry_run:
+        report["pruned"].append({"file": p.name, "would_delete": True})
+        return
+    # Delete the primary FIRST (the data-safe step, since provenance
+    # verified the bytes are archived). Review finding [2]: only a PRIMARY
+    # delete failure is a "not pruned" skip — a sidecar-unlink failure AFTER
+    # the primary is gone must NOT be misreported as a provenance failure
+    # (the file IS pruned); record the orphaned sidecar separately instead.
+    sidecar = dup_dir / f"{p.name}{_DUPLICATE_SIDECAR_SUFFIX}"
+    try:
+        p.unlink()
+    except OSError as exc:
+        report["skipped"].append(
+            {"file": p.name, "kind": "delete", "reason": f"delete failed: {exc}"})
+        return
+    entry: dict[str, Any] = {"file": p.name}
+    try:
+        sidecar.unlink(missing_ok=True)
+    except OSError as exc:
+        entry["orphaned_sidecar"] = f"{sidecar.name}: {exc}"
+    report["pruned"].append(entry)
+
+
 def retention_fold(vault: Path, today: datetime.date, *, dry_run: bool = False) -> dict[str, Any]:
     """CUT-02: prune ``inbox/_duplicate/`` entries older than
     ``BRAIN_DUPLICATE_RETENTION_DAYS`` (default 30, mtime-based). Safe by
@@ -147,38 +184,7 @@ def retention_fold(vault: Path, today: datetime.date, *, dry_run: bool = False) 
         if mtime > cutoff_ts:
             report["not_due"] += 1
             continue
-        # Per-candidate isolation (review finding [3]): any unexpected error in
-        # the verify chain skips THIS candidate, never aborts the fold.
-        try:
-            ok, reason = _verify_duplicate_provenance(p, vault, manifest)
-        except Exception as exc:  # noqa: BLE001 — defensive; verify is fail-safe
-            report["skipped"].append(
-                {"file": p.name, "kind": "provenance", "reason": f"verify error: {exc}"})
-            continue
-        if not ok:
-            report["skipped"].append({"file": p.name, "kind": "provenance", "reason": reason})
-            continue
-        if dry_run:
-            report["pruned"].append({"file": p.name, "would_delete": True})
-            continue
-        # Delete the primary FIRST (the data-safe step, since provenance
-        # verified the bytes are archived). Review finding [2]: only a PRIMARY
-        # delete failure is a "not pruned" skip — a sidecar-unlink failure AFTER
-        # the primary is gone must NOT be misreported as a provenance failure
-        # (the file IS pruned); record the orphaned sidecar separately instead.
-        sidecar = dup_dir / f"{p.name}{_DUPLICATE_SIDECAR_SUFFIX}"
-        try:
-            p.unlink()
-        except OSError as exc:
-            report["skipped"].append(
-                {"file": p.name, "kind": "delete", "reason": f"delete failed: {exc}"})
-            continue
-        entry: dict[str, Any] = {"file": p.name}
-        try:
-            sidecar.unlink(missing_ok=True)
-        except OSError as exc:
-            entry["orphaned_sidecar"] = f"{sidecar.name}: {exc}"
-        report["pruned"].append(entry)
+        _prune_duplicate(p, vault, manifest, dup_dir, dry_run, report)
     return report
 
 

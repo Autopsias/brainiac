@@ -192,7 +192,7 @@ def parse_frontmatter(block: str) -> dict:
         import yaml  # type: ignore
         data = yaml.safe_load(block)
         return data if isinstance(data, dict) else {}
-    except Exception:
+    except Exception:  # fail-open: falls through to the built-in parser below
         pass
     data: dict = {}
     block_aliases = False

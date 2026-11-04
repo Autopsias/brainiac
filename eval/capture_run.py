@@ -66,10 +66,10 @@ def _fingerprint(index_stats: dict, golden_path: str) -> dict:
     # it is the truthful stamp in both cases.
     try:
         from brain._version import __version__ as engine_version
-    except Exception:
+    except Exception:  # fail-open: falls back to the package version
         try:
             from brain import __version__ as engine_version
-        except Exception:
+        except Exception:  # fail-open: engine version unknown
             engine_version = None
     return {
         "notes": index_stats.get("notes"),
@@ -234,7 +234,7 @@ def _open_search(args, vault_root: str):
         status = core.status()
         index_stats = status.get("index") or {}
         index_state = {"index": index_stats}
-    except Exception:
+    except Exception:  # fail-open: status is optional metadata
         index_state = {}
     return core.hybrid_search, index_state, index_stats
 

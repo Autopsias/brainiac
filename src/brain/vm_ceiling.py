@@ -65,7 +65,8 @@ def write_signed(vault: Path, tier: str) -> dict[str, Any]:
     payload["signature"] = base64.b64encode(key.sign(canonical)).decode("ascii")
     path = signed_path(vault)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    from .atomic_temp import write_json_atomic
+    write_json_atomic(path, payload)
     return payload
 
 

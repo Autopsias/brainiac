@@ -57,6 +57,7 @@ copied.
 """
 
 from __future__ import annotations
+from .remediation_security import security_banners
 
 from .maintenance_retention import _QUARANTINE_REMEDY
 # The ROW TYPE and the rules that judge one live in `remediation_schema`; this
@@ -270,18 +271,13 @@ _EXACT: dict[str, Remedy] = {
     # is purely "tell the owner what the automation is spending", so it is an
     # EXACT entry rather than falling under the generic `trend:` prefix
     # (BANNER, no branch owns a regression, no owner can answer it): a cost
-    # line is answerable ("do nothing, it's expected" / "investigate"), which
+    # line is answerable ("do nothing, it's expected" / "investigate"), which  # noqa: ERA001
     # every other `trend:` key is not.
     "trend:remediation_cost": Remedy(
         OWNER, note="no cap is enforced on remediation spend; this is a "
                     "trend/floor alert only, never a throttle"),
     # The banner class.
-    "stuck-drafts": Remedy(
-        BANNER, note="UPD-01: capture drafts the drain keeps refusing "
-                     "(>48h in the inbox) — the skip reason names the fix "
-                     "(`brain sync` to read it; `update-needs-owner` applies "
-                     "with `brain write`). No branch may auto-apply refused "
-                     "untrusted bytes, so this may never route to automation"),
+    **security_banners(Remedy, BANNER),
     "blocked": Remedy(BANNER),
     "invariants-liveness": Remedy(BANNER, note="WAT-01 dead-man's switch"),
     "synthesis-watchdog": Remedy(BANNER),

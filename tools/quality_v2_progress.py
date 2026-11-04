@@ -22,6 +22,7 @@ Usage:
 
 from __future__ import annotations
 
+import logging
 import argparse
 import json
 import subprocess
@@ -52,7 +53,8 @@ def _baseline_at(project: Path, name: str, ref: str) -> dict | None:
         if out.returncode != 0:
             return None
         return json.loads(out.stdout)
-    except Exception:
+    except Exception as exc:
+        logging.getLogger(__name__).warning("quality progress: probe failed: %s", exc)
         return None
 
 

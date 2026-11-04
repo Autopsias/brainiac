@@ -47,10 +47,10 @@ import base64
 import datetime
 import hashlib
 import json
-import os
 from pathlib import Path
 from typing import Any
 
+from .atomic_temp import write_text_atomic
 from . import alerts as _alerts
 from . import alerts_staging as _alerts_staging
 from . import classification as _classification
@@ -60,7 +60,6 @@ from . import maintenance as _maintenance
 from . import maintenance_notify as _notify
 from . import remediation as _rem
 from . import remediation_exceptions as _rex
-from .atomic_temp import atomic_temp_path
 from .exceptions_render import render_page  # re-exported: the page's one
 # renderer, split out on 2026-08-22 when this file hit the 500-line bound.
 
@@ -288,9 +287,7 @@ def maybe_ping(vault: Path, keys: list[str], full_path: Path) -> str | None:
     if not str(out or "").startswith("skipped"):  # a SKIP defers, never spends
         try:
             state_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = atomic_temp_path(state_path)
-            tmp.write_text(json.dumps({"hash": current_hash}), encoding="utf-8")
-            os.replace(tmp, state_path)
+            write_text_atomic(state_path, json.dumps({"hash": current_hash}))
         except OSError:
             pass  # best-effort; a lost marker just risks one extra ping later
     return out
@@ -365,6 +362,4 @@ def generate(core: Any, today: datetime.date | None = None) -> dict[str, Any]:
 
 
 def _atomic_write(path: Path, text: str) -> None:
-    tmp = atomic_temp_path(path)
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    write_text_atomic(path, text)

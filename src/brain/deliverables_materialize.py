@@ -204,9 +204,7 @@ def _apply_plan(
     the only thing a hold withholds, because the move is the destructive-
     looking half even when it destroys nothing."""
     copied: list[str] = []
-    for rel in plan["hold"]:
-        if rel in prior:
-            final[rel] = prior[rel]
+    _keep_prior(plan["hold"], prior, final)
     for rel, target in plan["current"]:
         # A superseded hash is dropped HERE and not only on the copy path: the
         # `current` verdict means the swap this row was journalling is finished,
@@ -220,9 +218,8 @@ def _apply_plan(
         _write(wanted[rel], target, rel, final, building, bad_perms)
         copied.append(rel)
     if held:
-        for rel, *_rest in plan["replace"] + plan["retire"]:
-            if rel in prior:
-                final[rel] = prior[rel]
+        _keep_prior([row[0] for row in plan["replace"] + plan["retire"]],
+                    prior, final)
         return copied
     for rel, target, on_disk in plan["replace"]:
         # A new version of the SAME deliverable. Nothing on the shelf is ever
@@ -237,6 +234,14 @@ def _apply_plan(
         displaced.append({"path": rel,
                           "moved_to": L.displace(target, shelf, rel, sha, run_id)})
     return copied
+
+
+def _keep_prior(rels: list[str], prior: dict[str, dict[str, Any]],
+                final: dict[str, dict[str, Any]]) -> None:
+    """Carry the previous ledger row forward for every path that has one."""
+    for rel in rels:
+        if rel in prior:
+            final[rel] = prior[rel]
 
 
 def _settled(row: dict[str, Any]) -> dict[str, Any]:

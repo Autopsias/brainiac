@@ -414,7 +414,7 @@ class _CoreHealthMixin:
                     "investigate brain.injection_scan, then re-run integrity"))
         try:
             reads = _rl.status(self.vault)
-        except Exception:
+        except Exception:  # fail-open: reported as available: False with a reason
             reads = {"available": False, "reason": "read-log unreadable"}
         return rows, reads, coverage
 

@@ -237,7 +237,7 @@ class OnnxEmbedder:
             import tokenizers  # noqa: F401
 
             return True
-        except Exception:
+        except Exception:  # fail-open: optional dependency probe; False means unavailable
             return False
 
     def _ensure(self):
@@ -276,7 +276,7 @@ class OnnxEmbedder:
                     _mt = os.environ.get("BRAIN_EMBED_MAX_TOKENS")
                     if _mt and _mt.strip().isdigit():
                         _max_tok = int(_mt)
-                except Exception:
+                except Exception:  # fail-open: truncation env var is a tuning hint; default kept
                     pass
                 self._tok.enable_truncation(max_length=_max_tok)
                 # Pad to the longest in a batch so encode_batch returns a

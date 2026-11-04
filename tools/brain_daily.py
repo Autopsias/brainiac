@@ -19,6 +19,7 @@ Schedule it (host) to reproduce the old auto-morning-note behaviour, e.g. a
 launchd/cron entry or a fold in the existing brain-nightly routine:
   brain_daily.py --vault "$VAULT" --brief
 """
+import logging
 import argparse, datetime, pathlib, re, shutil, subprocess, sys
 
 TEMPLATE_SECTIONS = ["## Session Summary", "## Work Done", "## Open Threads", "## Next Session"]
@@ -35,7 +36,8 @@ def note_exists(vault: str, note_id: str) -> bool:
                            capture_output=True, text=True, timeout=60)
         if r.returncode == 0 and note_id in (r.stdout or ""):
             return True
-    except Exception:
+    except Exception as exc:
+        logging.getLogger(__name__).warning("brain_daily: `brain get` probe failed; trying disk fallback: %s", exc)
         pass
     # disk fallback (draft in capture-inbox or signed under brain/)
     for p in pathlib.Path(vault).rglob(f"{note_id}.md"):
@@ -54,7 +56,8 @@ def seed_from_brief(vault: str) -> str:
         # keep it short — first ~8 non-noise lines, indented as bullets
         picked = [ln for ln in lines if not ln.startswith(("Fetching", "==", "--"))][:8]
         return "\n".join(f"- {ln.lstrip('- ').strip()}" for ln in picked)
-    except Exception:
+    except Exception as exc:
+        logging.getLogger(__name__).warning("brain_daily: digest command failed; returning no digest: %s", exc)
         return ""
 
 

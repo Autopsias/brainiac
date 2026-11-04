@@ -70,6 +70,22 @@ def _run_retro(args, ctx) -> int:
     return 0
 
 
+def _interview_text(out: dict) -> str:
+    """The plain-text report for a non-JSON `brain interview` run."""
+    if "open" in out:
+        rows = out["open"]
+        lines = [f"interview: {len(rows)} open question(s)"]
+        for r in rows:
+            lines.append(f"[{r['key']}] {r['shape']}: {r['question']}")
+        return "\n".join(lines)
+    a = out.get("apply") or out.get("answer") or {}
+    g = out.get("generate") or {}
+    return (f"interview: applied {a.get('applied', 0)}, skipped {a.get('skipped', 0)}, "
+            f"failed {len(a.get('failed') or [])}; asked {g.get('asked', 0)} "
+            f"(room {(g.get('budget') or {}).get('room', 0)}), "
+            f"detector errors {len(g.get('errors') or [])}")
+
+
 def _run_interview(args, ctx) -> int:
     import datetime as _dt                                    # noqa: PLC0415
     from pathlib import Path                                  # noqa: PLC0415
@@ -108,20 +124,7 @@ def _run_interview(args, ctx) -> int:
     if args.json:
         _emit(out, True)
         return 0
-    if "open" in out:
-        rows = out["open"]
-        lines = [f"interview: {len(rows)} open question(s)"]
-        for r in rows:
-            lines.append(f"[{r['key']}] {r['shape']}: {r['question']}")
-        _emit(None, False, "\n".join(lines))
-        return 0
-    a = out.get("apply") or out.get("answer") or {}
-    g = out.get("generate") or {}
-    _emit(None, False,
-          f"interview: applied {a.get('applied', 0)}, skipped {a.get('skipped', 0)}, "
-          f"failed {len(a.get('failed') or [])}; asked {g.get('asked', 0)} "
-          f"(room {(g.get('budget') or {}).get('room', 0)}), "
-          f"detector errors {len(g.get('errors') or [])}")
+    _emit(None, False, _interview_text(out))
     return 0
 
 

@@ -20,6 +20,7 @@ drive an unversioned CLI blind.
 """
 from __future__ import annotations
 
+import functools
 import os
 import re
 import shutil
@@ -177,7 +178,7 @@ def detect_and_check_update(
             txt = (out.stdout or out.stderr or "").strip()
             m = re.search(r"(\d+\.\d+\.\d+\S*)", txt)
             installed = m.group(1) if m else (txt or None)
-        except Exception:
+        except Exception:  # fail-open: version probe; None means unknown
             installed = None
     engine_src = resolve_engine_source(claude_home=claude_home)
     avail = check_update_available(installed, channel, engine_src)
@@ -291,6 +292,7 @@ def run_update(
     run: Runner = _default_runner,
     skip_capability_probe: bool = False,
     dry_run: bool = False,
+    pin_version: Optional[str] = None,
 ) -> dict[str, Any]:
     """Chain, in order: capability probe -> marketplace refresh -> per-plugin
     downgrade-safe reinstall -> engine venv refresh -> dist/ rebuild ->
@@ -322,13 +324,19 @@ def run_update(
         decide_plugin_action=decide_plugin_action,
         apply_plugin_action=apply_plugin_action,
         check_installed_cli_plugins=check_installed_cli_plugins,
-        refresh_engine_venv=refresh_engine_venv,
+        # A-03: the nightly passes the version it verified; never a bare upgrade.
+        refresh_engine_venv=functools.partial(refresh_engine_venv, pin_version=pin_version),
         rebuild_dist=rebuild_dist,
         restage_workspaces=restage_workspaces,
         render_before_after=render_before_after,
         compare=_compare,
         reexec_after_engine_move=reexec_after_engine_move,
     )
+    if os.environ.get('BRAIN_UPDATE_ENGINE_ONLY') == '1':
+        from .update_engine_only import run_engine_only_flow
+        return run_engine_only_flow(engine_src=resolved_engine_src, brainiac_home=brainiac_home,
+                                    claude_home=claude_home, run=run, dry_run=dry_run,
+                                    callbacks=callbacks)
     return run_update_flow(
         marketplace_name=marketplace_name,
         engine_src=resolved_engine_src,

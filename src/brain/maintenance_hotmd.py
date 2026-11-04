@@ -22,6 +22,22 @@ def _joined_len(blocks: list[str]) -> int:
     return len(("\n\n".join(blocks) + "\n").encode("utf-8")) if blocks else 0
 
 
+def _entry_age(
+    block: str, today: datetime.date, keep_days: int,
+) -> tuple[datetime.date | None, bool]:
+    """``(header date, older than keep_days)`` for one keyed hot.md block."""
+    from .retro import _HEADER_DATE_RE
+
+    m = _HEADER_DATE_RE.search(block)
+    if not m:
+        return None, False
+    try:
+        entry_date = datetime.date.fromisoformat(m.group("date"))
+    except ValueError:
+        return None, False
+    return entry_date, (today - entry_date).days > keep_days
+
+
 def rotate_hot_md(
     text: str, today: datetime.date, *,
     max_bytes: int | None = None, keep_days: int = HOT_MD_ROTATE_KEEP_DAYS,
@@ -45,7 +61,7 @@ def rotate_hot_md(
     entry, not a queue item, and rotation ARCHIVES it (key line included)
     rather than dropping it. Recent entries are still never rotated, so a
     freshly-raised owner question always stays in the live file."""
-    from .retro import _HEADER_DATE_RE, _KEY_RE, HOT_MD_SOFT_MAX_BYTES
+    from .retro import _KEY_RE, HOT_MD_SOFT_MAX_BYTES
 
     limit = HOT_MD_SOFT_MAX_BYTES if max_bytes is None else max_bytes
     if len(text.encode("utf-8")) <= limit:
@@ -60,15 +76,7 @@ def rotate_hot_md(
         if not _KEY_RE.search(block):
             kept.append(block)  # unkeyed preamble/tail — never rotated
             continue
-        aged = False
-        entry_date: datetime.date | None = None
-        m = _HEADER_DATE_RE.search(block)
-        if m:
-            try:
-                entry_date = datetime.date.fromisoformat(m.group("date"))
-                aged = (today - entry_date).days > keep_days
-            except ValueError:
-                aged = False
+        entry_date, aged = _entry_age(block, today, keep_days)
         unresolved = "**Owner input needed" in block
         if aged and unresolved and entry_date is not None:
             # Preferred-kept: reconsidered below only if still over the cap.

@@ -280,7 +280,8 @@ def _ambiguities(planned: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 def sync(vault: str | os.PathLike[str] | None = None,
-         run_id: str | None = None) -> dict[str, Any]:
+         run_id: str | None = None, *,
+         taken: dict[str, Any] | None = None) -> dict[str, Any]:
     """Materialize the shelf from the census, safely and recoverably.
 
     Never raises on a refused shelf path: the resolver's own action-required
@@ -289,7 +290,8 @@ def sync(vault: str | os.PathLike[str] | None = None,
     inside ``vault/`` — a shelf that cannot be placed safely is not placed.
 
     ``run_id`` names this run's ``_previous/`` namespace; it is generated when
-    omitted, and exists as a parameter so a test can pin it.
+    omitted, and exists as a parameter so a test can pin it. ``taken`` is a census
+    the caller already read this run; it is taken here when omitted.
     """
     root = config.vault_root(vault)
     resolved = shelf_mod.resolve(root)
@@ -299,7 +301,8 @@ def sync(vault: str | os.PathLike[str] | None = None,
     shelf = resolved.path
     assert shelf is not None
 
-    taken = census(root)
+    if taken is None:
+        taken = census(root)
     prior = L.load_ledger(root, shelf)
     run_id = run_id or L.new_run_id()
     desired, ambiguous = plan_targets(taken["entries"])

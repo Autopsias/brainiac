@@ -14,7 +14,7 @@ def live_index_fingerprint(index: Any) -> str | None:
     """Read the live SQLite content fingerprint, never a VM snapshot marker."""
     try:
         raw = index.get_meta("vault_fingerprint")
-    except Exception:
+    except Exception:  # fail-open: unreadable index meta means no fingerprint
         return None
     norm = _normalise_fingerprint(raw)
     return f"sha256:{norm}" if norm else None
@@ -139,7 +139,7 @@ def projection_from_gated(
                 explain = trace.explain_for_id(
                     ident, rank, redact_identity=ident in redacted,
                 )
-            except Exception:
+            except Exception:  # fail-open: explain is optional; the row is kept without it
                 explain = None
             if isinstance(explain, dict):
                 score = explain.get("pre_rerank_score")

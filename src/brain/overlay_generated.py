@@ -58,13 +58,16 @@ vault that has classified nothing yet.
 """
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from .atomic_temp import write_text_atomic
 from . import frontmatter
 from . import overlay as ov
-from .atomic_temp import atomic_temp_path
+
+logger = logging.getLogger(__name__)
 
 #: Sibling of ``keywords/`` — deliberately NOT inside it. See the module
 #: docstring: ``keywords/`` drives ingest classification and this does not.
@@ -100,6 +103,7 @@ def _note_rows(path: Path, hand_ring: set[str]) -> list[Row]:
     try:
         meta, _body = frontmatter.parse_text(path.read_text(encoding="utf-8"))
     except Exception:  # pragma: no cover - an unreadable note is not a finding here
+        logger.debug("overlay note unreadable; it contributes no terms", exc_info=True)
         return []
     if not isinstance(meta, dict):
         return []
@@ -224,12 +228,7 @@ def _publish(path: Path, text: str) -> None:
     ``*.md`` glob in :func:`brain.overlay._ring_files` cannot pick a half-written
     temp file up as a ring file of its own.
     """
-    tmp = atomic_temp_path(path)
-    try:
-        tmp.write_text(text, encoding="utf-8")
-        os.replace(tmp, path)
-    finally:
-        tmp.unlink(missing_ok=True)
+    write_text_atomic(path, text)
 
 
 def regenerate(vault: str | os.PathLike[str],

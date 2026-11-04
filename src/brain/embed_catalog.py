@@ -75,7 +75,7 @@ class CatalogEmbedder:
                 sources=ModelSource(hf=spec["hf"]), dim=spec["dim"],
                 model_file=spec.get("model_file", "onnx/model.onnx"),
             )
-        except Exception:
+        except Exception:  # fail-open: already registered (idempotent); TextEmbedding() surfaces a real failure
             # Already registered (idempotent) or registry quirk — fall through and
             # let TextEmbedding() surface a real error if the model truly isn't usable.
             pass

@@ -290,6 +290,20 @@ def _evaluate_probe(
     }, status, weight
 
 
+def _disposition(score: Optional[float], threshold: float,
+                 counts: dict[str, int]) -> tuple[str, int]:
+    """Map the weighted score and status counts to (disposition, exit code)."""
+    if score is not None and score < threshold - 1e-9:
+        return "regression", source.EXIT_REGRESSION
+    if counts["invalid"]:
+        return "action_required", source.EXIT_ACTION_REQUIRED
+    if counts["transient"]:
+        return "transient", source.EXIT_TRANSIENT
+    if score is None:
+        return "action_required", source.EXIT_ACTION_REQUIRED
+    return "ok", source.EXIT_OK
+
+
 def run_probes(
     spec: dict[str, Any],
     call: Call,
@@ -352,16 +366,7 @@ def run_probes(
                 weight_passed += weight
 
     score = round(weight_passed / weight_total, 4) if weight_total > 0 else None
-    if score is not None and score < threshold - 1e-9:
-        disposition, exit_code = "regression", source.EXIT_REGRESSION
-    elif counts["invalid"]:
-        disposition, exit_code = "action_required", source.EXIT_ACTION_REQUIRED
-    elif counts["transient"]:
-        disposition, exit_code = "transient", source.EXIT_TRANSIENT
-    elif score is None:
-        disposition, exit_code = "action_required", source.EXIT_ACTION_REQUIRED
-    else:
-        disposition, exit_code = "ok", source.EXIT_OK
+    disposition, exit_code = _disposition(score, threshold, counts)
 
     return {
         "score": score,

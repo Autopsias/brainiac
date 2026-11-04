@@ -62,7 +62,7 @@ def main() -> int:
         p = src / r["source"]
         try:
             text = p.read_text(encoding="utf-8", errors="replace")
-        except Exception:
+        except Exception:  # fail-open: unreadable source is skipped
             continue
         m = STRONG.search(text)
         if m:

@@ -7,6 +7,52 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.49] — 2026-11-04
+### Security
+- **An image that declares too many pixels is refused before it is decoded.**
+  Pillow only raises at twice its own 89.5 M-pixel warning threshold, so a
+  ~100 KB PNG could make ingest hold hundreds of MB. The image handler now
+  quarantines such a file as `image_too_many_pixels`, and PowerPoint picture
+  OCR skips it.
+- **Backups are owner-only from the first byte.** The archive is created
+  with mode 0600, and an existing one is tightened; the default umask left a
+  plaintext copy of the whole vault readable by every local user.
+- **The unattended update installs exactly the version it verified (A-03).**
+  The nightly checked the attestation of one version, then ran a bare upgrade
+  that installed whatever PyPI served at that moment. Every PyPI channel (uv
+  tool, pipx, pip) now pins the verified version. `brain update` run by hand
+  is unchanged.
+- **The golden check no longer gives Codex the vault folder or a shell
+  (public PR #36).** Codex calls one fixed host tool that runs the scorer,
+  and its answer must equal the host's own measurement.
+- **Bounded document work.** A PDF has a page cap and a 120 s wall-clock
+  budget (an over-limit file is quarantined with the limit named, and OCR
+  stops between images once the budget is spent). A workbook that declares a
+  huge range is read at most 200 columns wide (a 4.8 KB file took 58 s, now
+  0.7 s). Capture-inbox drafts are read without following symlinks, and a
+  FIFO no longer hangs the remediation read.
+- `pypdf` floor raised to 6.21.4. Accepted risks A-16 (Python 3.10 keeps
+  Pillow 12.3.0 and filelock 4.1.0) and A-17 (a sandbox draft keeps the
+  classification it declares) are recorded in `docs/security-acceptances.md`.
+
+### Fixed
+- A draft whose title contains `---` survives staging.
+- State files are written atomically through one helper.
+- Failures that were swallowed silently are now logged.
+- A blank small screenshot is retried once on a high-contrast copy within the
+  same time budget; recovered text is flagged for review (public PR #36).
+- `brain doctor` reads the registry on a pipx install and follows a symlinked
+  launcher to its install channel (public PR #36).
+
+### Added
+- `BRAIN_UPDATE_ENGINE_ONLY=1` updates the engine only, for a Codex-only host
+  (public PR #36).
+
+### Changed
+- Internal simplification: shared dedup and atomic-write helpers, uncalled
+  functions removed, complex functions split. No behaviour change intended.
+- CI actions bumped to their current pinned releases (public PRs #37-#41).
+
 ## [0.20.48] — 2026-10-28
 ### Fixed
 - **Text too faint or too small to read is now flagged as hidden (pentest

@@ -10,7 +10,7 @@ import shutil
 import tempfile
 from pathlib import Path
 from typing import Any
-from ..atomic_temp import atomic_temp_path
+from ..atomic_temp import write_text_atomic
 
 
 def manifest_path(vault: Path) -> Path:
@@ -33,9 +33,7 @@ def load_manifest(vault: Path) -> dict[str, str]:
 def save_manifest(vault: Path, manifest: dict[str, str]) -> None:
     path = manifest_path(vault)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = atomic_temp_path(path)
-    tmp.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
-    os.replace(tmp, path)
+    write_text_atomic(path, json.dumps(manifest, indent=2, sort_keys=True))
 
 
 def failures_path(vault: Path) -> Path:
@@ -58,9 +56,7 @@ def load_failures(vault: Path) -> dict[str, int]:
 def save_failures(vault: Path, failures: dict[str, int]) -> None:
     path = failures_path(vault)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = atomic_temp_path(path)
-    tmp.write_text(json.dumps(failures, indent=2, sort_keys=True), encoding="utf-8")
-    os.replace(tmp, path)
+    write_text_atomic(path, json.dumps(failures, indent=2, sort_keys=True))
 
 
 def sha256_bytes(data: bytes) -> str:

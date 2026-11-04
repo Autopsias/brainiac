@@ -18,6 +18,7 @@ shipped in the corporate build).
 """
 from __future__ import annotations
 
+import logging
 import hashlib
 import pathlib
 import sys
@@ -125,7 +126,8 @@ def _licence(dist_name: str) -> str:
             if c.startswith("License :: OSI Approved :: "):
                 return c.split(":: ")[-1]
         return "UNKNOWN"
-    except Exception:
+    except Exception as exc:
+        logging.getLogger(__name__).warning("sbom: license lookup failed: %s", exc)
         return "UNKNOWN"
 
 
@@ -146,7 +148,8 @@ def _file_hashes(dist_name: str) -> list[dict]:
             h = parts[1] if len(parts) > 1 else ""
             if h.startswith("sha256="):
                 out.append({"path": path, "sha256": h[7:]})
-    except Exception:
+    except Exception as exc:
+        logging.getLogger(__name__).warning("sbom: file hash listing failed: %s", exc)
         pass
     return out
 
@@ -159,7 +162,8 @@ def _metadata_sha256(dist_name: str) -> str:
         meta = base / "METADATA"
         if meta.exists():
             return hashlib.sha256(meta.read_bytes()).hexdigest()
-    except Exception:
+    except Exception as exc:
+        logging.getLogger(__name__).warning("sbom: metadata hash failed: %s", exc)
         pass
     return ""
 

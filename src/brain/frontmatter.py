@@ -132,7 +132,7 @@ def parse(block: str) -> dict[str, Any]:
 
         data = yaml.safe_load(block)
         return data if isinstance(data, dict) else {}
-    except Exception:
+    except Exception:  # fail-open: falls through to the built-in parser below
         pass
     data: dict[str, Any] = {}
     block_aliases = False

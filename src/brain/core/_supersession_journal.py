@@ -229,15 +229,22 @@ class _SupersessionJournalMixin:
         if journal["old_rel"] == journal["new_rel"]:
             raise unreadable("both sides name the same path")
         for side in ("old", "new"):
-            rel = journal[f"{side}_rel"]
-            if not _contained_in(self.vault / rel, self.vault):
-                raise unreadable(f"{side}_rel {rel!r} escapes the vault")
-            meta, _ = frontmatter.parse_text(journal[f"{side}_before"])
-            got = str(meta.get("id") or "").strip()
-            if got != journal[f"{side}_id"]:
-                raise unreadable(
-                    f"{side}_before carries id {got!r}, but the journal names "
-                    f"{journal[f'{side}_id']!r}")
+            self._validate_supersede_side(journal, side, unreadable)
+
+    def _validate_supersede_side(
+        self, journal: dict[str, Any], side: str, unreadable: Any,
+    ) -> None:
+        """One side's path stays in the vault and its pre-image carries its id."""
+        rel = journal[f"{side}_rel"]
+        if not _contained_in(self.vault / rel, self.vault):
+            raise unreadable(f"{side}_rel {rel!r} escapes the vault")
+        meta, _ = frontmatter.parse_text(journal[f"{side}_before"])
+        got = str(meta.get("id") or "").strip()
+        if got != journal[f"{side}_id"]:
+            raise unreadable(
+                f"{side}_before carries id {got!r}, but the journal names "
+                f"{journal[f'{side}_id']!r}")
+
     def recover_pending_supersede(self, *, dry_run: bool = False) -> dict[str, Any] | None:
         """Public preflight: roll back an interrupted supersession, under the
         same single-writer lock the write verbs take. ``None`` when nothing is

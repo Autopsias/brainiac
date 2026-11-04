@@ -13,7 +13,6 @@ import os
 import platform
 import subprocess
 import hashlib
-from .atomic_temp import atomic_temp_path
 
 
 # ---------------------------------------------------------------------------
@@ -26,6 +25,73 @@ from .atomic_temp import atomic_temp_path
 NOTIFY_ENV = "BRAIN_NOTIFY"
 NOTIFY_MARKER_RETENTION_DAYS_ENV = "BRAIN_NOTIFY_MARKER_RETENTION_DAYS"
 DEFAULT_NOTIFY_MARKER_RETENTION_DAYS = 30
+
+
+def _blocked_pairs(outcomes: dict[str, Any]) -> list[tuple[str, str]]:
+    blocked = (outcomes.get("counts") or {}).get("blocked", 0)
+    if not blocked:
+        return []
+    # NAME them. Only the COUNT ever reached the health record, so the
+    # exceptions page told the owner "ask your assistant to look at these"
+    # about findings whose text no artifact still held — the run results
+    # are not persisted, and `hot.md` never receives a blocked item. The
+    # items are right here in `outcomes`; the count alone is a finding
+    # that cannot be acted on.
+    why = "; ".join(
+        str(it.get("finding", "")) for it in (outcomes.get("blocked") or [])
+        if it.get("finding"))
+    return [("blocked",
+             f"{blocked} blocked finding(s) this maintain run"
+             + (f": {why}" if why else ""))]
+
+
+def _action_required_pairs(outcomes: dict[str, Any]) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    for item in outcomes.get("action_required") or []:
+        finding = str(item.get("finding", ""))
+        if finding.startswith("brain-synthesis watchdog:"):
+            pairs.append(("synthesis-watchdog", finding))
+        elif item.get("notify_key"):
+            # An action_required item may carry its OWN stable dedup key
+            # (`ingest_quarantine_findings` does). Without one an item stays
+            # in the maintain result and never reaches `brain alerts`.
+            pairs.append((str(item["notify_key"]), finding))
+    return pairs
+
+
+def _trend_pairs(trend_findings: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    for f in trend_findings:
+        metric = str(f.get("metric") or "")
+        if metric == "blocked":
+            continue  # already reported via outcomes.counts above
+        text = str(f.get("summary") or f"{metric} regression")
+        pairs.append((f"trend:{metric}", text))
+    return pairs
+
+
+def _maintain_state_pairs(
+    maintain_state: dict[str, Any], today: datetime.date | None,
+) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    esc = maintain_escalation(maintain_state, today)
+    for b in esc["branches"]:
+        text = f"maintain branch '{b['branch']}' escalated: {'; '.join(b['reasons'])}"
+        pairs.append((f"branch-escalate:{b['branch']}", text))
+    # WAT-01 dead-man's switch, lane 3: a stale/missing corpus-invariants
+    # row and any recorded invariant regression become ordinary
+    # degradation findings, so they ride the existing notify-marker path
+    # that the SessionStart alerts hook already reads. This is deliberately
+    # keyed on the EXPECTED state row rather than on the rows that happen
+    # to be present — a fold that died cannot report its own death.
+    from . import invariants as _inv
+
+    live = _inv.liveness_finding(maintain_state, today)
+    if live:
+        pairs.append(live)
+    for r in _inv.state_regressions(maintain_state):
+        pairs.append((f"invariant:{r.get('metric')}", str(r.get("summary") or "")))
+    return pairs
 
 
 def degradation_findings(
@@ -61,53 +127,11 @@ def degradation_findings(
     degradation finding, keyed ``branch-escalate:<branch>`` so it dedups
     per branch per day same as everything else here."""
     pairs: list[tuple[str, str]] = []
-    blocked = (outcomes.get("counts") or {}).get("blocked", 0)
-    if blocked:
-        # NAME them. Only the COUNT ever reached the health record, so the
-        # exceptions page told the owner "ask your assistant to look at these"
-        # about findings whose text no artifact still held — the run results
-        # are not persisted, and `hot.md` never receives a blocked item. The
-        # items are right here in `outcomes`; the count alone is a finding
-        # that cannot be acted on.
-        why = "; ".join(
-            str(it.get("finding", "")) for it in (outcomes.get("blocked") or [])
-            if it.get("finding"))
-        pairs.append(("blocked",
-                      f"{blocked} blocked finding(s) this maintain run"
-                      + (f": {why}" if why else "")))
-    for item in outcomes.get("action_required") or []:
-        finding = str(item.get("finding", ""))
-        if finding.startswith("brain-synthesis watchdog:"):
-            pairs.append(("synthesis-watchdog", finding))
-        elif item.get("notify_key"):
-            # An action_required item may carry its OWN stable dedup key
-            # (`ingest_quarantine_findings` does). Without one an item stays
-            # in the maintain result and never reaches `brain alerts`.
-            pairs.append((str(item["notify_key"]), finding))
-    for f in trend_findings:
-        metric = str(f.get("metric") or "")
-        if metric == "blocked":
-            continue  # already reported via outcomes.counts above
-        text = str(f.get("summary") or f"{metric} regression")
-        pairs.append((f"trend:{metric}", text))
+    pairs.extend(_blocked_pairs(outcomes))
+    pairs.extend(_action_required_pairs(outcomes))
+    pairs.extend(_trend_pairs(trend_findings))
     if maintain_state:
-        esc = maintain_escalation(maintain_state, today)
-        for b in esc["branches"]:
-            text = f"maintain branch '{b['branch']}' escalated: {'; '.join(b['reasons'])}"
-            pairs.append((f"branch-escalate:{b['branch']}", text))
-        # WAT-01 dead-man's switch, lane 3: a stale/missing corpus-invariants
-        # row and any recorded invariant regression become ordinary
-        # degradation findings, so they ride the existing notify-marker path
-        # that the SessionStart alerts hook already reads. This is deliberately
-        # keyed on the EXPECTED state row rather than on the rows that happen
-        # to be present — a fold that died cannot report its own death.
-        from . import invariants as _inv
-
-        live = _inv.liveness_finding(maintain_state, today)
-        if live:
-            pairs.append(live)
-        for r in _inv.state_regressions(maintain_state):
-            pairs.append((f"invariant:{r.get('metric')}", str(r.get("summary") or "")))
+        pairs.extend(_maintain_state_pairs(maintain_state, today))
     return pairs
 
 
@@ -139,9 +163,7 @@ def record_current_findings(
     }
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = atomic_temp_path(path)
-        tmp.write_text(json.dumps(payload, indent=1), encoding="utf-8")
-        os.replace(tmp, path)
+        write_text_atomic(path, json.dumps(payload, indent=1))
     except OSError:
         _log.warning("[degradation] current-findings feed unwritable (%s); "
                      "`brain alerts` will report it as missing", path.parent)
@@ -320,6 +342,7 @@ def fire_and_mark_notifications(
     return sent
 
 # Cross-section binds, deferred past this module's own defs.
+from .atomic_temp import write_text_atomic
 from .maintenance_escalation import maintain_escalation as maintain_escalation  # noqa: E402
 from .maintenance_healthlog import _prune_old_files as _prune_old_files  # noqa: E402
 from .maintenance import _log as _log  # noqa: E402

@@ -22,7 +22,7 @@ def read_update_state(brainiac_home: Path) -> Optional[dict]:
     try:
         import json
         return json.loads(update_state_path(brainiac_home).read_text(encoding="utf-8"))
-    except Exception:
+    except Exception:  # fail-open: unreadable state reads as absent
         return None
 
 
@@ -42,7 +42,7 @@ def failure_is_moot(state: Optional[dict], installed: Optional[str]) -> bool:
         return False
     try:
         return _compare(str(installed), str(target)) >= 0
-    except Exception:
+    except Exception:  # fail-open: unparseable version compares as not up to date
         return False
 
 
@@ -64,12 +64,13 @@ def write_update_state(
     import json
     p = update_state_path(brainiac_home)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({
+    from .atomic_temp import write_text_atomic
+    write_text_atomic(p, json.dumps({
         "status": status, "installed": installed, "latest": latest,
         "source": source, "at": at, "detail": detail,
         "attempts": attempts, "attempted_on": attempted_on,
         "escalated": escalated,
-    }), encoding="utf-8")
+    }))
     return p
 
 

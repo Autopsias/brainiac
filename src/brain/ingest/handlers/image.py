@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .base import NO_TEXT_MARKER, ExtractResult, Handler, density_gate
 from .base import ocr_image as _ocr
+from .base import too_many_pixels
 
 try:
     from PIL import Image
@@ -45,11 +46,17 @@ class ImageHandler(Handler):
             )
         try:
             with Image.open(path) as img:
+                if too_many_pixels(img):
+                    width, height = img.size
+                    return ExtractResult.quarantine(
+                        "image_too_many_pixels",
+                        warnings=[f"{width}x{height} pixels exceeds the decode cap"],
+                    )
                 img.load()  # force decode now, inside the try
                 fmt = img.format or path.suffix.lstrip(".").upper() or "image"
                 width, height = img.size
                 mode = img.mode
-                ocr_text, warnings = _ocr(img)
+                ocr_text, warnings = _ocr(img, retry_blank=True)
         except Exception as exc:
             return ExtractResult.quarantine(
                 "image_open_error", warnings=[f"{type(exc).__name__}: {exc}"]

@@ -14,6 +14,7 @@ the pipeline, this module owns only the update lane's validation.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -43,7 +44,8 @@ def _target_rel_path(core: Any, note: Any, note_id: str, promotion_path) -> str:
     """
     try:
         row = core.index.get(note_id)
-    except Exception:
+    except Exception as exc:
+        logging.getLogger(__name__).warning("draft_update: index lookup failed; target reported missing: %s", exc)
         row = None
     raw_path = str((row or {}).get("path") or "")
     if not raw_path:

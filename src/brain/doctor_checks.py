@@ -175,7 +175,7 @@ def _capture_rows(
     for raw_vault in raw_vaults:
         try:
             resolved = checks.vault_root(raw_vault)
-        except Exception:
+        except Exception:  # fail-open: unresolvable vault is skipped; the others are still checked
             continue
         if resolved not in capture_vaults:
             capture_vaults.append(resolved)

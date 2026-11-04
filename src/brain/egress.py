@@ -285,14 +285,3 @@ def load_allowlist(path: Path | None = None) -> dict[str, Any]:
                 f"{h['posture_status']!r}; expected one of {sorted(_POSTURE_STATES)}"
             )
     return data
-
-
-def posture_summary(path: Path | None = None) -> dict[str, Any]:
-    """Counts by posture_status for the evidence table / CSF profile."""
-    data = load_allowlist(path)
-    out: dict[str, int] = {s: 0 for s in _POSTURE_STATES}
-    for h in data["harnesses"]:
-        out[h["posture_status"]] += 1
-    return {"total": len(data["harnesses"]), "by_status": out,
-            "verified_ids": [h["id"] for h in data["harnesses"]
-                             if h["posture_status"] == "VERIFIED"]}

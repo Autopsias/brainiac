@@ -83,6 +83,20 @@ def page_fonts(page: Any) -> dict[str, Any]:
     return fonts
 
 
+def _report_shown(operator: Any, args: Any, state: dict[str, Any],
+                  seen: Callable[[str], None] | None,
+                  sink: list[dict[str, Any]], page_no: int) -> None:
+    """Report one text-show operand to the coverage sink; record it if invisible."""
+    text = normalise(_shown_text(operator, args, state["font"]))
+    if text and seen is not None:
+        seen(text)
+    if text and state["mode"] in _INVISIBLE_MODES:
+        sink.append(run_record(
+            _pdf_marker(text),
+            f"pdf:p{page_no}o{state['obj']}",
+            f"pdf:page{page_no}", text))
+
+
 def pdf_operand_visitor(page_no: int, sink: list[dict[str, Any]],
                         seen: Callable[[str], None] | None = None,
                         page: Any = None) -> Callable[..., None]:
@@ -127,14 +141,7 @@ def pdf_operand_visitor(page_no: int, sink: list[dict[str, Any]],
             elif operator == b"Tr":
                 state["mode"] = int(args[0]) if args else 0
             elif operator in _SHOW_OPS:
-                text = normalise(_shown_text(operator, args, state["font"]))
-                if text and seen is not None:
-                    seen(text)
-                if text and state["mode"] in _INVISIBLE_MODES:
-                    sink.append(run_record(
-                        _pdf_marker(text),
-                        f"pdf:p{page_no}o{state['obj']}",
-                        f"pdf:page{page_no}", text))
+                _report_shown(operator, args, state, seen, sink, page_no)
         except Exception:  # a detector never breaks extraction
             note_degraded()
 

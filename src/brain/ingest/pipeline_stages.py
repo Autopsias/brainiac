@@ -236,6 +236,19 @@ def operational_set_aside_stage(record: ClaimRecord) -> ClaimRecord:
     return record
 
 
+def _manifest_gate(record: ClaimRecord) -> tuple[ClaimRecord | None, str | None]:
+    """(result, None) if known; (None, prior_id) retries a failed extraction (caller files a duplicate if it fails again)."""
+    existing_id = record.drain.manifest.get(record.original_sha)
+    if existing_id is None:
+        return None, None
+    refused = DLV.refuse_low_twin(record, existing_id) if record.deliverable else None
+    if refused is not None:
+        return refused, None
+    if not prior_extraction_failed(record.drain.vault, existing_id):
+        return record_duplicate(record, existing_id), None
+    return None, existing_id
+
+
 def extraction_handler_stage(record: ClaimRecord) -> ClaimRecord:
     """Extract verified bytes with the selected format handler."""
     if record.terminal:
@@ -244,20 +257,9 @@ def extraction_handler_stage(record: ClaimRecord) -> ClaimRecord:
 
     assert record.claimed is not None
     assert record.original_bytes is not None
-    retry_of: str | None = None
-    if record.original_sha in record.drain.manifest:
-        existing_id = record.drain.manifest[record.original_sha]
-        if record.deliverable:
-            refused = DLV.refuse_low_twin(record, existing_id)
-            if refused is not None:
-                return refused
-        if not prior_extraction_failed(record.drain.vault, existing_id):
-            return record_duplicate(record, existing_id)
-        # The prior ingest failed to read this file. Let it through and see
-        # whether THIS engine does better; if it does not, the tail of this
-        # function files it as the duplicate it would otherwise have been, so
-        # an hourly drain can never accumulate one stub per run.
-        retry_of = existing_id
+    early, retry_of = _manifest_gate(record)
+    if early is not None:
+        return early
     handler = H.handler_for(record.claimed)
     if handler is None:
         return _quarantine_handler_failure(record, "no_handler_for_extension", [])

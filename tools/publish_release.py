@@ -154,6 +154,11 @@ def main() -> int:
     parser.add_argument("--check", action="store_true", help="run the scriptable gates only; skip the contamination scan and tag")
     args = parser.parse_args()
 
+    # Refuse before any work: validate + export cost minutes on a full checkout.
+    if not args.check and not args.denylist:
+        print("\nFAIL: --denylist is required unless --check is passed (runbook §5 hard gate)", file=sys.stderr)
+        return 1
+
     version = read_pyproject_version()
     print(f"Publishing pyproject.toml SSOT version {version} — scriptable gates only; the push (Ruling 7 step 7) stays a HUMAN act.\n")
 
@@ -170,8 +175,6 @@ def main() -> int:
             if args.check:
                 print("  (--check: skipping contamination scan + tag)")
             else:
-                if not args.denylist:
-                    raise PublishError("--denylist is required unless --check is passed (runbook §5 hard gate)")
                 print("[3/3] contamination scan (hard gate, redacted counts only) ...")
                 counts = step_contamination_scan(export_dir, Path(args.denylist).expanduser())
                 print(f"  export hits: {counts['export_hit_count']} (expected 0)")

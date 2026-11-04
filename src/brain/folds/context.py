@@ -22,6 +22,9 @@ class MaintenanceRun:
     graphify_runner: Any = None
     golden_runner: Any = None
     results: dict[str, Any] = field(default_factory=dict)
+    # Deliverables census taken by the shelf fold, reused by the corpus-invariants
+    # fold that runs right after it (nothing writes notes in between).
+    shared_census: dict[str, Any] | None = None
     auto_fixed: list[dict[str, Any]] = field(default_factory=list)
     action_required: list[dict[str, Any]] = field(default_factory=list)
     blocked: list[dict[str, Any]] = field(default_factory=list)

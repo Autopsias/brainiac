@@ -18,6 +18,22 @@ from ._shared import (
 )
 
 
+def _notes_count(p: Path) -> int | None:
+    """Notes in the sqlite index at ``p``: None if absent, -1 if unreadable."""
+    import sqlite3 as _sq
+
+    if not p.exists():
+        return None  # absent
+    try:
+        c = _sq.connect(f"file:{p}?mode=ro", uri=True)
+        try:
+            return int(c.execute("SELECT count(*) FROM notes").fetchone()[0])
+        finally:
+            c.close()
+    except Exception:  # fail-open: unreadable snapshot counts as -1
+        return -1  # present but unreadable/corrupt
+
+
 class _CoreCaptureMixin:
     """Capture lifecycle methods for BrainCore."""
 
@@ -347,31 +363,17 @@ class _CoreCaptureMixin:
     ) -> dict[str, Any]:
         import datetime as _dt
         import shutil as _sh
-        import sqlite3 as _sq
-
         idx = config.index_path(self.vault)
         snap = config.snapshot_db_path(self.vault)
 
-        def _count(p: Path):
-            if not p.exists():
-                return None  # absent
-            try:
-                c = _sq.connect(f"file:{p}?mode=ro", uri=True)
-                try:
-                    return int(c.execute("SELECT count(*) FROM notes").fetchone()[0])
-                finally:
-                    c.close()
-            except Exception:
-                return -1  # present but unreadable/corrupt
-
-        snap_n = _count(snap)
+        snap_n = _notes_count(snap)
         if snap_n is None:
             raise FileNotFoundError(f"no snapshot to restore from: {snap}")
         if snap_n <= 0:
             raise ValueError(
                 f"snapshot has {snap_n} notes — refusing to restore an empty/corrupt "
                 f"snapshot ({snap})")
-        live_n = _count(idx)
+        live_n = _notes_count(idx)
 
         if live_n is not None and live_n > snap_n and not force:
             raise ValueError(
@@ -399,7 +401,7 @@ class _CoreCaptureMixin:
                 side.unlink()
         _sh.copy2(str(snap), str(idx))
 
-        live_after = _count(idx)
+        live_after = _notes_count(idx)
         if live_after != snap_n:
             raise RuntimeError(
                 f"post-restore verification failed: index has {live_after} notes, "

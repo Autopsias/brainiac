@@ -102,7 +102,7 @@ def _row(
 def _read_json(path: Path) -> Optional[dict]:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception:  # fail-open: unreadable JSON reads as absent
         return None
 
 
@@ -119,7 +119,7 @@ def _ssot_version(repo_root: Path) -> Optional[str]:
     pyproject = repo_root / "pyproject.toml"
     try:
         text = pyproject.read_text(encoding="utf-8")
-    except Exception:
+    except Exception:  # fail-open: unreadable pyproject reads as no version
         return None
     m = re.search(r'(?m)^version\s*=\s*"([^"]+)"', text)
     return m.group(1) if m else None
@@ -323,7 +323,7 @@ def run_doctor(
     if registry_entries is None:
         _ctx.sys_path_with_tools(repo_root)
         registry_entries, registry_unavailable = _ctx.resolve_registry_entries(
-            repo_root)
+            repo_root, vm_stage=looks_like_vm_stage())
 
     # Repo-oriented surfaces (SSOT/stamp/dist/plugin-manifests) only mean
     # anything on a DEV CHECKOUT. From an installed engine (dist venv, uv

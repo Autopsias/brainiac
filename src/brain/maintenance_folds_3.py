@@ -4,6 +4,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from .maintenance_folds_4 import _PARA_ZONES, _WIKILINK_RE
+
 def refresh_navigation(vault: Path) -> dict[str, Any]:
     """NAV-01: regenerate the human navigation surfaces nightly —
     ``brain/backlinks.md`` + one ``catalog.md`` per PARA zone. Byte-compatible
@@ -102,8 +104,3 @@ def _refresh_navigation_impl(vault: Path) -> dict[str, Any]:
     catalog_counts = _write_navigation_catalogs(brain_dir, notes)
     return {"backlink_targets": backlink_targets, "catalog_counts": catalog_counts}
 
-
-from . import maintenance as _maintenance  # noqa: E402
-
-_PARA_ZONES = _maintenance._PARA_ZONES
-_WIKILINK_RE = _maintenance._WIKILINK_RE

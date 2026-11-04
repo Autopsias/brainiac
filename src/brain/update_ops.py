@@ -269,7 +269,8 @@ class UpdateOpsMixin:
         try:
             with writer_lock(brainiac_home / UPDATE_LOCK_FILENAME,
                              verb="update-retry", timeout=0.1):
-                report = brain_update.run_update(brainiac_home=brainiac_home)
+                report = brain_update.run_update(
+                    brainiac_home=brainiac_home, pin_version=str(latest))
                 return _record_update_report(
                     brainiac_home,
                     report=report,

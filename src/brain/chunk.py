@@ -200,25 +200,8 @@ def _pack(heading: str, text: str, ordinal_start: int, lang_of) -> list[Chunk]:
     return out
 
 
-def chunk_text(body: str, *, lang_of=detect_language) -> list[Chunk]:
-    """Chunk a note body at section/block level with a soft size budget.
-
-    Strategy: split into heading-scoped blocks, then greedily merge adjacent
-    blocks under the same heading up to TARGET_CHARS, splitting any single block
-    over MAX_CHARS. Each chunk's language is detected on its own text.
-
-    Dual-granularity (RET-03): a short note (whole body ≤ ``_whole_note_max()``)
-    is returned as ONE whole-note chunk — its sections are NOT split — so its
-    cross-lingual signal stays concentrated in a single vector. See
-    ``WHOLE_NOTE_MAX_CHARS``.
-    """
-    whole_max = _whole_note_max()
-    stripped = body.strip()
-    if whole_max > 0 and stripped and len(stripped) <= whole_max:
-        return [Chunk(0, "", stripped, lang_of(stripped))]
-    blocks = _split_blocks(body)
-    if not blocks:
-        return []
+def _merge_blocks(blocks: list[tuple[str, str]], lang_of) -> list[Chunk]:
+    """Greedily merge adjacent same-heading blocks up to TARGET_CHARS and pack."""
     chunks: list[Chunk] = []
     ordinal = 0
     pending_heading = blocks[0][0]
@@ -247,3 +230,25 @@ def chunk_text(body: str, *, lang_of=detect_language) -> list[Chunk]:
     if pending_text:
         emit(pending_heading, pending_text)
     return chunks
+
+
+def chunk_text(body: str, *, lang_of=detect_language) -> list[Chunk]:
+    """Chunk a note body at section/block level with a soft size budget.
+
+    Strategy: split into heading-scoped blocks, then greedily merge adjacent
+    blocks under the same heading up to TARGET_CHARS, splitting any single block
+    over MAX_CHARS. Each chunk's language is detected on its own text.
+
+    Dual-granularity (RET-03): a short note (whole body ≤ ``_whole_note_max()``)
+    is returned as ONE whole-note chunk — its sections are NOT split — so its
+    cross-lingual signal stays concentrated in a single vector. See
+    ``WHOLE_NOTE_MAX_CHARS``.
+    """
+    whole_max = _whole_note_max()
+    stripped = body.strip()
+    if whole_max > 0 and stripped and len(stripped) <= whole_max:
+        return [Chunk(0, "", stripped, lang_of(stripped))]
+    blocks = _split_blocks(body)
+    if not blocks:
+        return []
+    return _merge_blocks(blocks, lang_of)

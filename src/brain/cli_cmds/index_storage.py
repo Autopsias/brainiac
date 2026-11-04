@@ -208,6 +208,63 @@ def _run_restore_index(args, ctx) -> int:
     return 0
 
 
+def _status_skew_lines(res, ver) -> list[str]:
+    skew_lines: list[str] = []
+    if ver.get("index_newer_than_binary"):
+        skew_lines.append(
+            f"  WARNING: index schema_version {ver.get('index_schema_version')} > "
+            f"binary SCHEMA_VERSION {ver.get('binary_schema_version')} — "
+            "index was built by a newer brain; update the engine "
+            "(or run `brain sync --rebuild` to force a downgrade)"
+        )
+    if ver.get("snapshot_newer_than_binary"):
+        skew_lines.append(
+            f"  WARNING: snapshot schema_version {ver.get('snapshot_schema_version')} > "
+            f"binary SCHEMA_VERSION {ver.get('binary_schema_version')} — "
+            "snapshot is newer than this CLI; update the engine"
+        )
+    # LIVENESS (HARDENED:claude-2): an unanswered COS ingestion batch
+    # is not an error anywhere — it just quietly re-kills the funnel
+    # behind the one-open-batch backpressure. Say so out loud.
+    live = (res.get("cos") or {}).get("batch_liveness") or {}
+    if live.get("alert"):
+        skew_lines.append(f"  WARNING: {live['alert_text']}")
+    # R8 (2026-07-30 review): the JSON status and the morning brief both
+    # carry `unstamped_batched`, but `brain status` — the primary human
+    # diagnostic — printed nothing, so an operator read a healthy status
+    # while EVERY candidate was being diverted for a missing stamp.
+    if live.get("unstamped_batched"):
+        skew_lines.append(
+            f"  WARNING: {live['unstamped_batched']} COS candidate(s) sent to "
+            f"the owner batch for a missing category/ruleset stamp — "
+            f"pattern auto-capture {live.get('pattern_autocapture', 'suspended')}"
+        )
+    # INS-01: a run the host validator could not certify. Loud here
+    # because run 59 skipped its whole self-eval and NOTHING noticed —
+    # an instrument that only writes a log is the failure being fixed.
+    if live.get("run_validity_text"):
+        skew_lines.append(f"  WARNING: {live['run_validity_text']}")
+    # STA-01: same treatment for a candidate the host could not
+    # attribute to a VALID run — quarantined, never silently bound.
+    if live.get("quarantine_text"):
+        skew_lines.append(f"  WARNING: {live['quarantine_text']}")
+    return skew_lines
+
+
+def _deliverables_line(res) -> str:
+    # DLV-03: the resolved deliverables shelf path, or its refusal — so
+    # the folder is discoverable without reading docs.
+    dlv = res.get("deliverables") or {}
+    if dlv.get("path"):
+        return f"deliverables shelf: {dlv['path']}"
+    if dlv.get("refused"):
+        return (
+            f"deliverables shelf: REFUSED ({dlv.get('notify_key', '?')}) "
+            f"— {dlv.get('reason', '?')}"
+        )
+    return f"deliverables shelf: {dlv.get('error', 'unknown')}"
+
+
 def _run_status(args, ctx) -> int:
     core = ctx.core
     res = core.status(args.snapshot_dest)
@@ -228,57 +285,8 @@ def _run_status(args, ctx) -> int:
                 + (f" ({hint} download)" if hint else "")
                 + " then `brain sync` for real semantic search"
             )
-        skew_lines = []
-        if ver.get("index_newer_than_binary"):
-            skew_lines.append(
-                f"  WARNING: index schema_version {ver.get('index_schema_version')} > "
-                f"binary SCHEMA_VERSION {ver.get('binary_schema_version')} — "
-                "index was built by a newer brain; update the engine "
-                "(or run `brain sync --rebuild` to force a downgrade)"
-            )
-        if ver.get("snapshot_newer_than_binary"):
-            skew_lines.append(
-                f"  WARNING: snapshot schema_version {ver.get('snapshot_schema_version')} > "
-                f"binary SCHEMA_VERSION {ver.get('binary_schema_version')} — "
-                "snapshot is newer than this CLI; update the engine"
-            )
-        # LIVENESS (HARDENED:claude-2): an unanswered COS ingestion batch
-        # is not an error anywhere — it just quietly re-kills the funnel
-        # behind the one-open-batch backpressure. Say so out loud.
-        live = (res.get("cos") or {}).get("batch_liveness") or {}
-        if live.get("alert"):
-            skew_lines.append(f"  WARNING: {live['alert_text']}")
-        # R8 (2026-07-30 review): the JSON status and the morning brief both
-        # carry `unstamped_batched`, but `brain status` — the primary human
-        # diagnostic — printed nothing, so an operator read a healthy status
-        # while EVERY candidate was being diverted for a missing stamp.
-        if live.get("unstamped_batched"):
-            skew_lines.append(
-                f"  WARNING: {live['unstamped_batched']} COS candidate(s) sent to "
-                f"the owner batch for a missing category/ruleset stamp — "
-                f"pattern auto-capture {live.get('pattern_autocapture', 'suspended')}"
-            )
-        # INS-01: a run the host validator could not certify. Loud here
-        # because run 59 skipped its whole self-eval and NOTHING noticed —
-        # an instrument that only writes a log is the failure being fixed.
-        if live.get("run_validity_text"):
-            skew_lines.append(f"  WARNING: {live['run_validity_text']}")
-        # STA-01: same treatment for a candidate the host could not
-        # attribute to a VALID run — quarantined, never silently bound.
-        if live.get("quarantine_text"):
-            skew_lines.append(f"  WARNING: {live['quarantine_text']}")
-        # DLV-03: the resolved deliverables shelf path, or its refusal — so
-        # the folder is discoverable without reading docs.
-        dlv = res.get("deliverables") or {}
-        if dlv.get("path"):
-            deliverables_line = f"deliverables shelf: {dlv['path']}"
-        elif dlv.get("refused"):
-            deliverables_line = (
-                f"deliverables shelf: REFUSED ({dlv.get('notify_key', '?')}) "
-                f"— {dlv.get('reason', '?')}"
-            )
-        else:
-            deliverables_line = f"deliverables shelf: {dlv.get('error', 'unknown')}"
+        skew_lines = _status_skew_lines(res, ver)
+        deliverables_line = _deliverables_line(res)
         _emit(
             None,
             False,

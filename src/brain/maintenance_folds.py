@@ -4,6 +4,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
+from .maintenance_folds_4 import (
+    _WIKILINK_RE,
+    _floor_bytes,
+    autodedup_max_per_run,
+    body_sha256,
+)
+
 def auto_dedup_tier1(core: Any) -> dict[str, Any]:
     """DDP-01: auto-supersede sha256-identical-body duplicate PAIRS.
 
@@ -232,10 +239,3 @@ def _run_dedup_groups(
     return {"retired": retired, **skipped, "truncated": truncated,
             "cap": cap, "floor": floor}
 
-
-from . import maintenance as _maintenance  # noqa: E402
-
-_WIKILINK_RE = _maintenance._WIKILINK_RE
-_floor_bytes = _maintenance._floor_bytes
-autodedup_max_per_run = _maintenance.autodedup_max_per_run
-body_sha256 = _maintenance.body_sha256

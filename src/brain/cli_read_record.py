@@ -91,7 +91,7 @@ def settle(
             vault=vault, role=role, cmd=cmd, max_tier=max_tier,
             tally=tally, latency_ms=latency_ms,
         )
-    except Exception:
+    except Exception:  # fail-open: recorded as RECORD_FAILED and handled below
         outcome = read_log.RECORD_FAILED
     if outcome == read_log.RECORD_DISABLED and read_log.enabled(role, respect_env=False):
         # Disabled with the env check removed still disables ONLY for a vm

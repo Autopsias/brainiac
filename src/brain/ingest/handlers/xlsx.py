@@ -6,11 +6,16 @@ formula text tagged `(formula, uncomputed)` rather than crashing or silently
 dropping the cell."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
-from .base import ExtractResult, Handler, density_gate, encrypted_office_gate
+from .base import (
+    ExtractResult, Handler, density_gate, encrypted_office_gate, ooxml_expansion_gate,
+)
 from .tables import rows_to_markdown
+
+logger = logging.getLogger(__name__)
 
 try:
     import openpyxl
@@ -20,6 +25,9 @@ except ImportError:  # pragma: no cover
 
 MAX_XLSX_BYTES = 100 * 1024 * 1024
 MAX_ROWS_PER_SHEET = 20_000  # cap runaway sheets rather than hang
+# openpyxl pads every row to the DECLARED sheet width (up to 16,384 columns), so
+# a 4.8 KB file declaring A1:XFD1048576 took 37-58 s; cap the width we read.
+MAX_COLS_PER_SHEET = 200
 
 
 def _open_workbooks(path: Path) -> tuple[Any, Any | None] | ExtractResult:
@@ -32,6 +40,9 @@ def _open_workbooks(path: Path) -> tuple[Any, Any | None] | ExtractResult:
     locked = encrypted_office_gate(path)
     if locked is not None:
         return locked
+    bomb = ooxml_expansion_gate(path)
+    if bomb is not None:
+        return bomb
     try:
         values = openpyxl.load_workbook(str(path), data_only=True, read_only=True)
     except Exception as exc:
@@ -41,7 +52,8 @@ def _open_workbooks(path: Path) -> tuple[Any, Any | None] | ExtractResult:
         )
     try:
         formulas = openpyxl.load_workbook(str(path), data_only=False, read_only=True)
-    except Exception:
+    except Exception:  # fail-open: formulas are optional; cached values were already read
+        logger.debug("xlsx formula workbook could not be opened; formulas skipped", exc_info=True)
         formulas = None
     return values, formulas
 
@@ -54,9 +66,12 @@ def _sheet_rows(
 ) -> list[list[object]]:
     rows: list[list[object]] = []
     if formulas_sheet is not None:
-        row_pairs = zip(values_sheet.iter_rows(), formulas_sheet.iter_rows())
+        row_pairs = zip(
+            values_sheet.iter_rows(max_col=MAX_COLS_PER_SHEET),
+            formulas_sheet.iter_rows(max_col=MAX_COLS_PER_SHEET),
+        )
     else:
-        row_pairs = ((row, None) for row in values_sheet.iter_rows())
+        row_pairs = ((row, None) for row in values_sheet.iter_rows(max_col=MAX_COLS_PER_SHEET))
     for row_index, (value_row, formula_row) in enumerate(row_pairs, start=1):
         if row_index > MAX_ROWS_PER_SHEET:
             warnings.append(f"sheet {name!r} truncated at {MAX_ROWS_PER_SHEET} rows")

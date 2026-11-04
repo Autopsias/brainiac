@@ -1,6 +1,7 @@
 """Health-report collection sections."""
 from __future__ import annotations
 
+import logging
 import datetime
 from pathlib import Path
 from typing import Any
@@ -137,7 +138,8 @@ def _collect_health_report_data_impl(
     vault = Path(core.vault)
     try:
         state = core._load_maintain_state()
-    except Exception:
+    except Exception as exc:
+        logging.getLogger(__name__).warning("health report: maintain state unreadable; using empty state: %s", exc)
         state = {}
     escalation = maint.maintain_escalation(state, report_date)
     doctor_report, doctor_gating = _health_report_doctor()
@@ -192,52 +194,65 @@ def _corpus_invariants_html(
     return _corpus_invariants_html_impl(state, trend, today=today)
 
 
+def _unlinked_extra(metric: dict[str, Any]) -> str:
+    # Per reason, not just the total. AGENTS.md §4 rule 6 requires
+    # by-design exclusions to be counted SEPARATELY — "0 unlinked" must
+    # never quietly mean "0 except the ones we skip". An aggregate hides
+    # a newly added exclusion class entirely: when `emitter_output`
+    # landed it took 25 rows out of the reference vault's count, and on
+    # the old aggregate line that read as one larger number with no way
+    # to tell what changed.
+    by_reason = metric.get("excluded_by_reason") or {}
+    detail = ", ".join(
+        f"{brief_mod._esc(key)} {brief_mod._esc(value)}"
+        for key, value in sorted(by_reason.items(), key=lambda kv: -kv[1])
+    )
+    return (f"{brief_mod._esc(metric.get('population', '?'))} in population, "
+             f"{brief_mod._esc(metric.get('excluded', 0))} excluded by design"
+             + (f" ({detail})" if detail else ""))
+
+
+def _cross_tier_extra(name: str, metric: dict[str, Any], inv_module: Any) -> str:
+    extra = (f"coverage {brief_mod._esc(metric.get('coverage', '?'))} "
+             f"({brief_mod._esc(metric.get('comparable', '?'))}/"
+             f"{brief_mod._esc(metric.get('population', '?'))} documents "
+             "comparable)")
+    if name == "cross_tier_duplicates":
+        by_reason = metric.get("excluded_by_reason") or {}
+        skipped = sum(
+            value for key, value in by_reason.items()
+            if key in inv_module.CROSS_TIER_SKIP_REASONS
+        )
+        extra += (f", {brief_mod._esc(metric.get('candidates', '?'))} undecided, "
+                  f"{brief_mod._esc(metric.get('subfloor', '?'))} sub-floor, "
+                  f"{brief_mod._esc(metric.get('retained_superseded', 0))} superseded "
+                  f"retained, {brief_mod._esc(skipped)} excluded by design")
+    return extra
+
+
+def _unguarded_extra(metric: dict[str, Any]) -> str:
+    legs = metric.get("raised_by_leg") or {}
+    legs_txt = (", ".join(f"{brief_mod._esc(key)} {brief_mod._esc(value)}"
+                          for key, value in sorted(legs.items()))
+                or "none yet")
+    return (f"{brief_mod._esc(metric.get('raised', '?'))} raised to a twin's "
+             f"tier (by leg: {legs_txt}), "
+             f"{brief_mod._esc(metric.get('clear', '?'))} clear, "
+             f"{brief_mod._esc(metric.get('subfloor', '?'))} too short to judge, "
+             f"{brief_mod._esc(metric.get('unstamped', '?'))} predate the guard, "
+             f"of {brief_mod._esc(metric.get('sources', '?'))} raw source(s)")
+
+
 def _invariant_extra(name: str, metric: dict[str, Any], inv_module: Any) -> str:
     extra = _unsigned_notes_context(metric) if name == "unsigned_notes" else ""
     if name == "unlinked_sources":
-        # Per reason, not just the total. AGENTS.md §4 rule 6 requires
-        # by-design exclusions to be counted SEPARATELY — "0 unlinked" must
-        # never quietly mean "0 except the ones we skip". An aggregate hides
-        # a newly added exclusion class entirely: when `emitter_output`
-        # landed it took 25 rows out of the reference vault's count, and on
-        # the old aggregate line that read as one larger number with no way
-        # to tell what changed.
-        by_reason = metric.get("excluded_by_reason") or {}
-        detail = ", ".join(
-            f"{brief_mod._esc(key)} {brief_mod._esc(value)}"
-            for key, value in sorted(by_reason.items(), key=lambda kv: -kv[1])
-        )
-        extra = (f"{brief_mod._esc(metric.get('population', '?'))} in population, "
-                 f"{brief_mod._esc(metric.get('excluded', 0))} excluded by design"
-                 + (f" ({detail})" if detail else ""))
+        extra = _unlinked_extra(metric)
     elif name == "cross_tier_twins":
         extra = f"of {brief_mod._esc(metric.get('pairs', '?'))} name-twin pair(s)"
     elif name in ("cross_tier_duplicates", "cross_tier_candidates"):
-        extra = (f"coverage {brief_mod._esc(metric.get('coverage', '?'))} "
-                 f"({brief_mod._esc(metric.get('comparable', '?'))}/"
-                 f"{brief_mod._esc(metric.get('population', '?'))} documents "
-                 "comparable)")
-        if name == "cross_tier_duplicates":
-            by_reason = metric.get("excluded_by_reason") or {}
-            skipped = sum(
-                value for key, value in by_reason.items()
-                if key in inv_module.CROSS_TIER_SKIP_REASONS
-            )
-            extra += (f", {brief_mod._esc(metric.get('candidates', '?'))} undecided, "
-                      f"{brief_mod._esc(metric.get('subfloor', '?'))} sub-floor, "
-                      f"{brief_mod._esc(metric.get('retained_superseded', 0))} superseded "
-                      f"retained, {brief_mod._esc(skipped)} excluded by design")
+        extra = _cross_tier_extra(name, metric, inv_module)
     elif name == "unguarded_ingests":
-        legs = metric.get("raised_by_leg") or {}
-        legs_txt = (", ".join(f"{brief_mod._esc(key)} {brief_mod._esc(value)}"
-                              for key, value in sorted(legs.items()))
-                    or "none yet")
-        extra = (f"{brief_mod._esc(metric.get('raised', '?'))} raised to a twin's "
-                 f"tier (by leg: {legs_txt}), "
-                 f"{brief_mod._esc(metric.get('clear', '?'))} clear, "
-                 f"{brief_mod._esc(metric.get('subfloor', '?'))} too short to judge, "
-                 f"{brief_mod._esc(metric.get('unstamped', '?'))} predate the guard, "
-                 f"of {brief_mod._esc(metric.get('sources', '?'))} raw source(s)")
+        extra = _unguarded_extra(metric)
     elif name == "subfloor_families":
         extra = (f"of {brief_mod._esc(metric.get('families', '?'))} supersession "
                  f"family/families, floor {brief_mod._esc(metric.get('floor', '?'))}B")

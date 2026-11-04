@@ -333,7 +333,11 @@ def read_nofollow(target: Path) -> tuple[str, tuple[int, int]]:
     the read — the bytes returned are the bytes of the inode reported."""
     import stat as _stat
 
-    fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    # O_NONBLOCK: a FIFO at the name would block the open until a writer
+    # arrives, before the S_ISREG check can refuse it (same guard as ingest;
+    # the copies stay separate on purpose, ADR 0013).
+    fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                 | getattr(os, "O_NONBLOCK", 0))
     try:
         info = os.fstat(fd)
         if not _stat.S_ISREG(info.st_mode):

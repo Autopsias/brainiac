@@ -45,7 +45,7 @@ def _in_site_packages(path: Path) -> bool:
 def _read_version_stamp(path: Path) -> Optional[str]:
     try:
         text = path.read_text(encoding="utf-8")
-    except Exception:
+    except Exception:  # fail-open: unreadable stamp reads as no version
         return None
     m = re.search(r'(?m)^__version__ = "([^"]+)"$', text)
     return m.group(1) if m else None

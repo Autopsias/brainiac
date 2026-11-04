@@ -33,6 +33,14 @@ tests/test_cos_sheet_questions.py:generic-api-key:129
 tests/test_cos_sheet_questions.py:generic-api-key:130
 tests/test_cos_sheet_questions.py:generic-api-key:131
 
+# tools/vendor_semantic_deps.py — two lines of the pinned-wheel table: a package
+# name beside its SHA256 file hash. Public PyPI hashes, not credentials; the rule
+# fires on their entropy. Read on 2026-11-01 (plan repo-health-fixes, s05 review
+# gate). The inline allow comment on both lines does not count for the plan-execute
+# egress guard, so they need these pins.
+tools/vendor_semantic_deps.py:generic-api-key:87
+tools/vendor_semantic_deps.py:generic-api-key:100
+
 # History fingerprints (commit:path:rule:line). These are the SAME reviewed
 # false positives as the pins above, as they appeared in older commits; the
 # path:rule:line pins match only the current tree, so `gitleaks git` (history

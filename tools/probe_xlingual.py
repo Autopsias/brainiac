@@ -82,7 +82,7 @@ def main() -> int:
     try:
         import torch  # noqa: F401
         result["torch_present"] = True
-    except Exception:
+    except Exception:  # fail-open: result records torch_present False
         result["torch_present"] = False
 
     # The probe model native dim is 384; we keep it (MiniLM is not MRL-trained,

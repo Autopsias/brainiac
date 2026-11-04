@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import datetime as dt
 import json
 import os
@@ -206,7 +207,8 @@ def _publish_graph_artifact(
     core._note_graphify_build_outcome(status="ok", attempted_at=day.isoformat())
     try:
         core.graph_report(today=day)
-    except Exception:
+    except Exception as exc:
+        logging.getLogger(__name__).warning("graphify: graph_report failed after a good build: %s", exc)
         pass
 
 

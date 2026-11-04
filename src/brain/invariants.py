@@ -89,7 +89,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .invariant_shared import SAMPLE_CAP
+from .invariant_shared import SAMPLE_CAP, _supersession_families
 from .invariant_reachability import unreachable_gold
 from .invariant_ingest_guard import ingest_guard
 from .invariant_unsigned_notes import unsigned_notes
@@ -153,29 +153,7 @@ def subfloor_families(conn: Any, *, cap: int = SAMPLE_CAP) -> dict[str, Any]:
     # metric agreed with the writer that a sub-floor family was fine.
     info = {str(r[0]): (body_sha256(r[1] or ""), _floor_bytes(r[1] or "")) for r in rows}
 
-    parent: dict[str, str] = {nid: nid for nid in info}
-
-    def find(x: str) -> str:
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    linked: set[str] = set()
-    for nid, _body, sup_by, prev in rows:
-        for other in (sup_by, prev):
-            o = str(other or "")
-            if not o or o not in info or o == nid:
-                continue
-            linked.add(str(nid))
-            linked.add(o)
-            ra, rb = find(str(nid)), find(o)
-            if ra != rb:
-                parent[ra] = rb
-
-    families: dict[str, list[str]] = {}
-    for nid in linked:
-        families.setdefault(find(nid), []).append(nid)
+    families = _supersession_families(rows, info)
 
     hits: list[str] = []
     subfloor_members: list[str] = []
@@ -203,7 +181,8 @@ def subfloor_families(conn: Any, *, cap: int = SAMPLE_CAP) -> dict[str, Any]:
     }
 
 
-def corpus_invariants(conn: Any, vault: Path, *, cap: int = SAMPLE_CAP) -> dict[str, Any]:
+def corpus_invariants(conn: Any, vault: Path, *, cap: int = SAMPLE_CAP,
+                      deliverables_census: dict[str, Any] | None = None) -> dict[str, Any]:
     """All four metrics in one read-only pass. Never raises on one metric —
     a metric that blows up records ``{"value": None, "error": …}`` so the
     other three still trend."""
@@ -229,7 +208,8 @@ def corpus_invariants(conn: Any, vault: Path, *, cap: int = SAMPLE_CAP) -> dict[
         "subfloor_families": lambda: subfloor_families(conn, cap=cap),
         "unreachable_gold": lambda: unreachable_gold(vault),
         "unsigned_notes": lambda: unsigned_notes(conn, vault, cap=cap),
-        **_deliverable_computers(vault, cap=cap, conn=conn),
+        **_deliverable_computers(
+            vault, cap=cap, conn=conn, census=deliverables_census),
     }
     for name in INVARIANT_METRICS:
         try:

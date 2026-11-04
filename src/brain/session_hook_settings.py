@@ -19,13 +19,11 @@ from pathlib import Path
 from typing import Any
 
 from .session_hook_spec import HOOK_EVENT, HOOKS, HookSpec
-from .atomic_temp import atomic_temp_path
+from .atomic_temp import write_json_atomic
 
 
 def _write_json_atomic(path: Path, payload: Any) -> None:
-    tmp = atomic_temp_path(path)
-    tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
+    write_json_atomic(path, payload)
 
 
 def _program_path(token: str) -> Path | None:

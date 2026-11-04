@@ -8,8 +8,9 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .atomic_temp import write_text_atomic
 from .invariant_shared import SAMPLE_CAP
-from .atomic_temp import atomic_temp_path
+from .overlay_core import TIERS
 
 # ---------------------------------------------------------------------------
 # G12 — the exclusion set, defined ONCE here and imported by every consumer
@@ -220,6 +221,25 @@ def _frontmatter_links(vault: Path, paths: list[str]) -> list[str]:
     return out
 
 
+def _body_and_frontmatter_refs(
+    conn: Any, vault: Path, resolver: Any, brain_paths: list[str],
+) -> set[str]:
+    """Ids referenced by any note body wikilink or ``brain/`` frontmatter cite."""
+    from .graph import parse_wikilinks
+
+    referenced: set[str] = set()
+    for (nid, body) in conn.execute("SELECT id, body FROM notes"):
+        for target in parse_wikilinks(body or ""):
+            tgt = _resolve(resolver, target)
+            if tgt and tgt != nid:
+                referenced.add(tgt)
+    for target in _frontmatter_links(vault, brain_paths):
+        tgt = _resolve(resolver, target)
+        if tgt:
+            referenced.add(tgt)
+    return referenced
+
+
 def _unlinked_rows(
     conn: Any, vault: Path,
 ) -> tuple[list[dict[str, Any]], dict[str, int], int]:
@@ -229,7 +249,7 @@ def _unlinked_rows(
     A source counts as REFERENCED when any note's body wikilinks it, when a
     ``brain/`` note's frontmatter cites it (``source:``/``replaces:``/…), or
     when it sits on either end of an indexed supersession link."""
-    from .graph import _build_resolver, parse_wikilinks
+    from .graph import _build_resolver
 
     # substr, not the whole body: only the leading frontmatter block is read
     # here, and one source in this corpus is 4.2MB.
@@ -265,15 +285,7 @@ def _unlinked_rows(
             "classification": str(cls or ""), "created": str(created or ""),
         })
 
-    for (nid, body) in conn.execute("SELECT id, body FROM notes"):
-        for target in parse_wikilinks(body or ""):
-            tgt = _resolve(resolver, target)
-            if tgt and tgt != nid:
-                referenced.add(tgt)
-    for target in _frontmatter_links(vault, brain_paths):
-        tgt = _resolve(resolver, target)
-        if tgt:
-            referenced.add(tgt)
+    referenced |= _body_and_frontmatter_refs(conn, vault, resolver, brain_paths)
 
     unlinked = sorted(
         (rec for rec in population if rec["id"] not in referenced),
@@ -316,7 +328,7 @@ LINK_LANE_RELPATH = ".brain/curation/unlinked-sources.json"
 # premise is that the most sensitive content is the least findable, so tier
 # outranks age; `created` ascending breaks the tie so a source that has sat
 # unlinked for months outranks one that arrived yesterday.
-_TIER_ORDER = {"Public": 0, "Internal": 1, "Confidential": 2, "Restricted": 3, "MNPI": 4}
+_TIER_ORDER = {tier: rank for rank, tier in enumerate(TIERS)}
 LINK_LANE_SELECTION = (
     "classification descending (unlabelled ranks MNPI), then trusted before "
     "untrusted drafts, then created ascending, then id"
@@ -438,9 +450,7 @@ def write_link_lane(conn: Any, vault: Path, *, limit: int | None = None) -> dict
     except (OSError, ValueError):
         previous = None
     payload.update(lane_consumption(previous, all_ids, payload["generated"]))
-    tmp = atomic_temp_path(out)
-    tmp.write_text(json.dumps(payload, indent=1), encoding="utf-8")
-    tmp.replace(out)
+    write_text_atomic(out, json.dumps(payload, indent=1))
     return {"path": str(out), "written": len(payload["candidates"]),
             "total_unlinked": payload["total_unlinked"], "budget": payload["budget"],
             "previous_generated": payload["previous_generated"],

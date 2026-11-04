@@ -24,6 +24,25 @@ def _command_name_for_line(
     return None
 
 
+def _track_definition_stack(
+    stack: list[tuple[int, str]],
+    line: str,
+    definition_pattern: Pattern[str],
+    is_continuation: bool,
+) -> None:
+    """Pop scopes the line dedents out of; push a new definition scope."""
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return
+    indent = len(line) - len(line.lstrip())
+    definition = None if is_continuation else definition_pattern.match(line)
+    if not is_continuation:
+        while stack and indent <= stack[-1][0]:
+            stack.pop()
+    if definition:
+        stack.append((indent, definition.group("name")))
+
+
 def _scan_creation_site_file(
     src_root: Path,
     file: Path,
@@ -42,18 +61,7 @@ def _scan_creation_site_file(
     paren_depth = 0
     for line_number, line in enumerate(lines, start=1):
         is_continuation = paren_depth > 0
-        stripped = line.strip()
-        if stripped and not stripped.startswith("#"):
-            indent = len(line) - len(line.lstrip())
-            if not is_continuation:
-                definition = definition_pattern.match(line)
-                if definition:
-                    while stack and indent <= stack[-1][0]:
-                        stack.pop()
-                    stack.append((indent, definition.group("name")))
-                else:
-                    while stack and indent <= stack[-1][0]:
-                        stack.pop()
+        _track_definition_stack(stack, line, definition_pattern, is_continuation)
         paren_depth += sum(line.count(character) for character in "([{")
         paren_depth -= sum(line.count(character) for character in ")]}")
         paren_depth = max(paren_depth, 0)

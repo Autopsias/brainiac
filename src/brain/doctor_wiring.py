@@ -129,9 +129,54 @@ def _mcp_entry_present(servers: dict, vault: str) -> bool:
     return False
 
 
+def _workspace_stage_problem(vpath: Path, workspace: str | None) -> str | None:
+    """Why the workspace is not staged (marker block + engine stamp), or None."""
+    from . import provision
+
+    if workspace is None:
+        return "no workspace_path on record for this vault"
+    wpath = Path(workspace)
+    claude_md = wpath / "CLAUDE.md"
+    try:
+        marker = claude_md.is_file() and "BEGIN BRAIN-CONTRACT" in claude_md.read_text(
+            encoding="utf-8", errors="replace")
+    except OSError:
+        marker = False
+    stamp = provision._staging_root(vpath, wpath) / "engine" / "brain" / "_version.py"
+    if marker and stamp.is_file():
+        return None
+    return (f"{claude_md} marker {'present' if marker else 'absent'}, {stamp} "
+            f"{'present' if stamp.is_file() else 'absent'}")
+
+
+def _mcp_absence_state(entries: list[dict]) -> str:
+    host_row = next((e for e in entries if e.get("target") == "host"), None)
+    ever_written = bool(host_row and host_row.get("mcp_registered_at"))
+    return "written, then absent" if ever_written else "never written"
+
+
+def _deliverables_problem(deliverables: Path, sweep_env: Any) -> str | None:
+    """Why the deliverables dir is not a live sweep source, or None."""
+    listed = sweep_env is not None and any(
+        same_path(entry_path(e), deliverables) for e in sweep_entries(sweep_env))
+    if deliverables.is_dir() and listed:
+        return None
+    return ("plist absent" if sweep_env is None
+            else "not listed" if not listed else f"{deliverables} missing")
+
+
+def _uninitialised_paths(vpath: Path) -> list[str] | None:
+    """Wire 1: the missing vault-init paths, or None when the vault is initialised."""
+    vault_id = vpath / ".brain" / "vault-id"
+    brain_dir = vpath / "brain"
+    raw_dir = vpath / "raw"
+    if vault_id.is_file() and brain_dir.is_dir() and raw_dir.is_dir():
+        return None
+    return [str(p) for p in (vault_id, brain_dir, raw_dir) if not p.exists()]
+
+
 def _wire_row(vault: str, entries: list[dict], *, desktop_config_path: Path,
              plist_dir: Any) -> dict:
-    from . import provision
     from .doctor import CURRENT, NOT_DETECTABLE, WARN, _row
 
     surface = f"{SURFACE} — {vault}"
@@ -147,37 +192,22 @@ def _wire_row(vault: str, entries: list[dict], *, desktop_config_path: Path,
     # `nightly_task_registered`, which needs launchctl and is out of budget
     # for a pure-file-reads row); matches `provision_wire.vault_is_initialised`
     # minus its launchd probe.
-    vault_id = vpath / ".brain" / "vault-id"
-    brain_dir = vpath / "brain"
-    raw_dir = vpath / "raw"
-    if not (vault_id.is_file() and brain_dir.is_dir() and raw_dir.is_dir()):
-        absent = [str(p) for p in (vault_id, brain_dir, raw_dir) if not p.exists()]
+    absent = _uninitialised_paths(vpath)
+    if absent is not None:
         return missing("1", f"absent: {', '.join(absent)}")
 
-    # wire 3 — host registry row
-    if not any(e.get("target") == "host" for e in entries):
-        return missing("3", f"no host row for {vault} in {_registry_path()}")
-
-    # wire 4 — cowork-vm registry row
-    if not any(e.get("target") == "cowork-vm" for e in entries):
-        return missing("4", f"no cowork-vm row for {vault}")
+    # wires 3 and 4 — host and cowork-vm registry rows
+    for wire, target, where in (("3", "host", f" in {_registry_path()}"),
+                                ("4", "cowork-vm", "")):
+        if not any(e.get("target") == target for e in entries):
+            return missing(wire, f"no {target} row for {vault}{where}")
 
     # wire 2 — workspace staged: the generated CLAUDE.md marker block, and
     # the engine stamp under the relocation-aware staging root.
-    if workspace is None:
-        return missing("2", "no workspace_path on record for this vault")
+    stage_problem = _workspace_stage_problem(vpath, workspace)
+    if stage_problem:
+        return missing("2", stage_problem)
     wpath = Path(workspace)
-    claude_md = wpath / "CLAUDE.md"
-    try:
-        marker = claude_md.is_file() and "BEGIN BRAIN-CONTRACT" in claude_md.read_text(
-            encoding="utf-8", errors="replace")
-    except OSError:
-        marker = False
-    stamp = provision._staging_root(vpath, wpath) / "engine" / "brain" / "_version.py"
-    if not (marker and stamp.is_file()):
-        return missing("2", f"{claude_md} marker "
-                       f"{'present' if marker else 'absent'}, {stamp} "
-                       f"{'present' if stamp.is_file() else 'absent'}")
 
     # wire 5 — this vault's Claude Desktop brain-mcp entry
     servers, desktop_unreadable = _desktop_mcp_servers(desktop_config_path)
@@ -186,10 +216,7 @@ def _wire_row(vault: str, entries: list[dict], *, desktop_config_path: Path,
                    f"{desktop_config_path} could not be read as JSON — cannot "
                    f"verify {WIRE_NAMES['5']}")
     if not _mcp_entry_present(servers or {}, vault):
-        host_row = next((e for e in entries if e.get("target") == "host"), None)
-        ever_written = bool(host_row and host_row.get("mcp_registered_at"))
-        state = "written, then absent" if ever_written else "never written"
-        return missing("5", state)
+        return missing("5", _mcp_absence_state(entries))
 
     # wire 6 — <workspace>/deliverables as a nightly sweep source. `current`
     # needs the FOLDER to exist AND be listed in the installed plist file —
@@ -205,12 +232,8 @@ def _wire_row(vault: str, entries: list[dict], *, desktop_config_path: Path,
     if plist_unreadable:
         return _row(surface, NOT_DETECTABLE,
                    f"{plist} could not be read — cannot verify {WIRE_NAMES['6']}")
-    deliverables = wpath / DELIVERABLES_DIRNAME
-    listed = sweep_env is not None and any(
-        same_path(entry_path(e), deliverables) for e in sweep_entries(sweep_env))
-    if not (deliverables.is_dir() and listed):
-        why = ("plist absent" if sweep_env is None
-              else "not listed" if not listed else f"{deliverables} missing")
+    why = _deliverables_problem(wpath / DELIVERABLES_DIRNAME, sweep_env)
+    if why:
         return missing("6", why)
 
     return _row(surface, CURRENT,

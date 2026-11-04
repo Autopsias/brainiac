@@ -94,9 +94,7 @@ def write_request(vault: str | os.PathLike[str], *, role: str) -> dict[str, Any]
     for zone in ("brain", "raw", "inbox"):
         (vault_p / zone).mkdir(exist_ok=True)
     payload = {"version": 1, "requested_at": _now_iso(), "role": role}
-    tmp = atomic_temp.atomic_temp_path(marker)
-    tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp, marker)
+    atomic_temp.write_json_atomic(marker, payload)
     return {"action": "provision-request", "status": "staged",
             "request": str(marker),
             "note": "the host completes provisioning on its next hourly "

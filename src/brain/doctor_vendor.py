@@ -39,6 +39,22 @@ def _running_vendor_arch() -> str | None:
     return None
 
 
+def _scan_abi_tags(scan_root: Path) -> set[str]:
+    """ABI tags (cp3XX / abi3) of every extension module under ``scan_root``."""
+    tags: set[str] = set()
+    for _dirpath, dirnames, filenames in os.walk(scan_root):
+        dirnames[:] = _prune_retired_dirs(dirnames)
+        for name in filenames:
+            if not name.endswith(".so"):
+                continue
+            m = _CPYTHON_SO_RE.search(name)
+            if m:
+                tags.add(f"cp{m.group(1)}{m.group(2)}")
+            elif name.endswith(".abi3.so"):
+                tags.add("abi3")
+    return tags
+
+
 def check_vendor_abi(vendor_dir: Path, interpreter: tuple[int, int],
                      arch: str | None = None) -> dict:
     """Report the vendored wheels' extension-module ABI tags against the
@@ -67,17 +83,7 @@ def check_vendor_abi(vendor_dir: Path, interpreter: tuple[int, int],
         arch_dir = vendor_dir / arch
         if arch_dir.is_dir():
             scan_root = arch_dir
-    tags: set[str] = set()
-    for dirpath, dirnames, filenames in os.walk(scan_root):
-        dirnames[:] = _prune_retired_dirs(dirnames)
-        for name in filenames:
-            if not name.endswith(".so"):
-                continue
-            m = _CPYTHON_SO_RE.search(name)
-            if m:
-                tags.add(f"cp{m.group(1)}{m.group(2)}")
-            elif name.endswith(".abi3.so"):
-                tags.add("abi3")
+    tags = _scan_abi_tags(scan_root)
     if not tags:
         return _row(surface, NOT_DETECTABLE,
                     f"no tagged extension modules under {vendor_dir} — vendor not staged "

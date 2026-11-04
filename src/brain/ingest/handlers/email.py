@@ -8,6 +8,7 @@ a shared byte/count budget at the pipeline layer (defense in depth against a
 crafted attachment-of-attachment chain)."""
 from __future__ import annotations
 
+import logging
 import email
 import email.policy
 import email.utils
@@ -19,6 +20,8 @@ from typing import Any, Optional
 
 from . import concealment
 from .base import ExtractResult, Handler, density_gate, strip_control_chars
+
+logger = logging.getLogger(__name__)
 
 MAX_EML_BYTES = 50 * 1024 * 1024
 MAX_ATTACHMENTS = 50
@@ -74,6 +77,7 @@ def _strip_html(raw: str) -> str:
         stripper.feed(raw)
         stripper.close()
     except Exception:  # coverage-audit: returns no body text, so nothing is admitted to cover
+        logger.warning("email HTML body could not be stripped; body text is empty", exc_info=True)
         return ""
     return stripper.get_text()
 
@@ -226,6 +230,7 @@ def _attachment_payloads(
     try:
         attachments = list(msg.iter_attachments())
     except Exception:  # coverage-audit: no manifest lines are admitted, so none are claimed
+        logger.warning("email attachments could not be listed; none are admitted", exc_info=True)
         attachments = []
     if len(attachments) > MAX_ATTACHMENTS:
         warnings.append(

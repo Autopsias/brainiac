@@ -2,12 +2,15 @@
 + tables (Markdown tables, headers retained)."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from . import concealment
 from .base import (ExtractResult, Handler, density_gate, encrypted_office_gate,
-                   ocr_available, ocr_image, ooxml_expansion_gate)
+                   ocr_available, ocr_image, ooxml_expansion_gate, too_many_pixels)
 from .tables import rows_to_markdown
+
+logger = logging.getLogger(__name__)
 
 try:
     from pptx import Presentation
@@ -37,8 +40,12 @@ def _ocr_pictures(slide: object) -> str:
             from PIL import Image
 
             with Image.open(io.BytesIO(blob)) as img:
+                if too_many_pixels(img):
+                    logger.warning("PPTX picture %sx%s exceeds the pixel cap; not OCRed", *img.size)
+                    continue
                 text, _ = ocr_image(img)
         except Exception:  # coverage-audit: this picture's OCR text is simply not admitted
+            logger.warning("OCR failed on a PPTX picture; its text is not admitted", exc_info=True)
             continue
         if text:
             texts.append(text)

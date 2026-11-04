@@ -153,7 +153,7 @@ def _registered_host_vaults() -> list[str]:
 
                 entries = _wr.list_entries(target="host")
                 return sorted({e["vault_path"] for e in entries})
-            except Exception:
+            except Exception:  # fail-open: registry import is optional; falls through to the JSON file
                 pass
     registry_path = Path.home() / ".brainiac" / "workspaces.json"
     try:
@@ -240,7 +240,7 @@ def _sparse_delta(history: list[dict], sparse_history: list[dict], metric: str) 
         d1 = _record_day(points[-1])
         d0 = _record_day(points[-2])
         lookback = (d1 - d0).days if d1 and d0 else None
-    except Exception:
+    except Exception:  # fail-open: unreadable record day leaves lookback unknown
         lookback = None
     return {"current": current, "baseline": baseline, "lookback_days": lookback}
 

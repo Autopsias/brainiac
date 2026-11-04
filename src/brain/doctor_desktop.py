@@ -196,7 +196,7 @@ def _newest_store_copy(sessions_root: Path, pname: str) -> list[tuple[float, Pat
             data = _read_json(pjson)
             if data and data.get("name") == pname:
                 candidates.append((pjson.stat().st_mtime, pjson))
-    except Exception:
+    except Exception:  # fail-open: unreadable session tree means no candidates
         return []
     return sorted(candidates, key=lambda t: t[0], reverse=True)
 

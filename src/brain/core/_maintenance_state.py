@@ -1,6 +1,6 @@
 """Maintenance state methods for BrainCore."""
 from __future__ import annotations
-from ..atomic_temp import atomic_temp_path
+from ..atomic_temp import write_text_atomic
 
 from ._shared import (
     Any,
@@ -127,13 +127,10 @@ class _MaintenanceStateMixin:
         """Atomic write (tmp + replace) so a crash mid-write never corrupts
         the file the session-start hook and ``brain status`` both read."""
         import json as _json
-        import os as _os
 
         path = config.maintain_state_path(self.vault)
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = atomic_temp_path(path)
-        tmp.write_text(_json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
-        _os.replace(tmp, path)
+        write_text_atomic(path, _json.dumps(state, indent=2, sort_keys=True))
     def _note_graphify_build_outcome(
         self, *, status: str, attempted_at: str, detail: str = "",
     ) -> None:

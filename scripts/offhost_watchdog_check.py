@@ -73,7 +73,7 @@ def _registered_host_vaults(repo_src: Path | None) -> list[str]:
                 import workspace_registry as _wr  # noqa: PLC0415
 
                 return sorted({e["vault_path"] for e in _wr.list_entries(target="host")})
-            except Exception:
+            except Exception:  # fail-open: registry import is optional; falls through to the JSON file
                 pass
     registry_path = Path.home() / ".brainiac" / "workspaces.json"
     try:

@@ -164,8 +164,9 @@ class HtmlHandler(Handler):
     def available(cls) -> bool:
         return True
 
-    @classmethod
-    def extract(cls, path: Path) -> ExtractResult:
+    @staticmethod
+    def _read_text(path: Path) -> str | ExtractResult:
+        """The file's text, or the quarantine result for a size/read/decode fault."""
         try:
             size = path.stat().st_size
         except OSError:  # coverage-audit: an unreadable size falls through to the gates below
@@ -188,6 +189,13 @@ class HtmlHandler(Handler):
                 continue
         if text_raw is None:
             return ExtractResult.quarantine("html_decode_error")
+        return text_raw
+
+    @classmethod
+    def extract(cls, path: Path) -> ExtractResult:
+        text_raw = cls._read_text(path)
+        if isinstance(text_raw, ExtractResult):
+            return text_raw
 
         # The coverage ledger: every chunk of this note's text, by source, so
         # `attest` can check that what it claims was searched IS what the note

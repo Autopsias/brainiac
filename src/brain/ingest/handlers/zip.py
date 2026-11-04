@@ -20,11 +20,16 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from .base import ExtractResult, Handler, density_gate, strip_control_chars
+from .base import (ExtractResult, Handler, _declared_member_count, density_gate,
+                   strip_control_chars)
 
 MAX_MEMBERS = 500
 MAX_MEMBER_BYTES = 200 * 1024 * 1024            # per-member cap (matches pipeline.MAX_INGEST_BYTES)
 MAX_TOTAL_DECLARED_BYTES = 500 * 1024 * 1024    # sum of DECLARED (pre-decompress) sizes
+# Entry count read from the EOCD record BEFORE ZipFile() builds one ZipInfo per
+# entry (SEC-04, 2026-11-02: 60,000 entries peaked at 34 MB first). Looser than
+# MAX_MEMBERS because directory entries count here and not there.
+MAX_DECLARED_ENTRIES = 4 * MAX_MEMBERS
 
 _WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:")
 _S_IFLNK = 0xA000
@@ -80,6 +85,12 @@ def _read_member_bounded(zf: "zipfile.ZipFile", info: "zipfile.ZipInfo", cap: in
 
 
 def _open_zip(path: Path) -> zipfile.ZipFile | ExtractResult:
+    declared = _declared_member_count(path, limit=MAX_DECLARED_ENTRIES)
+    if declared is not None and declared > MAX_DECLARED_ENTRIES:
+        return ExtractResult.quarantine(
+            "zip_too_many_members",
+            warnings=[f"{declared} entries exceeds cap {MAX_DECLARED_ENTRIES}"],
+        )
     try:
         return zipfile.ZipFile(path)
     except zipfile.BadZipFile as exc:

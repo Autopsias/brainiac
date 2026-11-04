@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -9,13 +10,16 @@ from typing import Any
 from .. import config
 from ..vectors import SqliteVecBackend
 
+logger = logging.getLogger(__name__)
+
 
 def _load_vector_backend(index: Any, conn: sqlite3.Connection) -> None:
     if not isinstance(index.backend, SqliteVecBackend):
         return
     try:
         index.backend.load_into(conn)
-    except Exception:
+    except Exception:  # fail-open: vector extension is optional; search falls back without it
+        logger.warning("vector backend failed to load; search runs without it", exc_info=True)
         pass
 
 

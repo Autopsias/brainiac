@@ -474,10 +474,11 @@ class _ToolMixin:
         return block
 
     def _refresh_language_census(self) -> dict[str, Any]:
-        """Recompute + cache the census after an index write. Never fatal — a
-        census failure must not fail a sync or a rebuild."""
+        """Cache the census after an index write (reused while fingerprints match). Never fatal."""
         try:
-            return self.language_census(refresh=True)
+            c = self.language_census()
+            fresh = c.get("stale") is False and "counts" in c and c.get("status") != "not-computed"
+            return c if fresh else self.language_census(refresh=True)
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
 

@@ -35,7 +35,7 @@ def _packaged_script(name: str, engine_src: Optional[Path] = None) -> Optional[P
     try:
         from importlib.resources import files
         candidates.append(Path(str(files("brain") / "_assets" / "scripts" / name)))
-    except Exception:
+    except Exception:  # fail-open: packaged script is optional; other candidates follow
         pass
     if engine_src is not None:
         candidates.append(engine_src / "src" / "brain" / "_assets" / "scripts" / name)
@@ -127,6 +127,7 @@ def _venv_bin(venv_dir: Path, name: str) -> Path:
 
 def refresh_engine_venv(
     engine_src: Optional[Path], brainiac_home: Path, run: Runner = _default_runner,
+    *, pin_version: Optional[str] = None,
 ) -> dict:
     """Channel-aware refresh (PYP-04 / RC2): detect which channel the host is
     actually on — the legacy editable dev checkout, a plain wheel in
@@ -144,4 +145,5 @@ def refresh_engine_venv(
         venv_bin=_venv_bin,
         which_brain=shutil.which("brain"),
         python_executable=sys.executable,
+        pin_version=pin_version,
     )

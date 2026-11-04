@@ -79,7 +79,7 @@ SYNTHESIS_STALE_DAYS = 8
 STUCK_DRAFT_HOURS = 48
 
 # The feed's `findings[].key` vocabulary is closed (see maintenance_notify.py:
-# "blocked", "synthesis-watchdog", "trend:<metric>", "invariant:<metric>",
+# "blocked", "synthesis-watchdog", "trend:<metric>", "invariant:<metric>",  # noqa: ERA001
 # "branch-escalate:<branch>", "ingest_quarantine*", ...). The dir is on the
 # VirtioFS mount the Cowork VM can write, so a key failing this shape must
 # never reach the rendered alert text — it is the one thing standing between
@@ -91,7 +91,7 @@ def _read_json(path: Path) -> Any:
     try:
         with open(path, encoding="utf-8") as fh:
             return json.load(fh)
-    except Exception:
+    except Exception:  # fail-open: missing or corrupt feed file reads as no data
         return None
 
 

@@ -24,6 +24,7 @@ depend on one.
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 from pathlib import Path
@@ -96,6 +97,8 @@ from .overlay_keywords import (  # noqa: E402,F401  (facade re-export)
     resolve_keyword_tiers as resolve_keyword_tiers,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def _validate_category_file(path: Path, category: str) -> list[str]:
     """Return a list of human-readable issues for one overlay file (empty = OK)."""
@@ -162,6 +165,37 @@ def _ingest_report(path: Path) -> dict[str, Any]:
             "issues": []}
 
 
+def _optional_category_entry(
+    cat_dir: Path, cat: str, warnings: list[str],
+) -> dict[str, Any]:
+    """Optional categories: shape-checked ONLY when present — a missing
+    optional dir is never an issue (backward-compatible with every
+    pre-existing overlay; see OPTIONAL_CATEGORIES)."""
+    if not cat_dir.is_dir():
+        return {"present": False, "file_count": 0, "issues": [], "optional": True}
+    issues: list[str] = []
+    md_files = sorted(cat_dir.glob("*.md"))
+    for f in md_files:
+        issues.extend(_validate_category_file(f, cat))
+    entry: dict[str, Any] = {"present": True, "file_count": len(md_files),
+                             "issues": issues, "optional": True}
+    # TAX-02: `cos/ingest.md` carries machine-read rules, so it gets a
+    # rule-level shape check on top of the generic frontmatter check. The
+    # file being ABSENT is not a problem at any level — absent means the
+    # whole category feature is OFF (docs/cos-ingest-taxonomy.md §5).
+    if cat == "cos":
+        ingest_path = cat_dir / INGEST_FILENAME
+        if ingest_path.is_file():
+            ing = _ingest_report(ingest_path)
+            entry["ingest"] = ing
+            issues.extend(ing["issues"])
+            warnings.extend(f"{cat}: {w}" for w in ing["warnings"])
+        else:
+            entry["ingest"] = {"present": False, "rules": {}, "warnings": [],
+                               "issues": []}
+    return entry
+
+
 def validate_overlay(path: Path) -> dict[str, Any]:
     """Validate an overlay directory's shape. Pure filesystem check.
 
@@ -208,33 +242,9 @@ def validate_overlay(path: Path) -> dict[str, Any]:
     # optional dir is never an issue (backward-compatible with every
     # pre-existing overlay; see OPTIONAL_CATEGORIES).
     for cat in OPTIONAL_CATEGORIES:
-        cat_dir = path / cat
-        if not cat_dir.is_dir():
-            categories[cat] = {"present": False, "file_count": 0,
-                               "issues": [], "optional": True}
-            continue
-        issues = []
-        md_files = sorted(cat_dir.glob("*.md"))
-        for f in md_files:
-            issues.extend(_validate_category_file(f, cat))
-        entry: dict[str, Any] = {"present": True, "file_count": len(md_files),
-                                 "issues": issues, "optional": True}
-        # TAX-02: `cos/ingest.md` carries machine-read rules, so it gets a
-        # rule-level shape check on top of the generic frontmatter check. The
-        # file being ABSENT is not a problem at any level — absent means the
-        # whole category feature is OFF (docs/cos-ingest-taxonomy.md §5).
-        if cat == "cos":
-            ingest_path = cat_dir / INGEST_FILENAME
-            if ingest_path.is_file():
-                ing = _ingest_report(ingest_path)
-                entry["ingest"] = ing
-                issues.extend(ing["issues"])
-                warnings.extend(f"{cat}: {w}" for w in ing["warnings"])
-            else:
-                entry["ingest"] = {"present": False, "rules": {}, "warnings": [],
-                                   "issues": []}
+        entry = _optional_category_entry(path / cat, cat, warnings)
         categories[cat] = entry
-        errors.extend(f"{cat}: {issue}" for issue in issues)
+        errors.extend(f"{cat}: {issue}" for issue in entry["issues"])
 
     return {
         "overlay_dir": str(path),
@@ -304,7 +314,8 @@ def resolve_brand(
         return result
     try:
         text = brand_files[0].read_text(encoding="utf-8")
-    except Exception:
+    except Exception:  # fail-open: unreadable brand file yields the default result
+        logger.warning("overlay brand file unreadable; using default brand result", exc_info=True)
         return result
 
     meta, _body = frontmatter.parse_text(text)

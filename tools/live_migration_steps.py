@@ -1,6 +1,7 @@
 """Write a migrated corpus workspace."""
 from __future__ import annotations
 
+import logging
 import argparse
 import json
 import re
@@ -37,7 +38,8 @@ def _collect_entries(src: Path, limit: int) -> tuple[list[dict], dict[str, str]]
         zone = relative.split("/", 1)[0]
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
-        except Exception:
+        except Exception as exc:
+            logging.getLogger(__name__).warning("migration: unreadable note, treating as empty: %s", exc)
             text = ""
         frontmatter, body = mc.split_frontmatter(text)
         has_frontmatter = frontmatter is not None
@@ -49,7 +51,8 @@ def _collect_entries(src: Path, limit: int) -> tuple[list[dict], dict[str, str]]
                 loaded = yaml.safe_load(frontmatter)
                 if isinstance(loaded, dict):
                     meta = loaded
-            except Exception:
+            except Exception as exc:
+                logging.getLogger(__name__).warning("migration: frontmatter YAML failed, using empty meta: %s", exc)
                 meta = {}
         tier, confidence, rationale = mc.classify(
             zone, text, body if body is not None else text, has_frontmatter

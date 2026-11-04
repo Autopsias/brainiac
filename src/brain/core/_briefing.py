@@ -1,6 +1,7 @@
 """Briefing render methods for BrainCore."""
 from __future__ import annotations
 
+import logging
 from ._shared import (
     Any,
     Path,
@@ -141,12 +142,14 @@ class _CoreBriefingMixin:
 
         try:
             stats = self.index.stats()
-        except Exception:
+        except Exception as exc:
+            logging.getLogger(__name__).warning("brief: index.stats() failed; reporting zero counts: %s", exc)
             stats = {"notes": 0, "chunks": 0}
 
         try:
             recent = self.recent(limit=max_recent)
-        except Exception:
+        except Exception as exc:
+            logging.getLogger(__name__).warning("brief: recent() failed; reporting no recent notes: %s", exc)
             recent = []
 
         surfaced, egress_report = egress.apply_gate(recent, max_tier=max_tier)
@@ -193,12 +196,14 @@ class _CoreBriefingMixin:
 
         try:
             stats = self.index.stats()
-        except Exception:
+        except Exception as exc:
+            logging.getLogger(__name__).warning("brief_html: index.stats() failed; reporting zero counts: %s", exc)
             stats = {"notes": 0, "chunks": 0}
 
         try:
             recent = self.recent(limit=500)
-        except Exception:
+        except Exception as exc:
+            logging.getLogger(__name__).warning("brief_html: recent() failed; reporting no recent notes: %s", exc)
             recent = []
 
         surfaced, egress_report = egress.apply_gate(recent, max_tier=max_tier)
@@ -231,11 +236,11 @@ class _CoreBriefingMixin:
                     try:
                         data = json.loads(p.read_text(encoding="utf-8"))
                         ts = _dt.datetime.fromisoformat(str(data.get("captured")))
-                    except Exception:
+                    except Exception:  # fail-open: unreadable run file is skipped
                         continue
                     if latest is None or ts > latest:
                         latest = ts
-            except Exception:
+            except Exception:  # fail-open: no runs dir means no autoresearch history
                 pass
         return maint.autoresearch_staleness(latest.date() if latest else None, today)
     def brief_html(
@@ -265,7 +270,8 @@ class _CoreBriefingMixin:
 
         try:
             stale_links = self.index.stale_wikilink_targets()
-        except Exception:
+        except Exception as exc:
+            logging.getLogger(__name__).warning("brief_html: stale_wikilink_targets() failed; reporting none: %s", exc)
             stale_links = []
         stale_links = [
             s for s in stale_links
@@ -275,7 +281,8 @@ class _CoreBriefingMixin:
 
         try:
             revisit_sample = self.index.revisit_sample(today=d, k=10)
-        except Exception:
+        except Exception as exc:
+            logging.getLogger(__name__).warning("brief_html: revisit_sample() failed; reporting none: %s", exc)
             revisit_sample = []
         revisit_sample, _ = egress.apply_gate(revisit_sample, max_tier=max_tier)
 
@@ -284,7 +291,8 @@ class _CoreBriefingMixin:
             open_path = config.recommendations_open_path(self.vault)
             if open_path.exists():
                 open_recs = maint.parse_recommendation_lines(open_path.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as exc:
+            logging.getLogger(__name__).warning("brief_html: open recommendations unreadable; reporting none: %s", exc)
             open_recs = []
 
         hot_head: list[str] = []
@@ -292,7 +300,8 @@ class _CoreBriefingMixin:
             hot_path = self._hot_md_path()
             if hot_path.exists():
                 hot_head = brief_mod.parse_hot_entries(hot_path.read_text(encoding="utf-8"))[-5:]
-        except Exception:
+        except Exception as exc:
+            logging.getLogger(__name__).warning("brief_html: hot.md unreadable; reporting none: %s", exc)
             hot_head = []
 
         autoresearch = self._autoresearch_status(d)

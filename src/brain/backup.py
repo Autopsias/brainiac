@@ -21,16 +21,27 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import tarfile
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from . import config
 from . import encryption as enc
 
 EXCLUDE_DIRS = {".brain", ".git", "__pycache__", ".pytest_cache"}
 
+
+
+def _write_owner_only(path: Path, data: bytes) -> None:
+    """Create the archive 0600 from the first byte: a plaintext backup is the
+    whole vault, and the default umask left it readable by every local user."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    config.secure_file_permissions(path, 0o600)  # O_CREAT ignores mode on an existing file
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(data)
 
 @dataclass
 class BackupManifest:
@@ -88,11 +99,11 @@ def create_backup(vault: Path, dest_dir: Path, *, name: str | None = None,
     if encrypt:
         token = enc.encrypt_bytes(plaintext, force=True)  # force: off-device => encrypt
         archive = dest_dir / f"{stamp}.tar.gz.enc"
-        archive.write_bytes(token)
+        _write_owner_only(archive, token)
         ct_bytes = len(token)
     else:
         archive = dest_dir / f"{stamp}.tar.gz"
-        archive.write_bytes(plaintext)
+        _write_owner_only(archive, plaintext)
         ct_bytes = len(plaintext)
 
     manifest = BackupManifest(

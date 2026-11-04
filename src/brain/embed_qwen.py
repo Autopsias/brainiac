@@ -59,7 +59,7 @@ class QwenEmbedder:
             import onnxruntime  # noqa: F401
 
             return True
-        except Exception:
+        except Exception:  # fail-open: optional dependency probe; False means unavailable
             return False
 
     def _ensure_model(self):

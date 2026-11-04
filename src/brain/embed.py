@@ -65,7 +65,7 @@ def _ort_threads() -> int | None:
         return int(raw)
     try:
         return min(_DEFAULT_THREADS, os.cpu_count() or _DEFAULT_THREADS)
-    except Exception:
+    except Exception:  # fail-open: thread count is a tuning hint; None means library default
         return None
 
 
@@ -211,7 +211,7 @@ class ArcticEmbedder:
             import onnxruntime  # noqa: F401
 
             return True
-        except Exception:
+        except Exception:  # fail-open: optional dependency probe; False means unavailable
             return False
 
     def _ensure_model(self):
@@ -422,7 +422,7 @@ def model_cache_ready(embedder: "Embedder | None" = None) -> bool | None:
             return True
     try:
         from huggingface_hub import snapshot_download
-    except Exception:
+    except Exception:  # fail-open: optional dependency probe; None means cannot check
         return None
     pat = [onnx_file, onnx_file + "_data", "tokenizer*", "*.json"]
     try:
@@ -439,7 +439,7 @@ def model_cache_ready(embedder: "Embedder | None" = None) -> bool | None:
             revision=e._revision, local_files_only=True,
         )
         return True
-    except Exception:
+    except Exception:  # fail-open: offline cache probe; False means not cached
         return False
 
 # The fastembed catalog adapter, the direct-ONNX embedders of record, and the

@@ -48,7 +48,10 @@ class InvariantFoldsMixin:
     def corpus_invariants_fold(self, run: MaintenanceRun) -> None:
         """Measure WAT-01 metrics, ratchet floors, and emit the BAK-04 link lane."""
         try:
-            metrics = invariants.corpus_invariants(self.index.conn, Path(self.vault))
+            metrics = invariants.corpus_invariants(
+                self.index.conn, Path(self.vault),
+                deliverables_census=run.shared_census,
+            )
             values = invariants.metric_values(metrics)
             previous = (
                 run.state.get(invariants.STATE_KEY)

@@ -240,6 +240,48 @@ def note_from_text(text: str, path: Path, vault: Path) -> Note | None:
 MACHINE_OUTPUT_DIRS = ("cos-ops",)
 
 
+def _scan_exclusion(p: Path, vault: Path) -> str | None:
+    """``"machine"`` for a cos-ops file (counted), ``"skip"`` for any other
+    excluded path, ``None`` for a path that is a candidate note."""
+    if "/.brain/" in p.as_posix():
+        return "skip"
+    try:
+        rel_parts = p.relative_to(vault).parts
+    except ValueError:
+        rel_parts = ()
+    # ADR-0003 Ruling 1: the ingestion drop zone is a visible top-level dir
+    # (not hidden like .brain/), but is never indexed — only the
+    # extracted raw/ source a handler promotes is a real note.
+    # C4: anchored to the vault-relative TOP-LEVEL path segment only — a
+    # prior unanchored "/inbox/" substring match wrongly excluded any note
+    # under a directory named "inbox" at ANY depth (e.g.
+    # brain/resources/inbox/reading-list.md), silently dropping it from
+    # the index.
+    # The overlay is the owner's PERSONALIZATION layer (voice/brand/
+    # keywords/people/cos settings), read from the filesystem by the
+    # drafting skills -- configuration, not knowledge. It carries
+    # `overlay_type:`, never the note schema's `classification:`, so
+    # indexing it both polluted retrieval with settings files and ranked
+    # every one of them as MNPI (unlabelled => most restrictive). A fresh
+    # `brain init` vault indexed 8 notes of which 4 were overlay config
+    # (reported by a Windows pilot user, 2026-07-29). Same posture as
+    # .brain/: present on disk, never a search hit.
+    if rel_parts and rel_parts[0] in ("inbox", "overlay"):
+        return "skip"
+    # INT-03 — machine output (see MACHINE_OUTPUT_DIRS). Counted, not
+    # silently dropped: an excluded tree that nobody reports is how 146
+    # unvalidated files ended up in a retrieval index unnoticed.
+    if rel_parts and rel_parts[0] in MACHINE_OUTPUT_DIRS:
+        return "machine"
+    # C5: raw/originals/ holds the archived, immutable ORIGINAL file a
+    # handler claimed during ingestion (e.g. a promoted .md's own source
+    # copy) — it is evidence, never a real note, and must not be
+    # double-indexed alongside the promoted raw/<slug>.md note.
+    if rel_parts[:2] == ("raw", "originals") or p.name == "backlinks.md":
+        return "skip"
+    return None
+
+
 def scan_vault(vault: Path, *, stats: dict | None = None) -> Iterator[Note]:
     """Yield every note under vault/, skipping the .brain/ runtime cache, the
     top-level inbox/ drop zone, the overlay/ personalization layer, machine
@@ -250,47 +292,10 @@ def scan_vault(vault: Path, *, stats: dict | None = None) -> Iterator[Note]:
     ``rebuild`` report them so a whole excluded tree is never silent."""
     excluded_machine = 0
     for p in sorted(vault.rglob("*.md")):
-        sp = p.as_posix()
-        if "/.brain/" in sp:
-            continue
-        try:
-            rel_parts = p.relative_to(vault).parts
-        except ValueError:
-            rel_parts = ()
-        # ADR-0003 Ruling 1: the ingestion drop zone is a visible top-level dir
-        # (not hidden like .brain/), but is never indexed — only the
-        # extracted raw/ source a handler promotes is a real note.
-        # C4: anchored to the vault-relative TOP-LEVEL path segment only — a
-        # prior unanchored "/inbox/" substring match wrongly excluded any note
-        # under a directory named "inbox" at ANY depth (e.g.
-        # brain/resources/inbox/reading-list.md), silently dropping it from
-        # the index.
-        if rel_parts and rel_parts[0] == "inbox":
-            continue
-        # The overlay is the owner's PERSONALIZATION layer (voice/brand/
-        # keywords/people/cos settings), read from the filesystem by the
-        # drafting skills -- configuration, not knowledge. It carries
-        # `overlay_type:`, never the note schema's `classification:`, so
-        # indexing it both polluted retrieval with settings files and ranked
-        # every one of them as MNPI (unlabelled => most restrictive). A fresh
-        # `brain init` vault indexed 8 notes of which 4 were overlay config
-        # (reported by a Windows pilot user, 2026-07-29). Same posture as
-        # .brain/: present on disk, never a search hit.
-        if rel_parts and rel_parts[0] == "overlay":
-            continue
-        # INT-03 — machine output (see MACHINE_OUTPUT_DIRS). Counted, not
-        # silently dropped: an excluded tree that nobody reports is how 146
-        # unvalidated files ended up in a retrieval index unnoticed.
-        if rel_parts and rel_parts[0] in MACHINE_OUTPUT_DIRS:
+        verdict = _scan_exclusion(p, vault)
+        if verdict == "machine":
             excluded_machine += 1
-            continue
-        # C5: raw/originals/ holds the archived, immutable ORIGINAL file a
-        # handler claimed during ingestion (e.g. a promoted .md's own source
-        # copy) — it is evidence, never a real note, and must not be
-        # double-indexed alongside the promoted raw/<slug>.md note.
-        if rel_parts[:2] == ("raw", "originals"):
-            continue
-        if p.name == "backlinks.md":
+        if verdict:
             continue
         note = load_note(p, vault)
         if note is not None:

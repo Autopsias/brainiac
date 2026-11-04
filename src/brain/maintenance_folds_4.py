@@ -7,6 +7,9 @@ from typing import Any
 import hashlib
 import os
 
+# One wikilink pattern for graph and folds (it strips #heading and |alias).
+from .graph import _WIKILINK as _WIKILINK_RE  # noqa: F401
+
 
 # ---------------------------------------------------------------------------
 # Self-organization folds (owner decision 2026-07-11): metadata, versioning,
@@ -14,7 +17,6 @@ import os
 # input. Synthesis (writing new prose notes) remains session work — these
 # folds only manage METADATA and generated views, never note bodies.
 # ---------------------------------------------------------------------------
-_WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)(?:\|.+?)?\]\]")
 _PARA_ZONES = ("projects", "areas", "resources", "archive")
 #: A RENDITION marker: the same document version in another format
 #: (``…_v52_PREVIEW.pdf`` beside ``…_v52.md``). Closed list, one word so far —

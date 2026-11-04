@@ -36,7 +36,8 @@ class DeliverablesFoldsMixin:
         if run.dry_run:
             return
         try:
-            result = deliverables_sync.sync(self.vault)
+            run.shared_census = deliverables_sync.census(self.vault)
+            result = deliverables_sync.sync(self.vault, taken=run.shared_census)
         except Exception as exc:
             run.blocked.append(maintenance.blocked_item(
                 f"deliverables-shelf fold failed: {type(exc).__name__}: {exc}",

@@ -49,7 +49,7 @@ from pathlib import Path
 from typing import Iterator, Optional
 
 from .pathkey import real_key
-from .atomic_temp import atomic_temp_path
+from .atomic_temp import write_json_atomic
 
 REGISTRY_VERSION = 1
 
@@ -127,9 +127,7 @@ def _load(path: Path) -> dict:
 
 def _write_atomic(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = atomic_temp_path(path)
-    tmp.write_text(json.dumps(data, indent=2, sort_keys=False) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
+    write_json_atomic(path, data)
 
 
 def _key(entry: dict) -> tuple:

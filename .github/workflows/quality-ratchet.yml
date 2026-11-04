@@ -50,7 +50,7 @@ jobs:
         # uv, not actions/setup-python: setup-python writes to the hosted
         # runner's tool cache and fails on a self-hosted runner. This works on
         # both. activate-environment puts .venv first on PATH for `python`.
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.12"
           activate-environment: true

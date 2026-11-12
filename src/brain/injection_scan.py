@@ -81,7 +81,20 @@ _SOFT_INVISIBLE_RANGES: tuple[tuple[int, int], ...] = (
 # how a bit-encoded payload looks; a converter emits them singly.
 _DENSE_RUN = 8
 
-_HTML_COMMENT = re.compile(r"<!--(.*?)-->", re.S)
+def _html_comments(text: str) -> list[tuple[int, str]]:
+    """``(offset, body)`` of each terminated ``<!--…-->`` comment, in one linear
+    pass. A lazy regex rescanned to the end of the text from every unterminated
+    ``<!--`` (F30); with no ``-->`` after one marker there is none after any
+    later marker, so the scan stops."""
+    found: list[tuple[int, str]] = []
+    pos = 0
+    while (start := text.find("<!--", pos)) >= 0:
+        end = text.find("-->", start + 4)
+        if end < 0:
+            break
+        found.append((start, text[start + 4:end]))
+        pos = end + 3
+    return found
 _HIDDEN_STYLE = re.compile(
     r"""(display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0|"""
     r"""color\s*:\s*#?(fff(fff)?|white)\b)""",
@@ -262,14 +275,13 @@ def _concealment_hits(text: str) -> list[dict[str, Any]]:
     note that says "run it while people find seats" is a note, not an attack.
     """
     out: list[dict[str, Any]] = []
-    for m in _HTML_COMMENT.finditer(text):
-        body = m.group(1)
+    for offset, body in _html_comments(text):
         found = _instruction_hits(body)
         if found:
             out.append({
                 "marker": "html_comment_instruction",
                 "revealed": found[0]["marker"],
-                "offset": m.start(),
+                "offset": offset,
                 "excerpt": " ".join(body.split())[:160],
             })
     for start in _hidden_style_offsets(text):

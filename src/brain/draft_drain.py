@@ -71,7 +71,18 @@ def sanitize_untrusted_note(content: str, *, path: Path, vault: Path) -> str:
         content = provenance.without_host_only_text(content)
     except provenance.HostOnlyKeyResidue as exc:
         raise UntrustedAuthorRefusal(f"host-only provenance forgery: {exc}") from exc
-    return frontmatter.set_keys(content, {"provenance.trust": "untrusted"})
+    split = frontmatter.split(content)
+    if split is not None and frontmatter.uses_alias(split[0]):
+        raise UntrustedAuthorRefusal("frontmatter uses YAML anchors/aliases (fail-closed)")
+    stamped = frontmatter.set_keys(content, {"provenance.trust": "untrusted"})
+    # Fail closed: whatever the parser keeps (YAML keeps the LAST duplicate)
+    # must read untrusted, or the host would sign a forged trust marker.
+    trust = frontmatter.parse_text(stamped)[0].get("provenance.trust")
+    if trust != "untrusted":
+        raise UntrustedAuthorRefusal(
+            f"provenance.trust reads {trust!r} after stamping (fail-closed)"
+        )
+    return stamped
 
 
 @dataclass

@@ -32,8 +32,9 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import re
-import shutil
+import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -55,6 +56,33 @@ def tools_on_path(engine_src: Path) -> Iterator[None]:
             pass
 
 
+def put_bytes_nofollow(dst: Path, data: bytes, mode: int | None = None) -> None:
+    """Write ``data`` to ``dst`` without ever writing THROUGH a link at ``dst``.
+
+    The staging folder is on the mount the untrusted Cowork VM can write to, so
+    a symlink planted at a fixed name (F35) used to send the host's write and
+    chmod to any file the owner can write. The bytes go to a fresh O_EXCL temp
+    file beside ``dst`` and are renamed over it; a rename replaces the link
+    itself, never its target. A link as ``dst``'s folder is refused.
+    """
+    if dst.parent.is_symlink():
+        raise OSError(f"refusing to stage into a symlinked folder: {dst.parent}")
+    fd, tmp = tempfile.mkstemp(dir=dst.parent, prefix=f".{dst.name}.")
+    try:
+        with os.fdopen(fd, "wb") as out:
+            out.write(data)
+            os.fchmod(out.fileno(), 0o644 if mode is None else mode)
+        os.replace(tmp, dst)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def put_file_nofollow(src: Path, dst: Path, mode: int | None = None) -> None:
+    """:func:`put_bytes_nofollow` of ``src``'s bytes."""
+    put_bytes_nofollow(dst, Path(src).read_bytes(), mode)
+
+
 def stage_vm_binaries(brain_dir: Path, dist: Path) -> dict:
     """Copy each frozen ELF, its ``.version`` marker, and rewrite SHA256SUMS.
 
@@ -71,14 +99,13 @@ def stage_vm_binaries(brain_dir: Path, dist: Path) -> dict:
             continue
         bin_dir.mkdir(parents=True, exist_ok=True)
         dst = bin_dir / f"brain-linux-{arch}"
-        shutil.copyfile(src, dst)
-        dst.chmod(0o755)
+        put_file_nofollow(src, dst, 0o755)
         staged_any = True
         status["shipped"] += 1
         marker = src.with_name(src.name + ".version")
         dst_marker = bin_dir / f"brain-linux-{arch}.version"
         if marker.is_file():
-            shutil.copyfile(marker, dst_marker)
+            put_file_nofollow(marker, dst_marker)
             status["versions"][arch] = marker.read_text(encoding="utf-8").strip()
         else:
             # An ELF built before the marker existed. Drop any leftover marker
@@ -91,7 +118,7 @@ def stage_vm_binaries(brain_dir: Path, dist: Path) -> dict:
         for path in sorted(bin_dir.glob("brain-linux-*")):
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
             lines.append(f"{digest}  {path.name}")
-        (bin_dir / "SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        put_bytes_nofollow(bin_dir / "SHA256SUMS", ("\n".join(lines) + "\n").encode("utf-8"))
     return status
 
 

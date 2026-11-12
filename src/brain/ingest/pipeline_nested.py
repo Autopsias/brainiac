@@ -15,6 +15,7 @@ def process_nested(
     budget: dict[str, int],
     drain: Any,
     provenance: dict[str, Any] | None = None,
+    parent_tier: str = "",
 ) -> None:
     """Re-enter admission for each safe synthetic nested candidate."""
     from . import pipeline as facade
@@ -50,8 +51,11 @@ def process_nested(
         synthetic_name = f"{parent_slug}-nested-{idx}-{safe_stem}{extension}"
         temp_path = facade._unique_dest(drain.processing_dir, synthetic_name)
         try:
+            from . import pipeline_files as files
+
+            files.refuse_symlinked_dirs(drain.processing_dir, 2)
             drain.processing_dir.mkdir(parents=True, exist_ok=True)
-            temp_path.write_bytes(data)
+            files.write_new_nofollow(temp_path, data)
         except OSError as exc:
             drain.report["skipped"].append({
                 "file": name,
@@ -70,6 +74,7 @@ def process_nested(
             depth=depth + 1,
             budget=budget,
             parent=parent_slug,
+            tier_floor=parent_tier,
         )
         try:
             stages.process_verified_claim(record)

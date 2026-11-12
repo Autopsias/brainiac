@@ -79,7 +79,8 @@ def _index_step(
             from . import init_seed
 
             sign_report = init_seed._sign_seeded_notes(
-                vault, seed_report["created"])
+                vault, seed_report["created"],
+                digests=seed_report.get("digests"))
             steps.append(
                 f"audit chain: signed {len(sign_report['signed'])} seeded note(s)"
                 if sign_report["ok"] else

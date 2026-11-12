@@ -98,6 +98,12 @@ def _root_for(entry: dict, raw: str) -> Path:
         return Path(raw) / ".brain"
 
 
+#: A stamp is kept only if it is a plain version string. Everything under the
+#: staging root is VM-writable, so an unmatched stamp is never echoed.
+_VERSION_RE = re.compile(r"\d+\.\d+\.\d+[0-9A-Za-z.+-]{0,32}")
+UNRECOGNISED_STAMP = "unrecognised version stamp"
+
+
 def _staged_versions(root: Path) -> set[str]:
     """Every version stamp a staged Cowork workspace carries, as file reads.
 
@@ -110,16 +116,17 @@ def _staged_versions(root: Path) -> set[str]:
     try:
         text = (root / "engine" / "brain" / "_version.py").read_text(
             encoding="utf-8")
-        m = re.search(r'__version__\s*=\s*"([^"]+)"', text)
+        m = re.search(r'__version__\s*=\s*"([^"\n]*)"', text)
         if m:
-            found.add(m.group(1))
+            found.add(m.group(1) if _VERSION_RE.fullmatch(m.group(1))
+                      else UNRECOGNISED_STAMP)
     except OSError:
         pass
     try:
         for stamp in sorted((root / "bin").glob("brain-linux-*.version")):
             v = stamp.read_text(encoding="utf-8").strip()
             if v:
-                found.add(v)
+                found.add(v if _VERSION_RE.fullmatch(v) else UNRECOGNISED_STAMP)
     except OSError:
         pass
     return found

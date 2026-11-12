@@ -31,6 +31,7 @@ from ._families import _FamilyMixin
 from ._search import _SearchMixin
 from ._graph import _GraphMixin
 from ._tools import _ToolMixin
+from ._language_census import _LanguageCensusMixin
 
 
 def _grep_bounded_search(compiled, text: str):
@@ -41,7 +42,7 @@ def _grep_bounded_search(compiled, text: str):
 class BrainIndex(
     _ConnectionMixin, _SchemaMixin, _PlanningMixin, _LifecycleMixin,
     _RecordMixin, _ZoneMixin, _IdentityMixin, _FamilyMixin, _SearchMixin,
-    _GraphMixin, _ToolMixin,
+    _GraphMixin, _ToolMixin, _LanguageCensusMixin,
 ):
     """Derived-index facade assembled from focused mixins."""
 

@@ -21,6 +21,7 @@ from typing import Any
 
 from . import _optional
 from . import interview as _iv
+from .frontmatter import yaml_scalar as _yaml_scalar
 from .interview_detect import note_path as _note_path
 
 _DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
@@ -65,7 +66,13 @@ def append_section(core: Any, path: str, heading: str, lines: list[str],
     ``write_note`` so the edit is signed and audited like any other."""
     if not path:
         raise ValueError("no note path to edit")
-    text = (Path(core.vault) / path).read_text(encoding="utf-8")
+    # The path comes from a VM-writable state.json: only an existing brain/
+    # note may be edited, never raw/, .brain/ or anything outside (F34/F48).
+    from .core import _contained_in  # noqa: PLC0415
+    target = Path(core.vault) / path
+    if not _contained_in(target, Path(core.vault) / "brain"):
+        raise ValueError(f"refusing to edit outside brain/: {path}")
+    text = target.read_text(encoding="utf-8")
     block = "\n".join(lines)
     marker = f"\n{heading}\n"
     if marker in text:
@@ -87,6 +94,11 @@ def write_decision_note(core: Any, row: dict[str, Any], note: str,
     """A decision note from a source that carried decision language, in the
     kernel template's shape, anchored to the source (TMP-05)."""
     src = row["target"]["id"]
+    # Evidence comes from a VM-writable state.json: never let it add YAML keys.
+    src_yaml = _yaml_scalar(f"[[{src}]]")
+    doc_date = str(row["evidence"][0].get("date") or "")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", doc_date):
+        doc_date = today.isoformat()
     phrase = row["question"].split('"')[1] if row["question"].count('"') >= 2 else ""
     # 2026-09-13/15: an empty note titled the note from the bare quote
     # ("approved on 2", "formally approved"); the passage says what it was.
@@ -97,7 +109,7 @@ def write_decision_note(core: Any, row: dict[str, Any], note: str,
         title = title[:120].rsplit(" ", 1)[0]
     # The title sits inside a double-quoted YAML scalar; a quote in the
     # passage (a quoted procedure name) would end it early.
-    title = re.sub(r'["\\]', "'", title)
+    title = re.sub(r'["\\]', "'", " ".join(title.split()))
     stem = f"decision-{today.isoformat()}-{_slug(title)}"
     rel = f"brain/resources/{stem}.md"
     cls = "Internal"
@@ -108,11 +120,11 @@ def write_decision_note(core: Any, row: dict[str, Any], note: str,
         pass
     body = "\n".join([
         "---", f'id: "{stem}"', f'title: "Decision - {title}"', "type: decision",
-        f"classification: {cls}", f'created: "{today.isoformat()}"',
+        f"classification: {_yaml_scalar(cls)}", f'created: "{today.isoformat()}"',
         f'updated: "{today.isoformat()}"', "tags: []",
-        f'document_date: "{row["evidence"][0].get("date") or today.isoformat()}"',
+        f'document_date: "{doc_date}"',
         f'effective_date: "{today.isoformat()}"', 'context: ""', 'project: ""',
-        "stakeholders: []", f'source: "[[{src}]]"', "related: []", "---", "",
+        "stakeholders: []", f"source: {src_yaml}", "related: []", "---", "",
         f"# Decision - {title}", "", "## Context", "",
         f"Recorded from [[{src}]], which carries the decision language "
         f"\"{phrase}\"; confirmed by the owner on {today.isoformat()} "

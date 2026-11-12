@@ -127,7 +127,7 @@ def _venv_bin(venv_dir: Path, name: str) -> Path:
 
 def refresh_engine_venv(
     engine_src: Optional[Path], brainiac_home: Path, run: Runner = _default_runner,
-    *, pin_version: Optional[str] = None,
+    *, pin_version: Optional[str] = None, pin_artifact: Optional[dict] = None,
 ) -> dict:
     """Channel-aware refresh (PYP-04 / RC2): detect which channel the host is
     actually on — the legacy editable dev checkout, a plain wheel in
@@ -146,4 +146,5 @@ def refresh_engine_venv(
         which_brain=shutil.which("brain"),
         python_executable=sys.executable,
         pin_version=pin_version,
+        pin_artifact=pin_artifact,
     )

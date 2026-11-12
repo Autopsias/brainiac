@@ -251,10 +251,32 @@ COVERED_SOURCES: dict[str, tuple[str, tuple[str, ...], str]] = {
 #: written down here is not caught. If a PLAIN source ever needs to carry
 #: arbitrary rich text, demote it out of :data:`COVERED_SOURCES` and let it read
 #: ``unknown`` rather than widen this further.
+#:
+#: Two of the constructs are not in the regex but in :func:`_has_markup`: the
+#: Markdown link ``](…)`` and the reference definition ``[label]: …``. As
+#: regexes they rescanned to the end of the chunk from every ``](`` or ``[``
+#: (F55); the helper finds each in one linear pass with the same matches.
 _MARKUP = re.compile(r"<!--|-->"
-                     r"|<\s*/?[a-z][a-z0-9]*(?:\s[^<>]*)?>|style\s*=\s*[\"']"
-                     r"|\]\([^)]*\)|^\s*\[[^\]]+\]:\s",
-                     re.I | re.M)
+                     r"|<\s*/?[a-z][a-z0-9]*(?:\s[^<>]*)?>|style\s*=\s*[\"']",
+                     re.I)
+_REF_OPEN = re.compile(r"^[^\S\n]*\[", re.M)
+_REF_CLOSE = re.compile(r"\]:\s")
+
+
+def _has_markup(text: str) -> bool:
+    """True if ``text`` carries any construct :data:`_MARKUP` documents."""
+    if _MARKUP.search(text):
+        return True
+    link = text.find("](")
+    if link >= 0 and text.find(")", link + 2) >= 0:  # ``](`` then a later ``)``
+        return True
+    for close in _REF_CLOSE.finditer(text):
+        # ``[label]:`` — a ``[`` at a line start, with no ``]`` between it and
+        # this one, so only the stretch after the previous ``]`` can hold it.
+        floor = text.rfind("]", 0, close.start()) + 1
+        if _REF_OPEN.search(text, floor, close.start() - 1):
+            return True
+    return False
 
 #: Sources KNOWN to be uncovered. Listing one changes NOTHING mechanically —
 #: absence from :data:`COVERED_SOURCES` is what decides — but it is how an
@@ -384,7 +406,7 @@ def _shortfall(admitted: "Admitted", source: str, kind: str,
                     "measures nothing")
     if kind == PLAIN:
         marked = sum(1 for name, text, _ in admitted.chunks
-                     if name == source and _MARKUP.search(text))
+                     if name == source and _has_markup(text))
         return (f"{marked} chunk(s) carry markup, so the 'no presentational "
                 "channel to hide in' that covers this source is not true of "
                 "this document") if marked else None

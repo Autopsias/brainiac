@@ -212,7 +212,7 @@ doctor.
 
 **Failure escalation** vs **liveness escalation** — a failure escalation counts branches
 that ran and failed (`consecutive_failures`). A liveness escalation flags branches that
-stopped running *at all*, keyed on `last_attempt` age. Only the latter can detect the mode
+stopped running *at all*, keyed on `last_run` age (set only on genuine success) and on the writer-busy skip counters `consecutive_skips` and `writer_busy_since` (`src/brain/maintenance_escalation.py`). It never uses `last_attempt`, because a writer-busy skip refreshes that even when no work happened. Only the latter can detect the mode
 that went unnoticed for 32 nights: when the process never runs, no handler fires, no
 counter increments, and a failure count stays at zero forever.
 
@@ -378,8 +378,9 @@ was actually established.
 **Outcome contract** vs **host validator** — two separate verdicts on one run. The
 *outcome contract* (`tools/cos_contract.py`) is the deterministic pass/fail computed from
 the run's own three inputs; the *host validator* (`brain.cos_runverify`, INS-01) scores
-the run VALID/DEGRADED/INCONCLUSIVE from host-derived stamps. A run needs **both** — the
+the run `VALID`, `VALID_DEGRADED`, `INVALID` or `INCONCLUSIVE` (`RUN_VERDICTS` in `src/brain/cos/_constants.py`) from host-derived stamps. Only `VALID` and `VALID_DEGRADED` permit a claim (`CLAIMABLE_VERDICTS`); a run with no recorded verdict reads `INCONCLUSIVE`. A run needs **both** — the
 contract can pass on a run the validator cannot vouch for at all.
+When a run is re-validated, the newest verdict is the one of record and the older ones go to its `earlier` list (newest 20, each with the engine that wrote it; `record_run_validity` in `src/brain/cos/_runs.py`).
 
 **Mark** vs **rule** — the two things the owner's morning sheet produces, and they are
 different kinds of record. A *mark* is one owner correction on one thread (this archive was
@@ -446,3 +447,9 @@ the export — the repo is one consumer of it, and the export is where the COS i
 **COS guard** — the one check core code uses to ask whether the COS is installed. It must see a
 real module file, never a leftover empty `brain/cos/` folder that Python reads as a namespace
 package after a pip upgrade.
+
+**Synthesis outcome** — the one word the weekly synthesis run records, one of `SYNTHESIS_OUTCOMES` in `src/brain/maintenance_watchdog.py`: `ok`, `session-failed`, `notes-unsigned`, `engine-missing`, `publish-deferred`, `publish-failed`, `writer-busy-skip`. `publish-deferred` is **not a failure**: the writer lock was busy at publish and the hourly sync publishes later. See **Writer-busy skip**.
+
+**Mailbox change subsets** — three named subsets of the mutation states in `tools/cos_mutate_policy.py`. `PROVEN_STATES` (`reconciled`, `confirmed`): the server answered or a re-read found the effect. `MAYBE_APPLIED_STATES` (`sent`, `confirmed`, `reconciled`, `unknown`): the request may have reached the mailbox. `KNOWN_RESULT_STATES` (`reconciled`, `aborted-not-applied`): finished with a known result. `verification-failed` is in `STATES` but no writer in the code sets it. `unknown` covers a lost response whose re-read was inconclusive, and a draft row the resume policy declines to re-check.
+
+**Exit code table** — the one table from a night's exit code to its meaning and stop word is `NIGHT_EXITS` in `tests/test_cos_nightly_exit_table.py`; it fails when `tools/cos_nightly.sh` and the table disagree.

@@ -141,6 +141,48 @@ def sanitize_archive_name(name: str) -> str:
     return cleaned or "file"
 
 
+class UnsafeVaultDir(OSError):
+    """A vault-internal directory is a symlink; ingest refuses to write through it."""
+
+
+def refuse_symlinked_dirs(directory: Path, levels: int = 3) -> None:
+    """Refuse when any of the last ``levels`` components of ``directory`` is a symlink.
+
+    The inbox, quarantine, processing and archive trees can be shaped by an
+    untrusted writer when the vault is co-located with the VM. ``mkdir`` and
+    ``rename`` follow a planted directory link, so the host would create or
+    move files outside the vault. ``lstat`` each component instead (SEC F5/F32).
+    A missing component is fine: ``mkdir`` creates it as a real directory.
+    """
+    current = directory
+    for _ in range(levels):
+        if current.is_symlink():
+            raise UnsafeVaultDir(f"{current.name} is a symlink — refused")
+        if current.parent == current:
+            break
+        current = current.parent
+
+
+def write_new_nofollow(path: Path, data: bytes) -> None:
+    """Create ``path`` with ``O_EXCL|O_NOFOLLOW`` and write ``data``; never replace."""
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags, 0o644)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+
+
+def write_sidecar(path: Path, text: str) -> None:
+    """Write an advisory ``.reason.txt``; a pre-planted name is left untouched."""
+    try:
+        write_new_nofollow(path, text.encode("utf-8"))
+    except FileExistsError:
+        pass
+
+
 def move_path(src: Path, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -151,6 +193,7 @@ def move_path(src: Path, dest: Path) -> None:
 
 def claim_path(path: Path, processing_dir: Path) -> Path | None:
     """Atomically claim a drop, returning ``None`` when another worker won."""
+    refuse_symlinked_dirs(processing_dir, 2)
     processing_dir.mkdir(parents=True, exist_ok=True)
     dest = processing_dir / path.name
     i = 0
@@ -233,11 +276,17 @@ def create_exclusive_or_collision(
     known_sha: str | None = None,
 ) -> str:
     """Create ``dest`` without replacement, reporting idempotency or collision."""
+    refuse_symlinked_dirs(dest.parent, 3)
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
-        fd = os.open(dest, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        fd = os.open(
+            dest, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+        )
     except FileExistsError:
-        existing = dest.read_bytes()
+        try:
+            existing = read_nofollow(dest)
+        except ReadRefused:
+            return "collision"
         if existing == data:
             return "idempotent"
         data_sha = known_sha if known_sha is not None else sha256_bytes(data)
@@ -312,14 +361,15 @@ def set_aside_operational(claimed: Path, inbox: Path, declared: str) -> None:
     from . import pipeline as facade
 
     dest_dir = inbox / facade.OPERATIONAL_DIRNAME / declared
+    refuse_symlinked_dirs(dest_dir, 3)
     dest = unique_destination(dest_dir, claimed.name)
     move_path(claimed, dest)
-    (dest_dir / f"{dest.name}.reason.txt").write_text(
+    write_sidecar(
+        dest_dir / f"{dest.name}.reason.txt",
         f"skipped_reason: operational_artifact:{declared}\n"
         "- this document declares its own operational type; it is the vault's\n"
         "  output, not knowledge about the business\n"
         "- set BRAIN_INGEST_ALLOW_OPERATIONAL=1 and re-drop it to override\n",
-        encoding="utf-8",
     )
 
 
@@ -331,10 +381,8 @@ def quarantine_claim(
 ) -> None:
     """Move a failed claim into a collision-safe quarantine sink."""
     dest_dir = quarantine_dir / reason
+    refuse_symlinked_dirs(dest_dir, 3)
     dest = unique_destination(dest_dir, claimed.name)
     move_path(claimed, dest)
     report_lines = [f"quarantine_reason: {reason}"] + [f"- {w}" for w in warnings]
-    (dest_dir / f"{dest.name}.reason.txt").write_text(
-        "\n".join(report_lines) + "\n",
-        encoding="utf-8",
-    )
+    write_sidecar(dest_dir / f"{dest.name}.reason.txt", "\n".join(report_lines) + "\n")

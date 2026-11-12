@@ -88,7 +88,10 @@ CROSS_TIER_SCREEN = 0.25
 # Superseded notes are therefore KEPT and reported as `retained_superseded`.
 CROSS_TIER_SKIP_REASONS = ("quarantined", "non_knowledge_zone", "generated_map")
 
-_CT_FRONTMATTER = re.compile(r"\A---\s*\n.*?\n---\s*\n", re.S)
+# The opener's whitespace excludes "\n": ``\s*`` there backtracked over every
+# newline of a leading blank run, each time rescanning the rest (F45). Same
+# matches: the closing ``\n---`` is found by the lazy body either way.
+_CT_FRONTMATTER = re.compile(r"\A---[^\S\n]*\n.*?\n---\s*\n", re.S)
 _CT_WORD = re.compile(r"\w+", re.U)
 
 

@@ -93,6 +93,18 @@ def validate_update(
         return UpdateVerdict(
             reason=f"update-needs-owner: {note_id!r} is host-authored — apply "
                    "it on the host with `brain write`")
+    # The on-disk `provenance.trust` is a CLAIM anyone with mount write access
+    # can edit in. Authorize only bytes the audit chain's latest signed write
+    # for this path covers (UPD-01 / F56); a hand-relabelled file is drift.
+    from .notes import sha256_file
+    from .remediation_branches import chain_provenance
+
+    provenance = chain_provenance(Path(core.audit.log_path))
+    if not provenance.covers_current(rel_path, sha256_file(core.vault / rel_path)):
+        return UpdateVerdict(
+            reason=f"update-refused-drift: {note_id!r} differs from its latest "
+                   "signed write — the host must review it, apply with "
+                   "`brain write`")
     # No `or ""`: the frontmatter parser turns an all-digit scalar into an
     # int, and 0 is falsy — an all-zero hash must fail as STALE, not missing.
     raw_base = note.meta.get("base_sha256")

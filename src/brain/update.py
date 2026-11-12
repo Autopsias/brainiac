@@ -293,6 +293,7 @@ def run_update(
     skip_capability_probe: bool = False,
     dry_run: bool = False,
     pin_version: Optional[str] = None,
+    pin_artifact: Optional[dict[str, str]] = None,
 ) -> dict[str, Any]:
     """Chain, in order: capability probe -> marketplace refresh -> per-plugin
     downgrade-safe reinstall -> engine venv refresh -> dist/ rebuild ->
@@ -325,7 +326,8 @@ def run_update(
         apply_plugin_action=apply_plugin_action,
         check_installed_cli_plugins=check_installed_cli_plugins,
         # A-03: the nightly passes the version it verified; never a bare upgrade.
-        refresh_engine_venv=functools.partial(refresh_engine_venv, pin_version=pin_version),
+        refresh_engine_venv=functools.partial(
+            refresh_engine_venv, pin_version=pin_version, pin_artifact=pin_artifact),
         rebuild_dist=rebuild_dist,
         restage_workspaces=restage_workspaces,
         render_before_after=render_before_after,

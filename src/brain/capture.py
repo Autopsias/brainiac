@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import re
 from typing import Any
 
 from . import frontmatter as fm
@@ -32,6 +33,10 @@ def _today() -> str:
 def _derive_id(body: str) -> str:
     h = hashlib.sha256(body.encode("utf-8")).hexdigest()[:12]
     return f"capture-{h}"
+
+
+#: A frontmatter key is written raw, so it must be one plain line (F11).
+_PLAIN_KEY = re.compile(r"[A-Za-z0-9_.-]+")
 
 
 def enforce(content: str, *, override: dict[str, Any] | None = None) -> str:
@@ -105,6 +110,9 @@ def enforce(content: str, *, override: dict[str, Any] | None = None) -> str:
         if k not in block:
             block[k] = v
 
+    for k in block:
+        if not _PLAIN_KEY.fullmatch(str(k)):
+            raise ValueError(f"capture: refusing frontmatter key {str(k)[:40]!r}")
     lines = ["---"]
     for k, v in block.items():
         lines.append(f"{k}: {fm.yaml_scalar(v)}")

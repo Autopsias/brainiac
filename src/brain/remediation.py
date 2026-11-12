@@ -378,6 +378,8 @@ _PREFIXES: tuple[tuple[str, Remedy], ...] = (
                      "read; the original stays in Outlook")),
     ("cos-attachment-oversize:", Remedy(BANNER, note="attachments above the "
         "fetch limit, skipped; the original stays in Outlook")),
+    ("cos-attachment-name-clash:", Remedy(BANNER, note="attachments named the "
+        "same as a different file that night, skipped; the original stays in Outlook")),
     ("cos-attachment-withheld:", Remedy(
         BANNER,
         note="ATT-03 holds a thread whose attachment bytes never reached a "

@@ -30,7 +30,8 @@ from .remediation_extract_retry import (
 )
 from .remediation_folds import (
     BranchOutcome, Intent, KEY_UNGUARDED, KEY_UNSIGNED, RAISE_CLASSIFICATION,
-    REGUARD, RESTAMP_GUARD_VERDICT, SIGN_EXISTING_BYTES, SIGN_REPAIR,
+    REGUARD, RESTAMP_GUARD_VERDICT, ReversibilityError, SIGN_EXISTING_BYTES,
+    SIGN_REPAIR, read_nofollow,
 )
 
 # ---------------------------------------------------------------------------
@@ -140,8 +141,8 @@ def plan_sign_repair(core: Any, cap: int) -> tuple[BranchOutcome, list[Intent],
     intents, tamper = [], []
     for rel in out.targets:
         try:
-            text = (Path(core.vault) / rel).read_text(encoding="utf-8")
-        except OSError as exc:
+            text, _ino = read_nofollow(Path(core.vault) / rel)
+        except (OSError, ValueError, ReversibilityError) as exc:
             out.skipped.append({"target": rel, "reason": f"unreadable: {exc}"})
             continue
         if ids is None:
@@ -197,13 +198,13 @@ def _sign_provenance(
        version resurrection: a v1 body, superseded months ago, reappearing as
        a live note whose frontmatter still says it was superseded."""
     from . import frontmatter as _fm
-    from .notes import sha256_file
+    from .notes import sha256_text
 
-    # The BYTES on disk, not `sha256_text(text)`: `text` came through
-    # `read_text()`, which deletes every `\r`, so a CR-only edit after signing
-    # hashed identical to the signed bytes and this lookup blessed drift as
-    # covered (M-7, 2026-09-02).
-    origin = provenance.by_hash.get(sha256_file(Path(core.vault) / rel))
+    # `text` is the caller's ONE no-follow read, decoded with no newline
+    # translation, so its UTF-8 bytes ARE the file's bytes (M-7: a CR-only edit
+    # must still change the hash). Hashing a SECOND disk read would let a racing
+    # writer give the check one file and the signature another (F51).
+    origin = provenance.by_hash.get(sha256_text(text))
     if origin is None:
         return "", ("no host record covers these bytes — TAMPER exception, "
                     "never auto")
@@ -272,7 +273,7 @@ def plan_reguard(core: Any, cap: int) -> tuple[BranchOutcome, list[Intent], list
     2,600-note reference vault). If that ever matters, thread ONE parsed walk
     through both from the maintain run; do not add a second cache here."""
     from .ingest import tierguard
-    from .notes import sha256_file
+    from .notes import sha256_text
 
     out = BranchOutcome(REGUARD, KEY_UNGUARDED)
     out.targets = unguarded_targets(Path(core.vault))
@@ -284,11 +285,11 @@ def plan_reguard(core: Any, cap: int) -> tuple[BranchOutcome, list[Intent], list
     intents: list[Intent] = []
     for rel in out.targets[:cap]:
         try:
-            text = (Path(core.vault) / rel).read_text(encoding="utf-8")
-        except OSError as exc:
+            text, _ino = read_nofollow(Path(core.vault) / rel)
+        except (OSError, ValueError, ReversibilityError) as exc:
             out.skipped.append({"target": rel, "reason": f"unreadable: {exc}"})
             continue
-        if not provenance.covers_current(rel, sha256_file(Path(core.vault) / rel)):
+        if not provenance.covers_current(rel, sha256_text(text)):
             out.skipped.append({"target": rel, "reason": (
                 "the audit chain does not cover these bytes — the guard stamp "
                 "and the classification floor are unverified claims, so this "

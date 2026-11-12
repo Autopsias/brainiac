@@ -202,6 +202,14 @@ def _cell(text: str) -> str:
     `brain.overlay._table_cells` performs the matching unescape. The two must
     change together; ``tests/test_overlay_generated_ring.py`` round-trips them.
     """
+    # The reader (`overlay_core._strip_noise`) treats a line holding `<!--`
+    # with no `-->` as an HTML comment and skips every later line, and a line
+    # break ends the row. A note title is attacker-reachable (untrusted capture
+    # lane), so neutralise both: one line, no comment delimiters (SEC F23).
+    text = " ".join(text.split())
+    # Repeat: one pass turns "<!---" back into "<!--" and "--->" into "-->".
+    while "<!--" in text or "-->" in text:
+        text = text.replace("<!--", "<!-").replace("-->", "->")
     return text.replace("\\", "\\\\").replace("|", "\\|")
 
 

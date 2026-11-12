@@ -353,8 +353,18 @@ def stage_vendor(brain_dir, *, archs=ARCHS, python_exe: str | None = None,
 def write_shim(brain_dir) -> Path:
     """Write the vendored-deps-aware zero-install shim to ``<brain_dir>/brain``."""
     p = Path(brain_dir) / "brain"
-    p.write_text(SHIM_CONTENT, encoding="utf-8")
-    p.chmod(0o755)
+    # F35: the folder is on the mount the VM can write to, so `p` may be a planted
+    # symlink. Write a fresh O_EXCL temp file and rename it over `p`: a rename
+    # replaces the link itself and never follows it.
+    fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=".brain-shim.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as out:
+            out.write(SHIM_CONTENT)
+            os.fchmod(out.fileno(), 0o755)
+        os.replace(tmp, p)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
     return p
 
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
 import os
 from typing import Any
 
@@ -175,11 +176,17 @@ def seed_sample_notes(vault: str | os.PathLike[str] | None) -> dict[str, Any]:
     # else in the install path creates it for a genuinely brand-new vault.
     (v / "raw").mkdir(parents=True, exist_ok=True)
     created: list[str] = []
+    digests: dict[str, str] = {}   # sha256 of the exact bytes written (F53)
+
+    def _digest(text: str) -> str:
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
     index_path = brain_dir / "index.md"
     if not index_path.exists():
-        index_path.write_text(_sample_index(today), encoding="utf-8")
+        index_text = _sample_index(today)
+        index_path.write_text(index_text, encoding="utf-8")
         created.append("index.md")
+        digests["index.md"] = _digest(index_text)
 
     for note_id, content in _sample_notes(today).items():
         path = dest_dir / f"{note_id}.md"
@@ -187,4 +194,5 @@ def seed_sample_notes(vault: str | os.PathLike[str] | None) -> dict[str, Any]:
             continue        # implies these shouldn't exist yet
         path.write_text(content, encoding="utf-8")
         created.append(f"resources/{note_id}.md")
-    return {"performed": True, "created": created}
+        digests[f"resources/{note_id}.md"] = _digest(content)
+    return {"performed": True, "created": created, "digests": digests}

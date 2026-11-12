@@ -50,6 +50,8 @@ from typing import TYPE_CHECKING, Any
 from .. import classification as CLS
 from .. import supersede_declared as SUP
 from ..atomic_temp import atomic_temp_path
+from .deliverables_anchor import (  # re-exported as DLV.*
+    _ANCHOR_SUBTREE, anchor_id, anchor_rel, existing_anchor_rel)
 
 if TYPE_CHECKING:  # the stage record; a runtime import here would be a cycle
     from .pipeline_stages import ClaimRecord
@@ -66,7 +68,6 @@ PRODUCED_BY = "inbox-deliverables"
 #: Fails to the most restrictive tier, NOT to the drop zone's ``Internal``.
 DEFAULT_CLASSIFICATION = "MNPI"
 
-_ANCHOR_SUBTREE = "brain/resources"
 
 
 # ---------------------------------------------------------------------------
@@ -277,14 +278,6 @@ def refuse_low_twin(record: "ClaimRecord", existing_id: str) -> "ClaimRecord | N
 # the anchor note
 # ---------------------------------------------------------------------------
 
-def anchor_id(slug: str) -> str:
-    return f"{slug}-deliverable"
-
-
-def anchor_rel(slug: str) -> str:
-    return f"{_ANCHOR_SUBTREE}/{anchor_id(slug)}.md"
-
-
 # Extensions a produced document actually arrives with. Deliberately a closed
 # list: a title like "Exec Review v4.1" has a dot-suffix too, and stripping
 # ".1" from it would be worse than the filename it replaced.
@@ -466,7 +459,7 @@ def recover(core: Any, report: dict[str, Any]) -> None:
         if not _lane_wrote(fm, vault / "raw" / f"{slug}.md"):
             done.append(slug)
             continue
-        if (vault / anchor_rel(slug)).is_file():
+        if existing_anchor_rel(vault, slug):
             done.append(slug)
             continue
         try:

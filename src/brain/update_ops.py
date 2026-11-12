@@ -151,7 +151,7 @@ def _record_update_report(
 
 def _hold_unattested(
     brainiac_home: Path, *, installed: Any, latest: Any, source: Any,
-    today: Any, attempts: int,
+    today: Any, attempts: int, artifact_box: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """The A-03 gate: ``None`` to proceed, a HELD result to stop.
 
@@ -165,8 +165,11 @@ def _hold_unattested(
     it by running `brain update` himself, which does NOT gate — his direction
     is the authority; the risk here is unattended execution, not the upgrade.
     """
+    artifact_box = {} if artifact_box is None else artifact_box
     verdict = attestation.verify_publisher(str(latest))
     if verdict["ok"]:
+        # Stash the attested file for the install (F36/F37): the caller reads it.
+        artifact_box["artifact"] = attestation.pick_pin_artifact(verdict.get("artifacts"))
         return None
     brain_update.write_update_state(
         brainiac_home, status="held", installed=installed, latest=latest,
@@ -248,9 +251,11 @@ class UpdateOpsMixin:
                     "latest": latest,
                     "attempts": previous_attempts,
                 }
+        attested: dict[str, Any] = {}
         held = _hold_unattested(
             brainiac_home, installed=installed, latest=latest,
             source=info.get("source"), today=today, attempts=previous_attempts,
+            artifact_box=attested,
         )
         if held is not None:
             return held
@@ -270,7 +275,8 @@ class UpdateOpsMixin:
             with writer_lock(brainiac_home / UPDATE_LOCK_FILENAME,
                              verb="update-retry", timeout=0.1):
                 report = brain_update.run_update(
-                    brainiac_home=brainiac_home, pin_version=str(latest))
+                    brainiac_home=brainiac_home, pin_version=str(latest),
+                    pin_artifact=attested.get("artifact"))
                 return _record_update_report(
                     brainiac_home,
                     report=report,

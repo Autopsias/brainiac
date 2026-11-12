@@ -32,7 +32,11 @@ BRAIN_BIN="${BRAIN_SYNTHESIS_BRAIN_BIN:-$(command -v brain || true)}"
 # 120, not 60: the 2026-07-19 08:00 run died error_max_turns at 61 while the
 # 22:26 rerun needed 96 turns for the same scope — 60 cannot fit a real
 # synthesis pass over a week's transcript batch.
-MAX_TURNS="${BRAIN_SYNTHESIS_MAX_TURNS:-120}"
+# 320, not 120: one vault's 2026-11-08 run died error_max_turns at 121
+# (80 sources into 35 notes, only the closing step lost). Earlier successful
+# runs reported num_turns 165, 206 and 255 under the same 120 cap, so the CLI
+# now enforces the cap on the count it reports. 320 = the largest seen + ~25%.
+MAX_TURNS="${BRAIN_SYNTHESIS_MAX_TURNS:-320}"
 
 log() { printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$LOG"; }
 
@@ -187,7 +191,11 @@ settings = {
             # the Edit rule above, so this widens nothing an Edit could not
             # already do by rewriting a note wholesale.
             absolute_rule("Write", vault, "brain/**"),
-            absolute_rule("Edit", vault, ".brain/memory/**"),
+            # Only the notes the prompt names; NOT inbox.jsonl (the owner
+            # question queue the host answers from) — security F14.
+            absolute_rule("Edit", vault, ".brain/memory/hot.md"),
+            absolute_rule("Edit", vault, ".brain/memory/handoff.md"),
+            absolute_rule("Edit", vault, ".brain/memory/lessons.md"),
             "Skill(kb-curator)",
             "mcp__brainiac__search", "mcp__brainiac__get",
             "mcp__brainiac__recent", "mcp__brainiac__bases_query",
@@ -252,16 +260,15 @@ PY
   # first; a workspace copy and an env override are accepted after that. A
   # miss is LOGGED, never silent.
   RETRO_TOOL=""
-  for cand in "${BRAIN_COS_RETRO:-}" \
-              "$(dirname "$0")/../tools/cos_retro.py" \
-              "$WS/tools/cos_retro.py"; do
-    if [ -n "$cand" ] && [ -f "$cand" ]; then RETRO_TOOL="$cand"; break; fi
-  done
+  # Engine-owned copy ONLY (security F2): never run code from $WS or an env
+  # override — the workspace is VM-writable and this runs on the host.
+  cand="$(dirname "$0")/../tools/cos_retro.py"
+  if [ -f "$cand" ]; then RETRO_TOOL="$cand"; fi
   if [ -n "$RETRO_TOOL" ]; then
     RETRO_OUT=$(python3 "$RETRO_TOOL" --vault "$VAULT" 2>&1 || true)
     log "cos-retro: $RETRO_OUT"
   else
-    log "cos-retro: SKIP — cos_retro.py not found beside $0 or in $WS/tools"
+    log "cos-retro: SKIP — engine copy of cos_retro.py not found beside $0"
   fi
   STATUS_DIAG=$(BRAIN_VAULT="$VAULT" "$BRAIN_BIN" --role vm status --json 2>&1 || true)
   DOCTOR_DIAG=$(BRAIN_VAULT="$VAULT" "$BRAIN_BIN" --role vm doctor --json 2>&1 || true)
@@ -289,6 +296,8 @@ doctor: $DOCTOR_DIAG"
   # < /dev/null: claude -p hangs forever reading a non-TTY stdin — and inside
   # this while-read loop it would otherwise inherit (and eat) the registry pipe
   RC=$?
+  OUTCOME=ok
+  if [ "$RC" -ne 0 ]; then OUTCOME=session-failed; fi
   rm -f -- "$SETTINGS_JSON" "$MCP_JSON"
   # THE DRAIN RUNS WHATEVER THE SESSION'S EXIT CODE WAS (2026-08-19). It used
   # to sit behind `[ "$RC" -eq 0 ]`, which meant a session that did all its
@@ -309,6 +318,7 @@ doctor: $DOCTOR_DIAG"
   if [ -z "$BRAIN_BIN" ] || [ ! -x "$BRAIN_BIN" ]; then
     log "FAIL synthesis: brain CLI not found for trusted host publish"
     RC=127
+    [ "$OUTCOME" != ok ] || OUTCOME=engine-missing
   else
     # -- SIGN-DRAIN (2026-08-15). The confined session CANNOT sign: it denies
     # Bash, runs BRAIN_ROLE=vm, and holds no key — deliberately, because it
@@ -381,6 +391,7 @@ doctor: $DOCTOR_DIAG"
     if [ "$SIGN_FAIL" -ne 0 ]; then
       log "FAIL synthesis: $SIGN_FAIL note(s) left unsigned"
       RC=75
+      [ "$OUTCOME" != ok ] || OUTCOME=notes-unsigned
     fi
   fi
   # Publish when the run succeeded OR when the drain just signed something:
@@ -389,9 +400,19 @@ doctor: $DOCTOR_DIAG"
   # layer down. A publish failure only sets RC when RC was otherwise clean —
   # it must never overwrite the session's own non-zero verdict.
   if [ "$RC" -eq 0 ] || [ "${SIGNED:-0}" -ne 0 ]; then
-    BRAIN_VAULT="$VAULT" BRAIN_ROLE=host "$BRAIN_BIN" sync --publish >>"$LOG" 2>&1
+    SYNC_OUT="$(BRAIN_VAULT="$VAULT" BRAIN_ROLE=host "$BRAIN_BIN" sync --publish 2>&1)"
     SYNC_RC=$?
-    if [ "$RC" -eq 0 ]; then RC=$SYNC_RC; fi
+    printf '%s\n' "$SYNC_OUT" >>"$LOG"
+    if [ "$SYNC_RC" -ne 0 ]; then
+      if printf '%s\n' "$SYNC_OUT" | grep -q '^sync failed (WriterLockBusy)'; then
+        # A busy writer lock is not a failure: the hourly maintain publishes later.
+        log "publish deferred: writer lock busy; the next hourly sync publishes"
+        [ "$OUTCOME" != ok ] || OUTCOME=publish-deferred
+      else
+        [ "$OUTCOME" != ok ] || OUTCOME=publish-failed
+        if [ "$RC" -eq 0 ]; then RC=$SYNC_RC; fi
+      fi
+    fi
   fi
   # The drain removes the marker on its own path; this catches every other exit
   # (model failure, missing brain CLI) so /tmp does not collect one per run.
@@ -403,7 +424,7 @@ doctor: $DOCTOR_DIAG"
   # the log line above + synthesis-state.json (read by the session-start
   # alerts hook).
   if [ "$RC" -ne 0 ] && command -v osascript >/dev/null 2>&1; then
-    osascript -e "display notification \"weekly synthesis FAILED (rc=$RC) for $VAULT — see $LOG\" with title \"Brainiac health\"" >/dev/null 2>&1 || true
+    osascript -e 'on run argv' -e 'display notification ("weekly synthesis FAILED (rc=" & item 1 of argv & ") for " & item 2 of argv & " — see " & item 3 of argv) with title "Brainiac health"' -e 'end run' "$RC" "$VAULT" "$LOG" >/dev/null 2>&1 || true
   fi
   # Render a human-readable transcript from the structured NDJSON into $LOG
   # (finding [5]): the prior `tee`'d raw NDJSON REPLACED the readable session
@@ -454,9 +475,9 @@ PY
   # a silent write failure there would freeze last_success and trip a FALSE
   # "synthesis stale" watchdog even though synthesis ran fine.
   mkdir -p "$(dirname "$STATE")" 2>>"$LOG" || true
-  python3 - "$STATE" "$VAULT" "$RC" "$OUT_JSON" <<'PY'
+  python3 - "$STATE" "$VAULT" "$RC" "$OUT_JSON" "$OUTCOME" <<'PY'
 import json, sys, datetime
-path, vault, rc, out_json = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+path, vault, rc, out_json, outcome = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4], sys.argv[5]
 try:
     state = json.load(open(path))
 except Exception:
@@ -464,6 +485,7 @@ except Exception:
 entry = state.setdefault(vault, {})
 entry["last_attempt"] = datetime.date.today().isoformat()
 entry["rc"] = rc
+entry["outcome"] = outcome
 if rc == 0:
     entry["last_success"] = entry["last_attempt"]
 

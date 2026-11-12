@@ -70,8 +70,12 @@ fi
 # the WAT-01 stale-feed alert names it after 2 days.
 # ponytail: process-name match, a pid lock if the night ever runs under
 # another name.
+# The bracket stops this check matching another copy of itself: BSD pgrep
+# excludes only itself and its ancestors, and a restart loads the vault jobs
+# together. Each saw the other's pgrep and skipped, and a skip exits at once,
+# so they stayed in step and did no work (2026-11-06).
 YIELD_TO="${BRAIN_BRIEF_YIELD_TO:-tools/cos_nightly.sh}"
-if pgrep -f "$YIELD_TO" >/dev/null 2>&1; then
+if pgrep -f "[${YIELD_TO:0:1}]${YIELD_TO:1}" >/dev/null 2>&1; then
   echo "=== brain-daily-brief / brain-nightly $(date -u +%Y-%m-%dT%H:%M:%SZ) === SKIP: the nightly mail run is running ($YIELD_TO); next hour catches up" >> "$LOG"
   exit 0
 fi

@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 from .cowork_snapshot_guard import snapshot_lands_on_the_mount
-from .vmstaging import tools_on_path
+from .update_stage_failure import _failed, _stage_failure
+from .vmstaging import put_file_nofollow, tools_on_path
 from .doctor import (
     CHANNEL_EDITABLE,
     CHANNEL_PIP_USER,
@@ -67,19 +68,25 @@ def _read_installed_version(
     return (output.stdout or output.stderr or "unknown").strip() or "unknown"
 
 
-def _pinned(pin: Optional[str]) -> str:
+def _pinned(pin: Optional[str], artifact: Optional[dict] = None) -> str:
+    """``==pin``, or (F36/F37) the exact attested file: URL plus ``#sha256=``,
+    which pip and uv both verify, so no later file added to the release can win."""
+    if artifact:
+        return f"brainiac-cli[mcp] @ {artifact['url']}#sha256={artifact['sha256']}"
     return f"brainiac-cli[mcp]=={pin}"
 
 
-def upgrade_uv_tool(run: Runner, pin: Optional[str] = None) -> subprocess.CompletedProcess[str]:
+def upgrade_uv_tool(run: Runner, pin: Optional[str] = None,
+                    pin_artifact: Optional[dict] = None) -> subprocess.CompletedProcess[str]:
     """Upgrade via uv; to exactly ``pin`` (the version A-03 verified) when given."""
-    cmd = ["uv", "tool", "install", _pinned(pin)] if pin else ["uv", "tool", "upgrade", "brainiac-cli"]
+    cmd = ["uv", "tool", "install", _pinned(pin, pin_artifact)] if pin else ["uv", "tool", "upgrade", "brainiac-cli"]
     return run(cmd, timeout=ENGINE_INSTALL_TIMEOUT_S)
 
 
-def upgrade_pipx(run: Runner, pin: Optional[str] = None) -> subprocess.CompletedProcess[str]:
+def upgrade_pipx(run: Runner, pin: Optional[str] = None,
+                 pin_artifact: Optional[dict] = None) -> subprocess.CompletedProcess[str]:
     """Upgrade via pipx; `upgrade` cannot pin and `install --force` failed in a probe."""
-    cmd = (["pipx", "runpip", "brainiac-cli", "install", _pinned(pin)] if pin
+    cmd = (["pipx", "runpip", "brainiac-cli", "install", _pinned(pin, pin_artifact)] if pin
            else ["pipx", "upgrade", "brainiac-cli"])
     return run(cmd, timeout=ENGINE_INSTALL_TIMEOUT_S)
 
@@ -88,9 +95,10 @@ def upgrade_pip_user(
     run: Runner,
     python_executable: str,
     pin: Optional[str] = None,
+    pin_artifact: Optional[dict] = None,
 ) -> subprocess.CompletedProcess[str]:
     """Upgrade the user-site distribution, to exactly ``pin`` when given."""
-    spec = _pinned(pin) if pin else "brainiac-cli[mcp]"
+    spec = _pinned(pin, pin_artifact) if pin else "brainiac-cli[mcp]"
     return run([python_executable, "-m", "pip", "install", "--user", "--upgrade", spec],
                timeout=ENGINE_INSTALL_TIMEOUT_S)
 
@@ -123,6 +131,7 @@ def refresh_engine_channel(
     which_brain: Optional[str],
     python_executable: str,
     pin_version: Optional[str] = None,
+    pin_artifact: Optional[dict] = None,
 ) -> dict:
     """Select one install channel, then run its upgrade command (``pin_version``:
     exact PyPI release; an editable checkout installs local source and ignores it)."""
@@ -146,15 +155,15 @@ def refresh_engine_channel(
             return _cos_guard_refusal(old_version, channel, brainiac_home)
 
     if channel == CHANNEL_PYPI_UV:
-        install_out = upgrade_uv_tool(run, pin_version)
+        install_out = upgrade_uv_tool(run, pin_version, pin_artifact)
     elif channel == CHANNEL_PIPX:
-        install_out = upgrade_pipx(run, pin_version)
+        install_out = upgrade_pipx(run, pin_version, pin_artifact)
     elif channel == CHANNEL_PIP_USER:
-        install_out = upgrade_pip_user(run, python_executable, pin_version)
+        install_out = upgrade_pip_user(run, python_executable, pin_version, pin_artifact)
     elif channel == CHANNEL_VENV_WHEEL:
         pip_path = venv_bin(legacy_venv_dir, "pip")
         target = (f"{engine_src}[mcp]" if has_checkout
-                  else _pinned(pin_version) if pin_version else "brainiac-cli[mcp]")
+                  else _pinned(pin_version, pin_artifact) if pin_version else "brainiac-cli[mcp]")
         install_out = upgrade_venv_wheel(run, pip_path, target)
         brain_bin = legacy_bin
     else:
@@ -218,6 +227,9 @@ def stage_engine_and_skills(
         assert_relocated_vault_leaves_no_note_bodies(
             workspace_path, vault_path, caller="stage_engine_and_skills")
 
+    for guarded in (brain_dir, brain_dir / "skills", brain_dir / "routines"):
+        if guarded.is_symlink():
+            raise OSError(f"refusing to stage through a symlink: {guarded}")
     engine_dir = brain_dir / "engine"
     if engine_dir.exists():
         shutil.rmtree(engine_dir)
@@ -234,14 +246,14 @@ def stage_engine_and_skills(
     skills_dst_dir.mkdir(parents=True, exist_ok=True)
     zips = sorted(skills_src_dir.glob("*.skill")) if skills_src_dir.is_dir() else []
     for bundle in zips:
-        shutil.copyfile(bundle, skills_dst_dir / bundle.name)
+        put_file_nofollow(bundle, skills_dst_dir / bundle.name)
 
     vendor_status: dict[str, str] = {}
     try:
         with tools_on_path(engine_src):
             import vendor_semantic_deps as vendor_deps  # type: ignore
 
-            vendor_deps.write_shim(brain_dir)
+            vendor_deps.write_shim(brain_dir)  # itself link-safe (same rename idiom)
             vendor_status = vendor_deps.stage_vendor(brain_dir)
     except Exception as exc:
         vendor_status = {"error": f"{type(exc).__name__}: {exc}"}
@@ -250,18 +262,17 @@ def stage_engine_and_skills(
     if prompt_src.exists():
         routines_dst = brain_dir / "routines"
         routines_dst.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(prompt_src, routines_dst / "cowork-session-prompt.md")
+        put_file_nofollow(prompt_src, routines_dst / "cowork-session-prompt.md")
 
     agents_src = engine_src / "AGENTS.md"
     if agents_src.exists():
-        shutil.copyfile(agents_src, brain_dir / "AGENTS.md")
+        put_file_nofollow(agents_src, brain_dir / "AGENTS.md")
 
     for script_name in ("vm-selftest.sh", "vm-boundary-probe.sh"):
         script_src = callbacks.packaged_script(script_name, engine_src)
         if script_src is not None:
             destination = brain_dir / script_name
-            shutil.copyfile(script_src, destination)
-            destination.chmod(0o755)
+            put_file_nofollow(script_src, destination, 0o755)
 
     ssot = callbacks.ssot_version(engine_src)
     staged = callbacks.read_version_stamp(engine_dir / "brain" / "_version.py")
@@ -323,28 +334,6 @@ def _sync_timeout_result(workspace_path: str, target: Any) -> dict:
             "this workspace with tools/cowork_workspace_install.sh"
         ),
     }
-
-
-def _failed(workspace_path: str, target: Any, reason: str) -> dict:
-    """One shape for every failure row this restage can produce."""
-    return {"workspace_path": workspace_path, "target": target,
-            "status": "failed", "reason": reason}
-
-
-def _stage_failure(stage_info: dict) -> str | None:
-    """Reason a re-stage landed wrong, or None when it is sound."""
-    if not stage_info["version_ok"]:
-        return (
-            f"staged engine version {stage_info['staged_version']!r} != "
-            f"SSOT {stage_info['ssot_version']!r} after re-stage — "
-            "engine copy landed a missing/stale _version.py stamp"
-        )
-    if not stage_info.get("binaries_ok", True):
-        return stage_info["binaries_detail"]
-    if stage_info["skills_shipped"] == 0:
-        return (f"no .skill bundles found in {stage_info['skills_src_dir']} "
-                "to refresh — run tools/package_clients.py in the checkout")
-    return None
 
 
 def _restage_cowork_workspace(

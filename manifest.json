@@ -305,6 +305,7 @@
     "src/brain/_optional.py",
     "src/brain/_version.py",
     "src/brain/alerts.py",
+    "src/brain/alerts_drafts.py",
     "src/brain/alerts_render.py",
     "src/brain/alerts_staging.py",
     "src/brain/anchor.py",
@@ -452,6 +453,7 @@
     "src/brain/index/_families.py",
     "src/brain/index/_graph.py",
     "src/brain/index/_identity.py",
+    "src/brain/index/_language_census.py",
     "src/brain/index/_lifecycle.py",
     "src/brain/index/_models.py",
     "src/brain/index/_planning.py",
@@ -477,6 +479,7 @@
     "src/brain/index_stages/sync.py",
     "src/brain/ingest/__init__.py",
     "src/brain/ingest/deliverables.py",
+    "src/brain/ingest/deliverables_anchor.py",
     "src/brain/ingest/handlers/__init__.py",
     "src/brain/ingest/handlers/base.py",
     "src/brain/ingest/handlers/concealment.py",
@@ -498,6 +501,7 @@
     "src/brain/ingest/handlers/xlsx.py",
     "src/brain/ingest/handlers/zip.py",
     "src/brain/ingest/pipeline.py",
+    "src/brain/ingest/pipeline_anchor.py",
     "src/brain/ingest/pipeline_duplicates.py",
     "src/brain/ingest/pipeline_files.py",
     "src/brain/ingest/pipeline_injection.py",
@@ -577,6 +581,7 @@
     "src/brain/provision.py",
     "src/brain/provision_mcp.py",
     "src/brain/provision_stage.py",
+    "src/brain/provision_summary.py",
     "src/brain/provision_wire.py",
     "src/brain/querylog.py",
     "src/brain/querylog_digest.py",
@@ -617,6 +622,7 @@
     "src/brain/update_model.py",
     "src/brain/update_ops.py",
     "src/brain/update_plugins.py",
+    "src/brain/update_stage_failure.py",
     "src/brain/update_state.py",
     "src/brain/update_venv.py",
     "src/brain/vectors.py",
@@ -704,5 +710,5 @@
     "vault/raw/2026-06-27-arctic-vs-e5-benchmark.md",
     "vault/raw/README.md"
   ],
-  "count": 703
+  "count": 709
 }

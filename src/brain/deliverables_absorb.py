@@ -438,8 +438,8 @@ def _ensure_anchor(core: Any, note_id: str, row: dict[str, Any]) -> str:
     existing anchor with is a tier no HIGHER than the raw note's own, because a
     higher declared one is refused before this is called.
     """
-    rel = DLV.anchor_rel(note_id)
-    if (Path(core.vault) / rel).is_file():
+    rel = DLV.existing_anchor_rel(core.vault, note_id)
+    if rel:
         return rel
     return DLV.write_anchor(core, {
         "slug": note_id, "title": row["name"], "project": row["project"] or None,

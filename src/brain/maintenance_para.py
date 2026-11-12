@@ -96,10 +96,22 @@ def _destination(path: Path) -> tuple[str | None, str]:
     return zone, note_id
 
 
-def _move(src: Path, dest: Path) -> None:
+def _move(src: Path, dest: Path, sha: str) -> None:
     """No-replace move: ``link`` fails with FileExistsError if ``dest``
-    appeared since the check, where ``rename`` would silently overwrite it."""
-    os.link(src, dest)
+    appeared since the check, where ``rename`` would silently overwrite it.
+
+    ``src`` was checked by NAME, and a name can be swapped for a symlink before
+    the link call (F47). So the link never follows a symlink, and what landed at
+    ``dest`` must be a regular file carrying the bytes that were signed, or it
+    is removed again."""
+    os.link(src, dest, follow_symlinks=False)
+    from .notes import sha256_file
+    try:
+        if not stat.S_ISREG(os.lstat(dest).st_mode) or sha256_file(dest) != sha:
+            raise OSError(f"{src.name} changed while it was being moved")
+    except OSError:
+        dest.unlink(missing_ok=True)
+        raise
     try:
         src.unlink()
     except OSError:
@@ -143,7 +155,7 @@ def _apply_one(vault: Path, move: dict[str, Any], audit: Any,
         report["skipped_unsigned"].append({"id": note_id, "reason": str(exc)})
         return
     try:
-        _move(p, dest)
+        _move(p, dest, sha)
     except OSError as exc:
         audit.append(verb="write_failed", path=new_rel,
                      reason=f"auto-para move failed: {type(exc).__name__}: {exc}")

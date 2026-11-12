@@ -72,11 +72,23 @@ class _TextExtractor(html.parser.HTMLParser):
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
+_TITLE_OPEN = re.compile(r"<title", re.IGNORECASE)
+_TITLE_CLOSE = re.compile(r"</title>", re.IGNORECASE)
+
+
 def _extract_title(raw_html: str) -> str | None:
-    m = re.search(r"<title[^>]*>(.*?)</title>", raw_html, re.IGNORECASE | re.DOTALL)
-    if not m:
+    # Linear scan, one pass per marker. A lazy ``<title[^>]*>(.*?)</title>``
+    # rescanned to the end of the document from EVERY unclosed ``<title`` (F28).
+    start = _TITLE_OPEN.search(raw_html)
+    if not start:
         return None
-    title = _html_stdlib.unescape(m.group(1))
+    open_end = raw_html.find(">", start.end())
+    if open_end < 0:
+        return None
+    close = _TITLE_CLOSE.search(raw_html, open_end + 1)
+    if not close:
+        return None
+    title = _html_stdlib.unescape(raw_html[open_end + 1:close.start()])
     title = _CONTROL_CHARS.sub("", title)
     title = re.sub(r"\s+", " ", title).strip()
     return title or None
@@ -132,8 +144,8 @@ def _extract_text(raw_html: str, seen: object = None) -> tuple[str, list[str], l
 #: A Claude-artifact "Bundled Page" export. The outer file is a LOADER: its
 #: only readable text is "This page requires JavaScript to display", and the
 #: real document sits JSON-encoded in this block.
-_BUNDLER_TEMPLATE = re.compile(
-    r'<script type="__bundler/template">(.*?)</script>', re.DOTALL)
+_BUNDLER_OPEN = '<script type="__bundler/template">'
+_BUNDLER_CLOSE = "</script>"
 
 
 def _bundled_document(raw_html: str) -> str | None:
@@ -146,11 +158,17 @@ def _bundled_document(raw_html: str) -> str | None:
     then goes through the same reader, the same concealment walk and the same
     coverage ledger as an ordinary document.
     """
-    match = _BUNDLER_TEMPLATE.search(raw_html)
-    if not match:
+    # str.find, not a lazy regex: an unclosed open tag repeated N times made
+    # the regex quadratic (F28).
+    begin = raw_html.find(_BUNDLER_OPEN)
+    if begin < 0:
+        return None
+    begin += len(_BUNDLER_OPEN)
+    end = raw_html.find(_BUNDLER_CLOSE, begin)
+    if end < 0:
         return None
     try:
-        inner = json.loads(match.group(1))
+        inner = json.loads(raw_html[begin:end])
     except ValueError:  # coverage-audit: not JSON, so not a bundle; the caller reads the outer document, whose own text IS walked
         return None
     return inner if isinstance(inner, str) and inner.strip() else None

@@ -16,6 +16,7 @@ from typing import Any
 from .. import remediation, remediation_folds as rf
 from .. import remediation_branches as rb
 from .. import remediation_state as rs
+from ..remediation_extract_retry import contained_file_under
 
 
 def registry_shadow_nights(key: str) -> int:
@@ -99,6 +100,69 @@ def apply_intents(
         outcome.healed.append(intent.target)
 
 
+#: The only two trees an ``extract_retry`` copy may read from.
+_RETRY_SOURCE_DIRS = (("raw", "originals"), ("inbox", "_quarantine"))
+
+
+class _SourceUnreadable(OSError):
+    """The retry source was refused or could not be read (nothing written)."""
+
+
+def _copy_retry_source(vault: Path, source: Path) -> str:
+    """Copy ``source`` into ``inbox/``; return the sha256 of the bytes copied.
+
+    Containment is re-checked here, not trusted from the planner, because
+    both source trees sit on the VM-writable mount; and the hash and the copy
+    read ONE descriptor opened ``O_NOFOLLOW``, so a source FILE swapped for a
+    link after planning is refused. ``O_NOFOLLOW`` guards only the last path
+    part: a parent directory swapped in the instant between the check and the
+    open is not covered. The copy is created ``O_NOFOLLOW`` at 0600, then
+    given the source's mode, as ``shutil.copy2`` did. Raises ``_SourceUnreadable`` before any byte is written, ``OSError``
+    after."""
+    import hashlib
+    import os
+    import shutil
+    import stat
+
+    real = vault.resolve()
+    if not any(contained_file_under(source, real.joinpath(*d))
+               for d in _RETRY_SOURCE_DIRS):
+        raise _SourceUnreadable(f"{source} is a link, missing, or outside "
+                                "raw/originals/ and inbox/_quarantine/")
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fh = os.fdopen(os.open(source, os.O_RDONLY | nofollow
+                               | getattr(os, "O_NONBLOCK", 0)), "rb")
+    except OSError as exc:
+        raise _SourceUnreadable(str(exc)) from exc
+    with fh:
+        try:
+            st = os.fstat(fh.fileno())
+            if not stat.S_ISREG(st.st_mode):
+                raise _SourceUnreadable(f"{source} is not a regular file")
+            digest = hashlib.sha256()
+            for blk in iter(lambda: fh.read(1 << 20), b""):
+                digest.update(blk)
+            fh.seek(0)
+        except _SourceUnreadable:
+            raise
+        except OSError as exc:
+            raise _SourceUnreadable(str(exc)) from exc
+        content_hash = digest.hexdigest()
+        inbox = vault / "inbox"
+        # mkdir and open follow a planted directory link: refuse one first.
+        from ..ingest.pipeline_files import refuse_symlinked_dirs
+        refuse_symlinked_dirs(inbox, levels=1)
+        inbox.mkdir(parents=True, exist_ok=True)
+        dest = inbox / f"retry-{content_hash[:12]}-{source.name}"
+        out_fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | nofollow, 0o600)
+        with os.fdopen(out_fd, "wb") as out:
+            shutil.copyfileobj(fh, out)
+            os.fchmod(out.fileno(), stat.S_IMODE(st.st_mode))  # keep 0600 private
+    os.utime(dest, ns=(st.st_atime_ns, st.st_mtime_ns))  # as shutil.copy2 kept them
+    return content_hash
+
+
 def apply_extract_retry_intents(
     core: Any, outcome: rf.BranchOutcome, intents: list[rf.Intent],
     row: dict[str, Any], today: datetime.date,
@@ -112,23 +176,14 @@ def apply_extract_retry_intents(
     archived original under ``raw/originals/``) is never deleted or moved;
     only a copy is written, so a failed retry leaves the original exactly
     where it was for the next attempt or an owner to find by hand."""
-    import shutil
-
-    inbox = Path(core.vault) / "inbox"
+    vault = Path(core.vault)
     for intent in intents:
-        source = Path(intent.content)
         try:
-            from ..snapshot import _sha256_file
-
-            content_hash = _sha256_file(source)
-        except OSError as exc:
+            content_hash = _copy_retry_source(vault, Path(intent.content))
+        except _SourceUnreadable as exc:
             outcome.skipped.append({"target": intent.target,
                                     "reason": f"source unreadable: {exc}"})
             continue
-        try:
-            inbox.mkdir(parents=True, exist_ok=True)
-            dest = inbox / f"retry-{content_hash[:12]}-{source.name}"
-            shutil.copy2(source, dest)
         except OSError as exc:
             outcome.skipped.append({"target": intent.target,
                                     "reason": f"copy failed: {exc}"})

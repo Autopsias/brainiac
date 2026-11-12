@@ -297,6 +297,30 @@ def _check_html_hash(
     return None
 
 
+def verify_host_summary(vault: Path, raw: dict[str, Any]) -> str | None:
+    """HOST-role check of the mount copy of ``exceptions.json``. Returns
+    ``None`` when the summary is signed by THIS host's own key for THIS vault,
+    else a reason. The key is the host's own (``audit.public_key_pem()``),
+    never a pin read from the mount, because on a co-located vault the VM can
+    rewrite the file and the pin beside it."""
+    _schema, reason = _check_schema(raw)
+    if reason is not None:
+        return reason
+    if not raw.get("signature"):
+        return "host summary is unsigned"
+    try:
+        from . import audit as _audit
+
+        pem = _audit.public_key_pem().decode("utf-8")
+    except Exception:  # noqa: BLE001 — no resolvable key is "not verified"
+        return "no host signing key available to verify the summary"
+    if not _verify_signature(raw, pem):
+        return "host summary signature is invalid"
+    if str(raw.get("vault_id") or "") != str(_config.vault_id(vault) or ""):
+        return "host summary vault_id does not match this vault"
+    return None
+
+
 def verify(
     vault: Path, today: datetime.date, workspace: Path | None = None,
 ) -> tuple[bool, dict[str, Any] | None, str]:

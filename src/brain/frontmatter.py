@@ -5,6 +5,8 @@ validator never disagree on note shape. Runs on a bare system python3.
 """
 from __future__ import annotations
 
+import functools
+
 import re
 import unicodedata
 from typing import Any
@@ -120,6 +122,45 @@ def _inline_list(inner: str) -> list[str]:
     return items
 
 
+#: Frontmatter blocks longer than this skip PyYAML (F9): the flat fallback
+#: parser below reads them line by line and cannot expand anything.
+MAX_BLOCK_CHARS = 65536
+
+
+@functools.lru_cache(maxsize=1)
+def _loader() -> Any:
+    """A SafeLoader that rejects YAML anchors and aliases (F9, alias bomb).
+
+    No note or template uses them; a refusal raises, and ``parse`` then falls
+    back to the flat line parser, which never expands a reference."""
+    import yaml  # type: ignore
+
+    class _NoAliasLoader(yaml.SafeLoader):
+        def compose_node(self, parent: Any, index: Any) -> Any:
+            event = self.peek_event()
+            if isinstance(event, yaml.events.AliasEvent) or getattr(event, "anchor", None):
+                raise yaml.YAMLError("YAML anchors and aliases are not allowed")
+            return super().compose_node(parent, index)
+
+    return _NoAliasLoader
+
+
+def uses_alias(block: str) -> bool:
+    """True when the block spells a YAML anchor or alias (or is over the cap).
+
+    Untrusted-path callers refuse such a block outright: the flat fallback in
+    :func:`parse` does not expand it, but a refusal is the safe answer."""
+    import yaml  # type: ignore
+
+    if len(block) > MAX_BLOCK_CHARS:
+        return True
+    try:
+        yaml.load(block, Loader=_loader())  # noqa: S506 - SafeLoader subclass
+    except yaml.YAMLError as exc:
+        return "anchors and aliases" in str(exc)
+    return False
+
+
 def parse(block: str) -> dict[str, Any]:
     """Parse a frontmatter block. PyYAML if importable, else a flat mini-parser.
 
@@ -130,7 +171,9 @@ def parse(block: str) -> dict[str, Any]:
     try:
         import yaml  # type: ignore
 
-        data = yaml.safe_load(block)
+        if len(block) > MAX_BLOCK_CHARS:
+            raise ValueError("frontmatter block too long for the YAML parser")
+        data = yaml.load(block, Loader=_loader())  # noqa: S506 - SafeLoader subclass
         return data if isinstance(data, dict) else {}
     except Exception:  # fail-open: falls through to the built-in parser below
         pass
@@ -269,15 +312,20 @@ def set_keys(text: str, updates: dict[str, Any]) -> str:
         raise ValueError("set_keys: text has no frontmatter block")
     block, body = fm
     remaining = dict(updates)
+    seen: set[str] = set()
     out_lines: list[str] = []
     for line in _block_lines(block):
         key = _top_level_key(line)
         if key is not None and key in remaining:
-            out_lines.append(f"{key}: {_scalar(remaining.pop(key))}")
+            # EVERY occurrence is rewritten: YAML keeps the LAST duplicate,
+            # so rewriting only the first left a forged value in force (F8).
+            out_lines.append(f"{key}: {_scalar(remaining[key])}")
+            seen.add(key)
             continue
         out_lines.append(line)
     for key, val in remaining.items():
-        out_lines.append(f"{key}: {_scalar(val)}")
+        if key not in seen:
+            out_lines.append(f"{key}: {_scalar(val)}")
     new_block = "\n".join(out_lines) + "\n"
     return f"---\n{new_block}---{body}"
 

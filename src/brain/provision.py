@@ -53,6 +53,7 @@ from . import atomic_temp, workspaces
 # because this module is the one every caller already imports.
 from .pathkey import real_key
 from .provision_mcp import mcp_server_name, register_mcp  # noqa: F401
+from .provision_summary import _wire_summary
 
 REQUEST_NAME = "provision-request.json"
 CLAIM_NAME = REQUEST_NAME + ".claimed"
@@ -267,45 +268,6 @@ def _staging_root(vault: Path, workspace: Path) -> Path:
     return staging_root(vault, workspace)
 
 
-def _wire_summary(wires: dict[str, Any], *, sync_ok: bool) -> dict[str, Any]:
-    """Six wire verdicts -> the report shape the drain's consumers speak.
-
-    Split out of :func:`_provision_one` only to keep it under the function-length
-    ratchet, and it is a coherent unit on its own: everything here is a pure
-    function of the wire statuses, with no vault, workspace or runner in reach.
-
-    Two rules live in it:
-
-    * **A failed wire may NEVER hide inside a `provisioned` summary.** Wires 3
-      and 5 are what make the vault findable at all, and this report is
-      CONSUMED: the claim marker is deleted on it, ``write_request`` reads
-      ``ok: true`` as already-provisioned, and ``maintain`` files an auto-fix.
-      So the wire statuses decide the status, not the sync exit code alone.
-    * **Only claim a Cowork workspace the staging actually built** — wire 4's
-      own condition, read back here. An entry asserting a Cowork-ready
-      workspace with no engine inside it sends a Cowork session to a
-      ``brain: command not found`` dead end.
-    """
-    # The MCP registration is what makes the vault reachable from the Desktop
-    # Chat tab and Cowork's MCP-on-host path — a vault that indexes perfectly
-    # and has no server entry is invisible to both.
-    out: dict[str, Any] = {
-        "mcp": wires["5"].get("mcp", {"status": "failed",
-                                      "error": wires["5"].get("detail", "")})}
-    failed = [k for k in ("3", "5") if wires[k]["status"] == "failed"]
-    if wires["3"]["status"] == "failed":
-        out["registry"] = f"NOT recorded — wire 3 failed: {wires['3'].get('detail', '')}"
-    else:
-        targets = ("host + cowork-vm" if wires["4"]["status"] in ("already", "done")
-                   else "host")
-        out["registry"] = f"recorded ({targets})"
-    out["status"] = "provisioned" if not failed else "wires-failed"
-    out["ok"] = sync_ok and not failed
-    if failed:
-        out["failed_wires"] = failed
-    return out
-
-
 def _provision_one(vault: Path, workspace: Path, *, entries: list[dict],
                    registered_vaults: set[Path],
                    registry_path: Path, lock_path: Path,
@@ -471,11 +433,27 @@ def drain(*, registry_path: Optional[Path] = None,
                 handled.append({"vault": str(vault), "status": "skipped-symlink-escape",
                                 "ok": False})
                 continue
+            # `.brain` is VM-writable too: a symlinked one would carry the
+            # claim and the result file to a host directory (F6).
+            if marker.parent.is_symlink():
+                handled.append({"vault": str(vault), "status": "skipped-symlink-escape",
+                                "ok": False})
+                continue
             claim = marker.with_name(CLAIM_NAME)
             try:
                 os.rename(marker, claim)  # atomic claim; racing drain loses cleanly
             except FileNotFoundError:
                 continue
+            # Re-verify after the claim and hand every later step the RESOLVED
+            # path, so a swap of <workspace>/vault between the check above and
+            # the provisioning below is refused instead of followed (F39).
+            if (Path(os.path.realpath(workspace)) != real_workspace
+                    or Path(os.path.realpath(vault)) != real_vault
+                    or vault.is_symlink() or marker.parent.is_symlink()):
+                handled.append({"vault": str(vault), "status": "skipped-symlink-escape",
+                                "ok": False})
+                continue
+            vault = real_vault
             try:
                 res = _provision_one(
                     vault, workspace, entries=entries,
@@ -488,8 +466,12 @@ def drain(*, registry_path: Optional[Path] = None,
             res["completed_at"] = _now_iso()
             result_file = vault / ".brain" / RESULT_NAME
             try:
-                result_file.write_text(json.dumps(res, indent=2) + "\n",
-                                       encoding="utf-8")
+                # Unpredictable O_EXCL temp name + rename: never writes
+                # THROUGH a symlink planted at the result name (F6).
+                from .core._durability import _write_atomic_durable
+                _write_atomic_durable(result_file,
+                              (json.dumps(res, indent=2) + "\n").encode("utf-8"),
+                              mode=0o644)
             except OSError:
                 pass
             claim.unlink(missing_ok=True)

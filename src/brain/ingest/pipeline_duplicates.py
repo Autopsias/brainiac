@@ -126,11 +126,14 @@ def record_duplicate(record: "ClaimRecord", existing_id: str) -> "ClaimRecord":
     """Move the claimed file aside as a duplicate of an already-ingested note."""
     from . import pipeline as facade
 
+    from . import pipeline_files as files
+
     assert record.claimed is not None
+    files.refuse_symlinked_dirs(record.drain.duplicate_dir, 2)
     facade._move(record.claimed, record.drain.duplicate_dir / record.claimed.name)
-    (record.drain.duplicate_dir / f"{record.claimed.name}.duplicate-of.txt").write_text(
+    files.write_sidecar(
+        record.drain.duplicate_dir / f"{record.claimed.name}.duplicate-of.txt",
         f"identical content already ingested as raw/{existing_id}.md\n",
-        encoding="utf-8",
     )
     record.append("duplicates", {
         "file": record.claimed.name,

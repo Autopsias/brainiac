@@ -94,9 +94,10 @@ def _read_summary(vault: Path) -> dict[str, Any] | None:
     except OSError:
         return None
     try:
-        return json.loads(raw)
+        data = json.loads(raw)
     except ValueError:
         return None
+    return data if isinstance(data, dict) else None
 
 
 def _full_page_path(vault: Path) -> Path:
@@ -140,6 +141,13 @@ def vault_row(vault: Path, *, role: str,
                     "count": None, "exists": page.is_file(),
                     "reason": "this vault's nightly run has not written a "
                               "summary yet"}
+        from . import exceptions_verify as _verify
+
+        bad = _verify.verify_host_summary(vault, summary)
+        if bad is not None:
+            return {"vault": str(vault), "name": name, "page": str(page),
+                    "count": None, "exists": page.is_file(),
+                    "reason": f"exceptions summary unreachable — {bad}"}
     count = summary.get("count")
     return {"vault": str(vault), "name": name, "page": str(page),
             "count": int(count) if isinstance(count, int) else None,

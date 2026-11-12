@@ -17,9 +17,12 @@ entry formats in `docs/session-memory.md`. Rules an agent needs at a glance:
 - **Run `brain alerts` at session start — EVERY harness, not just the one with
   a hook.** It is the single degradation digest: auto-update state, weekly
   synthesis health, the engine-feedback backlog, and whatever is degraded
-  RIGHT NOW (`blocked`, `trend:*`, `invariant:*`). Pure file reads — no index,
-  embedder, network or key — so it costs the engine's import floor and
-  nothing more. **Currently true, not recently seen:** it reads
+  RIGHT NOW (`blocked`, `trend:*`, `invariant:*`). File reads — no index,
+  embedder or network — so it costs the engine's import floor plus ONE
+  key read on the host: the host verifies the mount-side exceptions
+  summary against its own audit key (~1 s, measured 2026-11-11), because
+  the VM can write that file; a locked or absent key reports the summary
+  `unreachable`, never a count. **Currently true, not recently seen:** it reads
   `notify-sent/current.json`, which `brain maintain` REWRITES at the end
   of every run, never the sibling `*.marker` files — a marker records that a
   finding was ANNOUNCED that day, so reading markers made a condition fixed at

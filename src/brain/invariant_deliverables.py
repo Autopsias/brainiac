@@ -184,7 +184,7 @@ def unanchored_deliverable_payloads(
     One glob over ``raw/*.md`` and one ``is_file()`` per lane payload — the
     same shape and cost class as ``ingest_guard``'s own raw-zone walk, never
     a second walk of the whole vault. The anchor test is the drop lane's OWN
-    predicate (``deliverables.anchor_rel`` + ``is_file``), the one its
+    predicate (``deliverables.existing_anchor_rel``), the one its
     recovery pass uses to decide it is finished, so this metric and that
     recovery can never disagree about what "anchored" means.
     """
@@ -198,7 +198,7 @@ def unanchored_deliverable_payloads(
         if not DLV._lane_wrote(fm, path):
             continue
         payloads += 1
-        if not (root / DLV.anchor_rel(path.stem)).is_file():
+        if not DLV.existing_anchor_rel(root, path.stem):
             unanchored.append(f"raw/{path.name}")
     return {
         "value": len(unanchored),

@@ -45,6 +45,7 @@ from .alerts_staging import (  # noqa: F401 — re-exported for callers/tests
     host_vaults, retrieval_watch_alerts, RETRIEVAL_WATCH_UNREACHABLE,
     staging_alerts,
 )
+from .alerts_drafts import STUCK_DRAFT_HOURS, stuck_draft_alerts  # noqa: F401
 
 # `brain maintain` overwrites `notify-sent/current.json` at the end of every
 # run with the findings TRUE AT THAT MOMENT. That file is this digest's feed.
@@ -69,14 +70,6 @@ UPDATE_STATE_MAX_AGE_DAYS = 7
 
 # A weekly task that has not succeeded in longer than this has missed a run.
 SYNTHESIS_STALE_DAYS = 8
-
-# The hourly nightly drains capture drafts on every firing, so a draft still
-# sitting in the inbox after this many hours has been REFUSED by the drain
-# (duplicate-id, stale-base, update-needs-owner, ...) and will never promote
-# on its own. Until 2026-08-30 nothing reported this: a 19-Aug rule update
-# sat refused for 11 days while the session that staged it believed it had
-# applied (UPD-01).
-STUCK_DRAFT_HOURS = 48
 
 # The feed's `findings[].key` vocabulary is closed (see maintenance_notify.py:
 # "blocked", "synthesis-watchdog", "trend:<metric>", "invariant:<metric>",  # noqa: ERA001
@@ -250,36 +243,6 @@ def vault_alerts(
     return out
 
 
-def stuck_draft_alerts(vault: Path, name: str) -> list[dict[str, str]]:
-    """Capture drafts the drain keeps refusing (UPD-01). Pure mtime reads."""
-    import time
-
-    cutoff = time.time() - STUCK_DRAFT_HOURS * 3600
-    stuck: list[str] = []
-    for d in (_config.capture_inbox_dir(vault), vault / ".brain" / "drafts"):
-        try:
-            entries = sorted(d.glob("*.md"))
-        except OSError:
-            continue
-        for f in entries:
-            try:
-                if f.stat().st_mtime < cutoff:
-                    # Same posture as _FINDING_KEY_RE: a draft filename is
-                    # untrusted-leg-authored and this line is rendered into
-                    # the host SessionStart context — never verbatim.
-                    stuck.append(re.sub(r"[^A-Za-z0-9._-]", "_", f.name)[:64])
-            except OSError:
-                continue
-    if not stuck:
-        return []
-    shown = ", ".join(stuck[:3]) + ("…" if len(stuck) > 3 else "")
-    return [_alert(
-        "stuck-drafts",
-        f"{len(stuck)} capture draft(s) stuck >{STUCK_DRAFT_HOURS}h ({shown}) — "
-        "run `brain sync` and read the skip reasons; an `update-needs-owner` "
-        "refusal applies with `brain write`", name)]
-
-
 def exceptions_alerts(
     vault: Path, today: datetime.date, name: str, *, role: str,
     workspace: Path | None = None,
@@ -327,16 +290,29 @@ def exceptions_alerts(
                                "predates it, so exceptions are UNREPORTED "
                                "until the next run", name)]
             return []
+        # The mount copy is VM-writable on a co-located vault: verify it with
+        # this host's own key before trusting any field in it.
+        from . import exceptions_verify as _exc_verify
+
+        bad = _exc_verify.verify_host_summary(vault, summary)
+        if bad is not None:
+            return [_alert("exceptions:unreachable",
+                           f"exceptions summary unreachable — {bad}", name)]
         at = _date(summary.get("generated_at"))
         if at is None or (today - at).days > FINDINGS_STALE_DAYS:
             return [_alert("exceptions:stale",
                            "exceptions summary is stale or unparseable — "
                            "nothing is watching this vault's exceptions", name)]
 
-    count = int(summary.get("count") or 0)
+    count = summary.get("count")
+    if not isinstance(count, int) or isinstance(count, bool):
+        return [_alert("exceptions:unreachable",
+                       "exceptions summary unreachable — its count is not "
+                       "a number", name)]
     if not count:
         return []
-    page = str(summary.get("page_path") or "")
+    # Built here, never copied from the file: page_path is mount-writable text.
+    page = f".brain/{_exc_page.MOUNT_FILENAME}"
     # Name the COMMAND, not only the path. This line fires at session start in
     # Claude Code, Codex and Cowork, and a bare path is unopenable in two of
     # the three — `brain exceptions --open` works on the host and reports why

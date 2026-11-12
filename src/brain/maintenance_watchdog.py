@@ -22,6 +22,16 @@ import os
 # ---------------------------------------------------------------------------
 SYNTHESIS_STATE_ENV = "BRAIN_SYNTHESIS_STATE"
 SYNTHESIS_STALE_DAYS = 8  # weekly task + one day of grace
+# The closed list of words the synthesis writers store as `outcome` beside `rc`.
+SYNTHESIS_OUTCOMES = (
+    "ok",  # run and publish clean
+    "session-failed",  # the model session exited non-zero
+    "notes-unsigned",  # the sign-drain left a note unsigned (rc 75)
+    "engine-missing",  # no brain CLI to publish with (rc 127)
+    "publish-deferred",  # writer lock busy at publish; the hourly sync publishes later (rc 0)
+    "publish-failed",  # `sync --publish` failed for another reason
+    "writer-busy-skip",  # Codex twin: vault writer busy, retry later (rc 75)
+)
 
 
 def _load_synthesis_entry(

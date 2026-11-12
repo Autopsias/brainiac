@@ -59,9 +59,15 @@ def note_excerpt(vault: Any, path: str, n: int = 600) -> str:
     """The body of a note, frontmatter stripped, whitespace collapsed."""
     if not path:
         return ""
+    # The path can come from a VM-writable lane file: an absolute path or a
+    # `..` must never reach a file outside the notes (F33).
+    from .core import _contained_in  # noqa: PLC0415
+    target = Path(vault) / path
+    if not any(_contained_in(target, Path(vault) / z) for z in ("brain", "raw")):
+        return ""
     try:
-        text = (Path(vault) / path).read_text(encoding="utf-8")
-    except OSError:
+        text = target.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
         return ""
     text = _FRONTMATTER_RE.sub("", text, count=1)
     return re.sub(r"\s+", " ", text).strip()[:n]

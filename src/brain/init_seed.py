@@ -54,6 +54,7 @@ def _build_index(vault: str | os.PathLike[str] | None) -> dict[str, Any]:
 
 def _sign_seeded_notes(
     vault: str | os.PathLike[str] | None, created: list[str],
+    digests: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Put the freshly-seeded notes into the audit chain.
 
@@ -77,7 +78,14 @@ def _sign_seeded_notes(
     box with no signing key still inits, it just leaves the notes unsigned, and
     the invariant will say so honestly. Content is passed on stdin, never
     through a shell, so the note's exact bytes are signed.
+
+    ``digests`` (sha256 of what ``seed_sample_notes`` wrote) closes a race on a
+    VM-writable mount: the vault can be overwritten during the index rebuild,
+    and the host must not sign bytes it did not generate. A note whose bytes no
+    longer match is left unsigned and reported.
     """
+    import hashlib
+
     signed, failed = [], []
     for rel in created:
         relpath = f"brain/{rel}"
@@ -86,6 +94,10 @@ def _sign_seeded_notes(
             body = target.read_bytes()
         except OSError as exc:
             failed.append({"path": relpath, "reason": f"{type(exc).__name__}: {exc}"})
+            continue
+        if digests is not None and hashlib.sha256(body).hexdigest() != digests.get(rel):
+            failed.append({"path": relpath,
+                           "reason": "changed since seeding — not signed"})
             continue
         argv = [sys.executable, "-m", "brain"]
         if vault is not None:

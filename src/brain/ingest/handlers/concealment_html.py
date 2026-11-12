@@ -80,8 +80,52 @@ _VOID_TAGS = frozenset({
 #: attacker writes ``opacity:.01`` and a real designer never does.
 OPACITY_FLOOR = 0.05
 
-_STYLE_BLOCK = re.compile(r"<style[^>]*>(.*?)</style>", re.I | re.S)
-_RULE = re.compile(r"([^{}@]+)\{([^{}]*)\}", re.S)
+_STYLE_OPEN = re.compile(r"<style", re.I)
+_STYLE_CLOSE = re.compile(r"</style>", re.I)
+_SELECTOR_RUN = re.compile(r"[^{}@]+")
+_DECLS = re.compile(r"([^{}]*)\}")
+
+
+def _style_blocks(raw_html: str) -> list[str]:
+    """The text of every ``<style>…</style>`` block, in one linear pass.
+
+    A lazy regex rescanned to the end of the document from every unclosed
+    ``<style`` (F29). A missing ``>`` or ``</style>`` after one opener means
+    there is none after any later opener either, so the scan stops there.
+    """
+    blocks: list[str] = []
+    pos = 0
+    while (start := _STYLE_OPEN.search(raw_html, pos)):
+        gt = raw_html.find(">", start.end())
+        close = _STYLE_CLOSE.search(raw_html, gt + 1) if gt >= 0 else None
+        if close is None:
+            break
+        blocks.append(raw_html[gt + 1:close.start()])
+        pos = close.end()
+    return blocks
+
+
+def _rules(block: str) -> list[tuple[str, str]]:
+    """``(selectors, declarations)`` for each ``sel{decls}`` rule, linearly.
+
+    Same matches as ``([^{}@]+)\\{([^{}]*)\\}``, which retried every start
+    offset inside one long selector run (F29). A run can only end in ``{`` when
+    the whole run is the selector, so each run is tried once.
+    """
+    out: list[tuple[str, str]] = []
+    pos = 0
+    while (run := _SELECTOR_RUN.search(block, pos)):
+        end = run.end()
+        if end < len(block) and block[end] == "{":
+            decls = _DECLS.match(block, end + 1)
+            if decls:
+                out.append((run.group(), decls.group(1)))
+                pos = decls.end()
+                continue
+            pos = end + 1
+        else:
+            pos = end
+    return out
 #: A selector this module refuses to resolve — anything past one simple name.
 _COMPLEX_SELECTOR = re.compile(r"[\s>+~:\[*(]")
 
@@ -110,8 +154,8 @@ def stylesheet(raw_html: str) -> dict[str, str]:
     ``concealment``'s module gap list names the rest.
     """
     out: dict[str, str] = {}
-    for block in _STYLE_BLOCK.findall(raw_html or ""):
-        for selectors, decls in _RULE.findall(block):
+    for block in _style_blocks(raw_html or ""):
+        for selectors, decls in _rules(block):
             for sel in selectors.split(","):
                 sel = sel.strip().lower()
                 if not sel or _COMPLEX_SELECTOR.search(sel):

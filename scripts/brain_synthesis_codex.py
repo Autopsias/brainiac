@@ -23,6 +23,10 @@ from brain.audit import resolve_signing_key
 from brain.draft_drain import sanitize_untrusted_note
 from brain.invariant_coverage import link_lane_candidates
 from brain.lock import vault_writer_lock, WriterLockBusy
+try:
+    from brain.maintenance_watchdog import SYNTHESIS_OUTCOMES
+except ImportError:  # an installed engine older than the closed list
+    SYNTHESIS_OUTCOMES = ("ok", "session-failed", "writer-busy-skip")
 
 SCHEMA = {
     "type": "object", "additionalProperties": False,
@@ -313,6 +317,8 @@ def update_state(args, outcome):
         state = json.loads(state_path.read_text())
     except (OSError, ValueError):
         state = {}
+    if outcome.get("outcome") not in SYNTHESIS_OUTCOMES:
+        raise ValueError(f"unknown synthesis outcome: {outcome.get('outcome')!r}")
     entry = state.setdefault(str(args.vault), {})
     entry.update(outcome, last_attempt=dt.date.today().isoformat(), provider="codex")
     if outcome["rc"] == 0:
@@ -442,12 +448,13 @@ def main():
         else:
             production_run(args, run_dir, outcome)
     except WriterLockBusy:
-        outcome.update(rc=75, error="Vault writer busy; retry later (see private run artifacts)")
+        outcome.update(rc=75, outcome="writer-busy-skip", error="Vault writer busy; retry later (see private run artifacts)")
     except Exception as exc:
-        outcome.update(rc=1, error=f"{type(exc).__name__}: {exc}")
+        outcome.update(rc=1, outcome="session-failed", error=f"{type(exc).__name__}: {exc}")
     atomic_json(run_dir / "result.json", outcome)
     # A dry-run/smoke test must never earn the production watchdog heartbeat.
     if not args.smoke_test and not args.dry_run:
+        outcome.setdefault("outcome", "ok" if outcome["rc"] == 0 else "session-failed")
         update_state(args, outcome)
     # Numbers only: summary/action_required/error carry vault-derived text and
     # stay in the owner-only run_dir, never in the launchd log this lands in.

@@ -475,6 +475,12 @@ class _CoreCaptureMixin:
             raise  # fail closed — no unsigned writes
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
+            # Re-check NOW: signing took a lock and an fsync, and a directory
+            # swapped for a link in that window would carry this signed write
+            # outside the vault (F31). `target` was resolved before signing, so
+            # its parent must still resolve to itself.
+            if target.parent.resolve() != target.parent:
+                raise ValueError(f"write target moved during signing: {rel_path}")
             self._write_note_durable(target, content)
         except Exception as exc:
             # The signed "write" entry is already in the chain; record the failure

@@ -300,3 +300,7 @@ _evidence/invariants/*
 # Codex run transcripts staged by plan-execute. They carry live mailbox
 # content, so they are evidence, never source.
 _codex/
+
+# plan-execute runtime state (auto-added by plan-builder)
+_plans/*/LAND_NOTICE.txt
+_plans/*/_worktrees/

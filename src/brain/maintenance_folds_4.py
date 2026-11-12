@@ -120,15 +120,22 @@ def _group_versions(core: Any) -> tuple[
     can find the family's LIVE head."""
     rows = core.index.conn.execute(
         "SELECT id, is_latest_version, superseded_by, "
-        "COALESCE(NULLIF(effective_date,''), NULLIF(document_date,''), created) "
+        "COALESCE(NULLIF(effective_date,''), NULLIF(document_date,''), created), path "
         "FROM notes").fetchall()
     families: dict[str, list[tuple[int, str, str, dict[str, str]]]] = {}
     renditions: dict[tuple[str, int], list[tuple[str, dict[str, str]]]] = {}
     primaries: dict[tuple[str, int], list[str]] = {}
-    successor_of = {str(nid): str(sup_by or "") for nid, _ilv, sup_by, _vd in rows}
-    for nid, ilv, sup_by, vdate in rows:
+    successor_of = {str(nid): str(sup_by or "") for nid, _ilv, sup_by, _vd, _p in rows}
+    from .maintenance_folds import _dedup_trust_checker
+
+    is_untrusted = _dedup_trust_checker(core)
+    for nid, ilv, sup_by, vdate, npath in rows:
         parsed = parse_version_id(str(nid))
         if parsed is None:
+            continue
+        # An untrusted/draft note (a caller-chosen `-vN` capture) never joins a
+        # family: it must not become the successor that retires a trusted note.
+        if is_untrusted({"id": str(nid), "path": str(npath or "")}):
             continue
         fam, num, rendition = parsed
         meta = {"is_latest": str(ilv or ""), "superseded_by": str(sup_by or "")}

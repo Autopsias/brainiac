@@ -1,6 +1,8 @@
 """Index tool-query methods."""
 from __future__ import annotations
 
+from typing import Callable
+
 from ._shared import *  # noqa: F401,F403
 from ._retirement import RETIRED_PREDICATE
 from ..provenance import CONVERSATION_KEY, SENDER_KEY, header_row_fields, parse_index_frontmatter
@@ -42,6 +44,12 @@ def _grep_fts_query(pattern: str, terms: list[str], multi: bool, regex: bool) ->
     if regex or not all(any(c.isascii() and c.isalnum() for c in p) for p in parts):
         return None
     return "body : (" + " OR ".join('"' + p.replace('"', '""') + '"' for p in parts) + ")"
+
+
+#: Total wall-clock budget for ONE grep call. GREP_REGEX_TIMEOUT_S bounds a
+#: single line; this bounds the whole scan, so a backtracking pattern times
+#: out per call instead of per line across every line of the vault.
+GREP_TOTAL_BUDGET_S = 20.0
 
 
 class _ToolMixin:
@@ -99,6 +107,32 @@ class _ToolMixin:
         end = min(len(s), start + n)
         return (("…" if start > 0 else "") + s[start:end]
                 + ("…" if end < len(s) else ""))
+
+    def _grep_row_hit(
+        self, r: Any, rxs: list[Any], multi: bool, over_budget: Callable[[], None],
+    ) -> dict[str, Any] | None:
+        """Match one note row's body line by line; the result dict, or None."""
+        matches = []
+        for ln in (r[5] or "").splitlines():
+            over_budget()
+            if any(self._grep_bounded_search(x, ln) for x in rxs):
+                matches.append(ln)
+        if not matches:
+            return None
+        distinct = (
+            sum(1 for x in rxs if any(self._grep_bounded_search(x, ln) for ln in matches))
+            if multi else 1
+        )
+        return {
+            "id": r[0], "title": r[1], "classification": r[2],
+            "zone": r[3], "path": r[4], "vault_path": self._vault_path(r[4]),
+            "match_count": len(matches), "terms_matched": distinct,
+            "snippet": self._grep_snippet(matches[0], rxs),
+            "source": "grep",
+            "concealment": stored_verdict(r[6]),
+            **header_row_fields(r[7]),
+            "is_latest_version": str(r[8] or ""),
+        }
 
     def grep(
         self, pattern: str, *, k: int = 20, ignore_case: bool = True,
@@ -178,26 +212,18 @@ class _ToolMixin:
             allows = cls_mod.ClassificationFilter(max_tier=max_tier).allows
             rows = [r for r in rows if allows(r[2])]
         out: list[dict[str, Any]] = []
+        deadline = time.monotonic() + GREP_TOTAL_BUDGET_S
+
+        def _over_budget() -> None:
+            if time.monotonic() > deadline:
+                raise GrepPatternError(
+                    f"grep exceeded its {GREP_TOTAL_BUDGET_S:g}s total budget "
+                    "— use a simpler pattern")
+
         for r in rows:
-            body = r[5] or ""
-            matches = [ln for ln in body.splitlines()
-                       if any(self._grep_bounded_search(x, ln) for x in rxs)]
-            if not matches:
-                continue
-            distinct = (
-                sum(1 for x in rxs if any(self._grep_bounded_search(x, ln) for ln in matches))
-                if multi else 1
-            )
-            out.append({
-                "id": r[0], "title": r[1], "classification": r[2],
-                "zone": r[3], "path": r[4], "vault_path": self._vault_path(r[4]),
-                "match_count": len(matches), "terms_matched": distinct,
-                "snippet": self._grep_snippet(matches[0], rxs),
-                "source": "grep",
-                "concealment": stored_verdict(r[6]),
-                **header_row_fields(r[7]),
-                "is_latest_version": str(r[8] or ""),
-            })
+            hit = self._grep_row_hit(r, rxs, multi, _over_budget)
+            if hit is not None:
+                out.append(hit)
         out.sort(key=lambda d: (-d.get("terms_matched", 1), -d["match_count"], d["id"]))
         return out[:k]
 
@@ -422,65 +448,6 @@ class _ToolMixin:
                 out.append({"id": r[0], "title": r[1], "classification": r[2],
                             "zone": r[3], "path": r[4]})
         return out[:k]
-
-    def language_census(self, *, refresh: bool = False, detail: bool = False) -> dict[str, Any]:
-        """Which languages this vault holds — DERIVED, never declared.
-
-        Read path (``refresh=False``, ``detail=False``): returns the block
-        cached in ``meta`` by the last sync/rebuild, stamped ``stale`` when the
-        index content or the profile set has moved since. It never computes on
-        a read — ``stats()`` feeds ``brain status``, the morning brief and the
-        weekly digest, and none of them should pay a whole-corpus scan.
-
-        Compute path: classify every indexed body through
-        :mod:`brain.language` and cache the result. ``detail=True`` adds
-        ``by_note`` and is never cached (a triage/translation pass wants it;
-        status does not).
-        """
-        from .. import language as lang_mod
-
-        profiles = lang_mod.load_profiles()
-        fingerprint = self.get_meta("vault_fingerprint") or ""
-        profiles_fp = lang_mod.profiles_fingerprint(profiles)
-        if not refresh and not detail:
-            raw = self.get_meta("language_census")
-            block = None
-            if raw:
-                try:
-                    block = json.loads(raw)
-                except ValueError:
-                    block = None
-            if isinstance(block, dict):
-                block["stale"] = (
-                    block.get("vault_fingerprint") != fingerprint
-                    or block.get("profiles_fingerprint") != profiles_fp
-                )
-                return block
-            return {
-                "status": "not-computed",
-                "hint": "the census is derived at index time — run `brain sync` or `brain rebuild`",
-            }
-        rows = self.conn.execute("SELECT id, body FROM notes").fetchall()
-        block = lang_mod.census(
-            ((r[0], r[1] or "") for r in rows), profiles=profiles, detail=detail)
-        block["vault_fingerprint"] = fingerprint
-        block["stale"] = False
-        if not detail:
-            try:
-                self._set_meta("language_census", json.dumps(block, ensure_ascii=False))
-                self.conn.commit()
-            except sqlite3.Error:
-                pass  # read-only snapshot: the value is still returned, just not cached
-        return block
-
-    def _refresh_language_census(self) -> dict[str, Any]:
-        """Cache the census after an index write (reused while fingerprints match). Never fatal."""
-        try:
-            c = self.language_census()
-            fresh = c.get("stale") is False and "counts" in c and c.get("status") != "not-computed"
-            return c if fresh else self.language_census(refresh=True)
-        except Exception as exc:  # noqa: BLE001
-            return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
 
     def stats(self) -> dict[str, Any]:
         c = self.conn

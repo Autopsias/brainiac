@@ -76,6 +76,21 @@ def _is_contained_file(candidate: Path, reason_dir: Path) -> bool:
     return resolved.is_file()
 
 
+def contained_file_under(candidate: Path, base: Path) -> Path | None:
+    """``candidate`` resolved, when it is a real, non-symlink file under ``base``.
+
+    ``base`` is compared as given, never resolved, so callers root it at the
+    resolved vault: a symlinked ``raw/`` or ``originals/`` cannot move it.
+    """
+    if candidate.is_symlink():
+        return None
+    try:
+        resolved = candidate.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):  # missing, link loop, NUL byte
+        return None
+    return resolved if base in resolved.parents and resolved.is_file() else None
+
+
 def subfloor_retry_targets(core: Any) -> list[tuple[str, Path]]:
     """``[(note id, resolved archived-original path)]`` for every sub-floor
     family member worth retrying.
@@ -86,7 +101,10 @@ def subfloor_retry_targets(core: Any) -> list[tuple[str, Path]]:
     prior_extraction_failed`` makes, so a short-but-real note the family
     shape happens to catch is never mistaken for a stub — and its
     ``origin:`` frontmatter must resolve to a file that still exists (a
-    ``verbal``/``url`` origin has no archived binary to retry).
+    ``verbal``/``url`` origin has no archived binary to retry) INSIDE
+    ``raw/originals/``. ``origin`` is frontmatter a broker ``capture`` or VM
+    draft can write, so an absolute path, a ``../`` walk or a link named any
+    host file as a retry target, re-ingested into the vault as a signed source.
 
     Reads ``invariants.subfloor_families()["members"]`` — the SAME
     population the metric itself reports, never re-derived."""
@@ -94,6 +112,7 @@ def subfloor_retry_targets(core: Any) -> list[tuple[str, Path]]:
     from .ingest.handlers.base import NO_TEXT_MARKER
 
     vault = Path(core.vault)
+    originals = vault.resolve() / "raw" / "originals"
     metric = _inv.subfloor_families(core.index.conn)
     out: list[tuple[str, Path]] = []
     for nid in sorted(metric.get("members") or []):
@@ -111,8 +130,8 @@ def subfloor_retry_targets(core: Any) -> list[tuple[str, Path]]:
         origin = str(meta.get("origin") or "").strip()
         if not origin:
             continue
-        original = vault / origin
-        if original.is_file():
+        original = contained_file_under(vault / origin, originals)
+        if original is not None:
             out.append((nid, original))
     return out
 

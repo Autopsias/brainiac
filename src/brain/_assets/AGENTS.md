@@ -1733,7 +1733,7 @@ workers it takes ~4-11 depending on what else is running on this Mac (see the
 last bullet below), and the pass set is identical:
 
 ```bash
-.venv/bin/python -B -m pytest -n 8 --dist loadfile --timeout 300 -q \
+~/.claude/scripts/govrun .venv/bin/python -B -m pytest -n auto --dist loadfile --timeout 300 -q \
   --deselect tests/test_cos_runverify_body_corpus.py::test_corpus_join_zero_false_positives_across_every_real_historical_run \
   tests
 ```
@@ -1748,7 +1748,7 @@ Four parts of that line are load-bearing, and each is a measured lesson:
   blocks a gate until the gate's own timeout, and the run reports nothing.
 - **No `-x`.** For consecutive runs you want the whole failure list, not the
   first one; a 2026-08-13 run was wasted re-running the suite to see the rest.
-- **`-n 8` assumes this Mac is otherwise idle. It is not, routinely.** Two
+- **`-n 8` assumed this Mac is otherwise idle. It is not, routinely.** `govrun` now caps the workers itself (write `-n auto`; the hook refuses a hardcoded count above 4), but the lesson stands: two
   self-hosted GitHub Actions runners execute OTHER repositories' suites here;
   they start on a push and no agent tool lists them — and `ListAgents` does not
   list another Claude session's own 8-worker suite either. On 2026-09-05 four
@@ -1826,9 +1826,12 @@ entry formats in `docs/session-memory.md`. Rules an agent needs at a glance:
 - **Run `brain alerts` at session start — EVERY harness, not just the one with
   a hook.** It is the single degradation digest: auto-update state, weekly
   synthesis health, the engine-feedback backlog, and whatever is degraded
-  RIGHT NOW (`blocked`, `trend:*`, `invariant:*`). Pure file reads — no index,
-  embedder, network or key — so it costs the engine's import floor and
-  nothing more. **Currently true, not recently seen:** it reads
+  RIGHT NOW (`blocked`, `trend:*`, `invariant:*`). File reads — no index,
+  embedder or network — so it costs the engine's import floor plus ONE
+  key read on the host: the host verifies the mount-side exceptions
+  summary against its own audit key (~1 s, measured 2026-11-11), because
+  the VM can write that file; a locked or absent key reports the summary
+  `unreachable`, never a count. **Currently true, not recently seen:** it reads
   `notify-sent/current.json`, which `brain maintain` REWRITES at the end
   of every run, never the sibling `*.marker` files — a marker records that a
   finding was ANNOUNCED that day, so reading markers made a condition fixed at

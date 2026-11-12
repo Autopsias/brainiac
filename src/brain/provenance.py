@@ -250,6 +250,9 @@ def _carries_host_only(text: str, keys: tuple[str, ...] = HOST_ONLY_KEYS) -> boo
     only check that actually decides whether the file is safe to promote."""
     from . import frontmatter as fm
 
+    split = fm.split(text)
+    if split is not None and fm.uses_alias(split[0]):
+        return True  # an anchor/alias can hide the key: fail closed
     meta, _ = fm.parse_text(text)
     return any(is_host_only_key(k, keys) for k in meta)
 

@@ -419,6 +419,13 @@ def audited_write(
             f"{rel_path}: resolves elsewhere — a repair never follows a link")
     old_text, before = read_nofollow(target)
     _refuse_irreversible(rel_path, old_text, new_text)
+    if write_class == SIGN_EXISTING_BYTES and new_text != old_text:
+        # "Sign the bytes already there" means exactly those bytes: the planner
+        # matched the chain against its own read, and this pre-image is a later
+        # one. Any difference is a racing writer's frontmatter (F51).
+        raise ReversibilityError(
+            f"{rel_path}: the file changed since it was matched to the audit "
+            "chain — refusing to sign bytes that were not checked")
     result = core.write_note(rel_path, new_text, reason=reason)
     _confirm_written(vault, rel_path, new_text, before)
     return result

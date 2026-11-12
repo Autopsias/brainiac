@@ -106,7 +106,7 @@ python3 tools/validate.py vault                    # the sample vault's conventi
 Run the whole suite once, before you hand the change over:
 
 ```bash
-.venv/bin/python -m pytest -n 8 --dist loadfile --timeout 300 -q tests
+~/.claude/scripts/govrun .venv/bin/python -m pytest -n auto --dist loadfile --timeout 300 -q tests
 ```
 
 **Docs travel with the change.** If a change alters what a user sees or types,

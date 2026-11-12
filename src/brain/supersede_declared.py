@@ -298,9 +298,11 @@ def related(core: Any, old_id: str, new_id: str) -> str | None:
     from . import versionlink as vl
     from .ingest import deliverables as DLV
 
-    new_meta = _meta(core, new_id) or {}
-    if (str(new_meta.get("status", "")).strip().casefold() == "draft"
-            or str(new_meta.get("provenance.trust", "")).strip().casefold() == "untrusted"):
+    def untrusted(meta: dict[str, Any]) -> bool:
+        return (str(meta.get("status", "")).strip().casefold() == "draft"
+                or str(meta.get("provenance.trust", "")).strip().casefold() == "untrusted")
+
+    if untrusted(_meta(core, new_id) or {}):
         return None
     wikilink = re.compile(r"\[\[(?:raw/)?" + re.escape(old_id) + r"(?:[|#][^\]]*)?\]\]")
     for holder in (new_id, DLV.anchor_id(new_id)):
@@ -308,6 +310,10 @@ def related(core: Any, old_id: str, new_id: str) -> str | None:
         if note is None:
             continue
         meta, body = note
+        # The `<new_id>-deliverable` anchor is a plain id any caller can mint
+        # through `capture`: it is evidence only while it is itself trusted.
+        if untrusted(meta):
+            continue
         if old_id in (_link(meta.get("replaces")), _link(meta.get("previous_version"))):
             return f"{holder} declares replaces: {old_id}"
         if wikilink.search(body):

@@ -7,6 +7,58 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.50] — 2026-11-12
+### Security
+- **The host no longer trusts files the Cowork VM can write (scan of
+  2026-11-11, 59 of 61 findings).** Every host job that reads or writes the
+  shared mount now refuses a planted symlink instead of following it: the
+  ingest claim, quarantine and duplicate folders, the extract-retry copy, COS
+  pending/claim/quarantine readers, run-record migration, the e-check report,
+  the corrections store, Cowork staging, the provisioning result file, PARA
+  moves and sign-repair.
+- **Forged records are refused.** An owner answer is acted on only when the
+  host's own answer ledger confirms it (unconfirmed ones are named in the
+  consume report); sheet marks must match the host-written sheet;
+  version-link proposals need a host staging record and a recomputed digest;
+  `exceptions.json` is verified against the host's key on the host too, so
+  `brain alerts` now reads the key once (~1 s); version stamps must match a
+  strict pattern before they reach the session banner.
+- **Frontmatter:** YAML anchors and aliases are refused, every duplicate of a
+  stamped key is rewritten, and an untrusted note is re-parsed after stamping.
+  Keys must match `[A-Za-z0-9_.-]+`. A drafted update needs a chain that covers
+  the current bytes; untrusted or draft notes no longer join version families.
+- **Weekly synthesis** runs only the engine's own retro script, and the model
+  may edit only `hot.md`, `handoff.md` and `lessons.md` (never `inbox.jsonl`).
+- **The unattended update installs the attested file by URL and sha256**, not
+  just by version.
+- **Bounded parsing:** five regexes a hostile document could stall now run in
+  linear time; `grep` has a 20 s whole-call budget; the Cowork leak scanner
+  runs untrusted databases read-only under a deadline and reports a timeout as
+  a leak; run reports over 1 MB score INCONCLUSIVE.
+- Interview notes stay inside `brain/` and cannot add frontmatter lines; the
+  generated keyword ring strips HTML comment markers; reply drafts in an HTML
+  body are encoded; provisioning re-checks the vault path after the claim.
+
+### Fixed
+- The weekly synthesis turn cap is 320, not 120.
+- A busy writer lock is a deferred publish, and the synthesis outcome is one
+  word from a closed list.
+- A file named like a different attachment is skipped, not a stopped night.
+- The plan binding keeps every pass of a run, not only the last.
+- A weekday night of only trusted archives still builds its sheet; text
+  holding `{{` no longer refuses the sheet.
+- An auto-PARA-archived deliverable anchor still counts as anchored; the
+  hourly brief's skip check no longer matches another copy of itself.
+- A sent reply is scored only if it came after the draft, and only once.
+
+### Added
+- Morning sheet: today's meetings with prep cards, one "Decide or reply" list
+  (at most 5), "You owe", "Your projects overnight", "Your action list" with
+  Done and Drop, and "Ready to archive". Trusted archive categories are checked
+  on the Friday sheet only.
+- The night reads the owner's Inbox > Action folder, read-only. Prep cards
+  search the vault at Internal.
+
 ## [0.20.49] — 2026-11-04
 ### Security
 - **An image that declares too many pixels is refused before it is decoded.**

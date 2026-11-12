@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -22,6 +23,12 @@ from pathlib import Path
 # databases.
 _SQLITE_MAGIC = b"SQLite format 3\x00"
 _SQLITE_MIN_BYTES = 512
+
+#: Wall-clock cap on the SQL run against ONE untrusted database. The file is
+#: VM-writable, so its schema is attacker text: a progress handler aborts a
+#: statement that outlives this (the scan budget is only checked between
+#: directories, which cannot stop a single statement).
+_SQL_DEADLINE_S = 5.0
 
 
 def _looks_like_sqlite(path: Path) -> bool:
@@ -65,8 +72,14 @@ def _sqlite_body_rows(db: Path) -> int | None:
     except sqlite3.Error:
         return None
     try:
+        # The file is untrusted: never run a schema-defined view, trigger or
+        # function, keep the connection read-only, and bound the whole query.
+        conn.execute("PRAGMA trusted_schema=OFF")
+        conn.execute("PRAGMA query_only=ON")
+        deadline = time.monotonic() + _SQL_DEADLINE_S
+        conn.set_progress_handler(lambda: 1 if time.monotonic() > deadline else 0, 10000)
         cur = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type IN ('table','view') AND name='notes'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='notes'"
         )
         if cur.fetchone() is None:
             return None
@@ -74,6 +87,10 @@ def _sqlite_body_rows(db: Path) -> int | None:
         row = cur.fetchone()
         return int(row[0]) if row else 0
     except sqlite3.Error:
+        if time.monotonic() > deadline:
+            # A notes table too slow to count is reported, never read as clean.
+            # shortcut: the count is then a floor of 1, not the real number.
+            return 1
         return None
     finally:
         conn.close()

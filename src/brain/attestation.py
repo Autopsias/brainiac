@@ -29,6 +29,7 @@ nightly fold's path — calls this. `brain update` goes straight to
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -43,6 +44,8 @@ EXPECTED_REPOSITORY = "Autopsias/brainiac"
 EXPECTED_WORKFLOW = "pypi-publish.yml"
 
 _TIMEOUT = 15
+_FILES_HOST = "https://files.pythonhosted.org/"
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 def _get_json(url: str, timeout: int) -> Any:
@@ -63,8 +66,8 @@ def verify_publisher(version: str, *, timeout: int = _TIMEOUT) -> dict[str, Any]
     except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
         return {"ok": False, "reason": f"could not reach PyPI: {exc}", "publisher": None}
 
-    files = [entry.get("filename") for entry in (meta.get("urls") or [])]
-    files = [name for name in files if name]
+    entries = [e for e in (meta.get("urls") or []) if e.get("filename")]
+    files = [e["filename"] for e in entries]
     if not files:
         return {"ok": False, "reason": f"PyPI lists no files for {version}",
                 "publisher": None}
@@ -114,9 +117,30 @@ def verify_publisher(version: str, *, timeout: int = _TIMEOUT) -> dict[str, Any]
                                "account takeover looks like"),
                     "publisher": pub,
                 }
+    # F36/F37: hand back WHAT was attested (url + sha256), so the install can be
+    # bound to those exact bytes instead of re-resolving `==version` later.
+    artifacts = []
+    for entry in entries:
+        url = str(entry.get("url") or "")
+        digest = str((entry.get("digests") or {}).get("sha256") or "")
+        if not url.startswith(_FILES_HOST) or not _SHA256.fullmatch(digest):
+            return {"ok": False,
+                    "reason": (f"{entry['filename']}: PyPI gave no pinnable "
+                               "files.pythonhosted.org url + sha256 digest"),
+                    "publisher": None}
+        artifacts.append({"filename": entry["filename"], "url": url, "sha256": digest})
     return {
         "ok": True,
         "reason": (f"every file attested to {EXPECTED_REPOSITORY} "
                    f"/{EXPECTED_WORKFLOW}"),
         "publisher": {"repository": EXPECTED_REPOSITORY, "workflow": EXPECTED_WORKFLOW},
+        "artifacts": artifacts,
     }
+
+
+def pick_pin_artifact(artifacts: list[dict[str, str]] | None) -> dict[str, str] | None:
+    """The attested file to install: a wheel when there is one, else the first."""
+    if not artifacts:
+        return None
+    wheels = [a for a in artifacts if a["filename"].endswith(".whl")]
+    return (wheels or artifacts)[0]

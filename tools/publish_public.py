@@ -404,8 +404,12 @@ def phase_local_deploy(version: str, elf_build: "subprocess.Popen | None" = None
     # (audit drift, invariants watchdog) that no deploy can or should fix —
     # the v0.20.22 run deployed every surface and still exited 1 on two such
     # rows. The verdict is the staging-surface check on the JSON below.
+    # Name the release tree: `brain update` otherwise resolves the checkout its
+    # interpreter imports from, and a release run from a worktree then staged
+    # the main checkout's stale dist/ ELFs (v0.20.50 deployed 0.20.49).
     proc = _run([sys.executable, "-m", "brain", "update", "--json"],
-                cwd=REPO_ROOT, timeout=1800)
+                cwd=REPO_ROOT, timeout=1800,
+                env={**os.environ, "BRAINIAC_ENGINE_SRC": str(REPO_ROOT)})
     tail = proc.stdout[proc.stdout.index("{"):] if "{" in proc.stdout else ""
     try:
         report = json.loads(tail) if tail else None

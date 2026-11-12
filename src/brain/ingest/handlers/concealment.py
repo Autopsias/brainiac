@@ -103,10 +103,10 @@ here (owner ruling, 2026-09-02):
     ``.show{display:block}.hide{display:none}`` is admitted: declarations are
     concatenated in ATTRIBUTE order, so the last class named wins instead of
     the last RULE declared, and no specificity is computed. → s05d.
-11. **Presentational colour attributes.** REPRODUCED. ``<font color="#ffffff">``
-    is admitted; ``bgcolor`` is likewise never read as a ground. Neither
-    attribute is parsed at all today, and ``<font color>`` is the commonest way
-    HTML email hides text — mail being the primary ingest lane. → s05d.
+11. **Presentational colour attributes.** CLOSED 2026-11-12 (VULN-3418
+    retest): ``<font color>`` sets the text colour and ``bgcolor`` sets the
+    ground, both BELOW any CSS rule, as a browser applies them. A legacy hex
+    with no ``#`` (``color="ffffff"``) is read too.
 12. **A malformed declaration BESIDE a hiding property.** REPRODUCED.
     ``style="color:rgb(1.2.3,0,0);display:none"`` is admitted, while the same
     malformed colour ALONE on its own element still convicts: the per-element
@@ -206,18 +206,63 @@ TINY_PX = TINY_PT * 4 / 3
 #: An offset at least this far negative is off the page, not a layout nudge.
 OFFSCREEN_PX = 1000.0
 
+_HEX8 = re.compile(r"#([0-9a-f]{8})\b", re.I)
 _HEX6 = re.compile(r"#([0-9a-f]{6})\b", re.I)
+_HEX4 = re.compile(r"#([0-9a-f]{4})\b", re.I)
 _HEX3 = re.compile(r"#([0-9a-f]{3})\b", re.I)
+#: The CSS named colours. Only `white` and `black` were known, so `snow`,
+#: `ivory` or `whitesmoke` text on white passed (VULN-3418 retest, 2026-11-12).
+_NAMED = dict(pair.split(":") for pair in """
+aliceblue:f0f8ff antiquewhite:faebd7 aqua:00ffff aquamarine:7fffd4 azure:f0ffff
+beige:f5f5dc bisque:ffe4c4 black:000000 blanchedalmond:ffebcd blue:0000ff
+blueviolet:8a2be2 brown:a52a2a burlywood:deb887 cadetblue:5f9ea0 chartreuse:7fff00
+chocolate:d2691e coral:ff7f50 cornflowerblue:6495ed cornsilk:fff8dc crimson:dc143c
+cyan:00ffff darkblue:00008b darkcyan:008b8b darkgoldenrod:b8860b darkgray:a9a9a9
+darkgreen:006400 darkgrey:a9a9a9 darkkhaki:bdb76b darkmagenta:8b008b
+darkolivegreen:556b2f darkorange:ff8c00 darkorchid:9932cc darkred:8b0000
+darksalmon:e9967a darkseagreen:8fbc8f darkslateblue:483d8b darkslategray:2f4f4f
+darkslategrey:2f4f4f darkturquoise:00ced1 darkviolet:9400d3 deeppink:ff1493
+deepskyblue:00bfff dimgray:696969 dimgrey:696969 dodgerblue:1e90ff firebrick:b22222
+floralwhite:fffaf0 forestgreen:228b22 fuchsia:ff00ff gainsboro:dcdcdc
+ghostwhite:f8f8ff gold:ffd700 goldenrod:daa520 gray:808080 green:008000
+greenyellow:adff2f grey:808080 honeydew:f0fff0 hotpink:ff69b4 indianred:cd5c5c
+indigo:4b0082 ivory:fffff0 khaki:f0e68c lavender:e6e6fa lavenderblush:fff0f5
+lawngreen:7cfc00 lemonchiffon:fffacd lightblue:add8e6 lightcoral:f08080
+lightcyan:e0ffff lightgoldenrodyellow:fafad2 lightgray:d3d3d3 lightgreen:90ee90
+lightgrey:d3d3d3 lightpink:ffb6c1 lightsalmon:ffa07a lightseagreen:20b2aa
+lightskyblue:87cefa lightslategray:778899 lightslategrey:778899
+lightsteelblue:b0c4de lightyellow:ffffe0 lime:00ff00 limegreen:32cd32 linen:faf0e6
+magenta:ff00ff maroon:800000 mediumaquamarine:66cdaa mediumblue:0000cd
+mediumorchid:ba55d3 mediumpurple:9370db mediumseagreen:3cb371
+mediumslateblue:7b68ee mediumspringgreen:00fa9a mediumturquoise:48d1cc
+mediumvioletred:c71585 midnightblue:191970 mintcream:f5fffa mistyrose:ffe4e1
+moccasin:ffe4b5 navajowhite:ffdead navy:000080 oldlace:fdf5e6 olive:808000
+olivedrab:6b8e23 orange:ffa500 orangered:ff4500 orchid:da70d6 palegoldenrod:eee8aa
+palegreen:98fb98 paleturquoise:afeeee palevioletred:db7093 papayawhip:ffefd5
+peachpuff:ffdab9 peru:cd853f pink:ffc0cb plum:dda0dd powderblue:b0e0e6
+purple:800080 rebeccapurple:663399 red:ff0000 rosybrown:bc8f8f royalblue:4169e1
+saddlebrown:8b4513 salmon:fa8072 sandybrown:f4a460 seagreen:2e8b57 seashell:fff5ee
+sienna:a0522d silver:c0c0c0 skyblue:87ceeb slateblue:6a5acd slategray:708090
+slategrey:708090 snow:fffafa springgreen:00ff7f steelblue:4682b4 tan:d2b48c
+teal:008080 thistle:d8bfd8 tomato:ff6347 turquoise:40e0d0 violet:ee82ee
+wheat:f5deb3 white:ffffff whitesmoke:f5f5f5 yellow:ffff00 yellowgreen:9acd32
+""".split())
 _RGB = re.compile(
     r"rgba?\(\s*([0-9.]+)\s*[, ]\s*([0-9.]+)\s*[, ]\s*([0-9.]+)"
     r"(?:\s*[,/]\s*([0-9.%]+))?", re.I)
 _HSL = re.compile(
     r"hsla?\(\s*(-?[0-9.]+)\s*(?:deg)?\s*[, ]\s*([0-9.]+)%\s*[, ]\s*([0-9.]+)%"
     r"(?:\s*[,/]\s*([0-9.%]+))?", re.I)
-_SIZE = re.compile(r"(-?[0-9.]+)\s*(px|pt|em|rem|pc|in|cm|mm)", re.I)
+_SIZE = re.compile(
+    r"(-?[0-9.]+)\s*(px|pt|rem|em|pc|in|cm|mm|vmin|vmax|vw|vh|ex|ch|%)", re.I)
+_BARE = re.compile(r"(-?[0-9]*\.?[0-9]+)\s*(?:!important)?\s*$", re.I)
 _DECL = re.compile(r"([a-z-]+)\s*:\s*([^;]+)", re.I)
+# shortcut: relative units resolve against a 16px font and a 1280x720
+# viewport, not the real parent or window; exact for zero, which is the attack.
 _UNIT_PX = {"px": 1.0, "pt": 4 / 3, "em": 16.0, "rem": 16.0,
-            "pc": 16.0, "in": 96.0, "cm": 96 / 2.54, "mm": 9.6 / 2.54}
+            "pc": 16.0, "in": 96.0, "cm": 96 / 2.54, "mm": 9.6 / 2.54,
+            "%": 0.16, "ex": 8.0, "ch": 8.0, "vw": 12.8, "vh": 7.2,
+            "vmin": 7.2, "vmax": 12.8}
 _OFFSET_PROPS = ("text-indent", "left", "top", "margin-left", "margin-top")
 WHITE = (255, 255, 255)
 
@@ -238,10 +283,10 @@ def parse_colour(value: str) -> tuple[int, int, int, float] | None:
         return None
     if v == "transparent":
         return (0, 0, 0, 0.0)
-    if v == "white":
-        return (255, 255, 255, 1.0)
-    if v == "black":
-        return (0, 0, 0, 1.0)
+    name = v.split("!")[0].strip()
+    if name in _NAMED:
+        h = _NAMED[name]
+        return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), 1.0)
     m = _RGB.search(v)
     if m:
         rgb = tuple(min(255, max(0, int(float(g)))) for g in m.groups()[:3])
@@ -250,14 +295,16 @@ def parse_colour(value: str) -> tuple[int, int, int, float] | None:
     if m:
         r, g, b = _hsl_to_rgb(float(m.group(1)), float(m.group(2)), float(m.group(3)))
         return (r, g, b, _alpha(m.group(4)))
-    m = _HEX6.search(v)
+    m = _HEX8.search(v) or _HEX6.search(v)
     if m:
         h = m.group(1)
-        return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), 1.0)
-    m = _HEX3.search(v)
+        a = int(h[6:8], 16) / 255 if len(h) == 8 else 1.0
+        return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), a)
+    m = _HEX4.search(v) or _HEX3.search(v)
     if m:
         h = m.group(1)
-        return (int(h[0] * 2, 16), int(h[1] * 2, 16), int(h[2] * 2, 16), 1.0)
+        a = int(h[3] * 2, 16) / 255 if len(h) == 4 else 1.0
+        return (int(h[0] * 2, 16), int(h[1] * 2, 16), int(h[2] * 2, 16), a)
     return None
 
 
@@ -336,15 +383,57 @@ def contrast_ratio(fg: tuple[float, ...], bg: tuple[float, ...]) -> float:
 
 
 def to_px(value: str) -> float | None:
-    """A CSS length in pixels, or ``None`` when the value carries no unit."""
-    m = _SIZE.search(value or "")
-    if not m:
-        return None
-    return float(m.group(1)) * _UNIT_PX[m.group(2).lower()]
+    """A CSS length in pixels, or ``None`` when the value names no number.
+
+    A BARE number counts as pixels: ``0`` is a valid length in any mode, and a
+    quirks-mode page (most HTML email) reads ``font-size:1`` as 1px.
+    ``font-size:0`` with no unit walked past the size floor (VULN-3418 retest,
+    2026-11-12). In standards mode a unitless non-zero is dropped by the
+    browser, so reading it as px can over-flag; it never under-flags.
+    """
+    v = (value or "").strip()
+    m = _SIZE.search(v)
+    if m:
+        return float(m.group(1)) * _UNIT_PX[m.group(2).lower()]
+    m = _BARE.match(v)
+    return float(m.group(1)) if m else None
 
 
 def is_tiny(px: float | None) -> bool:
     return px is not None and 0 <= px < TINY_PX
+
+
+_SCALE = re.compile(r"scale[xy]?\(([^)]*)\)", re.I)
+
+
+def collapsed(own: dict[str, str]) -> bool:
+    """A box that paints no text: squeezed to 1px or less with its overflow
+    hidden, scaled to nothing, or Outlook's ``mso-hide:all``. Each walked past
+    the walkers (VULN-3418 retest, 2026-11-12); email uses all three.
+
+    Ceiling: ``height`` on an INLINE element does nothing in a browser, and
+    the display type is not resolved here, so an inline ``<span>`` with
+    ``height:0;overflow:hidden`` is flagged though it shows. That over-flags;
+    it never misses."""
+    if own.get("mso-hide", "").strip().lower().startswith("all"):
+        return True
+    overflow = " ".join(own.get(k, "") for k in ("overflow", "overflow-x", "overflow-y"))
+    if re.search(r"hidden|clip", overflow, re.I):
+        for prop in ("height", "max-height", "width", "max-width"):
+            px = to_px(own.get(prop, ""))
+            if px is not None and px <= 1.0:
+                return True
+    args = [a for m in _SCALE.finditer(own.get("transform", "")) for a in m.group(1).split(",")]
+    args += own.get("scale", "").split()
+    for arg in args:
+        try:
+            if abs(float(arg.strip().rstrip("%")) / (100 if "%" in arg else 1)) < 0.05:
+                return True
+        except ValueError:  # coverage-audit: a scale this walk cannot read
+            # (`calc()`, a variable) is judged visible, as a browser that
+            # drops the declaration would show it; colour and size still apply.
+            continue
+    return False
 
 
 def declarations(style: str | None) -> dict[str, str]:

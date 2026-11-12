@@ -7,6 +7,29 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.51] — 2026-11-12
+### Security
+- **Two more ways to hide text are flagged (VULN-3418 retest, 2026-11-12).**
+  `font-size:0` with no unit, and the `color` attribute of `<font>`
+  (`<font color="#ffffff">`, `"white"`, or a bare `ffffff`), walked past the
+  HTML, email and Markdown scans. A bare number now counts as pixels, and
+  `<font color>` and `bgcolor` set the text colour and its ground below any
+  CSS. On 184 real HTML and email originals: no change in findings.
+- **The rest of that family is flagged too (2026-11-12 review).** CSS
+  colour names beyond `white`/`black` (`snow`, `ivory`, `whitesmoke`, …),
+  hex with transparency (`#fff0`, `#ffffff80`), the size units `%`, `vw`,
+  `vh`, `ex` and `ch`, a box squeezed to 1px or less with its overflow
+  hidden, `transform:scale(0)` and Outlook's `mso-hide:all`. The Markdown
+  scan now runs the HTML scan on any HTML inside a note, so off-page,
+  dark-on-dark and `hidden` text is caught there as well. On 8,746 vault
+  notes and 184 HTML and email originals: no verdict changed.
+
+### Fixed
+- **A mailbox read answered 503 is sent once more.** The nightly's settle
+  step stopped on one `http 503` from Outlook (12 Nov: 9 of 37 changes not
+  dispatched). A read is now retried once after 2 s; a write is never
+  re-sent.
+
 ## [0.20.50] — 2026-11-12
 ### Security
 - **The host no longer trusts files the Cowork VM can write (scan of

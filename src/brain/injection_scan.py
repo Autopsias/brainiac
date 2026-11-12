@@ -268,6 +268,27 @@ def _invisible_hits(text: str) -> list[dict[str, Any]]:
     return out
 
 
+def _walked_html_hits(text: str) -> list[dict[str, Any]]:
+    """HTML inside a note, judged by the SAME walker the HTML handler uses, so
+    the Markdown lane cannot drift behind it again (VULN-3418 retest,
+    2026-11-12: off-page, dark-on-dark and ``hidden`` text passed here only)."""
+    if "<" not in text:
+        return []
+    from .ingest.handlers import concealment as c
+
+    try:
+        runs = c.html_runs_stdlib(text)
+    except Exception:  # unparseable: fail closed, the instruction check decides
+        runs = [{"text": text}]
+    joined = " ".join(r["text"] for r in runs)
+    found = _instruction_hits(joined) if joined else []
+    if not found:
+        return []
+    return [{"marker": "hidden_styled_instruction", "revealed": found[0]["marker"],
+             "offset": max(0, text.find(runs[0]["text"][:40])),
+             "excerpt": joined[:160]}]
+
+
 def _concealment_hits(text: str) -> list[dict[str, Any]]:
     """Instructions hidden from the human reader: comments and hidden styling.
 
@@ -284,6 +305,7 @@ def _concealment_hits(text: str) -> list[dict[str, Any]]:
                 "offset": offset,
                 "excerpt": " ".join(body.split())[:160],
             })
+    out += _walked_html_hits(text)
     for start in _hidden_style_offsets(text):
         window = text[start: start + 400]
         found = _instruction_hits(window)

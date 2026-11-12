@@ -576,6 +576,11 @@
       "count": 1
     },
     {
+      "file": "src/brain/ingest/handlers/concealment.py",
+      "rule": "no-matching-overload",
+      "count": 1
+    },
+    {
       "file": "src/brain/ingest/handlers/concealment_html.py",
       "rule": "unsupported-operator",
       "count": 2

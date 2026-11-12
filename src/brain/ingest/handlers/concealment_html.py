@@ -28,6 +28,8 @@ What this file resolves, and the ceiling on each (rework 2, after review):
   finding V8 — this said "``@media`` blocks never match" and the probe
   ``st_media_print`` contradicted it). That is an over-fire and it is inside
   the measured 0.00% conviction rate, not an untested claim;
+* the presentational ``<font color>`` and ``bgcolor`` attributes, below any
+  CSS (VULN-3418 retest, 2026-11-12);
 * ``display:none``, the ``hidden`` attribute, ``opacity:0`` and
   ``visibility:hidden`` — the five ordinary hiding states the round-1 review
   found admitted. ``display``/``opacity``/``hidden`` latch for the whole
@@ -50,7 +52,7 @@ import re
 from typing import Any, Callable
 
 from .concealment import (
-    WHITE, colour_marker, declarations, is_tiny, normalise, note_degraded,
+    WHITE, collapsed, colour_marker, declarations, is_tiny, normalise, note_degraded,
     parse_colour, run_record, to_px, OFFSCREEN_PX, _OFFSET_PROPS,
 )
 
@@ -176,6 +178,25 @@ def _sheet_style(sheet: dict[str, str], tag: str, attrs: dict[str, Any]) -> str:
     return ";".join(p for p in parts if p)
 
 
+_LEGACY_HEX = re.compile(r"[0-9a-f]{6}|[0-9a-f]{3}", re.I)
+
+
+def _presentational(tag: str, attrs: dict[str, Any]) -> str:
+    """``<font color>`` and ``bgcolor`` as declarations, placed BEFORE every
+    CSS rule so any stylesheet or inline style still wins, as in a browser.
+    ``<font color="#fff">`` is the commonest way HTML email hides text."""
+    out = []
+    for attr, prop in (("color", "color"), ("bgcolor", "background-color")):
+        if attr == "color" and tag != "font":
+            continue
+        raw = str(attrs.get(attr) or "").strip()
+        if _LEGACY_HEX.fullmatch(raw):
+            raw = "#" + raw  # a browser reads color="ffffff" as #ffffff
+        if raw and ";" not in raw:
+            out.append(f"{prop}:{raw}")
+    return ";".join(out)
+
+
 def _apply_paint(out: "_Style", own: dict[str, str]) -> None:
     """Fold colour, background and font-size declarations into ``out``."""
     if "color" in own:
@@ -220,6 +241,7 @@ class _Style:
                 sheet: dict[str, str] | None = None) -> "_Style":
         attrs = attrs or {}
         own = declarations(
+            f"{_presentational(tag, attrs)};"
             f"{_sheet_style(sheet or {}, tag, attrs)};{style_attr or ''}")
         out = _Style(self.colour, self.ground, self.size, self.offscreen,
                      self.undisplayed, self.invisible)
@@ -325,7 +347,7 @@ def _undisplayed(own: dict[str, str], attrs: dict[str, Any]) -> bool:
     """
     if own.get("display", "").strip().lower() == "none":
         return True
-    if _clipped_away(own):
+    if _clipped_away(own) or collapsed(own):
         return True
     # PRESENCE, not value: `hidden` is a boolean attribute, and the stdlib
     # parser reports a valueless one as ``None`` — a truthiness test reads

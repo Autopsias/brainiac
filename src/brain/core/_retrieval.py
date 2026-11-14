@@ -9,6 +9,7 @@ from ._shared import (
     frontmatter,
 )
 from ..index._retirement import retired_ids
+from ..rerank import RERANK_TOP_DEFAULT
 
 
 class _CoreRetrievalMixin:
@@ -22,7 +23,7 @@ class _CoreRetrievalMixin:
         caller's egress cap. See ``BrainIndex.freshness``."""
         return self.index.freshness(newest_hit_date, max_tier)
     def hybrid_search(
-        self, query: str, k: int = 10, *, rerank: bool = False, rerank_top: int = 15,
+        self, query: str, k: int = 10, *, rerank: bool = False, rerank_top: int = RERANK_TOP_DEFAULT,
         rrf_k: int = 60, rerank_gate: bool | None = None,
         include_retired: bool = False,
     ) -> list[Hit]:
@@ -36,7 +37,7 @@ class _CoreRetrievalMixin:
         )
     def hybrid_search_with_trace(
         self, query: str, k: int = 10, *, rerank: bool = False,
-        rerank_top: int = 15, rrf_k: int = 60, rerank_gate: bool | None = None,
+        rerank_top: int = RERANK_TOP_DEFAULT, rrf_k: int = 60, rerank_gate: bool | None = None,
         include_retired: bool = False,
     ):
         """Production hybrid search plus opt-in, pre-egress S03 attribution.
@@ -66,7 +67,7 @@ class _CoreRetrievalMixin:
         """
         return self.index.annotate_create_safety(query, surfaced, max_tier)
     def hybrid_search_graph(
-        self, query: str, k: int = 10, *, rerank: bool = False, rerank_top: int = 15,
+        self, query: str, k: int = 10, *, rerank: bool = False, rerank_top: int = RERANK_TOP_DEFAULT,
         rrf_k: int = 60, depth: int = 2, graph_weight: float = 0.5,
         seed_flat_top: int = 3, flat_pool: int = 30, return_trace: bool = False,
     ):

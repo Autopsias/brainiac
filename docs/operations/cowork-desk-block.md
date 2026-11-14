@@ -29,10 +29,11 @@ shell out for note content, and do not open a note file.
 Those seventeen names are the whole desk, and they are the only route to note
 CONTENT this session may use. **"Not on the desk" is not the same as "refused
 here"**, and conflating the two is how a session talks itself into a workaround:
-measured 2026-08-28, nine of the CLI's 22 VM-allowed verbs have no desk tool
-(`brief`, `cos-propose`, `digest`, `doctor`, `draft-capture`, `init`,
-`mcp-config`, `provision-request`, `status`), and two desk tools (`inbox`,
-`vault_languages`) are not VM-allowed on the CLI at all. Of those nine, only
+ten of the CLI's 23 VM-allowed verbs have no desk tool (`brief`,
+`check-egress`, `cos-propose`, `digest`, `doctor`, `draft-capture`, `init`,
+`mcp-config`, `provision-request`, `status`), and four desk tools (`inbox`,
+`supersede`, `unsupersede`, `vault_languages`) are not VM-allowed on the CLI
+(`brain.cli.VM_ALLOWED` is the list of record). Of those ten, only
 `cos-propose` — the COS ingress nothing on the desk serves — and the staging
 probes below are still invoked locally by a shipped bundle, both deliberately.
 Every verb that COMMITS or rebuilds — `write`, `sync`, `maintain`, `rebuild`,

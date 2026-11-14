@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from ._shared import *  # noqa: F401,F403
+from ..rerank import RERANK_TOP_DEFAULT
 
 
 class _GraphMixin:
@@ -25,7 +26,7 @@ class _GraphMixin:
         k: int = 10,
         *,
         rerank: bool = False,
-        rerank_top: int = 15,
+        rerank_top: int = RERANK_TOP_DEFAULT,
         rrf_k: int = 60,
         depth: int = 2,
         graph_weight: float = 0.5,

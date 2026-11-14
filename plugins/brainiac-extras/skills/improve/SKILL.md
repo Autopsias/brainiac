@@ -36,10 +36,11 @@ shell out for note content, and do not open a note file.
 Those seventeen names are the whole desk, and they are the only route to note
 CONTENT this session may use. **"Not on the desk" is not the same as "refused
 here"**, and conflating the two is how a session talks itself into a workaround:
-measured 2026-08-28, nine of the CLI's 22 VM-allowed verbs have no desk tool
-(`brief`, `cos-propose`, `digest`, `doctor`, `draft-capture`, `init`,
-`mcp-config`, `provision-request`, `status`), and two desk tools (`inbox`,
-`vault_languages`) are not VM-allowed on the CLI at all. Of those nine, only
+ten of the CLI's 23 VM-allowed verbs have no desk tool (`brief`,
+`check-egress`, `cos-propose`, `digest`, `doctor`, `draft-capture`, `init`,
+`mcp-config`, `provision-request`, `status`), and four desk tools (`inbox`,
+`supersede`, `unsupersede`, `vault_languages`) are not VM-allowed on the CLI
+(`brain.cli.VM_ALLOWED` is the list of record). Of those ten, only
 `cos-propose` — the COS ingress nothing on the desk serves — and the staging
 probes below are still invoked locally by a shipped bundle, both deliberately.
 Every verb that COMMITS or rebuilds — `write`, `sync`, `maintain`, `rebuild`,
@@ -103,7 +104,7 @@ conventions instead of an Obsidian/Cowork vault layout.
 > **Canonical layer note.** Some deployments keep a shared references
 > directory acting as the single source of truth across multiple repos
 > (this repo's own `docs/` plays that role for `AGENTS.md`/CLAUDE.md
-> content via `@AGENTS.md` import — see the top of `CLAUDE.md`). In a
+> content via the `@AGENTS-core.md` import — see the top of `CLAUDE.md`). In a
 > canonical-aware project, propose edits to the canonical file, not a
 > downstream copy that imports it.
 
@@ -138,11 +139,11 @@ Ask one question: "What scope should this retrospective cover?"
 
 ## Phase 2 — discovery (only if scope includes project artifacts)
 
-Catalog, concise (under 300 words), grouped by purpose with line counts and
+A short catalog, grouped by purpose with line counts and
 last-modified dates:
 
 - **`AGENTS.md`** — the canonical conventions file (every harness reads
-  this; `CLAUDE.md` just imports it via `@AGENTS.md`).
+  this; `CLAUDE.md` imports its smaller core, `AGENTS-core.md`).
 - **`.claude/skills/*/SKILL.md`** and any `commands/*.md` in the same dirs.
 - **`docs/`** — specs (`docs/substrate-spec.md`, `docs/classification-
   scheme.md`, `docs/operations/` if this is a cutover-in-progress repo).

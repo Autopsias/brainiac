@@ -597,6 +597,7 @@
     "src/brain/remediation_exceptions_store.py",
     "src/brain/remediation_extract_retry.py",
     "src/brain/remediation_folds.py",
+    "src/brain/remediation_image_pdf.py",
     "src/brain/remediation_invariants.py",
     "src/brain/remediation_questions.py",
     "src/brain/remediation_routing.py",
@@ -710,5 +711,5 @@
     "vault/raw/2026-06-27-arctic-vs-e5-benchmark.md",
     "vault/raw/README.md"
   ],
-  "count": 709
+  "count": 710
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # brain-daily-brief — THE single sanctioned host scheduled task (`brain-nightly`,
-# persistence-budget.md THE LOCK). Runs the `brain maintain` umbrella, which is
+# routines/manifest.json THE LOCK). Runs the `brain maintain` umbrella, which is
 # sync --publish + brief PLUS the date-gated branches (Mon=health, Tue=integrity,
 # Sun=digest, 1st=graphify-documented-only) -- see src/brain/core/
 # BrainCore.maintain + src/brain/maintenance.py maintain_branches.
@@ -17,7 +17,7 @@
 #               (scripts/register_tasks.py) -- only its invoked command changed.
 # User context: current user (LaunchAgent / Task Scheduler user-level)
 # Schedule:     daily 07:00 (see installer scripts); date-gated branches fire
-#               INSIDE this one run -- see routines/manifest.json + persistence-budget.md.
+#               INSIDE this one run -- see routines/manifest.json locked_counts.
 # Logs:         $BRAIN_LOG_DIR/brief-YYYY-MM-DD.log  (30-day rotation)
 # Uninstall:    see scripts/install-brief-mac.sh or install-brief-windows.ps1
 #

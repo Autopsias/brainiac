@@ -15,7 +15,7 @@ allows:
               ingestion-digest-weekly's on-demand form). autoresearch-cascade
               moved to host-only in AUT-04/s11 (needs the dev repo's eval/ +
               src/, not something a Cowork VM session can run).
-              These are NEVER auto-firing: persistence-budget.md locks the
+              These are NEVER auto-firing: routines/manifest.json locked_counts locks the
               Cowork/VM OS-scheduled-task count at exactly 0, so this leg
               never emits a cron_expression. It emits ONE paste-ready prompt
               a human pastes into a Cowork chat session; the prompt itself
@@ -90,7 +90,7 @@ def load_manifest(path: Path) -> dict:
     # model-backed kb-curator session). VM stays 0.
     if locked.get("host_os_scheduled") != 2 or locked.get("vm_os_scheduled") != 0:
         raise SystemExit(
-            "manifest locked_counts do not match persistence-budget.md THE LOCK "
+            "manifest locked_counts do not match THE LOCK "
             f"(host=2, vm=0) -- got {locked}. Refusing to register against an "
             "unratified budget. Amend routines/manifest.json locked_counts first."
         )

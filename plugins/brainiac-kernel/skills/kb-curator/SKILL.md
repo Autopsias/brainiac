@@ -36,10 +36,11 @@ shell out for note content, and do not open a note file.
 Those seventeen names are the whole desk, and they are the only route to note
 CONTENT this session may use. **"Not on the desk" is not the same as "refused
 here"**, and conflating the two is how a session talks itself into a workaround:
-measured 2026-08-28, nine of the CLI's 22 VM-allowed verbs have no desk tool
-(`brief`, `cos-propose`, `digest`, `doctor`, `draft-capture`, `init`,
-`mcp-config`, `provision-request`, `status`), and two desk tools (`inbox`,
-`vault_languages`) are not VM-allowed on the CLI at all. Of those nine, only
+ten of the CLI's 23 VM-allowed verbs have no desk tool (`brief`,
+`check-egress`, `cos-propose`, `digest`, `doctor`, `draft-capture`, `init`,
+`mcp-config`, `provision-request`, `status`), and four desk tools (`inbox`,
+`supersede`, `unsupersede`, `vault_languages`) are not VM-allowed on the CLI
+(`brain.cli.VM_ALLOWED` is the list of record). Of those ten, only
 `cos-propose` — the COS ingress nothing on the desk serves — and the staging
 probes below are still invoked locally by a shipped bundle, both deliberately.
 Every verb that COMMITS or rebuilds — `write`, `sync`, `maintain`, `rebuild`,
@@ -96,11 +97,8 @@ archive}`, frontmatter `classification`). It carries **no project-specific
 content** — a deployment that needs extra checks layers them in an overlay
 SKILL.md at the same path, per the override pattern below.
 
-This kernel **supersedes** the Smart-Connections/Obsidian-Bases version of
-kb-curator. Every check that used to read `.smart-env/*.ajson` vectors or the legacy
-Obsidian Bases (`*.base`) files now goes through the `brain` CLI instead — see
-AGENTS.md §5/§6 in this repo for the retrieval-tool + trust-split mapping
-this skill implements.
+Every check goes through the `brain` CLI — see AGENTS.md §5/§6 in this repo
+for the retrieval-tool + trust-split mapping this skill implements.
 
 ## Phase 0 — locate the vault and confirm it's brain-shaped
 
@@ -119,8 +117,7 @@ at all is by definition pointed at a brain-substrate vault. If `recent` errors, 
 desk as unreachable; do not go looking for the directories.
 
 If the fingerprint doesn't match, this skill refuses — it does not guess at a
-different substrate. (A project running FLAT or Obsidian/Smart-Connections
-keeps the legacy kb-curator base for now; this kernel is brain-only.)
+different substrate. This kernel is brain-only.
 
 ## When to invoke
 
@@ -144,7 +141,7 @@ When a threshold trips, propose the corresponding mode — never auto-execute.
 | Mode | What it does | brain command(s) |
 |---|---|---|
 | `audit` | Cheap, frequent health check — index/snapshot/draft state + audit-chain integrity + a quick retrieval self-test | `brain health --json` (folds `status` + `verify-audit` + a probe search) |
-| `audit-near-dup` | Corpus-wide cosine near-duplicate scan over the real vector backend — **REPOINT of the old `.smart-env`-cosine contradiction lint (G1, already shipped)** | `brain integrity --json` |
+| `audit-near-dup` | Corpus-wide cosine near-duplicate scan over the real vector backend | `brain integrity --json` |
 | `audit-orphans` | Notes with zero inbound wikilinks — the brain-substrate equivalent of "no Base type-binding and no link-in" | HOST ONLY — `python3 tools/validate.py "$BRAIN_VAULT" --backlinks` regenerates `vault/brain/backlinks.md`, then diff its link targets against every note id; any id absent is an orphan. No desk equivalent (see `audit-orphans` below) |
 | `lint-stale` | Frontmatter/classification conformance — every note has the required keys (`id, title, type, classification, created, updated` for `brain/`; `id, type, classification, captured, origin, immutable` for `raw/`) | `brain bases-query --where type=note --json` (enumerate, then validate locally) cross-checked with `python3 tools/validate.py "$BRAIN_VAULT"` |
 | `refresh-index` | After a batch of writes — incremental reindex | `brain sync` (fast path) or `brain rebuild` (full rebuild, always safe) |
@@ -180,18 +177,12 @@ Report `auto_fixed` and `action_required` verbatim; a non-empty `blocked`
 list (e.g. "no audit signing key resolved") is not a kb-curator failure — it
 is a host-environment gap (see `AGENTS.md` §6 for key custody). Surface it as-is, do not silently retry.
 
-## `audit-near-dup` — the Bases-existence check's REPOINT, not RETIRE
+## `audit-near-dup` — notes that say almost the same thing
 
-The old `.base`-file-existence checks (kb-curator's `audit_obsidian.py` check
-1) **RETIRE outright** — there are no `.base` files under the brain
-substrate, and there is nothing to replace them with (Bases introspection
-was retired, never shipped as a CLI verb — G4). Do not invent a stand-in
-check for a file format that no longer exists.
-
-What does carry forward is contradiction/near-dup detection, because that was
-never really about `.base` files — it was about finding notes that say
-almost the same thing. That REPOINTs cleanly onto the vector backend the
-brain already indexes with:
+This substrate has no `.base` files and no separate structured-view file:
+`bases-query` reads the same index `brain status` already reports on. Do not invent
+a check for a `.base` file. Near-duplicate detection runs on the vector backend
+the brain already indexes with:
 
 ```bash
 brain --vault "$BRAIN_VAULT" integrity --json
@@ -259,7 +250,7 @@ with each finding.
   to resolve them; this skill does the same.
 - **`brain write` / `brain capture` (the host-broker commit path) is only
   invoked for `promote-lesson`**, and only after the lesson has cleared the
-  same two-strike bar the legacy skill used (bitten/applied twice before
+  two-strike bar (bitten/applied twice before
   graduating from a session reflection into a durable note).
 - **Classification is never inferred or auto-assigned.** A note that fails
   `lint-stale`'s frontmatter check gets reported, not silently patched with a
@@ -274,17 +265,6 @@ with each finding.
   automatic, the marker is the judgment; the gap between them is what makes
   adoption measurable. `lint-stale` REPORTS an unmarked produced note like any
   other finding — it never stamps one.
-
-## Why the Bases checks retire instead of repointing
-
-The legacy OBSIDIAN audit chain spent four scripts partly on structural
-introspection — "do the 11 canonical `.base` files exist, and is their
-schema intact?" Under brain there is no separate structured-view file format
-to go stale: `bases-query` reads the SAME index `brain status` already
-reports on. So the genuinely new failure mode (a missing/corrupt structured
-view) cannot occur independently of the index itself — `brain health`
-already covers it. Inventing a parallel check would be insurance against a
-risk the architecture removed, not a real gap.
 
 ## Override pattern
 

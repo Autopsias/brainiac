@@ -237,6 +237,9 @@ def _load_ranking_metadata(
     rowids = tuple(scores)
     placeholders = ",".join("?" * len(rowids))
     date_expr = "COALESCE(NULLIF(effective_date,''), NULLIF(document_date,''), created)"
+    # The resolved zone feeds the zone prior and near-dup suppression only;
+    # with neither configured it is dead work (~1.2 s on the live vault).
+    need_zone = index._zone_prior_active() or index._dedup_params()[0] is not None
     for rowid, stored_zone, path, date in index.conn.execute(
         f"SELECT rowid, zone, path, {date_expr} FROM notes "  # nosec B608
         f"WHERE rowid IN ({placeholders})",
@@ -244,7 +247,8 @@ def _load_ranking_metadata(
     ):
         rid = int(rowid)
         column_zone[rid] = stored_zone or ""
-        zone[rid] = index._resolve_zone(stored_zone or "", path or "")
+        zone[rid] = (index._resolve_zone(stored_zone or "", path or "")
+                     if need_zone else stored_zone or "")
         valid_date[rid] = date or ""
     return zone, column_zone, valid_date
 

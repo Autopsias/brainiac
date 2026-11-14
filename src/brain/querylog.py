@@ -74,13 +74,6 @@ def _inside(child: Path, parent: Path) -> bool:
         return False
 
 
-def _mode(path: Path) -> int | None:
-    try:
-        return stat.S_IMODE(path.stat().st_mode)
-    except OSError:
-        return None
-
-
 def _is_owner_only_dir(path: Path) -> bool:
     if os.name != "posix":
         return False

@@ -242,19 +242,6 @@ def _make_core(args: Any, role: str) -> BrainCore:
         return BrainCore(vault=args.vault)
 
 
-def _cmd_connect(args: Any) -> int:
-    """Compatibility facade for the client-wiring group's connect command."""
-    from . import config
-    from .cli_cmds import CommandContext
-    from .cli_cmds.connect import command_connect
-
-    role = config.role(getattr(args, "role", None))
-    return command_connect(
-        args,
-        CommandContext(role=role, config=config, core=None),
-    )
-
-
 # Commands the read+draft-only VM leg may run. Everything else is host-broker.
 # capture/brief/digest are included because BrainCore routes correctly by role:
 #   capture → draft_capture (VM), write_note (host)

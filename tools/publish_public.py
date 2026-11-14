@@ -351,6 +351,11 @@ def start_vm_elf_build(version: str) -> "subprocess.Popen | None":
         return None
 
 
+def _marketplace_checkout() -> "Path | None":  # the tree `brain update`'s closing doctor scores
+    from brain.doctor_context import marketplace_install_location
+    return marketplace_install_location(Path.home() / ".claude")
+
+
 def phase_local_deploy(version: str, elf_build: "subprocess.Popen | None" = None) -> str:
     """Publishing is not deploying — this phase closes the gap between them.
 
@@ -407,6 +412,11 @@ def phase_local_deploy(version: str, elf_build: "subprocess.Popen | None" = None
     # Name the release tree: `brain update` otherwise resolves the checkout its
     # interpreter imports from, and a release run from a worktree then staged
     # the main checkout's stale dist/ ELFs (v0.20.50 deployed 0.20.49).
+    # The closing doctor reads the MARKETPLACE checkout's dist/COMPAT: package it too (v0.20.51).
+    market = _marketplace_checkout()
+    packager = market / "tools" / "package_clients.py" if market else None
+    if packager and packager.is_file() and market.resolve() != REPO_ROOT.resolve():
+        _need(_run([sys.executable, str(packager)], cwd=market, timeout=600), f"packaging {market}")
     proc = _run([sys.executable, "-m", "brain", "update", "--json"],
                 cwd=REPO_ROOT, timeout=1800,
                 env={**os.environ, "BRAINIAC_ENGINE_SRC": str(REPO_ROOT)})

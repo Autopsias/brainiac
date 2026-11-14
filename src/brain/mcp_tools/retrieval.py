@@ -33,6 +33,7 @@ from typing import Any
 
 from .. import classification as cls
 from ..mcp_adapter import dispatch
+from ..rerank import RERANK_TOP_DEFAULT
 
 
 def register(server: Any, *, core: Any) -> None:
@@ -170,7 +171,7 @@ def _register_alias_verbs(server: Any, *, core: Any) -> None:
         target: str,
         k: int = 10,
         rerank: bool = False,
-        rerank_top: int = 20,
+        rerank_top: int = RERANK_TOP_DEFAULT,
         rrf_k: int = 60,
         max_tier: str = cls.HOST_MCP_DEFAULT_MAX_TIER,
     ) -> dict:

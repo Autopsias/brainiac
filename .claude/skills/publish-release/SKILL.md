@@ -66,11 +66,10 @@ ls ~/brainiac-release-groundtruth.txt    # the denylist
   fresh venv "to fix it" swaps a step-7 failure for a step-3 failure. On this
   host `~/.brainiac/venv/bin/python3` is the one that satisfies all three —
   verify, never assume, and invoke the pipeline with it explicitly.
-- **Do NOT check `npm whoami`, and never run `npm login`.** Since 2026-08-20
-  the pipeline does not publish npm at all: the tag push fires
-  `npm-publish.yml`, which publishes over OIDC with no credential and with a
-  provenance attestation. The old hand publish is what needed a login that
-  expires every two hours, and it broke the v0.20.22 run. If npm is missing at
+- **Do NOT check `npm whoami`, and never run `npm login`.** The pipeline does
+  not publish npm at all: the tag push fires `npm-publish.yml`, which
+  publishes over OIDC with no credential and with a provenance attestation.
+  If npm is missing at
   the end, the fix is the workflow, not an auth session — `post-verify` prints
   the two `gh` commands.
 - `CHANGELOG.md` must have real content under `## [Unreleased]` — an empty
@@ -137,8 +136,7 @@ gate output), anything excluded from the release commit (step 1), any
 Windows-CI acceptance reason, and the acts as a multi-select.
 
 **There are FOUR gated acts:** `testpypi`, `pypi`, `public-git`,
-`release-asset`. It was five until 2026-08-20, when `npm` stopped being an
-act this pipeline performs. Include `release-asset` explicitly — omitting it
+`release-asset`. Include `release-asset` explicitly — omitting it
 stops the run near the end needing a second, separate approval (measured
 2026-08-16) — and say what it carries: it attaches assets to the GitHub
 release that CI already created on the tag push, and it has failed since

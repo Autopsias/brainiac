@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "generated": "2026-10-31T10:30:49Z",
+  "generated": "2026-11-13T11:06:23Z",
   "produced_by": "closed-stacks-2026-08-27 / S01 / FND-02 (rework 2, after the second adversarial-review round); derived columns RE-DERIVED by S02 / DESK-02 after the broker grew grep, graph_expand, read, hybrid_search and diagnose; derived columns RE-DERIVED AGAIN by S03 / DESK-03 after the broker grew alerts, exceptions, inbox; derived columns RE-DERIVED AGAIN by S04 / DESK-04 after the broker grew capture; derived columns RE-DERIVED AGAIN by S06B / DESK-07 after the 14 Cowork bundles were migrated onto the broker (consumers changed, seam unchanged); cli_parser_choices RE-DERIVED by one-command-per-vault-2026-08-30 / S01 / CMD-01 after the host CLI grew the host-only `provision-local` subcommand (74 -> 75). No other derived column moved: the verb appears in no skill bundle and is not in cli.VM_ALLOWED, so candidates, verbs, dispositions and the broker columns are byte-unchanged; cli_parser_choices RE-DERIVED by night-porter-2026-08-25 (the 2026-09-01 archive-ruling commit) after the survey caught up with the host-only `cos` and `cos-feedback` subcommands, added 2026-08-26 by f00b2db without the same-commit re-record (75 -> 77); the same pass re-recorded the chief-of-staff bundle content_sha256 after the 2026-09-01 DOCTRINE.md ruling edit. Verbs, tokens and candidates are byte-unchanged: neither new subcommand appears in any skill bundle or in cli.VM_ALLOWED.",
   "consumed_by": [
     "s02 definition of done",
@@ -32,8 +32,8 @@
   },
   "bundles_scanned": 13,
   "files_scanned": 13,
-  "raw_matches": 161,
-  "distinct_tokens": 51,
+  "raw_matches": 158,
+  "distinct_tokens": 48,
   "cli_parser_choices": 62,
   "mcp_registered_tools": [
     "alerts",
@@ -292,7 +292,7 @@
     },
     {
       "token": "health",
-      "count": 4,
+      "count": 3,
       "bundles": [
         "kb-curator",
         "vault-eval"
@@ -366,10 +366,11 @@
     },
     {
       "token": "integrity",
-      "count": 6,
+      "count": 7,
       "bundles": [
         "improve",
-        "kb-curator"
+        "kb-curator",
+        "vault-ingestion"
       ],
       "kind": "cli_verb"
     },
@@ -396,14 +397,6 @@
       "count": 1,
       "bundles": [
         "task-registrar"
-      ],
-      "kind": "not_a_verb"
-    },
-    {
-      "token": "near-dup",
-      "count": 1,
-      "bundles": [
-        "vault-ingestion"
       ],
       "kind": "not_a_verb"
     },
@@ -469,14 +462,6 @@
       "kind": "not_a_verb"
     },
     {
-      "token": "similar",
-      "count": 1,
-      "bundles": [
-        "vault-ingestion"
-      ],
-      "kind": "not_a_verb"
-    },
-    {
       "token": "snapshot",
       "count": 1,
       "bundles": [
@@ -528,14 +513,6 @@
       "count": 1,
       "bundles": [
         "task-registrar"
-      ],
-      "kind": "not_a_verb"
-    },
-    {
-      "token": "there",
-      "count": 1,
-      "bundles": [
-        "kb-curator"
       ],
       "kind": "not_a_verb"
     },
@@ -683,7 +660,7 @@
     },
     {
       "verb": "health",
-      "count": 4,
+      "count": 3,
       "bundles": [
         "kb-curator",
         "vault-eval"
@@ -738,10 +715,11 @@
     },
     {
       "verb": "integrity",
-      "count": 6,
+      "count": 7,
       "bundles": [
         "improve",
-        "kb-curator"
+        "kb-curator",
+        "vault-ingestion"
       ],
       "on_broker": false,
       "disposition": "host_only_never"
@@ -860,8 +838,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "fcf887f6915d56e1dc727c9a5f150eb77f9a0ef7",
-      "content_sha256": "9cbd7971d14688e7286688a5967c5fd16a2c168f4c06e5daad1b6d1ff15075d7"
+      "skill_md_git_blob": "17a5638c3fba5d691ac53326a3d385da41421baa",
+      "content_sha256": "5e3e7311a1f0b573df9b7cc687f4b9d5ae35d378ac9b09d7549714a057d8114f"
     },
     {
       "skill": "brain-inbox",
@@ -869,8 +847,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "cd486b33541f50e13e2e938ec0a03d1eacc6037c",
-      "content_sha256": "c3d181c05bbf60130c092914d8cdfd3f7d2167e91db91d72ef1ab771f05f35ee"
+      "skill_md_git_blob": "b1cdcc9720e2ab936df58619c4ef923c16812550",
+      "content_sha256": "20a74c2b977c17d7d2202e55883accecaf99ad2a45641a6a991ea992c2c8cf68"
     },
     {
       "skill": "curation",
@@ -878,8 +856,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "f590cbc6b0d41eecf5d4e5051347b7b5812c68e6",
-      "content_sha256": "c9239db6fd7ce734774bcb9268723022818d5284bbcea43beafb68468fd45156"
+      "skill_md_git_blob": "a51166666235a3d2adca704982aebc01b538253f",
+      "content_sha256": "84d74c7f4fad0b6d60bc068f996d1fc1ac16c091ef059d789a77cc6946c0dafb"
     },
     {
       "skill": "graph-explorer",
@@ -887,8 +865,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "78d802cf08c51b4665038129afff5722dddfd54e",
-      "content_sha256": "fbbf6bb915547c3edd7d840481bcb2ff9ea9bdcf287d041fdfacae35c9b488ed"
+      "skill_md_git_blob": "74a0f3cb281ed0b024273501088a13a7b501b751",
+      "content_sha256": "73f9aed525b9d95c473930c26c0545dc3d2ab5316fb90bc06390182971a36a77"
     },
     {
       "skill": "improve",
@@ -896,8 +874,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "810998e161f7b448dda059153bee23e0e01ac2c1",
-      "content_sha256": "45514cc19f51bdcd4c12f7caf3e0cbf1760978651c9877d6d60f4022ecc0ee70"
+      "skill_md_git_blob": "e64d6ab65aed4c5e4e13ac06697adfe6bb530c64",
+      "content_sha256": "15a2cc5dc5689efb1c2deb5230345cf4fe3e057ba6a225194de72ddbc9464e7a"
     },
     {
       "skill": "kb-curator",
@@ -905,8 +883,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "06c5f4c464d1ffc224f410196375757cb53adc0d",
-      "content_sha256": "72d77138fdb945d5a8b4c39238ac26379af5d169787358a607c564602015c1bb"
+      "skill_md_git_blob": "197529d7c3f4aad681bb9e67741bc4ee626bdbea",
+      "content_sha256": "7c2a86e16ac4dbba5160a7dbc0ffb0e9d2cde080f22e1d78dcdd8242b03c747b"
     },
     {
       "skill": "overlay-style",
@@ -914,8 +892,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "bacae77f2b752b7131f2fb4a9ca928537eabae4d",
-      "content_sha256": "e57b2cce815766532177b8484631636a9c3fe17bf226edf4ff883a401fc681e5"
+      "skill_md_git_blob": "9150e54747be768dabc8617d47e153f5708da388",
+      "content_sha256": "e5bc23d1ace97fa005a8161143f55c9c72ba6ce9c35e1b8792f0cdc314cef011"
     },
     {
       "skill": "promote",
@@ -923,8 +901,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "d87b628d732f807344f3e76e65e8864323b44332",
-      "content_sha256": "8f353ce91f4d07ad5a3d819e1402393b761c22b767591c85751ce07433609137"
+      "skill_md_git_blob": "86160d780200017682980e51eef91bde54ff3f82",
+      "content_sha256": "4de083a5de3fcb884f795ae112a7c78bb0e6c74c99044eb0472c6942dcdd3807"
     },
     {
       "skill": "save-conversation",
@@ -932,8 +910,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "17ee3aa2587c5000c8ab084ff57a060ef45a98aa",
-      "content_sha256": "2dc3e676821b25b5120d914dbb4c26a41d75705189f15da848e564b896fd4a93"
+      "skill_md_git_blob": "9776377830ee18e91f20dbb55af274619bd22f75",
+      "content_sha256": "339689e926b7b0927012ac6733a485359f63f234a332f04651cf329e89f5a6ba"
     },
     {
       "skill": "task-registrar",
@@ -941,8 +919,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "1430f3e9105df6323f93e16a108175afee0ba969",
-      "content_sha256": "20d723cb7f75f6a08b7cd7ae0fa0fd6a12975b49435982cac22bb5e84ab60d17"
+      "skill_md_git_blob": "8702c1bd3fed9b4c649f04fe70423341df9e6c1f",
+      "content_sha256": "50ffbb1caf5cc9ef0f106c29ef33929dda2e2c609c38eddc5e5fff3b4876aa65"
     },
     {
       "skill": "vault-eval",
@@ -950,8 +928,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "e63e8a488043bfd96c144673cebd60cecb13b565",
-      "content_sha256": "ac417b93a393373f9786f35d717d4045670adabc94318359eca0e313160fa935"
+      "skill_md_git_blob": "1189711becfed3c1b5f3d334e6e243278c35f6d0",
+      "content_sha256": "e2ff6d14b5ea4334a106e5d28e517c606596a61dee61e6cc186c98205c1a32e6"
     },
     {
       "skill": "vault-ingestion",
@@ -959,8 +937,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "70139d9a23525987a513b3faadf7eb166ea2e610",
-      "content_sha256": "06809534958a20ea83f9aa5c96047db9835dc2d605aa2995f3616e7a4d9fad2b"
+      "skill_md_git_blob": "8b7c209f7647f46576200943116d097c4531319d",
+      "content_sha256": "aa0988693f917f3eb6e3aafa8f0073c8dd0f7a426f1cc0005be65e478a3667ea"
     },
     {
       "skill": "vm-doctor",
@@ -968,8 +946,8 @@
       "files": [
         "SKILL.md"
       ],
-      "skill_md_git_blob": "dd025db754e722e0c1dad5f09cc48aca13c58a92",
-      "content_sha256": "ab68d2c7f2c991dec2b179d82335b99c7ffff6c6607a6e58436a3a94101c4efd"
+      "skill_md_git_blob": "a5dd6d2d9ebe43e6e3e39473f283eed3ed1eaa87",
+      "content_sha256": "a5f25af6e59960e4105f77fe4eaff17d8d630ee5021e5be44507f4f0842bf125"
     }
   ],
   "s02_update": {
@@ -1015,12 +993,12 @@
     "verification_property": "Host-side staging is unconditional, not a fallback: the broker process that runs mcp_capture_verbs.dispatch_capture is always the HOST process (a Cowork session reaches it over the channel Claude Desktop sets up, never by importing the module into the sandbox), so core.capture()'s existing role branch already guarantees the sandbox writes no file of its own. Covered end to end in tests/test_mcp_tools_capture.py: round trip (vm-role capture -> host drain -> signed+indexed+retrievable), untrusted-author sanitisation (one malicious field stripped, one benign field survives), a distinct mcp:capture read-log trace (present even when the draft is never drained), durable pending-backlog visibility from a fresh request, drain-twice idempotency (one signed note, not two), and a real concurrent-capture race (two captures landing in the same instant produce two distinct surviving files, never an overwrite)."
   },
   "superseded_pattern_reconciliation": {
-    "why_this_moved_here": "S01 pinned this reconciliation as literals INSIDE tests/test_cowork_skill_verbs.py (259/75 and a seven-token delta map). S06B REWROTE the bundle corpus those numbers were measured over, so they are no longer reproducible and re-recording them in the test would have turned a real check into one that confirms whatever the corpus says. The numbers moved into this oracle instead, where re-recording is the visible, reviewable act it is for every other count here. The PROPERTY s01 established is unchanged and still measured: the superseded pattern MISSES the quoted, path-qualified invocation, so the two patterns differ by a NET rather than by a pure loss. Read the `delta` map beside this line for the shape of that net -- it is currently 7 losses and 1 gain (status). s01 recorded SIX losses and one gain; that was true of the pre-DESK-07 corpus and is no longer, because `doctor` joined the losses (20 -> 6) when the shared desk block replaced vm-doctor's bootstrap. The count in this sentence is derived from the map, never carried forward.",
-    "superseded_raw": 177,
-    "superseded_distinct": 51,
-    "current_raw": 161,
-    "current_distinct": 51,
-    "net": -16,
+    "why_this_moved_here": "S01 pinned this reconciliation as literals INSIDE tests/test_cowork_skill_verbs.py (259/75 and a seven-token delta map). S06B REWROTE the bundle corpus those numbers were measured over, so they are no longer reproducible and re-recording them in the test would have turned a real check into one that confirms whatever the corpus says. The numbers moved into this oracle instead, where re-recording is the visible, reviewable act it is for every other count here. The PROPERTY s01 established is unchanged and still measured: the superseded pattern MISSES the quoted, path-qualified invocation, so the two patterns differ by a NET rather than by a pure loss. Read the `delta` map beside this line for the shape of that net -- it is currently 6 losses and 1 gain (status); `substrate` left the losses when a kb-curator prose line was rewritten (prompt-audit, 2026-11-13). s01 recorded SIX losses and one gain; that was true of the pre-DESK-07 corpus and is no longer, because `doctor` joined the losses (20 -> 6) when the shared desk block replaced vm-doctor's bootstrap. The count in this sentence is derived from the map, never carried forward.",
+    "superseded_raw": 173,
+    "superseded_distinct": 48,
+    "current_raw": 158,
+    "current_distinct": 48,
+    "net": -15,
     "delta": {
       "conventions": [
         2,
@@ -1033,10 +1011,6 @@
       "search": [
         10,
         9
-      ],
-      "substrate": [
-        2,
-        1
       ]
     },
     "the_gain_is_the_point": "`status` GAINS one under the current pattern: chief-of-staff still carries the string `\"$BRAIN_VAULT/.brain/brain\" --role vm status --json`, now in prose that FORBIDS it rather than in an instruction that uses it. The superseded pattern required `brain` followed immediately by whitespace and so misses it. That single row is what the whole reconciliation is about.",

@@ -109,13 +109,6 @@ def run_ingest(core: Any, *, dry_run: bool = False) -> dict[str, Any]:
     return run(core, dry_run=dry_run)
 
 
-def _released_without_anchor(vault: Path, manifest: dict[str, str]) -> set[str]:
-    """Compatibility entry point for the fail-closed released-byte set."""
-    from .pipeline_run import released_without_anchor
-
-    return released_without_anchor(vault, manifest)
-
-
 def _process_claimed(
     claimed: Path,
     orig_name: str,

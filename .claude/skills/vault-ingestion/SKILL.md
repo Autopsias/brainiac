@@ -36,10 +36,11 @@ shell out for note content, and do not open a note file.
 Those seventeen names are the whole desk, and they are the only route to note
 CONTENT this session may use. **"Not on the desk" is not the same as "refused
 here"**, and conflating the two is how a session talks itself into a workaround:
-measured 2026-08-28, nine of the CLI's 22 VM-allowed verbs have no desk tool
-(`brief`, `cos-propose`, `digest`, `doctor`, `draft-capture`, `init`,
-`mcp-config`, `provision-request`, `status`), and two desk tools (`inbox`,
-`vault_languages`) are not VM-allowed on the CLI at all. Of those nine, only
+ten of the CLI's 23 VM-allowed verbs have no desk tool (`brief`,
+`check-egress`, `cos-propose`, `digest`, `doctor`, `draft-capture`, `init`,
+`mcp-config`, `provision-request`, `status`), and four desk tools (`inbox`,
+`supersede`, `unsupersede`, `vault_languages`) are not VM-allowed on the CLI
+(`brain.cli.VM_ALLOWED` is the list of record). Of those ten, only
 `cos-propose` — the COS ingress nothing on the desk serves — and the staging
 probes below are still invoked locally by a shipped bundle, both deliberately.
 Every verb that COMMITS or rebuilds — `write`, `sync`, `maintain`, `rebuild`,
@@ -145,13 +146,10 @@ no-op, not a duplicate note. See `docs/ingestion.md` for the full contract.
 For a pasted document, a forwarded note, or a URL clip that never existed as
 a file, use the recipe below directly.
 
-## Phase 1 — dedup check (REPOINT of the old SC-cosine soft-warning)
+## Phase 1 — dedup check (a soft warning, never a block)
 
-The legacy pipeline read `.smart-env/*.ajson` to compute a cosine similarity
-between the new content and existing notes and soft-warn below an
-auto-block threshold. That capability is **gap G1** — note-to-note similarity
-isn't a standalone verb yet, but the same effect is achievable today via a
-query-against-corpus search using the new content's own gist as the query:
+The CLI has no verb that compares ONE new text against the vault's notes.
+Search with the new content's own gist as the query instead:
 
 ```bash
 brain --vault "$BRAIN_VAULT" search "<first ~150 chars of the new source>" --rerank --json
@@ -165,14 +163,12 @@ brain --vault "$BRAIN_VAULT" search "<first ~150 chars of the new source>" --rer
 > fuses the result lists into one ranking. `multilingual: false`, one language,
 > or no census: a single query is correct — do not invent a variant.
 
-Read the top result's score. There is no calibrated "auto-block" threshold
-shipped yet (the legacy threshold was tuned for a different embedder and
-scoring scale) — treat any high-scoring hit as a **soft warning**, never an
-auto-block: surface "similar to `[[existing-id]]` (score N.NN)" and ask
-whether to ingest anyway, merge, or skip. This is honestly a degraded
-substitute for true note-to-note similarity (G1's `brain similar` /
-`brain near-dup` proposal) — once those land, swap this query-based proxy
-for the real verb.
+Read the top result's score. No calibrated block threshold exists, so treat
+any high-scoring hit as a **soft warning**, never a block: surface "similar to
+`[[existing-id]]` (score N.NN)" and ask whether to ingest anyway, merge, or
+skip. This search is a proxy for note-to-note similarity. For near-duplicates
+among notes ALREADY in the vault, the corpus-wide scan is `brain integrity`
+(host only).
 
 ## Phase 2 — write the source (immutable, host-broker)
 
@@ -378,7 +374,6 @@ the count clears on the host's next sync, not when you finish.
 
 ## Cross-references
 
-- G1 — note-to-note similarity (the gap Phase 1 works around; no standalone gaps doc, tracked here)
 - `AGENTS.md` §4 (capture rules), §6 (host/VM write split)
 - `docs/ingestion.md` — the full `brain ingest` / `brain ingest-transcript` contract (handlers, caps, provenance fields)
 - `docs/adr/0003-parity-architecture.md` — Ruling 1 (drop-zone placement, trust split)

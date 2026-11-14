@@ -10,6 +10,7 @@ from typing import Any
 
 from . import frontmatter
 from .index import Hit, rerank_gate_enabled
+from .rerank import RERANK_TOP_DEFAULT
 
 
 # OUTER pooling controls for RET-05.  They remain re-exported by brain.core
@@ -290,7 +291,7 @@ class RetrievalOpsMixin:
         k: int = 10,
         *,
         rerank: bool = False,
-        rerank_top: int = 15,
+        rerank_top: int = RERANK_TOP_DEFAULT,
         rrf_k: int = 60,
         per_query_k: int | None = None,
         rerank_fused: bool | None = None,

@@ -17,6 +17,7 @@ from .. import remediation, remediation_folds as rf
 from .. import remediation_branches as rb
 from .. import remediation_state as rs
 from ..remediation_extract_retry import contained_file_under
+from ..remediation_image_pdf import image_pdf
 
 
 def registry_shadow_nights(key: str) -> int:
@@ -108,8 +109,9 @@ class _SourceUnreadable(OSError):
     """The retry source was refused or could not be read (nothing written)."""
 
 
-def _copy_retry_source(vault: Path, source: Path) -> str:
-    """Copy ``source`` into ``inbox/``; return the sha256 of the bytes copied.
+def _copy_retry_source(vault: Path, source: Path) -> tuple[str, str | None]:
+    """Copy ``source`` into ``inbox/``; return the sha256 of the source bytes,
+    plus the sha256 of the image-only PDF written instead, when one was.
 
     Containment is re-checked here, not trusted from the planner, because
     both source trees sit on the VM-writable mount; and the hash and the copy
@@ -154,13 +156,21 @@ def _copy_retry_source(vault: Path, source: Path) -> str:
         from ..ingest.pipeline_files import refuse_symlinked_dirs
         refuse_symlinked_dirs(inbox, levels=1)
         inbox.mkdir(parents=True, exist_ok=True)
-        dest = inbox / f"retry-{content_hash[:12]}-{source.name}"
+        # A quarantined file's parent dir IS its reason; an image-only PDF
+        # lets the PDF handler's own OCR read what the original hides.
+        converted = image_pdf(fh, source, source.parent.name)
+        name = source.name if converted is None else f"{source.stem}.pdf"
+        dest = inbox / f"retry-{content_hash[:12]}-{name}"
         out_fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | nofollow, 0o600)
         with os.fdopen(out_fd, "wb") as out:
-            shutil.copyfileobj(fh, out)
+            if converted is None:
+                shutil.copyfileobj(fh, out)
+            else:
+                out.write(converted)
             os.fchmod(out.fileno(), stat.S_IMODE(st.st_mode))  # keep 0600 private
     os.utime(dest, ns=(st.st_atime_ns, st.st_mtime_ns))  # as shutil.copy2 kept them
-    return content_hash
+    return content_hash, (None if converted is None
+                          else hashlib.sha256(converted).hexdigest())
 
 
 def apply_extract_retry_intents(
@@ -179,7 +189,8 @@ def apply_extract_retry_intents(
     vault = Path(core.vault)
     for intent in intents:
         try:
-            content_hash = _copy_retry_source(vault, Path(intent.content))
+            content_hash, converted_hash = _copy_retry_source(
+                vault, Path(intent.content))
         except _SourceUnreadable as exc:
             outcome.skipped.append({"target": intent.target,
                                     "reason": f"source unreadable: {exc}"})
@@ -197,6 +208,10 @@ def apply_extract_retry_intents(
         if rs.once_per_day(entry, "count", today):
             entry["count"] = int(entry.get("count", 0) or 0) + 1
         entry["target"] = intent.target
+        if converted_hash:
+            # The converted copy has its own bytes: remember them, so its
+            # success resolves this target and its re-quarantine is skipped.
+            entry.setdefault("converted_hashes", []).append(converted_hash)
         outcome.healed.append(intent.target)
 
 

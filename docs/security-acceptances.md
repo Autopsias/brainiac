@@ -1283,6 +1283,30 @@ lower).
 
 ---
 
+## A-18 · python-pptx stays, with no upstream release since 2024-08-07
+
+**Raised as:** the repo-health review of 2026-11-13 (DEPS-01). python-pptx 1.0.2
+is the latest release; the repository's last push is the same day, 544 issues
+are open, and it is not archived. About 138 million downloads a month show it
+is still widely used.
+
+**Ruling:** the owner's, 2026-11-13 — keep python-pptx and accept the risk,
+rather than vendor it or replace it.
+
+**Why the residual is small.** Only `src/brain/ingest/handlers/pptx.py` and
+`concealment_office.py` use it, during ingest, and `ingest` is not in
+`cli.VM_ALLOWED`. Only one vault holds `.pptx` files (141 of 2,800 originals).
+The ingest tests for XML entity bombs and encrypted Office files pass on it.
+
+**Not measured:** python-pptx's own security record. No advisory was checked
+beyond the review date.
+
+**What would reopen it:** a published security advisory against python-pptx
+with no upstream fix, or the yearly advisory check (next due 2027-11-13)
+finding one.
+
+---
+
 ## Not accepted, and deliberately absent
 
 The synthesis sign-drain finding ("Synthesis sign-drain signs untrusted

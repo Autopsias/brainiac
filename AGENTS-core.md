@@ -19,8 +19,9 @@
 > concluding the vault is thin.
 
 This repo is **Profile A** — a local, any-LLM second brain whose **substrate is
-plain Markdown + YAML frontmatter**. It is being built to **supersede Obsidian +
-Smart Connections** as the retrieval substrate. Retrieval,
+plain Markdown + YAML frontmatter**. It is **ready to replace Obsidian + Smart
+Connections** as the retrieval substrate (readiness is not cutover: AGENTS.md
+§7). Retrieval,
 embeddings, and indexing are owned by a `brain` engine (sqlite-vec + FTS5 +
 bge-m3-int8 embeddings), not by an Obsidian plugin. Design of record:
 `docs/substrate-spec.md`. (Unfamiliar term below? Check `docs/glossary.md`.)
@@ -81,8 +82,7 @@ profile-a-brain/
 `vault/raw/` carry no hard-coded voice/brand/people content — a new owner
 fills in `vault/overlay/{voice,brand,keywords,people}/` (starter scaffold:
 `overlay/template/`) and every drafting-facing kernel skill reads from
-there instead. `brain init --validate-overlay` (minimal slice — full
-`brain init` orchestration is a later session) detects and shape-checks the
+there instead. `brain init --validate-overlay` detects and shape-checks the
 active overlay; it never depends on the index, so it works on a brand-new
 install before one exists. Full schema: `overlay/README.md`.
 

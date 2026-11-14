@@ -49,6 +49,22 @@ BGE_M3_DIM = 1024
 # files with measurably different retrieval quality.
 BGE_M3_ONNX_REVISION = "4de13258303883538bd53b696b452bf8099f0858"
 
+# sha256 of the two files the loader reads, taken from the LFS pointers of the
+# pinned revision (huggingface.co/api/models/Xenova/bge-m3/tree/<revision>).
+# The revision pin above guards the DOWNLOAD only; a local model folder such as
+# <vault>/.brain/model is VM-writable, so the loader also checks its BYTES
+# (SAFE-01, 2026-11-13).
+# shortcut: the e5 rollback models carry no pins and load unchecked from a local
+# folder; pin them before making either one a default.
+PINNED_SHA256 = {
+    BGE_M3_INT8_MODEL_ID: {
+        BGE_M3_INT8_ONNX_FILE:
+            "a206e10e995aa2a833924bcd725ba5dd6c3425cd34bac3cf2b5677cd2a1c51d6",
+        "tokenizer.json":
+            "6710678b12670bc442b99edc952c4d996ae309a7020c1fa0096dd245c2faf790",
+    },
+}
+
 _VALID_QUANTIZATIONS = ("fp32", "int8")
 
 
@@ -337,10 +353,10 @@ class OnnxEmbedder:
             if os.path.exists(direct) and os.path.exists(
                 os.path.join(self._local_dir, "tokenizer.json")
             ):
-                return direct, self._local_dir
+                return self._check_pins(direct, self._local_dir)
             # Direct .onnx file path as local_dir.
             if os.path.isfile(self._local_dir) and self._local_dir.endswith(".onnx"):
-                return self._local_dir, os.path.dirname(self._local_dir)
+                return self._check_pins(self._local_dir, os.path.dirname(self._local_dir))
             # HF cache root: contains models--<org>--<name>/.
             repo_dir = "models--" + self._hf_repo.replace("/", "--")
             if os.path.isdir(os.path.join(self._local_dir, repo_dir)):
@@ -350,7 +366,7 @@ class OnnxEmbedder:
                     self._hf_repo, cache_dir=self._local_dir, allow_patterns=pat,
                     revision=self._revision,
                 )
-                return os.path.join(base, self._onnx_file), base
+                return self._check_pins(os.path.join(base, self._onnx_file), base)
             raise EmbedderUnavailable(
                 f"local_dir {self._local_dir!r} is neither a snapshot dir nor an "
                 f"HF cache root for {self._hf_repo!r}"
@@ -372,6 +388,35 @@ class OnnxEmbedder:
 
         base = snapshot_download(self._hf_repo, allow_patterns=pat, revision=self._revision)
         return os.path.join(base, self._onnx_file), base
+
+    def _check_pins(self, onnx_path: str, base: str) -> tuple[str, str]:
+        """Refuse a local model whose bytes are not the pinned revision's.
+
+        Applies only when the embedder is on the spec's own repo, revision and
+        file: an operator's ``$BRAIN_EMBED_REVISION`` mirror pin is a host
+        choice the VM cannot make, and it keeps its own semantics.
+        """
+        spec = self._model_spec
+        pins = PINNED_SHA256.get(spec.model_id)
+        if not pins or (self._hf_repo, self._revision, self._onnx_file) != (
+            spec.hf_repo, spec.revision, spec.onnx_file
+        ):
+            return onnx_path, base
+        import hashlib
+
+        for rel, path in ((spec.onnx_file, onnx_path),
+                          ("tokenizer.json", os.path.join(base, "tokenizer.json"))):
+            h = hashlib.sha256()
+            with open(path, "rb") as f:
+                for block in iter(lambda: f.read(1 << 20), b""):
+                    h.update(block)
+            if h.hexdigest() != pins[rel]:
+                raise EmbedderUnavailable(
+                    f"local model file {path!r} does not match the pinned sha256 "
+                    f"of {spec.model_id} @ {spec.revision[:12]}; refusing to load "
+                    f"it. Re-stage the model from a trusted host (`brain warmup`)."
+                )
+        return onnx_path, base
 
     def _encode_raw(self, texts: list[str]) -> list[list[float]]:
         """Apply the resolved model's pooling and L2-normalise."""

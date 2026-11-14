@@ -553,7 +553,7 @@
     {
       "file": "src/brain/index/_zones.py",
       "rule": "unresolved-attribute",
-      "count": 7
+      "count": 8
     },
     {
       "file": "src/brain/index_stages/near_duplicates.py",
@@ -786,6 +786,11 @@
       "count": 1
     },
     {
+      "file": "src/brain/remediation_image_pdf.py",
+      "rule": "unresolved-import",
+      "count": 2
+    },
+    {
       "file": "src/brain/rerank.py",
       "rule": "unresolved-import",
       "count": 5
@@ -943,6 +948,11 @@
     {
       "file": "tools/probe_xlingual.py",
       "rule": "unresolved-import",
+      "count": 1
+    },
+    {
+      "file": "tools/publish_public.py",
+      "rule": "unresolved-attribute",
       "count": 1
     },
     {

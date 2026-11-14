@@ -19,8 +19,9 @@
 > concluding the vault is thin.
 
 This repo is **Profile A** — a local, any-LLM second brain whose **substrate is
-plain Markdown + YAML frontmatter**. It is being built to **supersede Obsidian +
-Smart Connections** as the retrieval substrate. Retrieval,
+plain Markdown + YAML frontmatter**. It is **ready to replace Obsidian + Smart
+Connections** as the retrieval substrate (readiness is not cutover: AGENTS.md
+§7). Retrieval,
 embeddings, and indexing are owned by a `brain` engine (sqlite-vec + FTS5 +
 bge-m3-int8 embeddings), not by an Obsidian plugin. Design of record:
 `docs/substrate-spec.md`. (Unfamiliar term below? Check `docs/glossary.md`.)
@@ -81,8 +82,7 @@ profile-a-brain/
 `vault/raw/` carry no hard-coded voice/brand/people content — a new owner
 fills in `vault/overlay/{voice,brand,keywords,people}/` (starter scaffold:
 `overlay/template/`) and every drafting-facing kernel skill reads from
-there instead. `brain init --validate-overlay` (minimal slice — full
-`brain init` orchestration is a later session) detects and shape-checks the
+there instead. `brain init --validate-overlay` detects and shape-checks the
 active overlay; it never depends on the index, so it works on a brand-new
 install before one exists. Full schema: `overlay/README.md`.
 
@@ -400,15 +400,13 @@ gates.
    finally works.
 
    **A floor is only earned on a corpus that did not shrink
-   (`brain.invariant_floors`, 2026-08-20).** Every one of these metrics counts
+   (`brain.invariant_floors`).** Every one of these metrics counts
    DEFECTS IN A CORPUS, so REMOVING documents improves the score — the ratchet
-   can be won by damage. The reference vault read `unlinked_sources = 0` across
-   19 consecutive runs on 2026-08-19 while ~120 documents from the wrongful
-   433-file hand retirement were still out of the vault; they were reinstated
-   the next day (notes 2490 → 2612) and every healthy run since reported a
-   REGRESSION against a floor only a damaged corpus could reach. An alarm that
-   can never be satisfied is an alarm nobody reads, which is the exact failure
-   this fold exists to prevent. So each floor is stored WITH the `population`
+   can be won by damage, and a floor only a damaged corpus can reach is an
+   alarm nobody can satisfy, which is the exact failure this fold exists to
+   prevent. *Why:* on 2026-08-19 the reference vault read
+   `unlinked_sources = 0` while ~120 wrongly retired documents were still out
+   of it. So each floor is stored WITH the `population`
    it was recorded against (same shape as `unreachable_gold_labels`), and a
    metric may not set a new floor on a run whose population fell below that
    basis. The guard **only ever declines to LOWER a floor** — it never raises
@@ -461,14 +459,11 @@ gates.
    because an aggregate "N excluded by design" hides a newly added exclusion
    class completely.
 
-   **The anchoring is load-bearing, and only measurement found it.** A looser
-   rule — any of those keys whose value merely MENTIONS a `.py` — matched 27
-   of the reference vault's 98 unlinked sources; two of the extra were a
-   `type: decision-draft` and a `type: skill-patch` whose prose provenance
-   names the scanner that INFORMED them. Excluding a decision document is the
-   exact failure the 433-file hand retirement made. Anchored, it matches 25,
-   every one machine exhaust, and takes `unlinked_sources` 98 → 73. Both
-   false positives are pinned as known negatives in
+   **The anchoring is load-bearing.** A looser rule — any of those keys whose
+   value merely MENTIONS a `.py` — also matches a `type: decision-draft` and a
+   `type: skill-patch` whose prose provenance names the scanner that INFORMED
+   them, and excluding a decision document is the failure a hand retirement
+   makes (below). Both false positives are pinned as known negatives in
    `tests/test_corpus_invariants.py`; loosening the pattern fails them.
 
    **The Chief-of-Staff briefs are the one named exception (owner ruling
@@ -478,30 +473,25 @@ gates.
    does that: they declare no type and match no rule here. Retiring them was an
    owner act and stays one.
 
-   **A HAND retirement is not covered by any of this, and it is the one that
-   went wrong.** Two sessions retired 433 files from the reference vault as
-   "machine residue"; exactly ONE matched the set above, and the batch took
-   roughly a hundred documents this paragraph protects, including a
-   `type: design` architecture note. Nothing noticed for days — the RETRIEVAL
-   GOLDEN SET did, reporting 19 labels pointing at documents no longer in the
-   index. So: classify by subject and show the split BEFORE writing, never
-   after. Retired files are MOVED to `inbox/_quarantine/_resolved/<batch>/` and
-   never deleted, so a reinstatement is a move back into `vault/raw/` plus a
-   `brain sync` — the original signatures still cover the bytes, and
-   `verify-audit --check-content` confirmed zero drift across all 112 restored
-   on 2026-08-20.
+   **A HAND retirement is not covered by any of this.** Classify by subject
+   and show the split BEFORE writing, never after. Retired files are MOVED to
+   `inbox/_quarantine/_resolved/<batch>/` and never deleted, so a
+   reinstatement is a move back into `vault/raw/` plus a `brain sync` — the
+   original signatures still cover the bytes (`verify-audit --check-content`
+   checks for drift). *Why:* a 433-file hand retirement of "machine residue"
+   took roughly a hundred real documents, and only the retrieval golden set
+   noticed, days later.
 
    **A duplicate is decided on CONTENT, never on a filename (ENF-03,
    2026-08-12).** `cross_tier_twins` compares one id shape and therefore
    reads 0 while renamed, re-extracted and re-versioned copies of the same
-   document sit at two classifications; ENF-02 tried to close that on names
-   and was withdrawn whole when its "138 detections" proved to be 138
-   filename matches and 0 content matches. So `cross_tier_duplicates` and
+   document sit at two classifications, and a filename match is not a content
+   match. So `cross_tier_duplicates` and
    `cross_tier_candidates` compare bodies: 5-word-shingle Jaccard ≥ 0.60
    DECIDES the same document, word-set Jaccard ≥ 0.60 without it is
    **UNDECIDED and reported as such** — a detector that guesses on the
    undecided band is the failure mode, and a metric with no undecided bucket
-   (the old one) can never report anything but zero. The ENF-01 body-size
+   can never report anything but zero. The ENF-01 body-size
    floor applies first, and the shared exclusion definition applies with one
    documented exception: **superseded notes are counted, not excluded** —
    retiring a note does not remove it from the index, so a retired low twin
@@ -537,8 +527,8 @@ gates.
    holding nothing comparable is a separate status, `no_corpus`, reported on
    its own row and never inside that number: a cross-tier leak needs an
    existing higher-tier near-duplicate, so an empty corpus has nothing to leak
-   from, and counting it made every new vault's FIRST document trip a
-   floor-of-zero ratchet (2026-08-17). Raises
+   from, and counting it would make every new vault's FIRST document trip a
+   floor-of-zero ratchet. Raises
    are trended PER LEG and never alerted on: they are monotone over an
    append-only zone, so a min-ever floor would fire on every firing of a
    working guard, and a per-leg total is the only thing that can tell a clean
@@ -548,12 +538,12 @@ gates.
 **Supersession beyond `…-vN` is PROPOSED, never applied (CUR-01,
 2026-08-04).** Only two tiers auto-supersede: sha256-identical duplicates
 (DDP-01) and explicit `…-vN` id families (VER-01, rule 4 above — which
-since 2026-08-25 also retires a RENDITION, `…-v52-preview`, under its
+also retires a RENDITION, `…-v52-preview`, under its
 primary `…-v52` instead of leaving two live copies of one version). Everything
 else the nightly deduces — a HOST-VERIFIED email family, or a **name family**
 (`Draft`/`Final`, `Rev N`, `vF`, `versão`/`versión N`, an unmarked
-near-duplicate pair sharing one document name, or — since 2026-08-25 — a
-**format twin**: one version in two original formats, `.pdf` beside `.md`,
+near-duplicate pair sharing one document name, or a **format twin**: one
+version in two original formats, `.pdf` beside `.md`,
 landed together so no date can order them; oriented by
 `versionlink_stages.FORMAT_PREFERENCE`, the curated `.md` stays and the render
 retires under it, and near-duplicate content is required because a deck's
@@ -573,11 +563,8 @@ gitignored, never indexed).
 **An owner DECLARATION is the third auto-apply tier (SUP-01, 2026-09-18).**
 DDP-01 and VER-01 apply what the ENGINE can prove; CUR-01 proposes what it can
 only deduce. A third case is neither: the owner SAYS a new document replaces an
-old one. Until this change that statement could only be typed on the Mac
-(`brain supersede`), which a Cowork session cannot do — measured the day it
-shipped, an email attachment (`…-base-completa-copy`) and the final deliverable
-that replaced it both sat live, and plain search answered with the stale copy.
-Three surfaces now carry the declaration, all through ONE engine path
+old one. On the Mac that is `brain supersede`, which a Cowork session cannot
+run, so three more surfaces carry the declaration, all through ONE engine path
 (`brain.supersede_declared` → `core.supersede`, same audited write, same
 single-writer lock, same crash journal): **(1) the drop lane** — beside a file
 in `vault/inbox/_deliverables/<project>/`, an optional `<filename>.supersedes`
@@ -748,14 +735,11 @@ those bytes were signed. `clean` therefore means exactly one thing — the
 frontmatter said so — and an out-of-band edit of `injection_assessment.hidden`
 to `0` makes a note read `clean`. Do not report `clean` as evidence that a
 note is unaltered, and do not build a control on top of it.
-An audit-chain gate was built and then withdrawn: four adversarial-review
-rounds found four ways past it, the last two being `brain rebuild` (which
-re-derives the verdict with no audit facts, and which `sync` escalates into on
-a schema or embed-model change) and an unreadable `audit.jsonl` (which made
-the gate inert, and inert here means handing out the assurance). The claim was
-withdrawn rather than patched a fifth time. `hidden:<n>` — the value that
-actually protects a reader — never depended on the chain, so the withdrawal
-takes nothing away from it. It is NOT immune to the same edit: whoever can
+No audit-chain gate backs `clean`: `brain rebuild` re-derives the verdict
+with no audit facts (and `sync` escalates into it on a schema or embed-model
+change), and an unreadable `audit.jsonl` makes such a gate inert. `hidden:<n>`
+— the value that actually protects a reader — does not depend on the chain. It
+is NOT immune to the same edit: whoever can
 rewrite `hidden: 3` to `hidden: 0` erases the warning as easily as they mint
 `clean`, and the human renders print nothing either way. What the vocabulary
 buys is a reader who is TOLD when the record says text was hidden — not a
@@ -792,15 +776,14 @@ order is restored inside the slots the reranker selected. Reranker scores
 stay separate from RRF scores in `--explain`; they are never combined into
 one fake scale.
 
-**Rerank default-on (BR-03, owner ruling 2026-08-04; window revised the same
-day).** `search`/`hybrid-search` rerank ON by default at candidate **window
+**Rerank default-on (BR-03, owner ruling 2026-08-04).**
+`search`/`hybrid-search` rerank ON by default at candidate **window
 20** — measured on the 66-query golden set (`eval/FOLLOWUPS.md` #4): mrr@10
 0.267 → 0.411, hit@1 0.212 → 0.349, for ~5.5s p50 / 8.2s p95 added latency
-the owner explicitly accepted for the quality gain. The window briefly
-shipped at 50 on a latency figure that was the window-20 row mislabelled; at
-50 it really costs p50 68.0s and 85% of golden queries blow the 30s timeout
-and return the BARE ordering anyway, so the owner ruled the default back to
-20 — quality you receive beats quality that expires (`eval/FOLLOWUPS.md` #6).
+the owner explicitly accepted for the quality gain. The default is 20, not 50
+(owner ruling): at window 50 the p50 is 68.0s and
+85% of golden queries hit the 30s timeout and return the BARE ordering anyway
+— quality you receive beats quality that expires (`eval/FOLLOWUPS.md` #6).
 The CEILING stays 50: `BRAIN_RERANK_TOP`/`BRAIN_RERANK_MAX` still opt into
 the wide-candidate pass deliberately, and a wide pass needs
 `BRAIN_RERANK_TIMEOUT_S` raised with it. Opt out per call with `--no-rerank`; the global kill switch is
@@ -810,8 +793,8 @@ rerank call is caller-bounded, not hung forever: an ONNX forward pass cannot
 be interrupted mid-call, so `BRAIN_RERANK_TIMEOUT_S` (default 30s) bounds how
 long the CALLER waits, not the actual compute — a timed-out call keeps
 running in the background and its result is discarded, falling back to the
-pre-rerank order for that query. The skippable contract (RET-02) is
-unchanged: an absent reranker model still degrades to identity, on the host
+pre-rerank order for that query. The skippable contract (RET-02) holds: an
+absent reranker model still degrades to identity, on the host
 and on the Cowork VM leg alike.
 
 **Adaptive rerank gate (RK-02, 2026-08-04).** Reranking is default-on but not
@@ -898,24 +881,19 @@ the weekly synthesis sign-drain) stands exactly like any other decision note.
 32 such notes existed across the operator's registered vaults as of
 2026-09-02. See `docs/security-acceptances.md` **A-07** for the reasoning,
 the count, and what still bounds the exposure (`dossier`'s `tensions` field).
-**Plain `search` HIDES retired versions by default (owner ruling A,
-2026-08-25).** A note a supersede chain retired (`is_latest_version:
-false`) leaves the lexical and dense legs before fusion; `--include-retired`
-brings it back for a "previous version" question. Measured before the
-change on the reference vault: 522 of 2003 sources were retired and still
-took 29% of the top-10 slots across 15 document queries, with a retired
-version at rank 1 on 5 of them — the chain was written and never read at
-query time. The exact-identity leg is deliberately untouched: a query that IS
-a retired note's title or alias names that note. Every surfaced hit still
-carries `is_latest_version` (a plain semantic-search agent can prefer the
+**Plain `search`, `grep` and `recent` HIDE retired versions by default
+(owner ruling A, 2026-08-25).** A note a supersede chain retired
+(`is_latest_version: false`) leaves the lexical and dense legs before fusion;
+`--include-retired` brings it back for a "previous version" question, and
+`grep` takes the same predicate and flag. *Why:* on the reference vault,
+retired versions took 29% of the top-10 slots across 15 document queries.
+The exact-identity leg is deliberately untouched: a query that IS
+a retired note's title or alias names that note. Every surfaced hit and every
+grep row carries `is_latest_version` (a plain semantic-search agent can prefer
+the
 current claim without a second round-trip). Both temporal flags stay
 **VM_ALLOWED** — they are read-only filters over already-gated rows, no
-different in trust from any other `bases-query`. **`grep` follows the same
-rule (2026-09-11)** — the same predicate, the same `--include-retired` flag,
-and every grep row carries `is_latest_version`. It used to scan every note:
-measured on the reference vault, `brain grep gama` returned 12 bridge notes,
-11 of them retired copies of one email, with no field to tell them apart.
-`recent` has hidden them since 2026-08-26.
+different in trust from any other `bases-query`.
 
 **Breadth-intent routing (RTE-01).** A heuristic adapted from NapMem's
 observed navigator behavior (arXiv 2607.05794) — the paper never classifies
@@ -1158,8 +1136,8 @@ whole plan to rebuild the already-shipped fusion fix (item 10, `d5b2c58`).
    query string itself is the leak. Web search is for terms that are already
    public. When in doubt, treat the topic as internal and stay in the vault.
 
-   **This rule has a MECHANISM now (SEC-07, 2026-09-01), and it is still your
-   rule to follow.** `brain check-egress "<text>"` judges one outbound string
+   **This rule has a MECHANISM (SEC-07), and it is still your rule to
+   follow.** `brain check-egress "<text>"` judges one outbound string
    against THIS vault's `overlay/keywords/` decoder ring and exits `6` when a
    term is classified at or above the threshold (default `Confidential`,
    `$BRAIN_EGRESS_TERM_MIN_TIER` to change it; an unrecognised value fails
@@ -1167,8 +1145,8 @@ whole plan to rebuild the already-shipped fusion fix (item 10, `d5b2c58`).
    beside a web tool, so it needs the guard most. `scripts/brainiac-egress-guard.sh`
    is the Claude Code `PreToolUse` wiring; the script's own header carries the
    settings entry, and on a harness-managed `~/.claude` that entry belongs to
-   the deploy repo, not to this engine. **It watches EVERY outbound door and
-   fails CLOSED (M-2, 2026-09-02).** The matcher is
+   the deploy repo, not to this engine. **It watches EVERY outbound door
+   and fails CLOSED.** The matcher is
    `WebSearch|WebFetch|Bash|PowerShell|Write|Edit|NotebookEdit|Read|Grep|Glob|mcp__.*` — a `Bash` curl and an MCP tool
    are outbound channels too, and it reads the text that actually leaves per
    tool (the command, the written content, the query or URL, the MCP
@@ -1176,22 +1154,23 @@ whole plan to rebuild the already-shipped fusion fix (item 10, `d5b2c58`).
    codename is still editable. `--strict` goes to the WEB tools only, so an
    empty ring refuses a search without locking the owner out of their own
    shell.
-   **A line break in a framing field is itself a refusal (s08, 2026-09-04).**
+   **A line break in a framing field is itself a refusal.**
    `tool_name`, `cwd`, `session_id`, `tool_input.file_path`,
    `tool_input.notebook_path` and an ABSOLUTE `tool_input.path` may not contain
-   an LF or CR. Repairing one is not safe: stripping the break kept the guard's
-   field frame aligned but made it decide about a path that is not the path the
-   tool writes, so an out-of-tree write read as in-tree and was allowed. The
+   an LF or CR. Repairing one is not safe: stripping the break makes the
+   guard decide
+   about a path that is not the path the tool writes, so an out-of-tree write
+   reads as in-tree. The
    refusal names the offending field. A relative `path`, and the per-tool TEXT
    (a multi-line command, or written content), are unaffected — those are the
    normal case. A payload that breaks the field extraction outright, such as a
    top-level value that is not an object, refuses for the same reason: an empty
    field set is the most permissive state the script has.
 
-   **It keys on the DESTINATION, not the tool name (rework 1, 2026-09-03).**
-   The first cut refused `brain search "<codename>"`, a `grep` over the vault
-   and a vault note that mentions a term — the three most ordinary things
-   anyone does with this vault. A call is checked only when its destination is
+   **It keys on the DESTINATION, not the tool name.** Refusing
+   `brain search "<codename>"`, a `grep` over the vault or a vault note that
+   mentions a term would block the three most ordinary things anyone does
+   with this vault. A call is checked only when its destination is
    off this host: always for the web tools and every `mcp__*`; for `Bash` when
    the command names an outbound program or carries a URL; for a write when the
    target is outside the working tree and outside the vault the host registry
@@ -1205,29 +1184,28 @@ whole plan to rebuild the already-shipped fusion fix (item 10, `d5b2c58`).
    list, an alias that hides one, or one reached through a variable all pass,
    and neither rule sees dereferenced bytes.
 
-   **There is no tests exemption any more.** It was a substring test on the
-   tool's own ARGUMENTS (`*pytest*`, `*/tests/*`), so an injected instruction
-   could append `# pytest` to an exfiltrating `curl` and be allowed — measured
-   exit 0. The gate command passes now because `pytest` sends nothing off the
-   host. **And there is no in-band escape either (rework 2, 2026-09-03).**
-   `BRAINIAC_EGRESS_GUARD=off` was documented as owner-only because the hook
-   inherits Claude Code's environment and never a tool payload's — both true,
-   and the conclusion still wrong: Claude Code lets COMMITTED PROJECT SETTINGS
-   define a session's environment, so a repo change disarmed the guard for
-   every later call with nothing reporting it. The recovery is EXTERNAL now —
+   **There is no tests exemption.** A substring test on the tool's own
+   ARGUMENTS (`*pytest*`, `*/tests/*`) lets an injected instruction append
+   `# pytest` to an exfiltrating `curl`. The gate command passes because
+   `pytest` sends nothing off the host. **And there is no in-band escape
+   either.** An environment switch such as `BRAINIAC_EGRESS_GUARD=off` is not
+   owner-only: Claude Code lets COMMITTED PROJECT SETTINGS define a session's
+   environment, so a repo change could disarm the guard for every later call
+   with nothing reporting it. The recovery is EXTERNAL —
    quit Claude Code, remove the hook's `PreToolUse` entry from
    `~/.claude/settings.json`, restart — and `brain doctor` names the variable
    whenever a session still carries it.
 
    **Fail-closed, and exactly what that does and does not cover.** A
-   `check-egress` that RUNS and fails blocks with its reason printed; only exit
-   6 used to. TWO states still ALLOW, because neither is a failed check
+   `check-egress` that RUNS and fails blocks with its reason printed. TWO
+   states still ALLOW, because neither is a failed check
    — no engine found at all, and no vault resolvable from here (no vault means
    no ring means no authority, the same as no engine). A ring that EXISTS and
    cannot be READ is the opposite case and refuses on every tool, `--strict` or
-   not, naming the file: one `chmod 000` used to make the ring read as empty,
-   and empty only refused under `--strict`, which reaches the two web tools
-   alone (rework 2, H-1). TWO states REFUSE that used to be silent: a `.engine`
+   not, naming the file — read as empty, an unreadable ring would refuse
+   only under
+   `--strict`, which reaches the two web tools alone. TWO more states
+   REFUSE: a `.engine`
    pin naming an engine that is gone (a broken managed install, not an absence
    of authority), and a `.registry` pin that is not an absolute path. And the
    5-second hook timeout is FAIL-OPEN: Claude Code CANCELS a timed-out
@@ -1239,7 +1217,7 @@ whole plan to rebuild the already-shipped fusion fix (item 10, `d5b2c58`).
    it as current.
 
    **The VAULT comes from the HOST REGISTRY, per call, and the session KEEPS
-   what it has seen (s06 rounds 5-7, 2026-09-03).** The guard reads no
+   what it has seen.** The guard reads no
    environment variable to decide which vault it is judging against — not
    `$BRAIN_VAULT`, not `$BRAINIAC_HOME`, not `$PATH`, all three of which a
    committed project settings file can write. `brain install-hook` pins a
@@ -1285,7 +1263,7 @@ whole plan to rebuild the already-shipped fusion fix (item 10, `d5b2c58`).
 
    **The engine ships NO terms and never will** — they come from the owner's
    overlay, the same rows that already drive ingest classification, so there is
-   no second list to curate. **And the ring FILLS ITSELF (2026-09-01).** A
+   no second list to curate. **And the ring FILLS ITSELF.** A
    hand-written ring is an empty ring on every vault nobody curates, so the
    nightly fold regenerates `overlay/keywords-generated/` from this vault's own
    notes: every `project` note classified `Confidential` or above, plus its
@@ -1305,8 +1283,8 @@ whole plan to rebuild the already-shipped fusion fix (item 10, `d5b2c58`).
    rather than reporting a clean pass. It is a floor under this rule, not a
    replacement for it.
 
-This is the substrate's standing retrieval discipline; it replaces the old
-Obsidian "five-step retrieval cascade" rule for any harness reading this file.
+This is the substrate's standing retrieval discipline for any harness
+reading this file.
 
 ### Self-discovery — the `brain` CLI is the one interface
 
@@ -1337,31 +1315,32 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
 > `authoritative: false`) join `brain supersede` and `brain unsupersede` (§5)
 > as **refused on `role=vm`** before `BrainCore` is even constructed — see §6.
 >
-> **Per-harness wiring:** AGENTS.md is canonical; `CLAUDE.md` imports it
-> via `@AGENTS.md` and Gemini sets `contextFileName=AGENTS.md` (`.gemini/`). So
-> Codex, Claude Code, Gemini CLI, and the Desktop **Code tab** all read THIS file
+> **Per-harness wiring:** AGENTS.md is canonical. `CLAUDE.md` imports the
+> smaller `AGENTS-core.md` (the rest loads from `.claude/rules/`), and Gemini
+> sets `contextFileName=AGENTS.md` (`.gemini/`). So Codex, Claude Code, Gemini
+> CLI, and the Desktop **Code tab** all read this content
 > and call `brain` via their native shell — **no MCP**. The pure Desktop **Chat
 > tab** (the one surface that can't run a command) gets the optional, deletable
 > `brain-mcp` adapter. Full table: `docs/harness-wiring.md`.
 >
 > **Cowork-Windows VM (PRIMARY surface):** Cowork is Claude Desktop's Linux VM
 > sandbox execution mode (`docs/glossary.md`). **Two shapes exist, and which
-> one a given workspace runs depends on whether it has been through Closed
-> Stacks s07's cutover (2026-08-27 → 2026-08-30, VULN-3385).** Pre-cutover /
-> co-located: run `brain --role vm` (or `export BRAIN_ROLE=vm`) — the VM is
+> one a workspace runs depends on whether its vault was relocated off the VM's
+> mount (the 2026-08 cutover that closed VULN-3385).** Co-located (not
+> relocated): run `brain --role vm` (or `export BRAIN_ROLE=vm`) — the VM is
 > **read + draft only**, reading ONLY the published read-only snapshot in
 > `.brain/snapshot/` (never WAL), capturing via `brain draft-capture` into
 > `.brain/capture-inbox/`, never resolving a signing key; the host drains +
-> signs + indexes + republishes the snapshot. **Post-cutover (a relocated
-> workspace):** the vault is not attached to the VM's mount at all — `brain`
+> signs + indexes + republishes the snapshot. **Relocated:** the vault is
+> not attached to the VM's mount at all — `brain`
 > is not on the session's `PATH`, and there is no local snapshot to read —
 > every read reaches the vault only through the host `brain-mcp` broker,
-> which applies the same classification filter and now writes a fail-closed
+> which applies the same classification filter and writes a fail-closed
 > audit record before returning content. The broker's ceiling for this leg is
-> still the same full-vault default the host itself uses (no per-caller tier
-> narrowing is configured). **VULN-3385 is CLOSED (2026-09-01):** the bypass is
-> fixed, and an agent reading a high-tier note THROUGH the broker is
-> functionality, not the finding (A-01). The live residual is indirect prompt
+> the same full-vault default the host itself uses (no per-caller tier
+> narrowing is configured). An agent reading a high-tier note THROUGH the
+> broker is functionality, not a finding (A-01). The live residual is
+> indirect prompt
 > injection — what can LEAVE without the owner deciding — tracked at A-06.
 > Full posture: `docs/install/cowork.md`,
 > `docs/security/vuln-3385-risk-reduction.md`. Install +
@@ -1399,16 +1378,15 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
   **egress gate**: what `brain` is willing to surface to the model.
 - **The MCP transport resolves the SAME full vault as the CLI (owner ruling
   2026-08-17).** `brain-mcp` runs ON THE HOST, as the owner, over a
-  single-owner vault, so it is the CLI's trust context and now shares its
-  default. It previously borrowed the VM leg's `Internal` cap in seven places
-  plus the connector stanza, which starved every vault reached through Claude
-  Desktop: a curated vault keeps its substance at Confidential/Restricted, so
-  the answer came from Public+Internal scraps. Narrow it per deployment with
+  single-owner vault, so it is the CLI's trust context and shares its
+  default. *Why:* the VM leg's `Internal` cap starves every vault reached
+  through Claude Desktop, because a curated vault keeps its substance at
+  Confidential/Restricted. Narrow it per deployment with
   `$BRAIN_MAX_EGRESS_TIER`; an UNSET var means the full vault, while a
   SET-BUT-UNRECOGNISED one still fails CLOSED to `Internal` — the only reason
   to set it is to narrow the gate, so a typo must never return more than was
-  asked for. The trifecta break is unchanged and still lives at the `role=vm`
-  boundary, never on the owner's own host.
+  asked for. The trifecta break lives at the `role=vm` boundary, never on
+  the owner's own host.
 - **A vault MAY raise its own Cowork ceiling — but only through a HOST-SIGNED
   file (VULN-3386, external pentest 2026-08).** The shipped `role=vm` default
   stays `Internal`. The enforcement chain: `brain vm-egress-tier <TIER>` on
@@ -1416,21 +1394,21 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
   `<vault>/.brain/vm-egress-tier.signed`; the VM leg verifies it against the
   pinned anchor (`pinned-verify.json`, staged at install) before trusting,
   and anything missing, malformed, or badly signed fails CLOSED to `Internal`.
-  The previous mechanisms — an env var the session can export itself, and an
-  unsigned mount file the VM can write — no longer raise a VM ceiling (the
-  unsigned `vm-egress-tier` file and `$BRAIN_VM_MAX_EGRESS_TIER` are inert
-  for VM elevation; re-stage any prior opt-in with the signed verb).
+  An env var the session can export itself and an unsigned mount file the VM
+  can write do NOT raise a VM ceiling: the unsigned `vm-egress-tier` file and
+  `$BRAIN_VM_MAX_EGRESS_TIER` are inert for VM elevation; re-stage any prior
+  opt-in with the signed verb.
 - **Classification gate, role-split defaults (owner decision 2026-07-10).**
   `search/get/recent` filter by `classification`. A note with a missing or
   unrecognised `classification` ranks as the most-restrictive tier (MNPI).
-  **Trusted host default: the full vault** — the old `Internal` default
-  starved every real query; narrow it with `--max-tier` or
+  **Trusted host default: the full vault** — an `Internal` default starves
+  every real query; narrow it with `--max-tier` or
   `$BRAIN_DEFAULT_MAX_TIER` when a capped surface is wanted. **`--role vm`
   default: `Internal`** — the untrusted leg keeps the conservative
   deny-by-default cap, and elevation there is the explicit human gate.
   Levels, low→high: `Public < Internal < Confidential < Restricted < MNPI`.
-  **That `--role vm` cap binds the CLI, and since the Cowork cutover the CLI
-  is no longer how a Cowork session reads (2026-09-01).** A Cowork session
+  **That `--role vm` cap binds the CLI, and the CLI is not how a relocated
+  Cowork session reads.** A Cowork session
   reaches the vault through the DESK — the host-run `brain-mcp` broker, whose
   tools Claude Desktop announces into the session — and
   `mcp_verbs._egress_ceiling_tier()` resolves from `$BRAIN_MAX_EGRESS_TIER`
@@ -1448,12 +1426,12 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
   to MNPI, so an unlabelled note is withheld from every capped reader. That is
   RIGHT for reading and WRONG anywhere a tier is CHOSEN to write, raise, or
   compare toward: the default-deny tier is the ABSENCE of a classification,
-  never an assertion of one. On a `("", "Internal")` pair the UNLABELLED note
-  ranked highest, so accepting the cross-tier remediation raised the
-  correctly-labelled `Internal` note to MNPI on the strength of a MISSING
-  label — hiding it from every Internal-capped reader, the Cowork VM included
-  — while the real defect, a note carrying no classification at all, reached
-  nobody. A lane that picks a tier REFUSES a default-denied one
+  never an assertion of one. *Why:* on a `("", "Internal")` pair the
+  UNLABELLED note ranks highest, so a
+  remediation that raises toward it lifts the correctly-labelled `Internal`
+  note to MNPI on the strength of a MISSING label — hiding it from every
+  Internal-capped reader — while the real defect reaches nobody. A lane that
+  picks a tier REFUSES a default-denied one
   (`remediation_answers.unraisable`) and reports the missing label as its own
   finding.
 - **Trifecta break + HITL.** The "lethal trifecta" (`docs/glossary.md`) is
@@ -1461,12 +1439,12 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
   path; the leg that reads untrusted content must not also hold private data
   + an outbound channel. Surfacing sensitive content and any
   irreversible/outbound action is human-gated.
-  **This is the design, and on the Cowork leg it is no longer met (2026-09-01).**
-  The cutover removed the vault from the mount — a real gain, and it closed an
-  invisible bypass — but it routed the same session through the desk at the
-  host's full-vault ceiling (see the classification bullet above). The Cowork
-  leg therefore holds all three ingredients. What bounds it now is
-  DETECTION, not separation: the SEC-05 ingest quarantine refuses a document
+  **This is the design, and on the relocated Cowork leg it is NOT met.**
+  Relocation removed the vault from the mount and closed an invisible bypass,
+  but it routes the same session through the desk at the host's full-vault
+  ceiling (see the classification bullet above). The Cowork
+  leg therefore holds all three ingredients. What bounds it is DETECTION,
+  not separation: the SEC-05 ingest quarantine refuses a document
   carrying a CONCEALED instruction, `egress` marks every `raw/` hit
   `content_trust: untrusted-source`, the SEC-06 read record is fail-closed,
   and the Tuesday integrity fold raises a concealed-instruction count and a
@@ -1542,11 +1520,11 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
 
 | Context | May do | May NOT do |
 |---|---|---|
-| **Cowork Linux VM** (sandbox, EDR-blind) | `search`, `get`, `recent`, `draft_capture` (full VM_ALLOWED list: `init, doctor, alerts, search, hybrid-search, diagnose, grep, bases-query, graph-expand, get, read, recent, status, draft-capture, capture, brief, digest, cos-propose, provision-request` — `diagnose` is read-only and applies the same egress gate; `alerts` is the degradation digest every harness runs at session start (§9), file-reads only, and names the host-home sources the VM cannot reach instead of skipping them; `cos-propose` is an UNSIGNED drop into a proposal-drop dir `sync` never reads; only the host broker's owner-inbox gate can move it toward signing; `provision-request` (PRV-10) stages a NEW-VAULT request marker — a plain-file drop, no key, no launchd, no registry — that the host's `provision-drain` completes, see the protocol below) | sign, index-commit, WAL write, snapshot, `write_note`, `ingest`, `ingest-transcript`, `supersede`, `unsupersede`, `graphify`, every other `cos-*` verb (broker/correct/evidence/priority-map/hold) |
+| **Cowork Linux VM** (sandbox, EDR-blind) | `search`, `get`, `recent`, `draft_capture` (the authority is `VM_ALLOWED` in `src/brain/cli.py`; today: `init, doctor, alerts, search, hybrid-search, diagnose, dossier, check-egress, exceptions, mcp-config, grep, bases-query, graph-expand, get, read, recent, status, draft-capture, capture, brief, digest, cos-propose, provision-request` — `diagnose` is read-only and applies the same egress gate; `alerts` is the degradation digest every harness runs at session start (§9), file-reads only, and names the host-home sources the VM cannot reach instead of skipping them; `cos-propose` is an UNSIGNED drop into a proposal-drop dir `sync` never reads; only the host broker's owner-inbox gate can move it toward signing; `provision-request` (PRV-10) stages a NEW-VAULT request marker — a plain-file drop, no key, no launchd, no registry — that the host's `provision-drain` completes, see the protocol below) | sign, index-commit, WAL write, snapshot, `write_note`, `ingest`, `ingest-transcript`, `supersede`, `unsupersede`, `graphify`, every other `cos-*` verb (broker/correct/evidence/priority-map/hold) |
 | **HOST broker** (macOS/Windows, EDR-visible, holds the audit key) | everything: `write_note`, audit signing, WAL writes, snapshot generation, index commit, plus the ADR-0003 host-only verbs `ingest`/`ingest-transcript` (drop-zone → signed `raw/`, originals archived immutably), `supersede`/`unsupersede` (both sides of a version chain, and its audited undo), `graphify` (bounded monthly link-discovery build) | — |
 
-**`supersede`/`unsupersede` over the broker is still the HOST writing (SUP-01,
-2026-09-18).** The table above is about WHO SIGNS, and nothing moved: the
+**`supersede`/`unsupersede` over the broker is the HOST writing (SUP-01).**
+The table above is about WHO SIGNS: the
 `brain-mcp` broker is a host process holding the audit key, a Cowork session
 only ASKS it, and a `role=vm` broker refuses both tools. What bounds the ask is
 the guard in §5 — visibility, then relatedness, else a CUR-01 proposal.
@@ -1574,10 +1552,8 @@ The VM is a **read + draft** surface only; the host is the **only writer**.
    atomically republishes the read-only, generation-stamped snapshot into
    `.brain/snapshot/`. Only now is the note retrievable from the VM.
 
-**In-place updates (UPD-01, 2026-08-30).** A duplicate id used to be a dead
-end: the drain skipped it forever, silently — a Cowork session's rule update
-sat refused in `capture-inbox/` for 11 days while the session believed it had
-applied. A draft may now declare an IN-PLACE update of an existing note with
+**In-place updates (UPD-01).** A draft may declare an IN-PLACE update of an
+existing note with
 two transport-only frontmatter keys: `updates: <id>` (must equal the draft's
 own id) and `base_sha256: <sha>` (the `sha256` that `brain get` returned for
 the version the author read). The drain applies it through the same signed
@@ -1587,8 +1563,10 @@ rewrite what the untrusted lane wrote, never a host-authored note (those skip
 `update-needs-owner`; apply on the host with `brain write`) and never `raw/`
 (append-only). A base-hash mismatch skips as `stale-base` instead of
 clobbering a newer write. The transport keys are dropped before signing, and
-`brain alerts` now reports any draft still in the inbox after 48h
-(`stuck-drafts`) — a refusal is never silent again.
+`brain alerts` reports any draft still in the inbox after 48h
+(`stuck-drafts`), so a refusal is never silent. *Why:* a skipped duplicate id
+once sat in `capture-inbox/` for 11 days while the session believed it had
+applied.
 
 ### VM-request → host-drain vault provisioning (PRV-10, 2026-08-17)
 
@@ -1611,8 +1589,8 @@ empty registry has no roots to scan and no nightly to ride.
 
 **No capture daemon, no dedicated drain task.** The host drains *on invoke*.
 Scheduled tasks are a **small, curated set, each justified on its own merits —
-no fixed cap, no over-engineering** (owner ruling 2026-07-20, superseding the
-earlier fixed-two-tasks framing): currently **`brain-nightly`** — the
+no fixed cap, no over-engineering** (owner ruling 2026-07-20): currently
+**`brain-nightly`** — the
 maintenance umbrella (fires **hourly**; every firing runs sweep + ingest +
 drain + incremental sync + snapshot publish + the self-organization folds of
 §4 rule 4 — a captured document is searchable within the hour — while the
@@ -1635,9 +1613,9 @@ and republishes the snapshot.
 
 The hourly `brain-nightly` job and a hand-run `brain sync`/`rebuild` write the
 SAME sqlite index, so two protections apply to every index-mutating verb
-(`sync`, `rebuild`, `maintain`, `snapshot`, `restore-index`, and — since the
-2026-07-20 dedup-batch fix (finding 1) — `supersede`, whose full critical
-section (both signed note writes + its trailing reindex) now runs under ONE
+(`sync`, `rebuild`, `maintain`, `snapshot`, `restore-index`, and `supersede`,
+whose full critical section (both signed
+note writes + its trailing reindex) runs under ONE
 acquisition of the same lock, never an unbounded wait):
 
 - **A bounded, jittered write-retry** absorbs transient lock contention
@@ -1649,8 +1627,8 @@ acquisition of the same lock, never an unbounded wait):
   `writer-<vault>.lock`, off the Cowork mount beside the COS append locks —
   process-lifetime, NOT a pidfile: the kernel releases it on crash/kill, so
   there is no stale-lock heuristic to get wrong) serializes the hourly job
-  against a hand-run command. It lived at `<vault>/.brain/writer.lock` until
-  INT-05; on the mount, a lock can be unlinked while a holder has it and
+  against a hand-run command. It stays off the Cowork mount because there a
+  lock can be unlinked while a holder has it and
   replaced at the same name, after which a second holder locks the NEW inode
   and both run against one index. Re-entrant within one process (`sync` self-delegating to
   `rebuild` shares one lock, never deadlocks on it). Bounded wait
@@ -1668,13 +1646,14 @@ acquisition of the same lock, never an unbounded wait):
   skips, or a `writer_busy_since` older than a bounded grace period, is
   pathological (a leaked lock, a wedged rebuild) and must be surfaced as
   loudly as a failure — never silently reported HEALTHY.
-- **The supersede crash journal is host-private too** (ENF-01, 2026-08-10). It
+- **The supersede crash journal is host-private too** (ENF-01). It
   is the rollback record for an unfinished `supersede`/`unsupersede`, and it
   holds BOTH NOTES' COMPLETE PRE-IMAGES — full note text at whatever tier
-  those notes carry. On `<vault>/.brain/` that was unrestricted
-  Confidential/Restricted/MNPI content sitting outside the egress gate, so it
-  moved off the mount beside the writer lock (same helper, same app-data
-  fallback). A journal exists only while a transaction is unfinished; an
+  those notes carry. It lives off the mount beside the writer lock (same
+  helper, same
+  app-data fallback), because on `<vault>/.brain/` it would be
+  Confidential/Restricted/MNPI content outside the egress gate. A journal
+  exists only while a transaction is unfinished; an
   unparseable or STRUCTURALLY INCOMPLETE one fails closed — preserved, and
   every supersession verb refuses until a human repairs the pair. `brain
   maintain` validates/recovers it ONCE at the top of the run, before any
@@ -1728,9 +1707,9 @@ rework round and a 4–10 minute suite re-run.
 
 ### Running the test suite
 
-Run the full suite in PARALLEL. Sequentially it takes ~15 minutes; with eight
-workers it takes ~4-11 depending on what else is running on this Mac (see the
-last bullet below), and the pass set is identical:
+Run the full suite in PARALLEL. Sequentially it takes ~15 minutes; in parallel the
+time depends on what else is running on this Mac (see the last bullet below),
+and the pass set is identical:
 
 ```bash
 ~/.claude/scripts/govrun .venv/bin/python -B -m pytest -n auto --dist loadfile --timeout 300 -q \
@@ -1748,7 +1727,8 @@ Four parts of that line are load-bearing, and each is a measured lesson:
   blocks a gate until the gate's own timeout, and the run reports nothing.
 - **No `-x`.** For consecutive runs you want the whole failure list, not the
   first one; a 2026-08-13 run was wasted re-running the suite to see the rest.
-- **`-n 8` assumed this Mac is otherwise idle. It is not, routinely.** `govrun` now caps the workers itself (write `-n auto`; the hook refuses a hardcoded count above 4), but the lesson stands: two
+- **`-n auto`, never a hardcoded count.** `govrun` sets the worker count, and
+  the governor hook refuses a hardcoded `-n` above 4. This Mac is not idle: two
   self-hosted GitHub Actions runners execute OTHER repositories' suites here;
   they start on a push and no agent tool lists them — and `ListAgents` does not
   list another Claude session's own 8-worker suite either. On 2026-09-05 four
@@ -1758,18 +1738,13 @@ Four parts of that line are load-bearing, and each is a measured lesson:
   before any run whose SECONDS you intend to report, and again before you blame
   a kill on your own workload — `uptime`, `memory_pressure`, and
   `ps -eo pid,rss,etime,command | grep "[a]ctions-runners.*pytest"`. **Read
-  memory with `memory_pressure`, never with `vm_stat`'s "Pages free".** This
-  bullet said the runners "took free memory to 66 MB" until 2026-09-05, and
-  both sessions that wrote that had read it off `Pages free` alone. On macOS
-  that counter sits near zero as a matter of course: measured the same day it
-  read 68 MB while `memory_pressure` reported the system 44% free with a full
-  suite running, because inactive pages are reclaimable and `vm_stat | head -3`
-  does not even show them. The four kills happened; the memory figure attached
-  to them was never evidence of them, and the instrument this bullet used to
-  name would have had a reader wait out a starvation that was not there.
-  WAIT the runners out rather than lowering the worker count blindly:
+  memory with `memory_pressure`, never with `vm_stat`'s "Pages free".** On macOS
+  that counter sits near zero as a matter of course (measured 2026-09-05: 68 MB
+  while `memory_pressure` reported 44% free under a full suite), because
+  inactive pages are reclaimable and `vm_stat | head -3` does not show them.
+  WAIT the runners out:
   `until ! ps -eo command | grep -q "[a]ctions-runners.*pytest"; do sleep 20;
-  done`. With them running, `-n 6` survives where `-n 8` does not. Never report
+  done`. Never report
   a runtime delta as the effect of a code change unless both runs carry a load
   reading.
 
@@ -1778,7 +1753,7 @@ design; it is deselected in the sequential gates too, so parallel coverage
 equals sequential coverage. **Any OTHER deselect needs its cause written down
 and re-checked** — two historical ones were blamed on parallelism and turned
 out to be a date-rotted clock read and a live-vault leak (see
-`tests/test_doctor.py::_no_live_cwd_vault`). A deselect that outlives its cause
+`tests/conftest.py::_no_live_cwd_vault`). A deselect that outlives its cause
 is a check that cannot fail.
 
 While working, run only the tests you changed. Run the whole suite ONCE, at the
@@ -1931,19 +1906,12 @@ even though the mount makes them visible.
 `tools/cowork_workspace_install.sh`, never derived from the mutable
 `.brain/vault-id` file or from the summary it verifies (plus
 `maintain-state.json`, only to tell a vault that has never run `maintain`
-from one whose feed is missing). It no longer reads `memory/inbox.jsonl`
-directly (EXC-03, 2026-08-22 — GRILL ruling: "inbox.jsonl stays host-only
-doctrine; attacker-writable file existence is not evidence"); the exceptions
-summary is the one authority for open owner questions on the VM leg now.
-That is the whole point of the first bullet above — until 2026-08-14 this
-logic lived only in a Claude Code hook, so a Cowork session worked for days
-against a vault whose invariants had regressed with no surface that could
-tell it. Only the three HOST-HOME sources (`~/.brainiac/update-state.json`,
+from one whose feed is missing). It never reads `memory/inbox.jsonl`
+(owner ruling: "attacker-writable file existence is not evidence"); the
+exceptions summary is the one authority for open owner questions on the VM
+leg. Only the three HOST-HOME sources (`~/.brainiac/update-state.json`,
 `~/.brain/synthesis-state.json`, `~/.brain/retrieval-watch-state.json`) are out of the VM's reach, and `alerts`
 reports those under `unreachable` rather than skipping them. The reads are
 file-reads of counts and two findings files; the VM still never WRITES
 anything here,
-and none of it is ever indexed. This paragraph said "never reads or writes
-it" until 2026-08-18, which contradicted the bullet at the top of this
-section and would have told a Cowork session to refuse the one command that
-section requires of it.
+and none of it is ever indexed.

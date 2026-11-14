@@ -7,6 +7,32 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.52] — 2026-11-14
+### Fixed
+- **Two kinds of unreadable file now read themselves on the nightly retry
+  (2026-11-14).** A PDF from "Microsoft Print to PDF" draws its text as
+  shapes, with no font and no image, so the PDF reader's OCR found nothing.
+  A Word file made of pasted slide pictures has no text at all for the Word
+  reader. Both sat in quarantine and became an owner question after three
+  nights. The retry step now drops an image-only PDF instead of the same
+  bytes, and the PDF reader's own OCR reads it. On the three real files: 746,
+  1,434 and 1,714 words, no hidden-text flags. Page rendering uses the
+  optional `pdftoppm` (poppler); without it the retry copies the file as
+  before.
+- **Search does less wasted work**, and the rerank window and the tier list
+  each have one value in the code instead of several copies.
+- **Two checks that never ran now run**, and tests that could not fail are
+  fixed or removed with the dead code they guarded.
+- **The release deploy step packages the marketplace checkout too**, so the
+  closing health check no longer fails on a stale version marker, and the
+  Cowork VM build fetches its Debian packages over HTTPS.
+### Changed
+- Dependency lock files refreshed to current safe versions.
+- The two nightly page scripts are split into parts; the page they produce
+  is unchanged.
+- Agent instructions and skills state current rules in the present tense
+  and no longer name files or tools that do not exist.
+
 ## [0.20.51] — 2026-11-12
 ### Security
 - **Two more ways to hide text are flagged (VULN-3418 retest, 2026-11-12).**

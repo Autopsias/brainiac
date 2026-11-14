@@ -122,19 +122,12 @@ even though the mount makes them visible.
 `tools/cowork_workspace_install.sh`, never derived from the mutable
 `.brain/vault-id` file or from the summary it verifies (plus
 `maintain-state.json`, only to tell a vault that has never run `maintain`
-from one whose feed is missing). It no longer reads `memory/inbox.jsonl`
-directly (EXC-03, 2026-08-22 — GRILL ruling: "inbox.jsonl stays host-only
-doctrine; attacker-writable file existence is not evidence"); the exceptions
-summary is the one authority for open owner questions on the VM leg now.
-That is the whole point of the first bullet above — until 2026-08-14 this
-logic lived only in a Claude Code hook, so a Cowork session worked for days
-against a vault whose invariants had regressed with no surface that could
-tell it. Only the three HOST-HOME sources (`~/.brainiac/update-state.json`,
+from one whose feed is missing). It never reads `memory/inbox.jsonl`
+(owner ruling: "attacker-writable file existence is not evidence"); the
+exceptions summary is the one authority for open owner questions on the VM
+leg. Only the three HOST-HOME sources (`~/.brainiac/update-state.json`,
 `~/.brain/synthesis-state.json`, `~/.brain/retrieval-watch-state.json`) are out of the VM's reach, and `alerts`
 reports those under `unreachable` rather than skipping them. The reads are
 file-reads of counts and two findings files; the VM still never WRITES
 anything here,
-and none of it is ever indexed. This paragraph said "never reads or writes
-it" until 2026-08-18, which contradicted the bullet at the top of this
-section and would have told a Cowork session to refuse the one command that
-section requires of it.
+and none of it is ever indexed.

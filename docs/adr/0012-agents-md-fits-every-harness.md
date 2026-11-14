@@ -419,3 +419,30 @@ false.
 ---
 
 Decision: B — raise project_doc_max_bytes in the tracked .codex/config.toml, gated on its step 1 model run (owner, 2026-09-19).
+
+---
+
+## Appendix · How each harness reads the instruction files (moved from `CLAUDE.md`, 2026-11-13)
+
+**AGENTS.md is canonical; AGENTS-core.md is its ≤200-line Claude Code core.**
+Codex and Gemini CLI read the unmodified `AGENTS.md`. Codex reads ALL of it
+only because `.codex/config.toml` raises its 32,768-byte cut
+(`project_doc_max_bytes`), and only in a checkout trusted in
+`~/.codex/config.toml`. Three cases still get the first 32,768 bytes,
+silently: trust passed with `codex exec -c`, an untrusted clone, and
+`codex exec --ignore-user-config` or a `CODEX_HOME` pointed elsewhere, unless
+the command also passes `-c project_doc_max_bytes=262144` — the plan-execute
+Codex lane does since gearbox `755624fa` (2026-09-19). Gemini CLI's limit is
+unmeasured.
+The Desktop Code tab runs Claude Code, so it loads `CLAUDE.md` and
+`AGENTS-core.md` like the CLI (not probed by this ADR's plan). The guard is
+`tests/test_agents_md_fits_codex.py`. `AGENTS.md` stays ONE source of
+truth for the note shape, link style, capture rules, the four interactions,
+and the security posture.
+Claude Code alone imports the smaller `AGENTS-core.md` instead, to keep base
+context down; the rest of AGENTS.md's content loads CONDITIONALLY from
+`.claude/rules/*.md` (path-scoped — see AGENTS-core.md's pointer table) only
+when a matching file is touched. Do not duplicate content across
+`AGENTS.md`/`AGENTS-core.md`/`.claude/rules/`; edit `AGENTS.md` for the
+canonical text, then mirror any structural change into the split (context
+diet, s05, 2026-08-22).

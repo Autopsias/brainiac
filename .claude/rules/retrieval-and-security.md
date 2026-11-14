@@ -65,14 +65,11 @@ those bytes were signed. `clean` therefore means exactly one thing — the
 frontmatter said so — and an out-of-band edit of `injection_assessment.hidden`
 to `0` makes a note read `clean`. Do not report `clean` as evidence that a
 note is unaltered, and do not build a control on top of it.
-An audit-chain gate was built and then withdrawn: four adversarial-review
-rounds found four ways past it, the last two being `brain rebuild` (which
-re-derives the verdict with no audit facts, and which `sync` escalates into on
-a schema or embed-model change) and an unreadable `audit.jsonl` (which made
-the gate inert, and inert here means handing out the assurance). The claim was
-withdrawn rather than patched a fifth time. `hidden:<n>` — the value that
-actually protects a reader — never depended on the chain, so the withdrawal
-takes nothing away from it. It is NOT immune to the same edit: whoever can
+No audit-chain gate backs `clean`: `brain rebuild` re-derives the verdict
+with no audit facts (and `sync` escalates into it on a schema or embed-model
+change), and an unreadable `audit.jsonl` makes such a gate inert. `hidden:<n>`
+— the value that actually protects a reader — does not depend on the chain. It
+is NOT immune to the same edit: whoever can
 rewrite `hidden: 3` to `hidden: 0` erases the warning as easily as they mint
 `clean`, and the human renders print nothing either way. What the vocabulary
 buys is a reader who is TOLD when the record says text was hidden — not a
@@ -109,15 +106,14 @@ order is restored inside the slots the reranker selected. Reranker scores
 stay separate from RRF scores in `--explain`; they are never combined into
 one fake scale.
 
-**Rerank default-on (BR-03, owner ruling 2026-08-04; window revised the same
-day).** `search`/`hybrid-search` rerank ON by default at candidate **window
+**Rerank default-on (BR-03, owner ruling 2026-08-04).**
+`search`/`hybrid-search` rerank ON by default at candidate **window
 20** — measured on the 66-query golden set (`eval/FOLLOWUPS.md` #4): mrr@10
 0.267 → 0.411, hit@1 0.212 → 0.349, for ~5.5s p50 / 8.2s p95 added latency
-the owner explicitly accepted for the quality gain. The window briefly
-shipped at 50 on a latency figure that was the window-20 row mislabelled; at
-50 it really costs p50 68.0s and 85% of golden queries blow the 30s timeout
-and return the BARE ordering anyway, so the owner ruled the default back to
-20 — quality you receive beats quality that expires (`eval/FOLLOWUPS.md` #6).
+the owner explicitly accepted for the quality gain. The default is 20, not 50
+(owner ruling): at window 50 the p50 is 68.0s and
+85% of golden queries hit the 30s timeout and return the BARE ordering anyway
+— quality you receive beats quality that expires (`eval/FOLLOWUPS.md` #6).
 The CEILING stays 50: `BRAIN_RERANK_TOP`/`BRAIN_RERANK_MAX` still opt into
 the wide-candidate pass deliberately, and a wide pass needs
 `BRAIN_RERANK_TIMEOUT_S` raised with it. Opt out per call with `--no-rerank`; the global kill switch is
@@ -127,8 +123,8 @@ rerank call is caller-bounded, not hung forever: an ONNX forward pass cannot
 be interrupted mid-call, so `BRAIN_RERANK_TIMEOUT_S` (default 30s) bounds how
 long the CALLER waits, not the actual compute — a timed-out call keeps
 running in the background and its result is discarded, falling back to the
-pre-rerank order for that query. The skippable contract (RET-02) is
-unchanged: an absent reranker model still degrades to identity, on the host
+pre-rerank order for that query. The skippable contract (RET-02) holds: an
+absent reranker model still degrades to identity, on the host
 and on the Cowork VM leg alike.
 
 **Adaptive rerank gate (RK-02, 2026-08-04).** Reranking is default-on but not
@@ -215,24 +211,19 @@ the weekly synthesis sign-drain) stands exactly like any other decision note.
 32 such notes existed across the operator's registered vaults as of
 2026-09-02. See `docs/security-acceptances.md` **A-07** for the reasoning,
 the count, and what still bounds the exposure (`dossier`'s `tensions` field).
-**Plain `search` HIDES retired versions by default (owner ruling A,
-2026-08-25).** A note a supersede chain retired (`is_latest_version:
-false`) leaves the lexical and dense legs before fusion; `--include-retired`
-brings it back for a "previous version" question. Measured before the
-change on the reference vault: 522 of 2003 sources were retired and still
-took 29% of the top-10 slots across 15 document queries, with a retired
-version at rank 1 on 5 of them — the chain was written and never read at
-query time. The exact-identity leg is deliberately untouched: a query that IS
-a retired note's title or alias names that note. Every surfaced hit still
-carries `is_latest_version` (a plain semantic-search agent can prefer the
+**Plain `search`, `grep` and `recent` HIDE retired versions by default
+(owner ruling A, 2026-08-25).** A note a supersede chain retired
+(`is_latest_version: false`) leaves the lexical and dense legs before fusion;
+`--include-retired` brings it back for a "previous version" question, and
+`grep` takes the same predicate and flag. *Why:* on the reference vault,
+retired versions took 29% of the top-10 slots across 15 document queries.
+The exact-identity leg is deliberately untouched: a query that IS
+a retired note's title or alias names that note. Every surfaced hit and every
+grep row carries `is_latest_version` (a plain semantic-search agent can prefer
+the
 current claim without a second round-trip). Both temporal flags stay
 **VM_ALLOWED** — they are read-only filters over already-gated rows, no
-different in trust from any other `bases-query`. **`grep` follows the same
-rule (2026-09-11)** — the same predicate, the same `--include-retired` flag,
-and every grep row carries `is_latest_version`. It used to scan every note:
-measured on the reference vault, `brain grep gama` returned 12 bridge notes,
-11 of them retired copies of one email, with no field to tell them apart.
-`recent` has hidden them since 2026-08-26.
+different in trust from any other `bases-query`.
 
 **Breadth-intent routing (RTE-01).** A heuristic adapted from NapMem's
 observed navigator behavior (arXiv 2607.05794) — the paper never classifies
@@ -475,8 +466,8 @@ whole plan to rebuild the already-shipped fusion fix (item 10, `d5b2c58`).
    query string itself is the leak. Web search is for terms that are already
    public. When in doubt, treat the topic as internal and stay in the vault.
 
-   **This rule has a MECHANISM now (SEC-07, 2026-09-01), and it is still your
-   rule to follow.** `brain check-egress "<text>"` judges one outbound string
+   **This rule has a MECHANISM (SEC-07), and it is still your rule to
+   follow.** `brain check-egress "<text>"` judges one outbound string
    against THIS vault's `overlay/keywords/` decoder ring and exits `6` when a
    term is classified at or above the threshold (default `Confidential`,
    `$BRAIN_EGRESS_TERM_MIN_TIER` to change it; an unrecognised value fails
@@ -484,8 +475,8 @@ whole plan to rebuild the already-shipped fusion fix (item 10, `d5b2c58`).
    beside a web tool, so it needs the guard most. `scripts/brainiac-egress-guard.sh`
    is the Claude Code `PreToolUse` wiring; the script's own header carries the
    settings entry, and on a harness-managed `~/.claude` that entry belongs to
-   the deploy repo, not to this engine. **It watches EVERY outbound door and
-   fails CLOSED (M-2, 2026-09-02).** The matcher is
+   the deploy repo, not to this engine. **It watches EVERY outbound door
+   and fails CLOSED.** The matcher is
    `WebSearch|WebFetch|Bash|PowerShell|Write|Edit|NotebookEdit|Read|Grep|Glob|mcp__.*` — a `Bash` curl and an MCP tool
    are outbound channels too, and it reads the text that actually leaves per
    tool (the command, the written content, the query or URL, the MCP
@@ -493,22 +484,23 @@ whole plan to rebuild the already-shipped fusion fix (item 10, `d5b2c58`).
    codename is still editable. `--strict` goes to the WEB tools only, so an
    empty ring refuses a search without locking the owner out of their own
    shell.
-   **A line break in a framing field is itself a refusal (s08, 2026-09-04).**
+   **A line break in a framing field is itself a refusal.**
    `tool_name`, `cwd`, `session_id`, `tool_input.file_path`,
    `tool_input.notebook_path` and an ABSOLUTE `tool_input.path` may not contain
-   an LF or CR. Repairing one is not safe: stripping the break kept the guard's
-   field frame aligned but made it decide about a path that is not the path the
-   tool writes, so an out-of-tree write read as in-tree and was allowed. The
+   an LF or CR. Repairing one is not safe: stripping the break makes the
+   guard decide
+   about a path that is not the path the tool writes, so an out-of-tree write
+   reads as in-tree. The
    refusal names the offending field. A relative `path`, and the per-tool TEXT
    (a multi-line command, or written content), are unaffected — those are the
    normal case. A payload that breaks the field extraction outright, such as a
    top-level value that is not an object, refuses for the same reason: an empty
    field set is the most permissive state the script has.
 
-   **It keys on the DESTINATION, not the tool name (rework 1, 2026-09-03).**
-   The first cut refused `brain search "<codename>"`, a `grep` over the vault
-   and a vault note that mentions a term — the three most ordinary things
-   anyone does with this vault. A call is checked only when its destination is
+   **It keys on the DESTINATION, not the tool name.** Refusing
+   `brain search "<codename>"`, a `grep` over the vault or a vault note that
+   mentions a term would block the three most ordinary things anyone does
+   with this vault. A call is checked only when its destination is
    off this host: always for the web tools and every `mcp__*`; for `Bash` when
    the command names an outbound program or carries a URL; for a write when the
    target is outside the working tree and outside the vault the host registry
@@ -522,29 +514,28 @@ whole plan to rebuild the already-shipped fusion fix (item 10, `d5b2c58`).
    list, an alias that hides one, or one reached through a variable all pass,
    and neither rule sees dereferenced bytes.
 
-   **There is no tests exemption any more.** It was a substring test on the
-   tool's own ARGUMENTS (`*pytest*`, `*/tests/*`), so an injected instruction
-   could append `# pytest` to an exfiltrating `curl` and be allowed — measured
-   exit 0. The gate command passes now because `pytest` sends nothing off the
-   host. **And there is no in-band escape either (rework 2, 2026-09-03).**
-   `BRAINIAC_EGRESS_GUARD=off` was documented as owner-only because the hook
-   inherits Claude Code's environment and never a tool payload's — both true,
-   and the conclusion still wrong: Claude Code lets COMMITTED PROJECT SETTINGS
-   define a session's environment, so a repo change disarmed the guard for
-   every later call with nothing reporting it. The recovery is EXTERNAL now —
+   **There is no tests exemption.** A substring test on the tool's own
+   ARGUMENTS (`*pytest*`, `*/tests/*`) lets an injected instruction append
+   `# pytest` to an exfiltrating `curl`. The gate command passes because
+   `pytest` sends nothing off the host. **And there is no in-band escape
+   either.** An environment switch such as `BRAINIAC_EGRESS_GUARD=off` is not
+   owner-only: Claude Code lets COMMITTED PROJECT SETTINGS define a session's
+   environment, so a repo change could disarm the guard for every later call
+   with nothing reporting it. The recovery is EXTERNAL —
    quit Claude Code, remove the hook's `PreToolUse` entry from
    `~/.claude/settings.json`, restart — and `brain doctor` names the variable
    whenever a session still carries it.
 
    **Fail-closed, and exactly what that does and does not cover.** A
-   `check-egress` that RUNS and fails blocks with its reason printed; only exit
-   6 used to. TWO states still ALLOW, because neither is a failed check
+   `check-egress` that RUNS and fails blocks with its reason printed. TWO
+   states still ALLOW, because neither is a failed check
    — no engine found at all, and no vault resolvable from here (no vault means
    no ring means no authority, the same as no engine). A ring that EXISTS and
    cannot be READ is the opposite case and refuses on every tool, `--strict` or
-   not, naming the file: one `chmod 000` used to make the ring read as empty,
-   and empty only refused under `--strict`, which reaches the two web tools
-   alone (rework 2, H-1). TWO states REFUSE that used to be silent: a `.engine`
+   not, naming the file — read as empty, an unreadable ring would refuse
+   only under
+   `--strict`, which reaches the two web tools alone. TWO more states
+   REFUSE: a `.engine`
    pin naming an engine that is gone (a broken managed install, not an absence
    of authority), and a `.registry` pin that is not an absolute path. And the
    5-second hook timeout is FAIL-OPEN: Claude Code CANCELS a timed-out
@@ -556,7 +547,7 @@ whole plan to rebuild the already-shipped fusion fix (item 10, `d5b2c58`).
    it as current.
 
    **The VAULT comes from the HOST REGISTRY, per call, and the session KEEPS
-   what it has seen (s06 rounds 5-7, 2026-09-03).** The guard reads no
+   what it has seen.** The guard reads no
    environment variable to decide which vault it is judging against — not
    `$BRAIN_VAULT`, not `$BRAINIAC_HOME`, not `$PATH`, all three of which a
    committed project settings file can write. `brain install-hook` pins a
@@ -602,7 +593,7 @@ whole plan to rebuild the already-shipped fusion fix (item 10, `d5b2c58`).
 
    **The engine ships NO terms and never will** — they come from the owner's
    overlay, the same rows that already drive ingest classification, so there is
-   no second list to curate. **And the ring FILLS ITSELF (2026-09-01).** A
+   no second list to curate. **And the ring FILLS ITSELF.** A
    hand-written ring is an empty ring on every vault nobody curates, so the
    nightly fold regenerates `overlay/keywords-generated/` from this vault's own
    notes: every `project` note classified `Confidential` or above, plus its
@@ -622,8 +613,8 @@ whole plan to rebuild the already-shipped fusion fix (item 10, `d5b2c58`).
    rather than reporting a clean pass. It is a floor under this rule, not a
    replacement for it.
 
-This is the substrate's standing retrieval discipline; it replaces the old
-Obsidian "five-step retrieval cascade" rule for any harness reading this file.
+This is the substrate's standing retrieval discipline for any harness
+reading this file.
 
 ### Self-discovery — the `brain` CLI is the one interface
 
@@ -654,31 +645,32 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
 > `authoritative: false`) join `brain supersede` and `brain unsupersede` (§5)
 > as **refused on `role=vm`** before `BrainCore` is even constructed — see §6.
 >
-> **Per-harness wiring:** AGENTS.md is canonical; `CLAUDE.md` imports it
-> via `@AGENTS.md` and Gemini sets `contextFileName=AGENTS.md` (`.gemini/`). So
-> Codex, Claude Code, Gemini CLI, and the Desktop **Code tab** all read THIS file
+> **Per-harness wiring:** AGENTS.md is canonical. `CLAUDE.md` imports the
+> smaller `AGENTS-core.md` (the rest loads from `.claude/rules/`), and Gemini
+> sets `contextFileName=AGENTS.md` (`.gemini/`). So Codex, Claude Code, Gemini
+> CLI, and the Desktop **Code tab** all read this content
 > and call `brain` via their native shell — **no MCP**. The pure Desktop **Chat
 > tab** (the one surface that can't run a command) gets the optional, deletable
 > `brain-mcp` adapter. Full table: `docs/harness-wiring.md`.
 >
 > **Cowork-Windows VM (PRIMARY surface):** Cowork is Claude Desktop's Linux VM
 > sandbox execution mode (`docs/glossary.md`). **Two shapes exist, and which
-> one a given workspace runs depends on whether it has been through Closed
-> Stacks s07's cutover (2026-08-27 → 2026-08-30, VULN-3385).** Pre-cutover /
-> co-located: run `brain --role vm` (or `export BRAIN_ROLE=vm`) — the VM is
+> one a workspace runs depends on whether its vault was relocated off the VM's
+> mount (the 2026-08 cutover that closed VULN-3385).** Co-located (not
+> relocated): run `brain --role vm` (or `export BRAIN_ROLE=vm`) — the VM is
 > **read + draft only**, reading ONLY the published read-only snapshot in
 > `.brain/snapshot/` (never WAL), capturing via `brain draft-capture` into
 > `.brain/capture-inbox/`, never resolving a signing key; the host drains +
-> signs + indexes + republishes the snapshot. **Post-cutover (a relocated
-> workspace):** the vault is not attached to the VM's mount at all — `brain`
+> signs + indexes + republishes the snapshot. **Relocated:** the vault is
+> not attached to the VM's mount at all — `brain`
 > is not on the session's `PATH`, and there is no local snapshot to read —
 > every read reaches the vault only through the host `brain-mcp` broker,
-> which applies the same classification filter and now writes a fail-closed
+> which applies the same classification filter and writes a fail-closed
 > audit record before returning content. The broker's ceiling for this leg is
-> still the same full-vault default the host itself uses (no per-caller tier
-> narrowing is configured). **VULN-3385 is CLOSED (2026-09-01):** the bypass is
-> fixed, and an agent reading a high-tier note THROUGH the broker is
-> functionality, not the finding (A-01). The live residual is indirect prompt
+> the same full-vault default the host itself uses (no per-caller tier
+> narrowing is configured). An agent reading a high-tier note THROUGH the
+> broker is functionality, not a finding (A-01). The live residual is
+> indirect prompt
 > injection — what can LEAVE without the owner deciding — tracked at A-06.
 > Full posture: `docs/install/cowork.md`,
 > `docs/security/vuln-3385-risk-reduction.md`. Install +
@@ -716,16 +708,15 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
   **egress gate**: what `brain` is willing to surface to the model.
 - **The MCP transport resolves the SAME full vault as the CLI (owner ruling
   2026-08-17).** `brain-mcp` runs ON THE HOST, as the owner, over a
-  single-owner vault, so it is the CLI's trust context and now shares its
-  default. It previously borrowed the VM leg's `Internal` cap in seven places
-  plus the connector stanza, which starved every vault reached through Claude
-  Desktop: a curated vault keeps its substance at Confidential/Restricted, so
-  the answer came from Public+Internal scraps. Narrow it per deployment with
+  single-owner vault, so it is the CLI's trust context and shares its
+  default. *Why:* the VM leg's `Internal` cap starves every vault reached
+  through Claude Desktop, because a curated vault keeps its substance at
+  Confidential/Restricted. Narrow it per deployment with
   `$BRAIN_MAX_EGRESS_TIER`; an UNSET var means the full vault, while a
   SET-BUT-UNRECOGNISED one still fails CLOSED to `Internal` — the only reason
   to set it is to narrow the gate, so a typo must never return more than was
-  asked for. The trifecta break is unchanged and still lives at the `role=vm`
-  boundary, never on the owner's own host.
+  asked for. The trifecta break lives at the `role=vm` boundary, never on
+  the owner's own host.
 - **A vault MAY raise its own Cowork ceiling — but only through a HOST-SIGNED
   file (VULN-3386, external pentest 2026-08).** The shipped `role=vm` default
   stays `Internal`. The enforcement chain: `brain vm-egress-tier <TIER>` on
@@ -733,21 +724,21 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
   `<vault>/.brain/vm-egress-tier.signed`; the VM leg verifies it against the
   pinned anchor (`pinned-verify.json`, staged at install) before trusting,
   and anything missing, malformed, or badly signed fails CLOSED to `Internal`.
-  The previous mechanisms — an env var the session can export itself, and an
-  unsigned mount file the VM can write — no longer raise a VM ceiling (the
-  unsigned `vm-egress-tier` file and `$BRAIN_VM_MAX_EGRESS_TIER` are inert
-  for VM elevation; re-stage any prior opt-in with the signed verb).
+  An env var the session can export itself and an unsigned mount file the VM
+  can write do NOT raise a VM ceiling: the unsigned `vm-egress-tier` file and
+  `$BRAIN_VM_MAX_EGRESS_TIER` are inert for VM elevation; re-stage any prior
+  opt-in with the signed verb.
 - **Classification gate, role-split defaults (owner decision 2026-07-10).**
   `search/get/recent` filter by `classification`. A note with a missing or
   unrecognised `classification` ranks as the most-restrictive tier (MNPI).
-  **Trusted host default: the full vault** — the old `Internal` default
-  starved every real query; narrow it with `--max-tier` or
+  **Trusted host default: the full vault** — an `Internal` default starves
+  every real query; narrow it with `--max-tier` or
   `$BRAIN_DEFAULT_MAX_TIER` when a capped surface is wanted. **`--role vm`
   default: `Internal`** — the untrusted leg keeps the conservative
   deny-by-default cap, and elevation there is the explicit human gate.
   Levels, low→high: `Public < Internal < Confidential < Restricted < MNPI`.
-  **That `--role vm` cap binds the CLI, and since the Cowork cutover the CLI
-  is no longer how a Cowork session reads (2026-09-01).** A Cowork session
+  **That `--role vm` cap binds the CLI, and the CLI is not how a relocated
+  Cowork session reads.** A Cowork session
   reaches the vault through the DESK — the host-run `brain-mcp` broker, whose
   tools Claude Desktop announces into the session — and
   `mcp_verbs._egress_ceiling_tier()` resolves from `$BRAIN_MAX_EGRESS_TIER`
@@ -765,12 +756,12 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
   to MNPI, so an unlabelled note is withheld from every capped reader. That is
   RIGHT for reading and WRONG anywhere a tier is CHOSEN to write, raise, or
   compare toward: the default-deny tier is the ABSENCE of a classification,
-  never an assertion of one. On a `("", "Internal")` pair the UNLABELLED note
-  ranked highest, so accepting the cross-tier remediation raised the
-  correctly-labelled `Internal` note to MNPI on the strength of a MISSING
-  label — hiding it from every Internal-capped reader, the Cowork VM included
-  — while the real defect, a note carrying no classification at all, reached
-  nobody. A lane that picks a tier REFUSES a default-denied one
+  never an assertion of one. *Why:* on a `("", "Internal")` pair the
+  UNLABELLED note ranks highest, so a
+  remediation that raises toward it lifts the correctly-labelled `Internal`
+  note to MNPI on the strength of a MISSING label — hiding it from every
+  Internal-capped reader — while the real defect reaches nobody. A lane that
+  picks a tier REFUSES a default-denied one
   (`remediation_answers.unraisable`) and reports the missing label as its own
   finding.
 - **Trifecta break + HITL.** The "lethal trifecta" (`docs/glossary.md`) is
@@ -778,12 +769,12 @@ Obsidian "five-step retrieval cascade" rule for any harness reading this file.
   path; the leg that reads untrusted content must not also hold private data
   + an outbound channel. Surfacing sensitive content and any
   irreversible/outbound action is human-gated.
-  **This is the design, and on the Cowork leg it is no longer met (2026-09-01).**
-  The cutover removed the vault from the mount — a real gain, and it closed an
-  invisible bypass — but it routed the same session through the desk at the
-  host's full-vault ceiling (see the classification bullet above). The Cowork
-  leg therefore holds all three ingredients. What bounds it now is
-  DETECTION, not separation: the SEC-05 ingest quarantine refuses a document
+  **This is the design, and on the relocated Cowork leg it is NOT met.**
+  Relocation removed the vault from the mount and closed an invisible bypass,
+  but it routes the same session through the desk at the host's full-vault
+  ceiling (see the classification bullet above). The Cowork
+  leg therefore holds all three ingredients. What bounds it is DETECTION,
+  not separation: the SEC-05 ingest quarantine refuses a document
   carrying a CONCEALED instruction, `egress` marks every `raw/` hit
   `content_trust: untrusted-source`, the SEC-06 read record is fail-closed,
   and the Tuesday integrity fold raises a concealed-instruction count and a

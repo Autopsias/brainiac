@@ -8,10 +8,10 @@ description: One-command host install of Brainiac — install the `brain` CLI en
 Runs the whole host install. Imperative steps — execute them in order, do not
 ask permission between steps except where a human gate is named explicitly.
 
-**Channel (PYP-04, 2026-07-11):** the engine installs from **PyPI**
+**Channel:** the engine installs from **PyPI**
 (`brainiac-cli` — import package + console command both stay `brain`), never
 a clone, unless the user is a contributor or has no PyPI/network access. A
-clone of `~/brainiac` is now **dev/offline-only**, never the default path.
+clone of `~/brainiac` is **dev/offline-only**, never the default path.
 
 ## Step 0 — sandbox self-check (route, don't silently degrade)
 
@@ -132,8 +132,7 @@ This registers the nightly task as part of wire 1 — a **per-vault** launchd
 label `com.brainiac.nightly.<id>` (`<id>` = the vault's 8-hex slug; Windows:
 `brain-daily-brief-<id>`), daily 07:00. It is the ONE sanctioned host
 scheduled task PER VAULT (AGENTS.md §6). Each vault owns its own plist, so
-wiring a second vault never disturbs the first — the pre-0.9.0
-single-shared-label repoint hazard is gone, and the installer retires the
+wiring a second vault never disturbs the first. The installer retires the
 legacy `com.profile-a-brain.daily-brief` plist on first per-vault run.
 **Idempotent:** `already` for a wire on the same vault = success, not
 failure. Since `vault/brain/` is genuinely empty on a first-time install,

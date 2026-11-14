@@ -18,11 +18,11 @@ paths:
 
 | Context | May do | May NOT do |
 |---|---|---|
-| **Cowork Linux VM** (sandbox, EDR-blind) | `search`, `get`, `recent`, `draft_capture` (full VM_ALLOWED list: `init, doctor, alerts, search, hybrid-search, diagnose, grep, bases-query, graph-expand, get, read, recent, status, draft-capture, capture, brief, digest, cos-propose, provision-request` — `diagnose` is read-only and applies the same egress gate; `alerts` is the degradation digest every harness runs at session start (§9), file-reads only, and names the host-home sources the VM cannot reach instead of skipping them; `cos-propose` is an UNSIGNED drop into a proposal-drop dir `sync` never reads; only the host broker's owner-inbox gate can move it toward signing; `provision-request` (PRV-10) stages a NEW-VAULT request marker — a plain-file drop, no key, no launchd, no registry — that the host's `provision-drain` completes, see the protocol below) | sign, index-commit, WAL write, snapshot, `write_note`, `ingest`, `ingest-transcript`, `supersede`, `unsupersede`, `graphify`, every other `cos-*` verb (broker/correct/evidence/priority-map/hold) |
+| **Cowork Linux VM** (sandbox, EDR-blind) | `search`, `get`, `recent`, `draft_capture` (the authority is `VM_ALLOWED` in `src/brain/cli.py`; today: `init, doctor, alerts, search, hybrid-search, diagnose, dossier, check-egress, exceptions, mcp-config, grep, bases-query, graph-expand, get, read, recent, status, draft-capture, capture, brief, digest, cos-propose, provision-request` — `diagnose` is read-only and applies the same egress gate; `alerts` is the degradation digest every harness runs at session start (§9), file-reads only, and names the host-home sources the VM cannot reach instead of skipping them; `cos-propose` is an UNSIGNED drop into a proposal-drop dir `sync` never reads; only the host broker's owner-inbox gate can move it toward signing; `provision-request` (PRV-10) stages a NEW-VAULT request marker — a plain-file drop, no key, no launchd, no registry — that the host's `provision-drain` completes, see the protocol below) | sign, index-commit, WAL write, snapshot, `write_note`, `ingest`, `ingest-transcript`, `supersede`, `unsupersede`, `graphify`, every other `cos-*` verb (broker/correct/evidence/priority-map/hold) |
 | **HOST broker** (macOS/Windows, EDR-visible, holds the audit key) | everything: `write_note`, audit signing, WAL writes, snapshot generation, index commit, plus the ADR-0003 host-only verbs `ingest`/`ingest-transcript` (drop-zone → signed `raw/`, originals archived immutably), `supersede`/`unsupersede` (both sides of a version chain, and its audited undo), `graphify` (bounded monthly link-discovery build) | — |
 
-**`supersede`/`unsupersede` over the broker is still the HOST writing (SUP-01,
-2026-09-18).** The table above is about WHO SIGNS, and nothing moved: the
+**`supersede`/`unsupersede` over the broker is the HOST writing (SUP-01).**
+The table above is about WHO SIGNS: the
 `brain-mcp` broker is a host process holding the audit key, a Cowork session
 only ASKS it, and a `role=vm` broker refuses both tools. What bounds the ask is
 the guard in §5 — visibility, then relatedness, else a CUR-01 proposal.
@@ -50,10 +50,8 @@ The VM is a **read + draft** surface only; the host is the **only writer**.
    atomically republishes the read-only, generation-stamped snapshot into
    `.brain/snapshot/`. Only now is the note retrievable from the VM.
 
-**In-place updates (UPD-01, 2026-08-30).** A duplicate id used to be a dead
-end: the drain skipped it forever, silently — a Cowork session's rule update
-sat refused in `capture-inbox/` for 11 days while the session believed it had
-applied. A draft may now declare an IN-PLACE update of an existing note with
+**In-place updates (UPD-01).** A draft may declare an IN-PLACE update of an
+existing note with
 two transport-only frontmatter keys: `updates: <id>` (must equal the draft's
 own id) and `base_sha256: <sha>` (the `sha256` that `brain get` returned for
 the version the author read). The drain applies it through the same signed
@@ -63,8 +61,10 @@ rewrite what the untrusted lane wrote, never a host-authored note (those skip
 `update-needs-owner`; apply on the host with `brain write`) and never `raw/`
 (append-only). A base-hash mismatch skips as `stale-base` instead of
 clobbering a newer write. The transport keys are dropped before signing, and
-`brain alerts` now reports any draft still in the inbox after 48h
-(`stuck-drafts`) — a refusal is never silent again.
+`brain alerts` reports any draft still in the inbox after 48h
+(`stuck-drafts`), so a refusal is never silent. *Why:* a skipped duplicate id
+once sat in `capture-inbox/` for 11 days while the session believed it had
+applied.
 
 ### VM-request → host-drain vault provisioning (PRV-10, 2026-08-17)
 
@@ -87,8 +87,8 @@ empty registry has no roots to scan and no nightly to ride.
 
 **No capture daemon, no dedicated drain task.** The host drains *on invoke*.
 Scheduled tasks are a **small, curated set, each justified on its own merits —
-no fixed cap, no over-engineering** (owner ruling 2026-07-20, superseding the
-earlier fixed-two-tasks framing): currently **`brain-nightly`** — the
+no fixed cap, no over-engineering** (owner ruling 2026-07-20): currently
+**`brain-nightly`** — the
 maintenance umbrella (fires **hourly**; every firing runs sweep + ingest +
 drain + incremental sync + snapshot publish + the self-organization folds of
 §4 rule 4 — a captured document is searchable within the hour — while the
@@ -111,9 +111,9 @@ and republishes the snapshot.
 
 The hourly `brain-nightly` job and a hand-run `brain sync`/`rebuild` write the
 SAME sqlite index, so two protections apply to every index-mutating verb
-(`sync`, `rebuild`, `maintain`, `snapshot`, `restore-index`, and — since the
-2026-07-20 dedup-batch fix (finding 1) — `supersede`, whose full critical
-section (both signed note writes + its trailing reindex) now runs under ONE
+(`sync`, `rebuild`, `maintain`, `snapshot`, `restore-index`, and `supersede`,
+whose full critical section (both signed
+note writes + its trailing reindex) runs under ONE
 acquisition of the same lock, never an unbounded wait):
 
 - **A bounded, jittered write-retry** absorbs transient lock contention
@@ -125,8 +125,8 @@ acquisition of the same lock, never an unbounded wait):
   `writer-<vault>.lock`, off the Cowork mount beside the COS append locks —
   process-lifetime, NOT a pidfile: the kernel releases it on crash/kill, so
   there is no stale-lock heuristic to get wrong) serializes the hourly job
-  against a hand-run command. It lived at `<vault>/.brain/writer.lock` until
-  INT-05; on the mount, a lock can be unlinked while a holder has it and
+  against a hand-run command. It stays off the Cowork mount because there a
+  lock can be unlinked while a holder has it and
   replaced at the same name, after which a second holder locks the NEW inode
   and both run against one index. Re-entrant within one process (`sync` self-delegating to
   `rebuild` shares one lock, never deadlocks on it). Bounded wait
@@ -144,13 +144,14 @@ acquisition of the same lock, never an unbounded wait):
   skips, or a `writer_busy_since` older than a bounded grace period, is
   pathological (a leaked lock, a wedged rebuild) and must be surfaced as
   loudly as a failure — never silently reported HEALTHY.
-- **The supersede crash journal is host-private too** (ENF-01, 2026-08-10). It
+- **The supersede crash journal is host-private too** (ENF-01). It
   is the rollback record for an unfinished `supersede`/`unsupersede`, and it
   holds BOTH NOTES' COMPLETE PRE-IMAGES — full note text at whatever tier
-  those notes carry. On `<vault>/.brain/` that was unrestricted
-  Confidential/Restricted/MNPI content sitting outside the egress gate, so it
-  moved off the mount beside the writer lock (same helper, same app-data
-  fallback). A journal exists only while a transaction is unfinished; an
+  those notes carry. It lives off the mount beside the writer lock (same
+  helper, same
+  app-data fallback), because on `<vault>/.brain/` it would be
+  Confidential/Restricted/MNPI content outside the egress gate. A journal
+  exists only while a transaction is unfinished; an
   unparseable or STRUCTURALLY INCOMPLETE one fails closed — preserved, and
   every supersession verb refuses until a human repairs the pair. `brain
   maintain` validates/recovers it ONCE at the top of the run, before any

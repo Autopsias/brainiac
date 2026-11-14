@@ -18,7 +18,6 @@ the gate. See docs/operations/egress-provider-posture.md.
 from __future__ import annotations
 
 import contextvars as _contextvars
-import json
 import weakref
 from pathlib import Path
 from typing import Any, Iterable
@@ -264,24 +263,3 @@ def gate_dossier_tensions(decisions: list[dict], surfaced_sources: list[dict]) -
 # register itself is data (docs/harness-allowlist.json) so it is reviewable and
 # diffable; this loader is the typed accessor + invariants.
 ALLOWLIST_PATH = Path(__file__).resolve().parents[2] / "docs" / "harness-allowlist.json"
-
-_POSTURE_STATES = frozenset({"VERIFIED", "PENDING", "REJECTED"})
-
-
-def load_allowlist(path: Path | None = None) -> dict[str, Any]:
-    """Load the trusted-harness allowlist register. Raises on a malformed file
-    (fail-closed: a register we cannot parse must not be treated as 'allow all')."""
-    p = Path(path) if path else ALLOWLIST_PATH
-    data = json.loads(p.read_text(encoding="utf-8"))
-    if "harnesses" not in data or not isinstance(data["harnesses"], list):
-        raise ValueError(f"allowlist {p} missing a 'harnesses' list")
-    for h in data["harnesses"]:
-        missing = {"id", "vendor", "posture_status", "verification_step", "owner"} - set(h)
-        if missing:
-            raise ValueError(f"allowlist entry {h.get('id')!r} missing keys: {sorted(missing)}")
-        if h["posture_status"] not in _POSTURE_STATES:
-            raise ValueError(
-                f"allowlist entry {h['id']!r} has posture_status "
-                f"{h['posture_status']!r}; expected one of {sorted(_POSTURE_STATES)}"
-            )
-    return data

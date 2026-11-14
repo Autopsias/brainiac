@@ -88,15 +88,13 @@ paths:
    finally works.
 
    **A floor is only earned on a corpus that did not shrink
-   (`brain.invariant_floors`, 2026-08-20).** Every one of these metrics counts
+   (`brain.invariant_floors`).** Every one of these metrics counts
    DEFECTS IN A CORPUS, so REMOVING documents improves the score — the ratchet
-   can be won by damage. The reference vault read `unlinked_sources = 0` across
-   19 consecutive runs on 2026-08-19 while ~120 documents from the wrongful
-   433-file hand retirement were still out of the vault; they were reinstated
-   the next day (notes 2490 → 2612) and every healthy run since reported a
-   REGRESSION against a floor only a damaged corpus could reach. An alarm that
-   can never be satisfied is an alarm nobody reads, which is the exact failure
-   this fold exists to prevent. So each floor is stored WITH the `population`
+   can be won by damage, and a floor only a damaged corpus can reach is an
+   alarm nobody can satisfy, which is the exact failure this fold exists to
+   prevent. *Why:* on 2026-08-19 the reference vault read
+   `unlinked_sources = 0` while ~120 wrongly retired documents were still out
+   of it. So each floor is stored WITH the `population`
    it was recorded against (same shape as `unreachable_gold_labels`), and a
    metric may not set a new floor on a run whose population fell below that
    basis. The guard **only ever declines to LOWER a floor** — it never raises
@@ -149,14 +147,11 @@ paths:
    because an aggregate "N excluded by design" hides a newly added exclusion
    class completely.
 
-   **The anchoring is load-bearing, and only measurement found it.** A looser
-   rule — any of those keys whose value merely MENTIONS a `.py` — matched 27
-   of the reference vault's 98 unlinked sources; two of the extra were a
-   `type: decision-draft` and a `type: skill-patch` whose prose provenance
-   names the scanner that INFORMED them. Excluding a decision document is the
-   exact failure the 433-file hand retirement made. Anchored, it matches 25,
-   every one machine exhaust, and takes `unlinked_sources` 98 → 73. Both
-   false positives are pinned as known negatives in
+   **The anchoring is load-bearing.** A looser rule — any of those keys whose
+   value merely MENTIONS a `.py` — also matches a `type: decision-draft` and a
+   `type: skill-patch` whose prose provenance names the scanner that INFORMED
+   them, and excluding a decision document is the failure a hand retirement
+   makes (below). Both false positives are pinned as known negatives in
    `tests/test_corpus_invariants.py`; loosening the pattern fails them.
 
    **The Chief-of-Staff briefs are the one named exception (owner ruling
@@ -166,30 +161,25 @@ paths:
    does that: they declare no type and match no rule here. Retiring them was an
    owner act and stays one.
 
-   **A HAND retirement is not covered by any of this, and it is the one that
-   went wrong.** Two sessions retired 433 files from the reference vault as
-   "machine residue"; exactly ONE matched the set above, and the batch took
-   roughly a hundred documents this paragraph protects, including a
-   `type: design` architecture note. Nothing noticed for days — the RETRIEVAL
-   GOLDEN SET did, reporting 19 labels pointing at documents no longer in the
-   index. So: classify by subject and show the split BEFORE writing, never
-   after. Retired files are MOVED to `inbox/_quarantine/_resolved/<batch>/` and
-   never deleted, so a reinstatement is a move back into `vault/raw/` plus a
-   `brain sync` — the original signatures still cover the bytes, and
-   `verify-audit --check-content` confirmed zero drift across all 112 restored
-   on 2026-08-20.
+   **A HAND retirement is not covered by any of this.** Classify by subject
+   and show the split BEFORE writing, never after. Retired files are MOVED to
+   `inbox/_quarantine/_resolved/<batch>/` and never deleted, so a
+   reinstatement is a move back into `vault/raw/` plus a `brain sync` — the
+   original signatures still cover the bytes (`verify-audit --check-content`
+   checks for drift). *Why:* a 433-file hand retirement of "machine residue"
+   took roughly a hundred real documents, and only the retrieval golden set
+   noticed, days later.
 
    **A duplicate is decided on CONTENT, never on a filename (ENF-03,
    2026-08-12).** `cross_tier_twins` compares one id shape and therefore
    reads 0 while renamed, re-extracted and re-versioned copies of the same
-   document sit at two classifications; ENF-02 tried to close that on names
-   and was withdrawn whole when its "138 detections" proved to be 138
-   filename matches and 0 content matches. So `cross_tier_duplicates` and
+   document sit at two classifications, and a filename match is not a content
+   match. So `cross_tier_duplicates` and
    `cross_tier_candidates` compare bodies: 5-word-shingle Jaccard ≥ 0.60
    DECIDES the same document, word-set Jaccard ≥ 0.60 without it is
    **UNDECIDED and reported as such** — a detector that guesses on the
    undecided band is the failure mode, and a metric with no undecided bucket
-   (the old one) can never report anything but zero. The ENF-01 body-size
+   can never report anything but zero. The ENF-01 body-size
    floor applies first, and the shared exclusion definition applies with one
    documented exception: **superseded notes are counted, not excluded** —
    retiring a note does not remove it from the index, so a retired low twin
@@ -225,8 +215,8 @@ paths:
    holding nothing comparable is a separate status, `no_corpus`, reported on
    its own row and never inside that number: a cross-tier leak needs an
    existing higher-tier near-duplicate, so an empty corpus has nothing to leak
-   from, and counting it made every new vault's FIRST document trip a
-   floor-of-zero ratchet (2026-08-17). Raises
+   from, and counting it would make every new vault's FIRST document trip a
+   floor-of-zero ratchet. Raises
    are trended PER LEG and never alerted on: they are monotone over an
    append-only zone, so a min-ever floor would fire on every firing of a
    working guard, and a per-leg total is the only thing that can tell a clean
@@ -236,12 +226,12 @@ paths:
 **Supersession beyond `…-vN` is PROPOSED, never applied (CUR-01,
 2026-08-04).** Only two tiers auto-supersede: sha256-identical duplicates
 (DDP-01) and explicit `…-vN` id families (VER-01, rule 4 above — which
-since 2026-08-25 also retires a RENDITION, `…-v52-preview`, under its
+also retires a RENDITION, `…-v52-preview`, under its
 primary `…-v52` instead of leaving two live copies of one version). Everything
 else the nightly deduces — a HOST-VERIFIED email family, or a **name family**
 (`Draft`/`Final`, `Rev N`, `vF`, `versão`/`versión N`, an unmarked
-near-duplicate pair sharing one document name, or — since 2026-08-25 — a
-**format twin**: one version in two original formats, `.pdf` beside `.md`,
+near-duplicate pair sharing one document name, or a **format twin**: one
+version in two original formats, `.pdf` beside `.md`,
 landed together so no date can order them; oriented by
 `versionlink_stages.FORMAT_PREFERENCE`, the curated `.md` stays and the render
 retires under it, and near-duplicate content is required because a deck's
@@ -261,11 +251,8 @@ gitignored, never indexed).
 **An owner DECLARATION is the third auto-apply tier (SUP-01, 2026-09-18).**
 DDP-01 and VER-01 apply what the ENGINE can prove; CUR-01 proposes what it can
 only deduce. A third case is neither: the owner SAYS a new document replaces an
-old one. Until this change that statement could only be typed on the Mac
-(`brain supersede`), which a Cowork session cannot do — measured the day it
-shipped, an email attachment (`…-base-completa-copy`) and the final deliverable
-that replaced it both sat live, and plain search answered with the stale copy.
-Three surfaces now carry the declaration, all through ONE engine path
+old one. On the Mac that is `brain supersede`, which a Cowork session cannot
+run, so three more surfaces carry the declaration, all through ONE engine path
 (`brain.supersede_declared` → `core.supersede`, same audited write, same
 single-writer lock, same crash journal): **(1) the drop lane** — beside a file
 in `vault/inbox/_deliverables/<project>/`, an optional `<filename>.supersedes`

@@ -31,8 +31,6 @@ are in scope.
 
 - `/brainiac-uninstall` (no args) — full teardown: every registry entry this
   host owns.
-- `/brainiac-update --deregister-all` — same effect, invoked via the update
-  skill's alias.
 - A single vault: ask "which vault?" if not already clear from context, then
   scope every step below to just that entry.
 

@@ -6,6 +6,7 @@ import argparse
 
 from .. import core as core_mod
 from ..cli import EPILOG
+from ..rerank import RERANK_TOP_DEFAULT
 from .common_parser import add_common
 
 
@@ -28,7 +29,7 @@ def _add_search(sub, name: str, help_text: str) -> None:
     sp.add_argument(
         "--rerank-top",
         type=int,
-        default=20,
+        default=RERANK_TOP_DEFAULT,
         help="rerank window, clamped to 10-50 by default (BRAIN_RERANK_MAX raises the ceiling further; default: 20 — a wider window costs strongly super-linearly, see eval/FOLLOWUPS.md #6)",
     )
     sp.add_argument(
@@ -90,7 +91,7 @@ def _add_diagnose(sub) -> None:
     sp.add_argument(
         "--rerank-top",
         type=int,
-        default=20,
+        default=RERANK_TOP_DEFAULT,
         help="production rerank window, clamped to 10-50 by default (default: 20 — same as search/hybrid-search)",
     )
     sp.add_argument(

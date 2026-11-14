@@ -36,10 +36,11 @@ shell out for note content, and do not open a note file.
 Those seventeen names are the whole desk, and they are the only route to note
 CONTENT this session may use. **"Not on the desk" is not the same as "refused
 here"**, and conflating the two is how a session talks itself into a workaround:
-measured 2026-08-28, nine of the CLI's 22 VM-allowed verbs have no desk tool
-(`brief`, `cos-propose`, `digest`, `doctor`, `draft-capture`, `init`,
-`mcp-config`, `provision-request`, `status`), and two desk tools (`inbox`,
-`vault_languages`) are not VM-allowed on the CLI at all. Of those nine, only
+ten of the CLI's 23 VM-allowed verbs have no desk tool (`brief`,
+`check-egress`, `cos-propose`, `digest`, `doctor`, `draft-capture`, `init`,
+`mcp-config`, `provision-request`, `status`), and four desk tools (`inbox`,
+`supersede`, `unsupersede`, `vault_languages`) are not VM-allowed on the CLI
+(`brain.cli.VM_ALLOWED` is the list of record). Of those ten, only
 `cos-propose` — the COS ingress nothing on the desk serves — and the staging
 probes below are still invoked locally by a shipped bundle, both deliberately.
 Every verb that COMMITS or rebuilds — `write`, `sync`, `maintain`, `rebuild`,
@@ -103,10 +104,7 @@ should run" to "this machine/account actually runs it."
 ## The governing constraint — read this before registering anything
 
 `routines/manifest.json`'s `locked_counts` LOCKS the OS-scheduled-task count at
-**exactly 2 host tasks, 0 VM/Cowork tasks** (it read "1 host task" here until
-2026-08-30, seven weeks after the owner amended the lock to 2 on 2026-07-11 —
-and `scripts/register_tasks.py:91` had been refusing anything but 2 the whole
-time, so this paragraph contradicted the code it describes) (MITRE ATT&CK T1053.005
+**exactly 2 host tasks, 0 VM/Cowork tasks** (MITRE ATT&CK T1053.005
 minimization — every additional scheduler entry is an independent
 persistence/hijack surface for no functional gain; a markdown-truth +
 disposable-index substrate needs exactly one reconciling heartbeat). This
@@ -115,21 +113,23 @@ skill enforces that lock structurally:
 - `scripts/register_tasks.py` refuses to run at all if
   `routines/manifest.json`'s `locked_counts` don't read `{host: 2, vm: 0}` —
   it will not register against an unratified budget.
-- The HOST leg registers exactly one task: `brain-nightly`
-  (`brain maintain --json`), which already does sync+publish+brief AND the
-  date-gated health/integrity/digest branches internally (one OS entry, many
-  cadences multiplexed inside it — see `src/brain/core/` `BrainCore.maintain`).
+- The HOST leg has exactly two tasks. `brain-nightly`
+  (`brain maintain --json`) does sync+publish+brief AND the date-gated
+  health/integrity/digest branches internally (one OS entry, many cadences
+  multiplexed inside it — see `src/brain/core/` `BrainCore.maintain`).
+  `brain-synthesis-weekly` is the weekly model-backed session. One installer
+  run installs both, and the dry-run reports both.
 - The COWORK leg never sets a cron/schedule expression on anything it
   registers. The triggers it creates are **poke-only** (fired manually, by
   name, via the Cowork scheduled-tasks tools' own "run now" / `fire_trigger`
   equivalent) — convenience aliases for retyping a prompt, not autonomous
   cron entries. If a future deployment genuinely wants a Cowork cron, that is
-  an explicit budget amendment to `persistence-budget.md` first, not something
+  an explicit amendment to `locked_counts` in `routines/manifest.json` first, not something
   this skill (or any paste-prompt it emits) does silently.
 
 If you are asked to "make the Cowork task run automatically every morning" —
 **stop and flag the budget conflict** rather than wiring up a cron-fired
-Cowork routine. That request is a `persistence-budget.md` amendment, not a
+Cowork routine. That request is a `locked_counts` amendment, not a
 registrar operation.
 
 ## Phase 0 — locate the manifest and confirm the budget is sane
@@ -150,15 +150,9 @@ print('budget OK:', lc, '->', sorted(ids))
 "
 ```
 
-**Do not hardcode the budget number here.** This line asserted
-`host_os_scheduled == 1` until 2026-08-30, seven weeks after the owner amended
-the lock to 2 (brain-nightly + brain-synthesis-weekly, 2026-07-11). So the
-check FAILED on a healthy manifest and passed on nothing — a guard that fires
-only when the state is correct.
-
-Comparing the declared count against the routines actually marked
-`os_scheduled` was still not a guard, and the 2026-08-30 adversarial round said
-so: both numbers come from the SAME file. A manifest that adds a third task and
+**Do not hardcode the budget number here**, and do not trust a comparison of
+the declared count with the routines marked `os_scheduled`: both numbers come
+from the SAME file. A manifest that adds a third task and
 bumps `locked_counts` in one edit satisfies `len(host) ==
 lc['host_os_scheduled'] == 3`, and the check meant to stop an unratified
 persistence expansion prints `budget OK`.
@@ -169,11 +163,10 @@ the two `scripts/register_tasks.py:91` hard-refuses to deviate from, so the
 anchor lives OUTSIDE the file being checked — which is the whole difference
 between a lock and a restatement. A third task now fails closed whatever
 `locked_counts` says about itself. Adding one is an owner decision: amend
-`persistence-budget.md`, then the manifest, then this set, in that order.
+the manifest's `locked_counts`, then this set, in that order.
 
 If this fails, the manifest has drifted from the locked budget — fix the
-manifest (or `persistence-budget.md`, with the reopening-clause ratification
-it requires) before running the registrar.
+manifest (a change to `locked_counts` is an owner decision) before running the registrar.
 
 ## Phase 1 — dry-run report (always do this first)
 
@@ -263,7 +256,7 @@ the next dry-run would then report stale state.
 - `routines/manifest.json` — the manifest this skill consumes
 - `scripts/register_tasks.py` — the registrar implementation (`--dry-run` /
   `--apply`, `--client host|cowork|all`, `--json`, `--save-cowork-prompt`)
-- `routines/manifest.json` `locked_counts` — THE LOCK (1 host, 0 VM) this skill enforces
+- `routines/manifest.json` `locked_counts` — THE LOCK (2 host, 0 VM) this skill enforces
 - `routines/manifest.json` per-task `disposition` field — taxonomy (FOLD /
   DISTINCT-CADENCE / ON-INVOKE / OVERLAY-ONLY) the manifest rows are built from
 - `docs/operations/egress-provider-posture.md` — PF-02, the gate every Cowork-bound

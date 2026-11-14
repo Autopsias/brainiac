@@ -64,7 +64,7 @@ $logFile = "$LogDir\brief-$(Get-Date -Format 'yyyy-MM-dd').log"
 # Task action: the `maintain` umbrella -- sync --publish + brief, PLUS the
 # date-gated branches (Mon=health, Tue=integrity, Sun=digest,
 # 1st=graphify-documented-only). This is THE single sanctioned OS task
-# (`brain-nightly`, persistence-budget.md THE LOCK) -- see
+# (`brain-nightly`, routines/manifest.json THE LOCK) -- see
 # src/brain/core/ BrainCore.maintain. routines/manifest.json id "brain-nightly".
 $scriptBlock = @"
 `$env:BRAIN_VAULT = '$VaultPath'

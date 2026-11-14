@@ -9,6 +9,7 @@ from typing import Any
 
 from . import classification as cls
 from . import config, egress
+from .rerank import RERANK_TOP_DEFAULT
 from . import querylog_status as _querylog_status
 from .querylog_digest import (
     _normalise_fingerprint,
@@ -67,7 +68,7 @@ def _gated_hybrid(core: Any, record: dict[str, Any]) -> tuple[list[dict[str, Any
     # rows below, so a replay digest cannot resurrect a withheld candidate.
     trace_hits, trace = core.hybrid_search_with_trace(
         record["query"], k=record["k"], rerank=bool(rerank.get("requested")),
-        rerank_top=top_n or 15, rrf_k=record["rrf_k"],
+        rerank_top=top_n or RERANK_TOP_DEFAULT, rrf_k=record["rrf_k"],
     )
     hits = [hit.to_dict() for hit in trace_hits]
     max_tier = record.get("max_tier", cls.DEFAULT_MAX_TIER)

@@ -188,6 +188,21 @@ def _retry_already_resolved(vault: Path, content_hash: str) -> bool:
     return NO_TEXT_MARKER not in text
 
 
+def _entry_converted(row: dict[str, Any], content_hash: str) -> list[str]:
+    """The image-only PDF hashes written for this target's earlier retries."""
+    attempts = row.get("retry_attempts")
+    entry = attempts.get(content_hash) if isinstance(attempts, dict) else None
+    hashes = entry.get("converted_hashes") if isinstance(entry, dict) else None
+    return [h for h in hashes if isinstance(h, str)] if isinstance(hashes, list) else []
+
+
+def _converted_hashes(row: dict[str, Any]) -> set[str]:
+    attempts = row.get("retry_attempts")
+    if not isinstance(attempts, dict):
+        return set()
+    return {h for key in attempts for h in _entry_converted(row, key)}
+
+
 def _retry_candidates(core: Any, vault: Path) -> list[tuple[str, str, Path, str]]:
     # (registry key, target identity, bytes to retry, owner exception key)
     candidates: list[tuple[str, str, Path, str]] = []
@@ -233,13 +248,20 @@ def plan_extract_retry(
     retried_this_run: set[str] = set()
     exhausted: dict[str, list[str]] = {}
     intents: list[Intent] = []
+    converted = _converted_hashes(row)
     for key, target, source, exhaust_key in candidates:
         try:
             content_hash = _sha256_file(source)
         except OSError as exc:
             out.skipped.append({"target": target, "reason": f"unreadable: {exc}"})
             continue
-        if _retry_already_resolved(vault, content_hash):
+        if content_hash in converted:
+            # This branch's own image-only PDF that failed and re-quarantined:
+            # its bytes are new on every conversion, so without this skip each
+            # one would restart the bound as a fresh target.
+            continue
+        if any(_retry_already_resolved(vault, h) for h in
+               (content_hash, *_entry_converted(row, content_hash))):
             # A prior retry already produced a real note over these bytes;
             # the stub/quarantine leftover is not deleted, but it is no
             # longer a target — resolved, not exhausted, not retried again.

@@ -11,6 +11,8 @@ import os
 import re
 from pathlib import Path
 
+from .classification import TIERS  # noqa: F401 - re-export
+
 
 def overlay_dir(
     vault: str | os.PathLike[str] | None = None,
@@ -32,9 +34,8 @@ def overlay_dir(
     return config.vault_root(vault) / "overlay"
 
 
-#: The classification ladder, low to high. Shared by the ingest rules and
-#: the decoder ring since the 2026-09-04 split.
-TIERS: tuple[str, ...] = ("Public", "Internal", "Confidential", "Restricted", "MNPI")
+# The classification ladder (``classification.TIERS``), re-exported under the
+# name the ingest rules and the decoder ring import.
 KEYWORDS_GENERATED_DIR = "keywords-generated"
 _TABLE_ROW_RE = re.compile(r"^\s*\|(.+)\|\s*$")
 _PLACEHOLDER_RE = re.compile(r"^<.*>$")

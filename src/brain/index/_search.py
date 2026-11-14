@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from ._shared import *  # noqa: F401,F403
 from ..model_slot import model_slot
+from ..rerank import RERANK_TOP_DEFAULT
 
 
 class _SearchMixin:
@@ -115,13 +116,20 @@ class _SearchMixin:
         best_chunk_text: dict[int, str] = {}
         best_chunk_rowid: dict[int, int] = {}
         order: list[int] = []
+        rows: dict[int, tuple[int, str]] = {}
+        ids = [int(r) for r, _ in chunk_hits]
+        for i in range(0, len(ids), 900):  # under SQLite's variable limit
+            batch = ids[i:i + 900]
+            for rid, nrid, ctext in c.execute(
+                "SELECT rowid, note_rowid, text FROM chunks WHERE rowid IN "  # nosec B608
+                f"({','.join('?' * len(batch))})", batch
+            ):
+                rows[int(rid)] = (int(nrid), ctext)
         for chunk_rowid, score in chunk_hits:
-            row = c.execute(
-                "SELECT note_rowid, text FROM chunks WHERE rowid=?", (chunk_rowid,)
-            ).fetchone()
+            row = rows.get(int(chunk_rowid))
             if not row:
                 continue
-            nrid, ctext = int(row[0]), row[1]
+            nrid, ctext = row
             if score > best.get(nrid, -1.0):
                 best[nrid] = score
                 best_chunk_text[nrid] = ctext
@@ -143,7 +151,7 @@ class _SearchMixin:
         candidate_factor: int = 8,
         rerank: bool = False,
         reranker: Any | None = None,
-        rerank_top: int = 15,
+        rerank_top: int = RERANK_TOP_DEFAULT,
         rerank_gate: bool | None = None,
         include_retired: bool = False,
     ) -> list[Hit]:
@@ -169,7 +177,7 @@ class _SearchMixin:
         candidate_factor: int = 8,
         rerank: bool = False,
         reranker: Any | None = None,
-        rerank_top: int = 15,
+        rerank_top: int = RERANK_TOP_DEFAULT,
         rerank_gate: bool | None = None,
         include_retired: bool = False,
     ) -> tuple[list[Hit], _SearchTrace]:
@@ -208,7 +216,7 @@ class _SearchMixin:
         candidate_factor: int = 8,
         rerank: bool = False,
         reranker: Any | None = None,
-        rerank_top: int = 15,
+        rerank_top: int = RERANK_TOP_DEFAULT,
         rerank_gate: bool | None = None,
         trace: _SearchTrace | None,
         include_retired: bool = False,

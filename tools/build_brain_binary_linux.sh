@@ -83,7 +83,7 @@ for arch in "${arches[@]}"; do
     bash -eu -c '
       cat > /etc/apt/sources.list.d/debian.sources <<APTSRC
 Types: deb
-URIs: http://snapshot.debian.org/archive/debian/$APT_SNAPSHOT
+URIs: https://snapshot.debian.org/archive/debian/$APT_SNAPSHOT
 Suites: trixie
 Components: main
 Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp

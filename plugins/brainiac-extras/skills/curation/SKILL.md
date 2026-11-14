@@ -1,6 +1,6 @@
 ---
 name: curation
-description: "Curation pass over a brain-substrate vault — stale wikilink targets (a note links to something that's drifted or been archived since), and a staleness revisit sample (notes overdue for a re-read, ranked by age x whole-corpus link centrality). The engine (`brain curate`) now runs both checks itself and folds them into the Sunday brain-nightly branch (AUT-02) — this skill is the on-invoke deep-dive surface: read the engine's findings, and run the two checks (orphans, contradictions, callouts) that still have no brain-retrieval equivalent. Triggers: 'run curation', 'find stale links', 'what needs a re-read', 'revisit queue', 'curation pass'. Read-only by default — surfaces findings, never edits a note's content."
+description: "Curation pass over a brain-substrate vault — stale wikilink targets (a note links to something that's drifted or been archived since), and a staleness revisit sample (notes overdue for a re-read, ranked by age x whole-corpus link centrality). The engine (`brain curate`) runs both checks itself and folds them into the Sunday brain-nightly branch (AUT-02) — this skill is the on-invoke deep-dive surface: read the engine's findings, and run the two checks (orphans, contradictions, callouts) that still have no brain-retrieval equivalent. Triggers: 'run curation', 'find stale links', 'what needs a re-read', 'revisit queue', 'curation pass'. Read-only by default — surfaces findings, never edits a note's content."
 ---
 
 # curation (brain-substrate kernel)
@@ -36,10 +36,11 @@ shell out for note content, and do not open a note file.
 Those seventeen names are the whole desk, and they are the only route to note
 CONTENT this session may use. **"Not on the desk" is not the same as "refused
 here"**, and conflating the two is how a session talks itself into a workaround:
-measured 2026-08-28, nine of the CLI's 22 VM-allowed verbs have no desk tool
-(`brief`, `cos-propose`, `digest`, `doctor`, `draft-capture`, `init`,
-`mcp-config`, `provision-request`, `status`), and two desk tools (`inbox`,
-`vault_languages`) are not VM-allowed on the CLI at all. Of those nine, only
+ten of the CLI's 23 VM-allowed verbs have no desk tool (`brief`,
+`check-egress`, `cos-propose`, `digest`, `doctor`, `draft-capture`, `init`,
+`mcp-config`, `provision-request`, `status`), and four desk tools (`inbox`,
+`supersede`, `unsupersede`, `vault_languages`) are not VM-allowed on the CLI
+(`brain.cli.VM_ALLOWED` is the list of record). Of those ten, only
 `cos-propose` — the COS ingress nothing on the desk serves — and the staging
 probes below are still invoked locally by a shipped bundle, both deliberately.
 Every verb that COMMITS or rebuilds — `write`, `sync`, `maintain`, `rebuild`,
@@ -135,11 +136,8 @@ something recent (§C only catches stale targets reachable from active
 notes) — some notes are simply overdue for review regardless of inbound
 links.
 
-**Centrality is now real, whole-corpus, and reused — not a gap.** The
-previous version of this skill documented "global graph centrality is gap
-G3, not yet a CLI verb" and fell back to age-only ranking. AUT-02 (s08)
-closes that gap by REUSING the existing `src/brain/graph.py` wikilink-BFS+PPR
-module (built for `graph-expand`, RET-03): `revisit_sample` runs Personalized
+**Centrality is real and whole-corpus.** `revisit_sample` reuses the
+`src/brain/graph.py` wikilink-BFS+PPR module (built for `graph-expand`): it runs Personalized
 PageRank seeded with EVERY note (uniform restart across the whole corpus —
 i.e. standard PageRank), not a new ranking module. The score is
 `age_days x (centrality + 1)` — the `+1` means an isolated/orphan note
@@ -191,8 +189,8 @@ whether new findings are being surfaced this run.
 - **No deletes.** A note past its staleness threshold is surfaced for
   review, never moved to `archive/` automatically.
 - **§E's centrality claim must stay accurate.** It IS whole-corpus PageRank
-  now (not an age-only fallback) — say so plainly, and note the s10 upgrade
-  path (INFERRED edges) as a future ENHANCEMENT, not a missing baseline.
+  (not an age-only fallback) — say so plainly. INFERRED graph edges are a
+  possible future ENHANCEMENT, not a missing baseline.
 
 ## Cross-references
 

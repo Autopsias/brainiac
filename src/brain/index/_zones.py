@@ -81,6 +81,13 @@ class _ZoneMixin:
             return 1.0
         return factor if math.isfinite(factor) and factor > 0 else 1.0
 
+    def _zone_prior_active(self) -> bool:
+        """True when any zone weight is configured (shipped default is none).
+        Unset means every factor is 1.0, so the per-note zone lookup is skipped."""
+        if self._DEFAULT_ZONE_WEIGHTS or getattr(self, "_zone_weights", None):
+            return True
+        return bool((os.environ.get("BRAIN_ZONE_WEIGHTS") or "").strip())
+
     def _zone_scope(self) -> str:
         """`all` | `semantic_only` (default). An UNRECOGNISED value fails safe
         to `semantic_only`, never to `all`: `all` also multiplies lexical and

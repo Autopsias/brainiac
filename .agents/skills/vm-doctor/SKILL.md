@@ -36,10 +36,11 @@ shell out for note content, and do not open a note file.
 Those seventeen names are the whole desk, and they are the only route to note
 CONTENT this session may use. **"Not on the desk" is not the same as "refused
 here"**, and conflating the two is how a session talks itself into a workaround:
-measured 2026-08-28, nine of the CLI's 22 VM-allowed verbs have no desk tool
-(`brief`, `cos-propose`, `digest`, `doctor`, `draft-capture`, `init`,
-`mcp-config`, `provision-request`, `status`), and two desk tools (`inbox`,
-`vault_languages`) are not VM-allowed on the CLI at all. Of those nine, only
+ten of the CLI's 23 VM-allowed verbs have no desk tool (`brief`,
+`check-egress`, `cos-propose`, `digest`, `doctor`, `draft-capture`, `init`,
+`mcp-config`, `provision-request`, `status`), and four desk tools (`inbox`,
+`supersede`, `unsupersede`, `vault_languages`) are not VM-allowed on the CLI
+(`brain.cli.VM_ALLOWED` is the list of record). Of those ten, only
 `cos-propose` — the COS ingress nothing on the desk serves — and the staging
 probes below are still invoked locally by a shipped bundle, both deliberately.
 Every verb that COMMITS or rebuilds — `write`, `sync`, `maintain`, `rebuild`,
@@ -90,11 +91,8 @@ finding for the engine, not a gap to work around.
 
 **Motivating failure (2026-07-20):** a Cowork session was asked to run
 `brain doctor`. No `brain` was on PATH, and rather than say so, the agent
-invented a wrong claim ("doctor is a host-only verb") and gave up. The remedy
-it reached for at the time — loading the session bootstrap — is now FORBIDDEN
-(see the desk block above and §1); that half of this story is superseded
-history, not instruction. The error being recorded here is the inference, not
-the missing bootstrap: `doctor` **is** in the CLI's
+invented a wrong claim ("doctor is a host-only verb") and gave up. The error
+is the inference: `doctor` **is** in the CLI's
 `VM_ALLOWED` list (`src/brain/cli.py`, `run_doctor_vm`) — it is a full
 VM-leg health table, read-only, safe to run any number of times. This
 skill's job: make the diagnosis deterministic so no future session
@@ -111,25 +109,22 @@ rationalizes "command not found" into a wrong architecture claim.
 ## 1 — Which lane you are in (decide this first)
 
 **Cowork (VM leg): bootstrap nothing.** The desk block above is the whole story
-for vault content, and that is a RULE, not yet a fact about the filesystem: a
-workspace provisioned before the s07 cutover still has the vault and its
-snapshot on the mount. Bootstrap nothing REGARDLESS — pointing at a mount vault
-is what the desk exists to replace, and content read that way skips the desk's
-read record. After the cutover there is nothing there to point at either. Run the §2 probes with whatever `brain` is on `PATH`. **If there is none, that
+for vault content, and that is a RULE, not a fact about the filesystem: an
+older workspace can still have the vault and its snapshot on the mount.
+Bootstrap nothing REGARDLESS — pointing at a mount vault is what the desk exists
+to replace, and content read that way skips the desk's read record. Run the §2 probes with whatever `brain` is on `PATH`. **If there is none, that
 is NOT evidence the workspace is unstaged.** The workspace installer stages the
 engine at `<vault>/.brain/brain` and `<vault>/.brain/bin/` and never writes to a
 `PATH` location; the only thing that ever put `brain` on `PATH` was the
-per-session bootstrap this section deletes. So on a fully staged workspace,
+per-session bootstrap this skill forbids. So on a fully staged workspace,
 following this rule, `command -v brain` finds nothing. Report exactly that —
 "no `brain` on this session's `PATH`; staging cannot be confirmed from here" —
 and go to §2b. Do not report "no staged engine".
 
-The bootstrap block this section carried until 2026-08-28 (`export
-BRAIN_VAULT="$PWD/vault"`, `BRAIN_RUNTIME_DIR`, a `PATH` prepend) was deleted,
-not moved. It points at a mount-resident vault — one the s07 cutover removes,
-and one that must not be read even while it is still there — and re-exporting it
-teaches a session to hunt for note content inside the sandbox.
-Never reintroduce it, and never copy it out of an older bundle.
+Never add a bootstrap block (`export
+BRAIN_VAULT="$PWD/vault"`, `BRAIN_RUNTIME_DIR`, a `PATH` prepend). It points at
+a mount-resident vault, which must not be read, and it teaches a session to
+hunt for note content inside the sandbox. Never copy one out of an older bundle.
 
 **Host (the owner's Mac): nothing to do.** `brain` is already on `PATH`; run
 the §2 probes against the vault you mean (`--vault <dir>`).

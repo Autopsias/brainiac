@@ -194,7 +194,7 @@ ENGINE_ASSET_FILES = [
     "tools/cos_mutate_canary.py", "tools/cos_mutate_cli.py", "tools/cos_mutate_evidence.py",
     "tools/cos_mutate_discard.py", "tools/cos_mutate_discard_closure.py",
     "tools/cos_mutate_discard_manifest.py",
-    "tools/cos_mutate_page.js", "tools/cos_capture_hook.js",
+    "tools/cos_page_script.py", "tools/cos_capture_hook.js",
     "tools/cos_mutate_gates.py", "tools/cos_mutate_ledger.py", "tools/cos_mutate_passes.py",
     "tools/cos_mutate_plan.py", "tools/cos_mutate_plan_aged.py", "tools/cos_mutate_plan_budget.py", "tools/cos_mutate_plan_marks.py", "tools/cos_mutate_plan_noise.py", "tools/cos_mutate_plan_rulings.py", "tools/cos_mutate_plan_stale.py", "tools/cos_mutate_policy.py", "tools/cos_mutate_rehearsal.py",
     "tools/cos_mutate_selfcheck.py", "tools/cos_mutate_shapes.py", "tools/cos_mutate_shapestore.py", "tools/cos_mutate_retry.py",
@@ -217,10 +217,11 @@ ENGINE_ASSET_FILES = [
     "assets/graph-explorer-template.html",
 ]
 ENGINE_ASSET_FILES = without_cos(ENGINE_ASSET_FILES)
-ENGINE_ASSET_DIRS = [
+ENGINE_ASSET_DIRS = without_cos([
     "templates",
     "overlay/template",
-]
+    "tools/cos_mutate_page",  # the page script's ordered parts, loaded by tools/cos_page_script.py
+])
 
 # Package-native assets have no repo-root counterpart: they are consumed via
 # ``importlib.resources`` by an installed engine.  The mirror sync must still
@@ -468,17 +469,16 @@ def main() -> int:
         _log("  OK: .codex/config.toml parses")
         validate_claude_settings()
         _log("  OK: .claude/settings.json (extraKnownMarketplaces present)")
-        # dist/ is gitignored build output, so on a clean checkout (CI) these
-        # artifacts do not exist and are not a repo invariant to validate. The
-        # full build path always creates dist/ first, so it still checks them.
-        if DIST_DIR.exists():
+        # Gitignored build output, absent on a clean checkout (CI); the build
+        # path creates it first. Gate on THIS folder, not dist/ (PKG-01).
+        if COWORK_DIST_DIR.exists():
             for name in ALL_SKILLS:
                 validate_cowork_zip(COWORK_DIST_DIR / f"{name}.skill", version)
             _log(f"  OK: all {len(ALL_SKILLS)} dist/cowork-skills/*.skill zips re-open, parse, and carry the SSOT VERSION")
             validate_compat_marker()
             _log("  OK: dist/COMPAT + SKILL_VERSION markers match")
         else:
-            _log("  SKIP: dist/ absent (gitignored build output) — cowork zips + COMPAT marker not validated")
+            _log("  SKIP: dist/cowork-skills/ absent (gitignored build output) — cowork zips + COMPAT marker not validated")
         validate_plugin_version_lockstep(version)
         _log("  OK: all plugin.json versions match the pyproject.toml SSOT (ADR-0004 Ruling 5)")
         validate_npm_version_lockstep(version)

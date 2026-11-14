@@ -7,6 +7,22 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.53] — 2026-11-14
+### Security
+- **A symlinked note can no longer make the vault scan read a file outside the
+  vault (2026-11-14).** The scan followed a `.md` symlink, so the search index
+  and `brain project` could take in text from any file the link pointed at.
+  Each note is now opened once. The scan refuses a file that is not a regular
+  file, a file whose real path is outside the vault, and a file inside an
+  excluded folder. It also stops if the vault folder itself is swapped during
+  a scan, so a sync cannot delete index rows. Every refusal is counted as
+  `excluded_unsafe_note` in `sync`, `rebuild` and `brain project`.
+### Fixed
+- **The hourly draft drain refuses a draft over 64 MiB.** Before, one huge
+  file from the Cowork VM was read whole into memory.
+### Removed
+- Five old scripts that nothing called.
+
 ## [0.20.52] — 2026-11-14
 ### Fixed
 - **Two kinds of unreadable file now read themselves on the nightly retry

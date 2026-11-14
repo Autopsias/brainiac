@@ -315,7 +315,8 @@ def _run_project(args, ctx) -> int:
         res
         if args.json
         else f"projected {res['copied']} notes (<= {res['max_tier']}) to {res['dest']}; "
-        f"excluded {res['excluded']} ({res['excluded_unlabelled']} unlabelled)",
+        f"excluded {res['excluded']} ({res['excluded_unlabelled']} unlabelled); "
+        f"refused {res['excluded_unsafe_note']} unsafe note(s)",
         args.json,
     )
     return 0

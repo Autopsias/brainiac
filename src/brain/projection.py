@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import classification as cls
-from .notes import scan_vault
+from .notes import _vault_root_id, read_note_text_safe, scan_vault, sha256_text
 
 # Marker file written into every projection root. `project_workspace` will only
 # `rmtree` an existing destination that carries this marker (or is empty), so a
@@ -66,6 +66,7 @@ class ProjectionResult:
     copied: int
     excluded: int
     excluded_unlabelled: int
+    excluded_unsafe_note: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -74,6 +75,7 @@ class ProjectionResult:
             "copied": self.copied,
             "excluded": self.excluded,
             "excluded_unlabelled": self.excluded_unlabelled,
+            "excluded_unsafe_note": self.excluded_unsafe_note,
         }
 
 
@@ -95,13 +97,22 @@ def project_workspace(vault: Path, dest: Path, max_tier: str = cls.DEFAULT_MAX_T
     dest.mkdir(parents=True)
     (dest / PROJECTION_MARKER).write_text("brain projection\n", encoding="utf-8")
 
-    copied = excluded = excluded_unlabelled = 0
-    for note in scan_vault(vault):
+    copied = excluded = excluded_unlabelled = unsafe_second = 0
+    stats: dict = {}
+    root = _vault_root_id(vault)  # one root for the scan and the second reads
+    for note in scan_vault(vault, stats=stats, root=root):
         if flt.allows(note.classification):
             rel = note.path.relative_to(vault)
+            # Second read goes through the same safe open; the text must still
+            # be the bytes the classification check ran on.
+            text = read_note_text_safe(note.path, vault, root)
+            if text is None or sha256_text(text) != note.content_hash:
+                excluded += 1  # refused or substituted between the two reads
+                unsafe_second += 1
+                continue
             out = dest / rel
             out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_text(note.path.read_text(encoding="utf-8"), encoding="utf-8")
+            out.write_text(text, encoding="utf-8")
             copied += 1
         else:
             excluded += 1
@@ -111,4 +122,5 @@ def project_workspace(vault: Path, dest: Path, max_tier: str = cls.DEFAULT_MAX_T
     return ProjectionResult(
         dest=dest, max_tier=max_tier, copied=copied,
         excluded=excluded, excluded_unlabelled=excluded_unlabelled,
+        excluded_unsafe_note=stats.get("excluded_unsafe_note", 0) + unsafe_second,
     )

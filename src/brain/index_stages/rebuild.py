@@ -180,6 +180,7 @@ def rebuild_index(
     return {
         "indexed": len(plan.notes),
         "excluded_machine_output": plan.scan_stats.get("excluded_machine_output", 0),
+        "excluded_unsafe_note": plan.scan_stats.get("excluded_unsafe_note", 0),
         "chunks": chunk_rowid - 1,
         "backend": index.backend.name,
         "embed_model": index.embedder.model_id,

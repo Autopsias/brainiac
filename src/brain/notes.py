@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
+import stat
+import sys
 import unicodedata
 import warnings
 from dataclasses import dataclass, field
@@ -166,29 +169,128 @@ def _zone_of(path: Path, vault: Path) -> str:
     return rel.parts[0] if rel.parts else "brain"
 
 
-def load_note(path: Path, vault: Path) -> Note | None:
+class _UnsafeNote(Exception):
+    """The file is not a regular file, or its real location is outside the
+    vault or inside an excluded tree. Distinct from "no frontmatter"."""
+
+
+class VaultRootChanged(OSError):
+    """The vault root was replaced mid-scan. NOT an _UnsafeNote: a short scan
+    must abort, or sync would delete every index row the scan never listed."""
+
+
+def _fd_real_path(fd: int, fallback: str) -> str:
+    """The real path of an OPEN descriptor, so a swapped parent directory is
+    seen. Windows has neither call: ``realpath(fallback)`` is advisory there."""
+    if sys.platform == "darwin":
+        import fcntl
+
+        raw = fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024))
+        return raw.split(b"\0", 1)[0].decode("utf-8")
+    if sys.platform.startswith("linux"):
+        return os.readlink(f"/proc/self/fd/{fd}")
+    return os.path.realpath(fallback)
+
+
+def _open_flags() -> int:
+    return os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+
+
+def _vault_root_id(vault: Path) -> tuple[str, int, int]:
+    """``(real path, st_dev, st_ino)`` of the vault root from ONE open. Resolve
+    it once per scan: a root swapped mid-scan must not become the trusted root.
+    Taken from the descriptor because macOS returns the on-disk letter case,
+    which `realpath` does not. Raises loudly when the call fails, so a broken
+    platform call stops the scan instead of skipping every note."""
+    if sys.platform == "win32":
+        # Windows refuses os.open on a directory; stat + realpath is all it has.
+        st = os.stat(vault)
+        return os.path.realpath(vault), st.st_dev, st.st_ino
+    dfd = os.open(vault, os.O_RDONLY)
+    try:
+        st = os.fstat(dfd)
+        return _fd_real_path(dfd, str(vault)), st.st_dev, st.st_ino
+    finally:
+        os.close(dfd)
+
+
+def _read_note_bytes(path: Path, vault: Path, root: tuple[str, int, int] | None = None) -> bytes:
+    """Read a note's bytes from ONE descriptor, refusing anything that is not a
+    regular file whose real path sits inside the vault, outside the excluded
+    trees. A symlink whose target stays inside keeps working. Pass ``root`` (from
+    ``_vault_root_id``) to reuse one root for a whole scan."""
+    root_path, root_dev, root_ino = root or _vault_root_id(vault)
+    fd = os.open(path, _open_flags())
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise _UnsafeNote("not a regular file")
+        now = os.stat(vault)
+        if (now.st_dev, now.st_ino) != (root_dev, root_ino):
+            raise VaultRootChanged("the vault root changed during the scan")
+        try:
+            real = _fd_real_path(fd, str(path))
+        except OSError as exc:  # unknown location: refuse, never "unreadable"
+            raise _UnsafeNote(f"cannot resolve the real path: {exc}") from exc
+        if os.path.commonpath([real, root_path]) != root_path or real == root_path:
+            raise _UnsafeNote(f"real path {real} is outside the vault")
+        if _scan_exclusion(Path(real), Path(root_path)) is not None:
+            raise _UnsafeNote(f"real path {real} is in an excluded tree")
+        with os.fdopen(os.dup(fd), "rb") as fh:
+            return fh.read()
+    except ValueError as exc:  # commonpath across drives (Windows)
+        raise _UnsafeNote(str(exc)) from exc
+    finally:
+        os.close(fd)
+
+
+def _load(path: Path, vault: Path, root: tuple[str, int, int] | None = None) -> tuple[Note | None, bool]:
+    """``(note, unsafe)``: ``unsafe`` is True only for a refused file."""
     try:
         # ONE read. `raw_hash` is derived from these exact bytes rather than
         # re-opening the path later: re-opening to authenticate bytes already
         # parsed is the substitution window `note_from_text` below exists to
         # close, and the downgrade guard used to do exactly that (adversarial
         # review round 5, 2026-09-04).
-        raw = path.read_bytes()
+        raw = _read_note_bytes(path, vault, root)
         # `str.splitlines`-style translation, so `content_hash` keeps the exact
         # convention `read_text` gave it — the index's change detection,
         # fingerprint and graph manifest all key on that value.
         text = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    except VaultRootChanged:
+        raise
+    except _UnsafeNote as exc:
+        warnings.warn(f"refusing unsafe note {path}: {exc}", stacklevel=3)
+        return None, True
     except (UnicodeDecodeError, OSError) as exc:
         # H-3: a single bad-encoding (or unreadable) file must not abort a
         # whole-vault rebuild/sync. Skip it with a warning rather than
         # silently mangling its content (no errors="replace") — an excluded
         # note is honest; a mojibake-indexed one is not.
-        warnings.warn(f"skipping unreadable note {path}: {exc}", stacklevel=2)
-        return None
+        warnings.warn(f"skipping unreadable note {path}: {exc}", stacklevel=3)
+        return None, False
     note = note_from_text(text, path, vault)
     if note is not None:
         note.raw_hash = hashlib.sha256(raw).hexdigest()
-    return note
+    return note, False
+
+
+def load_note(path: Path, vault: Path) -> Note | None:
+    """Load one note. A file whose real path is outside the vault or inside an
+    excluded tree (.brain/, inbox/, overlay/, cos-ops/, raw/originals/) is
+    refused with a warning and returns None."""
+    return _load(path, vault)[0]
+
+
+def read_note_text_safe(path: Path, vault: Path, root: tuple[str, int, int] | None = None) -> str | None:
+    """The newline-normalised text of a contained regular file, or None when it
+    is refused or unreadable. For callers that re-read a note after ``scan_vault``."""
+    try:
+        return _read_note_bytes(path, vault, root).decode("utf-8").replace(
+            "\r\n", "\n").replace("\r", "\n")
+    except VaultRootChanged:
+        raise
+    except (_UnsafeNote, UnicodeDecodeError, OSError):
+        return None
 
 
 def note_from_text(text: str, path: Path, vault: Path) -> Note | None:
@@ -282,7 +384,7 @@ def _scan_exclusion(p: Path, vault: Path) -> str | None:
     return None
 
 
-def scan_vault(vault: Path, *, stats: dict | None = None) -> Iterator[Note]:
+def scan_vault(vault: Path, *, stats: dict | None = None, root: tuple[str, int, int] | None = None) -> Iterator[Note]:
     """Yield every note under vault/, skipping the .brain/ runtime cache, the
     top-level inbox/ drop zone, the overlay/ personalization layer, machine
     output dirs (``MACHINE_OUTPUT_DIRS``), archived ingestion originals under
@@ -290,15 +392,21 @@ def scan_vault(vault: Path, *, stats: dict | None = None) -> Iterator[Note]:
 
     Pass ``stats`` (a dict) to receive the exclusion counts — ``sync``/
     ``rebuild`` report them so a whole excluded tree is never silent."""
-    excluded_machine = 0
+    excluded_machine = excluded_unsafe = 0
+    # Probe + pin once; raises if the platform call fails. A vault folder that does
+    # not exist yet scans as empty (rglob yields nothing), as it always did.
+    if root is None and vault.is_dir():
+        root = _vault_root_id(vault)
     for p in sorted(vault.rglob("*.md")):
         verdict = _scan_exclusion(p, vault)
         if verdict == "machine":
             excluded_machine += 1
         if verdict:
             continue
-        note = load_note(p, vault)
+        note, unsafe = _load(p, vault, root)
+        excluded_unsafe += unsafe
         if note is not None:
             yield note
     if stats is not None:
         stats["excluded_machine_output"] = excluded_machine
+        stats["excluded_unsafe_note"] = excluded_unsafe

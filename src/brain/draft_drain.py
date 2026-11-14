@@ -119,6 +119,10 @@ class DraftDrainRun:
         )
 
 
+# 64 MiB = 10.4x the largest untrusted-lane note measured 2026-11-14 (6,431,396 B).
+MAX_DRAFT_BYTES = 64 * 1024 * 1024
+
+
 class _UnsafeDraft(Exception):
     """A capture-inbox entry that is a symlink or not a regular file."""
 
@@ -134,9 +138,12 @@ def _read_text_nofollow(path: Path) -> str:
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             raise _UnsafeDraft(f"{path.name} is not a regular file")
-        chunks = []
+        chunks, total = [], 0
         while b := os.read(fd, 1 << 16):
             chunks.append(b)
+            total += len(b)
+            if total > MAX_DRAFT_BYTES:  # cap on the open fd, never on stat() (INT-04)
+                raise _UnsafeDraft(f"{path.name} exceeds the {MAX_DRAFT_BYTES}-byte cap")
     finally:
         os.close(fd)
     return b"".join(chunks).decode("utf-8")

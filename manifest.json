@@ -261,9 +261,6 @@
     "scripts/brainiac-egress-guard.sh",
     "scripts/ci/eval_gate.sh",
     "scripts/com.brainiac.retrievalwatch.plist",
-    "scripts/eval-s13-launch.sh",
-    "scripts/eval-s13-monitor.sh",
-    "scripts/eval-vault-reconcile.py",
     "scripts/install-brief-mac.sh",
     "scripts/install-brief-windows.ps1",
     "scripts/offhost_watchdog_check.py",
@@ -687,8 +684,6 @@
     "tools/quality_v2_progress.py",
     "tools/ratchetlib.py",
     "tools/release.py",
-    "tools/s04_egress_probe.py",
-    "tools/s04_search_parity.py",
     "tools/sbom_sections.py",
     "tools/validate.py",
     "tools/validate_invariants.py",
@@ -711,5 +706,5 @@
     "vault/raw/2026-06-27-arctic-vs-e5-benchmark.md",
     "vault/raw/README.md"
   ],
-  "count": 710
+  "count": 705
 }

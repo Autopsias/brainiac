@@ -133,14 +133,18 @@ def _excluded_note(res: dict[str, Any]) -> str:
     """INT-03: name the machine-output files this build left OUT of the index.
     Silence is what let an unvalidated tree sit in retrieval unnoticed."""
     n = res.get("excluded_machine_output") or 0
-    if not n:
-        return ""
-    from .notes import MACHINE_OUTPUT_DIRS
+    unsafe = res.get("excluded_unsafe_note") or 0
+    out = ""
+    if n:
+        from .notes import MACHINE_OUTPUT_DIRS
 
-    return (
-        f"; excluded {n} machine-output file(s) "
-        f"({'/'.join(MACHINE_OUTPUT_DIRS)}, not knowledge — never indexed)"
-    )
+        out = (
+            f"; excluded {n} machine-output file(s) "
+            f"({'/'.join(MACHINE_OUTPUT_DIRS)}, not knowledge — never indexed)"
+        )
+    if unsafe:
+        out += f"; refused {unsafe} unsafe note(s) (not a regular file, or a link leaving the vault)"
+    return out
 
 
 # Set True by main() on role=vm: the untrusted leg must not be told to

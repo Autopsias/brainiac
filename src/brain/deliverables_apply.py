@@ -290,6 +290,8 @@ def _payload_mismatch(core: Any, key: str, path: Path, want: str) -> list[str]:
 
     root = Path(core.vault)
     note = _notes.load_note(path, root)
+    if note is None:
+        return [f"{key}: the approved note is unreadable or refused"]
     payload, kind, _tier, problem = ds._payload_of(note, root)
     if payload is None or kind == "unresolved":
         return [f"{key}: the approved payload is unresolvable ({problem or kind})"]

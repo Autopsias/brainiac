@@ -464,6 +464,7 @@ def sync_index(
         **counts,
         "indexed": counts["added"] + counts["updated"] + counts["unchanged"],
         "excluded_machine_output": scan_stats.get("excluded_machine_output", 0),
+        "excluded_unsafe_note": scan_stats.get("excluded_unsafe_note", 0),
         "chunks": total_chunks,
         "backend": index.backend.name,
         "embed_model": index.embedder.model_id,

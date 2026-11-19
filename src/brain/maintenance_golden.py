@@ -36,7 +36,6 @@ _GOLDEN_VALID_EXIT_CODES = (GOLDEN_EXIT_OK, GOLDEN_EXIT_REGRESSION,
                             GOLDEN_EXIT_ACTION_REQUIRED, GOLDEN_EXIT_TRANSIENT)
 _GOLDEN_VALID_DISPOSITIONS = ("ok", "regression", "action_required", "transient")
 
-GOLDEN_RETRY_BASE_MINUTES_ENV = "BRAIN_GOLDEN_RETRY_BASE_MINUTES"
 # 6h base (re-review): the old 60m EQUALLED the hourly maintain cadence, so a
 # run repeatedly killed mid-`codex exec` re-fired every hour despite the
 # provisional backoff. golden is a WEEKLY branch — a base well above the
@@ -184,10 +183,7 @@ def update_golden_attempt_marker(
     ONLY for exit 3 — every other resolved outcome (ok/regression/
     action_required) is a DETERMINISTIC answer and resets the backoff, since
     the branch got its weekly answer whatever it was."""
-    import os as _os
-
-    base = base_minutes if base_minutes is not None else int(
-        _os.environ.get(GOLDEN_RETRY_BASE_MINUTES_ENV, DEFAULT_GOLDEN_RETRY_BASE_MINUTES))
+    base = base_minutes if base_minutes is not None else DEFAULT_GOLDEN_RETRY_BASE_MINUTES
     prev = dict(marker or {})
     consecutive = int(prev.get("consecutive_transient_failures", 0))
     consecutive = consecutive + 1 if transient else 0

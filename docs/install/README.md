@@ -156,9 +156,11 @@ install the engine.
 
 4. Cowork loads the workspace's `CLAUDE.md` on its own. Send the message
    `contract?` in a Cowork session; a healthy session answers
-   `[brain contract loaded]`. If it does not, paste the session prompt saved
-   at `<workspace>/vault/.brain/routines/cowork-session-prompt.md` into the
-   project's custom instructions.
+   `[brain contract loaded]`. If it does not, paste the engine's own
+   `docs/install/cowork-session-prompt.md` into the project's custom
+   instructions (not the copy staged at
+   `<workspace>/vault/.brain/routines/`: it sits on the Cowork mount, where a
+   Cowork session can rewrite it).
 
 5. Test it: ask the Cowork session to run `brain status` or to search the
    brain.

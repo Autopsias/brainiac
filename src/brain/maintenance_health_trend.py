@@ -5,21 +5,27 @@ import datetime
 from pathlib import Path
 from typing import Any
 
-def collect_health_metrics(
-    core: Any, *, outcomes: dict[str, Any], results: dict[str, Any],
-    run_id: str, ts: str | None = None,
-) -> dict[str, Any]:
-    """Build ONE health-history record (schema in the s02 context bundle) from
-    already-computed run state. ``results`` is the SAME run-context dict
-    ``BrainCore.maintain`` accumulates branch outputs into — this is the
-    "structured partial-result hook" a later golden-eval branch (s07) folds
-    into: it need only set ``results["golden"] = {"score": ...}`` before this
-    is called, no JSONL rewrite required. Never raises on a missing piece —
-    every field degrades to ``None`` rather than aborting the run's own
-    health-history append."""
-    return _collect_health_metrics_impl(
-        core, outcomes=outcomes, results=results, run_id=run_id, ts=ts,
-    )
+from .maintenance_healthlog import (
+    DEFAULT_GOLDEN_REGRESSION_PCT as DEFAULT_GOLDEN_REGRESSION_PCT,
+    DEFAULT_LATENCY_REGRESSION_PCT as DEFAULT_LATENCY_REGRESSION_PCT,
+    DEFAULT_QUARANTINE_REGRESSION_PCT as DEFAULT_QUARANTINE_REGRESSION_PCT,
+    DEFAULT_REMEDIATION_COST_ALERT_USD as DEFAULT_REMEDIATION_COST_ALERT_USD,
+    DEFAULT_REMEDIATION_COST_REGRESSION_MULTIPLE as DEFAULT_REMEDIATION_COST_REGRESSION_MULTIPLE,
+    HEALTH_TREND_MIN_BASELINE_DAYS as HEALTH_TREND_MIN_BASELINE_DAYS,
+    HEALTH_TREND_MIN_CURRENT_SAMPLES as HEALTH_TREND_MIN_CURRENT_SAMPLES,
+    HEALTH_TREND_MIN_DAYS as HEALTH_TREND_MIN_DAYS,
+    _DAILY_REDUCERS as _DAILY_REDUCERS,
+    _bucket_daily as _bucket_daily,
+    _count_files as _count_files,
+    _record_date as _record_date,
+)
+from .maintenance_invariant_fields import (
+    invariant_health_history_fields as invariant_health_history_fields,
+)
+from .maintenance_watchdog import (
+    _union_by_run_id as _union_by_run_id,
+    latest_synthesis_cost as latest_synthesis_cost,
+)
 
 
 def _len_or_none(d: dict[str, Any], key: str) -> int | None:
@@ -66,10 +72,18 @@ def _link_lane_consumed(results: dict[str, Any]) -> int | None:
     return lane.get("consumed_today") if isinstance(lane, dict) else None
 
 
-def _collect_health_metrics_impl(
+def collect_health_metrics(
     core: Any, *, outcomes: dict[str, Any], results: dict[str, Any],
     run_id: str, ts: str | None = None,
 ) -> dict[str, Any]:
+    """Build ONE health-history record (schema in the s02 context bundle) from
+    already-computed run state. ``results`` is the SAME run-context dict
+    ``BrainCore.maintain`` accumulates branch outputs into — this is the
+    "structured partial-result hook" a later golden-eval branch (s07) folds
+    into: it need only set ``results["golden"] = {"score": ...}`` before this
+    is called, no JSONL rewrite required. Never raises on a missing piece —
+    every field degrades to ``None`` rather than aborting the run's own
+    health-history append."""
     import datetime as _dt
     import time as _time
 
@@ -163,46 +177,6 @@ def _collect_health_metrics_impl(
     }
 
 
-def health_trend(
-    history: list[dict[str, Any]], today: datetime.date, *,
-    sparse_history: list[dict[str, Any]] | None = None,
-    latency_regression_pct: float | None = None,
-    quarantine_regression_pct: float | None = None,
-    golden_regression_pct: float | None = None,
-    remediation_cost_regression_multiple: float | None = None,
-    remediation_cost_alert_usd: float | None = None,
-) -> list[dict[str, Any]]:
-    """Week-over-week regression findings. Each finding is
-    ``{metric, severity, current, baseline, delta_pct, summary}``.
-
-    - ``blocked`` fires immediately from the LATEST record alone (no
-      baseline needed — any blocked>0 is already actionable).
-    - ``selftest_ms``/``quarantine`` (high-frequency, appended every hourly
-      run) are daily-bucketed and compared against a trailing-median
-      baseline, but ONLY once >= ``HEALTH_TREND_MIN_DAYS`` calendar days of
-      history exist AND the baseline has >= ``HEALTH_TREND_MIN_BASELINE_DAYS``
-      non-null days — otherwise these two checks silently skip (never a
-      false regression from a too-thin history; correction 1).
-    - ``golden_score`` (sparse — null on nearly every hourly record) compares
-      the latest non-null value against the PREVIOUS non-null value
-      regardless of window/day-count (correction 1). A null on either side
-      skips the check — a null is "absent", never a "-100%" drop.
-    - ``remediation_cost`` (sparse, SPD-01) fires on a >= 5x week-over-week
-      jump, on the FIRST night any model-backed branch ever records nonzero
-      spend, or on any night crossing the absolute
-      ``BRAIN_REMEDIATION_COST_ALERT_USD`` floor — never on a cap, because
-      there is none (owner ruling: unlimited spend, trend-alerted).
-    """
-    return _health_trend_impl(
-        history, today, sparse_history=sparse_history,
-        latency_regression_pct=latency_regression_pct,
-        quarantine_regression_pct=quarantine_regression_pct,
-        golden_regression_pct=golden_regression_pct,
-        remediation_cost_regression_multiple=remediation_cost_regression_multiple,
-        remediation_cost_alert_usd=remediation_cost_alert_usd,
-    )
-
-
 def _append_health_high_freq_finding(
     findings: list[dict[str, Any]], ordered: list[dict[str, Any]],
     *, span_ok: bool, metric: str, pct: float, label: str,
@@ -280,7 +254,7 @@ def _append_health_remediation_cost_finding(
     1. **First occurrence** — the first night ANY model-backed branch ever
        records nonzero spend, with no previous point to compare against.
     2. **Absolute floor** — ``current >= alert_floor``
-       (``$BRAIN_REMEDIATION_COST_ALERT_USD``, default 5), regardless of the
+       (``DEFAULT_REMEDIATION_COST_ALERT_USD``, 5), regardless of the
        trend, so a single expensive night alerts even without a prior data
        point to jump from.
 
@@ -315,7 +289,7 @@ def _append_health_remediation_cost_finding(
     })
 
 
-def _health_trend_impl(
+def health_trend(
     history: list[dict[str, Any]], today: datetime.date, *,
     sparse_history: list[dict[str, Any]] | None = None,
     latency_regression_pct: float | None = None,
@@ -324,22 +298,39 @@ def _health_trend_impl(
     remediation_cost_regression_multiple: float | None = None,
     remediation_cost_alert_usd: float | None = None,
 ) -> list[dict[str, Any]]:
-    import os
+    """Week-over-week regression findings. Each finding is
+    ``{metric, severity, current, baseline, delta_pct, summary}``.
 
-    lat_pct = latency_regression_pct if latency_regression_pct is not None else float(
-        os.environ.get("BRAIN_HEALTH_LATENCY_REGRESSION_PCT", DEFAULT_LATENCY_REGRESSION_PCT))
-    quar_pct = quarantine_regression_pct if quarantine_regression_pct is not None else float(
-        os.environ.get("BRAIN_HEALTH_QUARANTINE_REGRESSION_PCT", DEFAULT_QUARANTINE_REGRESSION_PCT))
-    gold_pct = golden_regression_pct if golden_regression_pct is not None else float(
-        os.environ.get("BRAIN_HEALTH_GOLDEN_REGRESSION_PCT", DEFAULT_GOLDEN_REGRESSION_PCT))
+    - ``blocked`` fires immediately from the LATEST record alone (no
+      baseline needed — any blocked>0 is already actionable).
+    - ``selftest_ms``/``quarantine`` (high-frequency, appended every hourly
+      run) are daily-bucketed and compared against a trailing-median
+      baseline, but ONLY once >= ``HEALTH_TREND_MIN_DAYS`` calendar days of
+      history exist AND the baseline has >= ``HEALTH_TREND_MIN_BASELINE_DAYS``
+      non-null days — otherwise these two checks silently skip (never a
+      false regression from a too-thin history; correction 1).
+    - ``golden_score`` (sparse — null on nearly every hourly record) compares
+      the latest non-null value against the PREVIOUS non-null value
+      regardless of window/day-count (correction 1). A null on either side
+      skips the check — a null is "absent", never a "-100%" drop.
+    - ``remediation_cost`` (sparse, SPD-01) fires on a >= 5x week-over-week
+      jump, on the FIRST night any model-backed branch ever records nonzero
+      spend, or on any night crossing the absolute
+      ``DEFAULT_REMEDIATION_COST_ALERT_USD`` floor — never on a cap, because
+      there is none (owner ruling: unlimited spend, trend-alerted).
+    """
+    lat_pct = (latency_regression_pct if latency_regression_pct is not None
+               else DEFAULT_LATENCY_REGRESSION_PCT)
+    quar_pct = (quarantine_regression_pct if quarantine_regression_pct is not None
+                else DEFAULT_QUARANTINE_REGRESSION_PCT)
+    gold_pct = (golden_regression_pct if golden_regression_pct is not None
+                else DEFAULT_GOLDEN_REGRESSION_PCT)
     cost_multiple = (
         remediation_cost_regression_multiple
-        if remediation_cost_regression_multiple is not None else float(
-            os.environ.get("BRAIN_HEALTH_REMEDIATION_COST_REGRESSION_MULTIPLE",
-                           DEFAULT_REMEDIATION_COST_REGRESSION_MULTIPLE)))
-    cost_floor = remediation_cost_alert_usd if remediation_cost_alert_usd is not None else float(
-        os.environ.get(BRAIN_REMEDIATION_COST_ALERT_USD_ENV,
-                       DEFAULT_REMEDIATION_COST_ALERT_USD))
+        if remediation_cost_regression_multiple is not None
+        else DEFAULT_REMEDIATION_COST_REGRESSION_MULTIPLE)
+    cost_floor = (remediation_cost_alert_usd if remediation_cost_alert_usd is not None
+                  else DEFAULT_REMEDIATION_COST_ALERT_USD)
 
     findings: list[dict[str, Any]] = []
     if not history:
@@ -372,24 +363,3 @@ def _health_trend_impl(
         findings, ordered, sparse_history,
         regression_multiple=cost_multiple, alert_floor=cost_floor)
     return findings
-
-
-from . import maintenance as _maintenance  # noqa: E402
-
-_DAILY_REDUCERS = _maintenance._DAILY_REDUCERS
-_bucket_daily = _maintenance._bucket_daily
-_count_files = _maintenance._count_files
-_record_date = _maintenance._record_date
-_union_by_run_id = _maintenance._union_by_run_id
-DEFAULT_GOLDEN_REGRESSION_PCT = _maintenance.DEFAULT_GOLDEN_REGRESSION_PCT
-DEFAULT_LATENCY_REGRESSION_PCT = _maintenance.DEFAULT_LATENCY_REGRESSION_PCT
-DEFAULT_QUARANTINE_REGRESSION_PCT = _maintenance.DEFAULT_QUARANTINE_REGRESSION_PCT
-DEFAULT_REMEDIATION_COST_REGRESSION_MULTIPLE = (
-    _maintenance.DEFAULT_REMEDIATION_COST_REGRESSION_MULTIPLE)
-DEFAULT_REMEDIATION_COST_ALERT_USD = _maintenance.DEFAULT_REMEDIATION_COST_ALERT_USD
-BRAIN_REMEDIATION_COST_ALERT_USD_ENV = _maintenance.BRAIN_REMEDIATION_COST_ALERT_USD_ENV
-HEALTH_TREND_MIN_BASELINE_DAYS = _maintenance.HEALTH_TREND_MIN_BASELINE_DAYS
-HEALTH_TREND_MIN_CURRENT_SAMPLES = _maintenance.HEALTH_TREND_MIN_CURRENT_SAMPLES
-HEALTH_TREND_MIN_DAYS = _maintenance.HEALTH_TREND_MIN_DAYS
-invariant_health_history_fields = _maintenance.invariant_health_history_fields
-latest_synthesis_cost = _maintenance.latest_synthesis_cost

@@ -54,7 +54,7 @@ from .update_channels import (
     stage_engine_and_skills as stage_engine_and_skills_impl,
     restage_workspaces as restage_workspaces_impl,
 )
-from .update_channels_2 import UpdateFlowCallbacks, run_update_flow
+from .update_flow import UpdateFlowCallbacks, run_update_flow
 from .update_plugins import _default_runner as _default_runner  # noqa: F401
 from .update_state import (  # noqa: F401  (facade re-export)
     UPDATE_RETRY_ESCALATE_AFTER as UPDATE_RETRY_ESCALATE_AFTER,
@@ -120,8 +120,6 @@ def resolve_claude_bin() -> Optional[str]:
 
 
 Runner = Callable[..., "subprocess.CompletedProcess[str]"]
-
-
 
 
 # --------------------------------------------------------------------------
@@ -222,7 +220,7 @@ def stage_engine_and_skills(
     Returns a dict with the SSOT/staged versions and skill count so the
     caller can assert-and-fail rather than silently report ok.
     """
-    from .cowork_staging import staging_root
+    from .cowork_staging import staging_root_for_write
 
     callbacks = WorkspaceStageCallbacks(
         packaged_script=_packaged_script,
@@ -242,7 +240,7 @@ def stage_engine_and_skills(
     # run --- `Path(workspace_path) / ".brain"` split them apart the moment
     # the two paths differ, staging an engine the ELFs could not find.
     bin_status = stage_vm_binaries(
-        staging_root(vault_path, workspace_path), engine_src / "dist"
+        staging_root_for_write(vault_path, workspace_path), engine_src / "dist"
     )
     binaries_ok, binaries_detail = vm_binaries_verdict(
         bin_status, staged.get("ssot_version")
@@ -351,31 +349,6 @@ def run_update(
     )
 
 
-def _demo() -> None:
-    """ponytail self-check: decision function + dry-run orchestration never
-    crash and never call a real subprocess in dry-run mode."""
-
-    assert decide_plugin_action(None, "1.0.0") == "install"
-    assert decide_plugin_action("1.0.0", None) == "skip"
-    assert decide_plugin_action("1.1.0", "0.9.1") == "reinstall"
-    assert decide_plugin_action("0.9.0", "0.9.1") == "update"
-    assert decide_plugin_action("0.9.1", "0.9.1") == "skip"
-
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        import subprocess as sp
-
-        return sp.CompletedProcess(cmd, 0, stdout="ok", stderr="")
-
-    report = run_update(run=fake_run, dry_run=True, skip_capability_probe=True)
-    assert "ok" in report
-    assert calls == [], "dry_run must never invoke the injected runner for mutating steps"
-    print("OK: update self-check passed")
-
-
-
 # The plugin-channel steps live in update_plugins.py and the dist/model staging
 # legs in update_model.py since the 2026-08-16 size ratchet; re-exported so
 # every `brain.update.<name>` caller and monkeypatch target is unchanged.
@@ -404,11 +377,3 @@ from .update_plugins import (  # noqa: E402,F401  (facade re-export)
     probe_cli_capability as probe_cli_capability,
     refresh_marketplace as refresh_marketplace,
 )
-
-
-# The ``__main__`` guard lives at the very END of the module, AFTER the
-# facade re-exports above: under runpy (``python -m brain.<mod>``) the guard
-# fires at its source position, and every facade name must already be bound
-# by then (2026-08-16 size-ratchet fix).
-if __name__ == "__main__":
-    _demo()

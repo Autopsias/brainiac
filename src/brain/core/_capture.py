@@ -1,6 +1,8 @@
 """Capture lifecycle methods for BrainCore."""
 from __future__ import annotations
 
+import tempfile
+
 from .. import _optional
 from ._capture_staging import stage_draft_unique as _stage_draft_unique
 from ._shared import (
@@ -353,7 +355,9 @@ class _CoreCaptureMixin:
         live index that holds MORE notes than the snapshot (the snapshot is
         older — ``sync``/``rebuild`` instead) unless ``force``; backs up the
         current index (reversible ``.pre-restore-*.bak``) before overwriting; and
-        verifies the note count post-restore.
+        verifies the note count post-restore. The snapshot must also be signed
+        by THIS host's audit key (``snapshot.check_signed_snapshot``): its dir
+        can sit on the VM-writable Cowork mount, so an unsigned or altered DB is refused.
         """
         self._require_host("restore the index from a snapshot")
         with vault_writer_lock(self.vault, verb="restore-index"):
@@ -363,9 +367,13 @@ class _CoreCaptureMixin:
     ) -> dict[str, Any]:
         import datetime as _dt
         import shutil as _sh
+        from ..snapshot import check_signed_snapshot, stage_signed_snapshot
+
         idx = config.index_path(self.vault)
         snap = config.snapshot_db_path(self.vault)
 
+        if snap.exists():  # verify BEFORE sqlite opens bytes the VM may have written
+            check_signed_snapshot(snap.parent, snap)
         snap_n = _notes_count(snap)
         if snap_n is None:
             raise FileNotFoundError(f"no snapshot to restore from: {snap}")
@@ -390,16 +398,25 @@ class _CoreCaptureMixin:
             return plan
 
         config.ensure_index_dir(self.vault)
+        # install a re-verified private copy under an unpredictable, O_EXCL-created name
+        fd, stage_name = tempfile.mkstemp(dir=idx.parent, prefix=idx.name + ".restore.", suffix=".tmp")
+        os.close(fd)
+        stage = Path(stage_name)
         backup = None
-        if idx.exists():
-            stamp = _dt.datetime.now().strftime("%Y%m%dT%H%M%S")
-            backup = idx.with_name(idx.name + f".pre-restore-{stamp}.bak")
-            _sh.move(str(idx), str(backup))
-        for suf in ("-wal", "-shm"):  # stale sqlite sidecars would mask the copy
-            side = idx.with_name(idx.name + suf)
-            if side.exists():
-                side.unlink()
-        _sh.copy2(str(snap), str(idx))
+        try:
+            stage_signed_snapshot(snap, stage)
+            if idx.exists():
+                stamp = _dt.datetime.now().strftime("%Y%m%dT%H%M%S")
+                backup = idx.with_name(idx.name + f".pre-restore-{stamp}.bak")
+                _sh.move(str(idx), str(backup))
+            for suf in ("-wal", "-shm"):  # stale sqlite sidecars would mask the copy
+                side = idx.with_name(idx.name + suf)
+                if side.exists():
+                    side.unlink()
+            stage.replace(idx)
+        except BaseException:
+            stage.unlink(missing_ok=True)  # never leave an index-sized stage file
+            raise
 
         live_after = _notes_count(idx)
         if live_after != snap_n:

@@ -163,7 +163,7 @@
       stronger option.</td>
       <td><span class="pill done">DONE</span> engine · <span class="pill open">ORG</span> verify the bootstrap</td></tr>
     <tr><td>3.9b</td><td><strong>Set the VM egress ceiling in managed config.</strong>
-      <code>BRAIN_VM_MAX_EGRESS_TIER</code> (default <code>Internal</code>) is a hard clamp — a higher
+      The host-signed ceiling <code>vm_ceiling.resolved_ceiling</code> (default <code>Internal</code>; the <code>BRAIN_VM_MAX_EGRESS_TIER</code> variable is ignored for the VM) is a hard clamp — a higher
       <code>--max-tier</code> typed inside the VM is silently capped and the elevation hint suppressed,
       so raising it is a host-operator act. Where a vault holds tiers the sandbox should never see,
       stage the workspace from <code>brain project --dest &lt;dir&gt; --max-tier &lt;tier&gt;</code>: a filtered

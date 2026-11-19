@@ -7,6 +7,58 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.54] — 2026-11-19
+### Fixed
+- **The public `semgrep` check is green again.** It failed on every release since 0.20.50 on one false finding: the `brain` launcher shim is written with mode `0o755` because it must be executable. The line now carries a reviewed inline suppression with the reason.
+
+### Added
+- **Text views tag our own earlier proposals, and the agent rule says what the mark means.** `search`, `grep`, `bases-query` and `dossier` print `[own output]` on a row that already carries `own_output: true`; nothing else in the text changes. `AGENTS.md` section 5 (and its two copies) and the MCP tool descriptions now say: never cite an `own_output` row as evidence for a claim, because the mark shows who produced a note and never raises trust. No version bump: ADR-0004 ranks "docs, prompt/skill wording that changes no contract" as PATCH, and this release is not cut here.
+
+### Security
+- **Older signed copies of the alerts feed and `exceptions.json` are refused on
+  the host; an untrusted note still guards its title.** Both files sit on the
+  mount the VM can write, and the signature covers only the file's own fields, so
+  a VM could copy an older signed file back over the new one. Each file now signs
+  a full UTC `generated_at`; the host records the newest one it wrote in a private
+  file off the mount and refuses a file that is older, or has none once a record
+  exists. With no record yet (the first run after upgrading) it accepts, as before.
+  The VM cannot read that record: its check keeps the existing two-day window on
+  the signed `generated_at` (older summaries without the full stamp pass within it).
+  Separately, the generated egress ring now keeps the TITLE of a note stamped
+  `provenance.trust: untrusted` (owner ruling 2026-11-18); only its `aliases`, the
+  poisoning vector, are skipped, counted in `regenerate()["untrusted_aliases_skipped"]`.
+  An untrusted title never replaces or raises a trusted note's claim on the same
+  term, and when the ring is over its row cap every untrusted row is cut (lowest
+  tier first) before any trusted one (`regenerate()["untrusted_rows_cut"]`). The
+  host replay check also keeps the older rule as a second check: a feed or summary
+  dated before the newest `last_run` in the private maintain state is refused even
+  with no freshness record; if that record cannot be written the feed carries the
+  finding `maintain:freshness-record-unwritten`.
+- **`brain restore-index` only installs a snapshot this host signed.** The
+  snapshot folder can sit on the Cowork mount, which the VM can write, and the
+  manifest's `sha256` was never checked: a VM that swapped the snapshot database
+  could have made it the live index. `brain snapshot` now signs the manifest with
+  the host audit key (new `signature` field). `restore-index` refuses a snapshot
+  whose manifest is missing, unsigned, signed by another key or altered, or whose
+  database does not match the signed `sha256`. It checks the file before opening
+  it and checks again on a private copy that is then moved into place.
+  `brain snapshot` also builds, hashes and signs the database in a private file
+  beside the live index (`<index>.snapshot-stage`) and only then copies it into the
+  snapshot folder, so a write to that folder during a publish can no longer get its
+  bytes signed. The published file is still owner-only (0600).
+  **What changes for you:** a snapshot published by an older engine is unsigned and
+  `restore-index` refuses it until the next `brain snapshot` (the hourly run does
+  this); if no audit key can be read, `brain snapshot` still publishes, unsigned,
+  and logs one warning, and that publish replaces a signed snapshot with an unsigned
+  one on purpose. An older engine on the VM reads a signed manifest as "no
+  snapshot" until it is updated. **Not covered:** the VM's own `--role vm` read of
+  the snapshot (it holds only a key on the same writable mount; see A-13), and
+  replay of an older snapshot the host did sign.
+
+### Changed
+- **`supersede` answers `already_done: true` on an identical repeat.** When an agent repeats a supersede that already went through (for example after a timed-out call), the engine returns success with `already_done: true` and writes nothing; a repeat naming a different newer note is still refused. With reindex on, it re-syncs the index, so a crash between the journal clear and the sync heals. The broker `supersede` passes the key through. No version bump.
+- **39 tuning settings are now plain constants.** Nothing in the repo, the live launch agents or any workflow set them, so behaviour is unchanged; setting one in the environment no longer does anything. Removed environment names: `BRAIN_COS_GC_DAYS`, `BRAIN_COS_KEEPER_HORIZON_DAYS`, `BRAIN_COS_SWEEP_RECENCY_SECONDS`, `BRAIN_GOLDEN_RETRY_BASE_MINUTES`, `BRAIN_GRAPH_ORPHAN_GROWTH_MAX`, `BRAIN_ORPHAN_SUSTAINED_GROWTH`, `BRAIN_GRAPHIFY_DRIFT_PCT`, `BRAIN_GRAPHIFY_COOLDOWN_DAYS`, `BRAIN_HEALTH_HISTORY_MAX_BYTES`, `BRAIN_HEALTH_HISTORY_READ_WINDOW_DAYS`, `BRAIN_HEALTH_ARCHIVE_RETENTION_DAYS`, `BRAIN_HEALTH_LATENCY_REGRESSION_PCT`, `BRAIN_HEALTH_QUARANTINE_REGRESSION_PCT`, `BRAIN_HEALTH_GOLDEN_REGRESSION_PCT`, `BRAIN_HEALTH_REMEDIATION_COST_REGRESSION_MULTIPLE`, `BRAIN_REMEDIATION_COST_ALERT_USD`, `BRAIN_NOTIFY_MARKER_RETENTION_DAYS`, `BRAIN_OFFHOST_DAILY_STALE_HOURS`, `BRAIN_LANGUAGE_MIN_SHARE`, `BRAIN_LANGUAGE_MAX`, `BRAIN_INTEGRITY_BOILERPLATE_PATTERNS`, `BRAIN_MULTI_MAX_VARIANTS`, `BRAIN_EMBED_MAX_TOKENS`, `BRAIN_RERANK_MAX_TOKENS`, `BRAIN_WHOLENOTE_MAX_CHARS`, `BRAIN_RERANK_TOP`, `BRAIN_RERANK_MAX`, `BRAIN_RECENCY_HALFLIFE_DAYS`, `BRAIN_RERANKER_MODEL`, `BRAIN_MOUNT_SCAN_WORKERS`, `BRAIN_VERSIONLINK_MIN_SIMILARITY`, `BRAIN_VERSIONLINK_WINDOW_DAYS`, `BRAIN_COS_MIN_COVERAGE`, `BRAIN_COS_SHEET_CHAT_MODEL`, `BRAIN_COS_SHEET_CHAT_TURN_SECONDS`, `BRAIN_COS_SHEET_GATE_SECONDS`, `COS_SIGNIN_MAX_AGE_HOURS`, `BRAIN_SYNTHESIS_LINK_BUDGET`, `BRAIN_SYNTHESIS_MAX_TURNS`. Deployment settings (paths, keys, model folders) stay and are listed in `docs/operations/deployment-settings.md`.
+
 ## [0.20.53] — 2026-11-14
 ### Security
 - **A symlinked note can no longer make the vault scan read a file outside the

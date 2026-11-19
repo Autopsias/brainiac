@@ -10,12 +10,12 @@ from .. import cli as shared
 from .. import egress
 
 _emit = shared._emit
-_excluded_note = shared._excluded_note
 _filter_dicts = shared._filter_dicts
 _freshness_block = shared._freshness_block
 _egress_footer = shared._egress_footer
 _concealment_notice = shared._concealment_notice
 _header_line = shared._header_line
+_own_mark = shared._own_mark
 _variant_block = shared._variant_block
 _render_variant_block = shared._render_variant_block
 _render_explain_hit = shared._render_explain_hit
@@ -173,7 +173,7 @@ def _render_search(
     else:
         lines = [
             f"[{hit['source']}] {hit['id']}  <{hit.get('type') or '?'}>"
-            f"  ({hit['classification'] or 'UNLABELLED'})"
+            f"  ({hit['classification'] or 'UNLABELLED'}){_own_mark(hit)}"
             f"  {hit.get('date') or 'undated'}  "
             f"{hit['score'] if hit.get('score') is not None else 'redacted'}"
             f"{_header_line(hit)}"
@@ -301,7 +301,7 @@ def _render_dossier(decisions, sources, res, report, freshness) -> str:
     lines = [f"== decision layer ({len(decisions)}) =="]
     for h in decisions:
         lines.append(
-            f"  {h['id']}  ({h['classification']})  {h.get('date') or 'undated'}"
+            f"  {h['id']}  ({h['classification']}){_own_mark(h)}  {h.get('date') or 'undated'}"
         )
         if _concealment_notice(h):
             lines.append(_concealment_notice(h))
@@ -314,7 +314,7 @@ def _render_dossier(decisions, sources, res, report, freshness) -> str:
             )
             lines.append(
                 f"    !! newer source post-dates this decision: "
-                f"{x['id']} ({x['date']}){caveat} — report the tension, "
+                f"{x['id']} ({x['date']}){_own_mark(x)}{caveat} — report the tension, "
                 f"never promote the proposal"
             )
             if _concealment_notice(x):
@@ -322,7 +322,7 @@ def _render_dossier(decisions, sources, res, report, freshness) -> str:
     lines.append(f"== sources under consideration ({len(sources)}) ==")
     for h in sources:
         lines.append(
-            f"  {h['id']}  <{h.get('type') or '?'}>  {h.get('date') or 'undated'}"
+            f"  {h['id']}  <{h.get('type') or '?'}>{_own_mark(h)}  {h.get('date') or 'undated'}"
         )
         if _concealment_notice(h):
             lines.append(_concealment_notice(h))
@@ -348,6 +348,7 @@ def _run_dossier(args, ctx) -> int:
     # The targeted decision-layer probe can add a hit outside hybrid's normal
     # pool; finalize post-egress identity over both layers so it stays unknown.
     core.annotate_create_safety(args.query, decisions + sources, args.max_tier)
+    own_outputs = egress.own_outputs(sources)  # after annotate: copies carry the final rows
     report = {
         "total": drep["total"] + srep["total"],
         "surfaced": drep["surfaced"] + srep["surfaced"],
@@ -370,6 +371,7 @@ def _run_dossier(args, ctx) -> int:
         "query": res["query"],
         "decisions": decisions,
         "sources": sources,
+        "own_outputs": own_outputs,
         "retired_excluded": res["retired_excluded"],
         "egress": report,
     }
@@ -420,7 +422,7 @@ def _run_grep(args, ctx) -> int:
     else:
         lines = [
             f"{h['id']} ({h['classification'] or 'UNLABELLED'}) "
-            f"x{h['match_count']}"
+            f"x{h['match_count']}{_own_mark(h)}"
             + (" RETIRED" if str(h.get("is_latest_version", "")).lower() == "false" else "")
             + f"{_header_line(h)}\n    {h['snippet']}"
             + (f"\n{_concealment_notice(h)}" if _concealment_notice(h) else "")
@@ -446,7 +448,7 @@ def _run_bases_query(args, ctx) -> int:
         _emit({"filters": filters, "results": surfaced, "egress": report}, True)
     else:
         lines = [
-            f"{h['id']}  type={h.get('type', '?')}  ({h['classification'] or 'UNLABELLED'})"
+            f"{h['id']}  type={h.get('type', '?')}  ({h['classification'] or 'UNLABELLED'}){_own_mark(h)}"
             + (f"\n{_concealment_notice(h)}" if _concealment_notice(h) else "")
             for h in surfaced
         ]

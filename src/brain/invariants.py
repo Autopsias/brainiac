@@ -445,18 +445,18 @@ def state_regressions(state: dict[str, Any] | None) -> list[dict[str, Any]]:
 # caller (including ingest/pipeline.py and ingest/tierguard.py imports) works
 # unchanged.
 from .invariant_coverage import (  # noqa: E402,F401  (facade re-export)
-    _frontmatter_links as _frontmatter_links, _resolve as _resolve, _TIER_ORDER as _TIER_ORDER,
-    _unlinked_rows as _unlinked_rows, _untrusted_draft as _untrusted_draft, DEFAULT_LINK_LANE_BUDGET as DEFAULT_LINK_LANE_BUDGET,
+    _resolve as _resolve,
+    DEFAULT_LINK_LANE_BUDGET as DEFAULT_LINK_LANE_BUDGET,
     EMBEDDED_FRONTMATTER_HEAD as EMBEDDED_FRONTMATTER_HEAD, embedded_source_type as embedded_source_type, emitter_output as emitter_output,
-    EMITTER_OUTPUT_MARKER as EMITTER_OUTPUT_MARKER, EXCLUSION_REASONS as EXCLUSION_REASONS, GENERATED_MAP_BASENAMES as GENERATED_MAP_BASENAMES,
+    GENERATED_MAP_BASENAMES as GENERATED_MAP_BASENAMES,
     lane_consumption as lane_consumption, link_coverage_exclusion as link_coverage_exclusion, link_lane_budget as link_lane_budget,
     LINK_LANE_BUDGET_ENV as LINK_LANE_BUDGET_ENV, link_lane_candidates as link_lane_candidates, LINK_LANE_RELPATH as LINK_LANE_RELPATH,
-    LINK_LANE_SELECTION as LINK_LANE_SELECTION, NON_KNOWLEDGE_ZONES as NON_KNOWLEDGE_ZONES, OPERATIONAL_SOURCE_TYPES as OPERATIONAL_SOURCE_TYPES,
-    QUARANTINE_PATH_SEGMENTS as QUARANTINE_PATH_SEGMENTS, unlinked_sources as unlinked_sources, write_link_lane as write_link_lane,
+    OPERATIONAL_SOURCE_TYPES as OPERATIONAL_SOURCE_TYPES,
+    unlinked_sources as unlinked_sources, write_link_lane as write_link_lane,
 )
 from .invariant_crosstier import (  # noqa: E402,F401  (facade re-export)
-    _ct_exclusion as _ct_exclusion, _CT_FRONTMATTER as _CT_FRONTMATTER, _ct_shingles as _ct_shingles,
-    _ct_sketch as _ct_sketch, _ct_tokens as _ct_tokens, _CT_WORD as _CT_WORD,
+    _ct_exclusion as _ct_exclusion, _ct_shingles as _ct_shingles,
+    _ct_sketch as _ct_sketch, _ct_tokens as _ct_tokens,
     _jaccard as _jaccard, CROSS_TIER_CANDIDATE as CROSS_TIER_CANDIDATE, cross_tier_candidates_entry as cross_tier_candidates_entry,
     CROSS_TIER_MIN_TOKENS as CROSS_TIER_MIN_TOKENS, CROSS_TIER_SAME_DOC as CROSS_TIER_SAME_DOC, CROSS_TIER_SCREEN as CROSS_TIER_SCREEN,
     CROSS_TIER_SHINGLE as CROSS_TIER_SHINGLE, CROSS_TIER_SKETCH as CROSS_TIER_SKETCH, CROSS_TIER_SKIP_REASONS as CROSS_TIER_SKIP_REASONS,
@@ -464,14 +464,13 @@ from .invariant_crosstier import (  # noqa: E402,F401  (facade re-export)
 )
 from .invariants_metrics import cross_tier_duplicates as cross_tier_duplicates  # noqa: E402
 from .invariant_floors import (  # noqa: E402,F401  (facade re-export)
-    declined_floors as declined_floors, metric_populations as metric_populations,
+    declined_floors as declined_floors,
     POPULATION_SUFFIX as POPULATION_SUFFIX, update_floors_guarded as update_floors_guarded,
 )
 # FIX-05 — invariant:unlinked_sources is rekeyed to BAK-04 lane health rather
 # than the ratchet; see invariant_lane_health.py's module docstring.
 from .invariant_lane_health import (  # noqa: E402,F401  (facade re-export)
-    lane_health as lane_health, LANE_HEALTH_ESCALATE_AFTER as LANE_HEALTH_ESCALATE_AFTER,
-    LANE_MAX_AGE_DAYS as LANE_MAX_AGE_DAYS, LANE_MIN_HISTORY_DAYS as LANE_MIN_HISTORY_DAYS,
+    lane_health as lane_health,
     lane_health_regression as lane_health_regression, STATE_SUBKEY as LANE_HEALTH_STATE_SUBKEY,
     update_lane_health as update_lane_health,
 )

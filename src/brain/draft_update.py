@@ -14,12 +14,13 @@ the pipeline, this module owns only the update lane's validation.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .notes import note_from_text
+from .notes import _read_note_bytes, _UnsafeNote, note_from_text
 
 #: Transport-only frontmatter keys of the update lane (UPD-01, 2026-08-30).
 #: They declare intent to the DRAIN and are dropped before signing — a
@@ -81,8 +82,13 @@ def validate_update(
             reason=f"update-refused-immutable-zone: {rel_path!r} is not under "
                    "brain/ (raw/ is append-only)")
     try:
-        current_text = (core.vault / rel_path).read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
+        # ONE contained read (F78): the trust claim below and the chain proof
+        # further down are both made over THIS buffer. Re-opening the path for
+        # the hash let a mount writer show the parse forged bytes and the hash
+        # the genuine signed ones (`notes._load` closes the same window).
+        raw = _read_note_bytes(core.vault / rel_path, core.vault)
+        current_text = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    except (OSError, UnicodeDecodeError, _UnsafeNote) as exc:
         return UpdateVerdict(
             reason=f"update-target-unreadable: {type(exc).__name__}")
     current = note_from_text(current_text, core.vault / rel_path, core.vault)
@@ -96,11 +102,10 @@ def validate_update(
     # The on-disk `provenance.trust` is a CLAIM anyone with mount write access
     # can edit in. Authorize only bytes the audit chain's latest signed write
     # for this path covers (UPD-01 / F56); a hand-relabelled file is drift.
-    from .notes import sha256_file
     from .remediation_branches import chain_provenance
 
     provenance = chain_provenance(Path(core.audit.log_path))
-    if not provenance.covers_current(rel_path, sha256_file(core.vault / rel_path)):
+    if not provenance.covers_current(rel_path, hashlib.sha256(raw).hexdigest()):
         return UpdateVerdict(
             reason=f"update-refused-drift: {note_id!r} differs from its latest "
                    "signed write — the host must review it, apply with "

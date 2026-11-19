@@ -285,6 +285,10 @@ _EXACT: dict[str, Remedy] = {
     "maintain:no-feed": Remedy(BANNER),
     "maintain:unparseable-feed": Remedy(
         BANNER, note="a forged/broken feed fails closed to stale"),
+    "maintain:freshness-record-unwritten": Remedy(
+        BANNER, note="the host could not save the feed's signed generated_at "
+                     "privately, so only the last-run date floor guards it "
+                     "against a replayed older copy"),
     "cos:sheet-heartbeat": Remedy(
         BANNER,
         note="out-of-band COS liveness: the sheets directory, not a run "
@@ -295,6 +299,10 @@ _EXACT: dict[str, Remedy] = {
         note="ADR 0013: this vault has COS folders but the installed engine "
              "has no COS code, so the nightly cannot run; never silent"),
     "cos-calendar-read-failed": Remedy(BANNER, note="next night retries; a good read clears it"),
+    "golden-probes-changed": Remedy(
+        BANNER, note="F127: the golden probes file no longer matches its "
+                     "host-private pin, so the weekly golden score was NOT "
+                     "taken; only the owner can say whether the edit is his"),
     "exceptions": Remedy(
         BANNER, note="EXC-03: the unified 'N exception(s) — open <page>' "
                      "banner, read the SAME way on host and VM from the "

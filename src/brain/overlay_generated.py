@@ -88,6 +88,14 @@ MIN_TIER = "Confidential"
 #: Two-character terms match inside too much ordinary text to be useful.
 MIN_TERM_CHARS = 3
 
+#: Size bounds on what the untrusted capture lane can make the ring carry: the
+#: outbound guard walks the whole ring on every tool call, so a note with
+#: thousands of aliases (or thousands of notes) would push that walk past the
+#: hook timeout. Plain constants, not settings. Anything cut is logged and
+#: counted in ``regenerate()["truncated"]`` — never dropped silently.
+MAX_ALIASES_PER_NOTE = 100
+MAX_RING_ROWS = 5000
+
 
 class Row(NamedTuple):
     """One generated decoder-ring row, and the note it came from."""
@@ -96,9 +104,10 @@ class Row(NamedTuple):
     tier: str
     source_id: str
     source_type: str
+    trusted: bool = True  # False: an untrusted capture; it never outranks a trusted claim
 
 
-def _note_rows(path: Path, hand_ring: set[str]) -> list[Row]:
+def _note_rows(path: Path, hand_ring: set[str], stats: dict[str, int]) -> list[Row]:
     """Every term ONE note contributes: its title, then each alias."""
     try:
         meta, _body = frontmatter.parse_text(path.read_text(encoding="utf-8"))
@@ -116,8 +125,25 @@ def _note_rows(path: Path, hand_ring: set[str]) -> list[Row]:
     nid = str(meta.get("id") or path.stem).strip()
     names = [meta.get("title")]
     aliases = meta.get("aliases")
+    # Owner ruling 2026-11-18: an untrusted capture still guards its TITLE; its ALIASES
+    # (the poisoning vector) are skipped. Only the drain's stamp counts, not `status: draft`.
+    trusted = str(meta.get("provenance.trust", "")).strip().casefold() != "untrusted"
+    if not trusted:
+        if isinstance(aliases, list) and aliases:
+            stats["untrusted_aliases_skipped"] = (
+                stats.get("untrusted_aliases_skipped", 0) + len(aliases))
+            logger.warning(
+                "egress ring: untrusted note %r: its title is guarded, its %d aliases "
+                "are skipped", nid, len(aliases))
+        aliases = None
     if isinstance(aliases, list):
-        names.extend(aliases)
+        if len(aliases) > MAX_ALIASES_PER_NOTE:
+            cut = len(aliases) - MAX_ALIASES_PER_NOTE
+            stats["aliases_dropped"] = stats.get("aliases_dropped", 0) + cut
+            logger.warning(
+                "egress ring: note %r has %d aliases; only the first %d are guarded "
+                "(%d dropped)", nid, len(aliases), MAX_ALIASES_PER_NOTE, cut)
+        names.extend(aliases[:MAX_ALIASES_PER_NOTE])
     out: list[Row] = []
     for name in names:
         if not isinstance(name, str):
@@ -127,17 +153,23 @@ def _note_rows(path: Path, hand_ring: set[str]) -> list[Row]:
         # deliberately; a derived row must never silently retier it.
         if len(term) < MIN_TERM_CHARS or term.casefold() in hand_ring:
             continue
-        out.append(Row(term, tier, nid, ntype))
+        out.append(Row(term, tier, nid, ntype, trusted))
     return out
 
 
-def derive(vault: str | os.PathLike[str]) -> list[Row]:
+def derive(vault: str | os.PathLike[str],
+           stats: dict[str, int] | None = None) -> list[Row]:
     """Every generated row for ``vault``, deduplicated and sorted.
 
     On a term claimed by two notes at different tiers the HIGHER tier wins:
     the ring answers "may this leave", and the protective answer is the safe
-    one to be wrong about.
+    one to be wrong about. The one exception: an UNTRUSTED capture's claim
+    never replaces or raises a trusted note's, whatever the tiers. Past
+    ``MAX_RING_ROWS`` every untrusted row is cut (lowest tier first) before
+    any trusted one, then the lowest trusted tiers. ``stats``, when given,
+    receives the counts of anything truncated.
     """
+    stats = {} if stats is None else stats
     root = Path(vault)
     hand_ring = set(ov.resolve_keyword_tiers(root))
     best: dict[str, Row] = {}
@@ -145,12 +177,25 @@ def derive(vault: str | os.PathLike[str]) -> list[Row]:
     if not brain_dir.is_dir():
         return []
     for path in sorted(brain_dir.rglob("*.md")):
-        for row in _note_rows(path, hand_ring):
+        for row in _note_rows(path, hand_ring, stats):
             key = row.term.casefold()
             prior = best.get(key)
-            if prior is None or ov.TIERS.index(row.tier) > ov.TIERS.index(prior.tier):
+            if prior is None or (row.trusted, ov.TIERS.index(row.tier)) > (
+                    prior.trusted, ov.TIERS.index(prior.tier)):
                 best[key] = row
-    return sorted(best.values(), key=lambda r: (r.term.casefold(), r.tier))
+    rows = sorted(best.values(), key=lambda r: (r.term.casefold(), r.tier))
+    if len(rows) > MAX_RING_ROWS:
+        stats["rows_dropped"] = len(rows) - MAX_RING_ROWS
+        logger.warning(
+            "egress ring: %d terms exceed the %d-row cap; the %d lowest-tier "
+            "terms are not guarded", len(rows), MAX_RING_ROWS, stats["rows_dropped"])
+        # sorted() is stable, so equal tiers keep their alphabetical order.
+        keep = sorted(rows, key=lambda r: (not r.trusted, -ov.TIERS.index(r.tier)))
+        keep = keep[:MAX_RING_ROWS]
+        stats["untrusted_rows_cut"] = sum(
+            1 for r in rows if not r.trusted) - sum(1 for r in keep if not r.trusted)
+        rows = sorted(keep, key=lambda r: (r.term.casefold(), r.tier))
+    return rows
 
 
 def render(rows: list[Row]) -> str:
@@ -246,7 +291,8 @@ def regenerate(vault: str | os.PathLike[str],
     ``changed`` is False when the rendered bytes match what is already on disk,
     so an unchanged corpus costs one read and no write.
     """
-    rows = derive(vault)
+    stats: dict[str, int] = {}
+    rows = derive(vault, stats)
     path = generated_path(vault, explicit)
     text = render(rows)
     try:
@@ -265,5 +311,9 @@ def regenerate(vault: str | os.PathLike[str],
         "terms": len(rows),
         "sources": len({r.source_id for r in rows}),
         "by_tier": tiers,
+        "truncated": {"aliases": stats.get("aliases_dropped", 0),
+                      "rows": stats.get("rows_dropped", 0)},
+        "untrusted_aliases_skipped": stats.get("untrusted_aliases_skipped", 0),
+        "untrusted_rows_cut": stats.get("untrusted_rows_cut", 0),
         "changed": changed,
     }

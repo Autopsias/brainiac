@@ -51,6 +51,12 @@ DEFAULT_NOISE_BAND = 0.0417
 # tight one.
 LOW_CONFIDENCE_N = 20
 
+# Owner decision 2026-11-14: below LOW_CONFIDENCE_N paired rows one borderline
+# row flipping moves the rate more than the band (1/6 = 16.7%), so a same-config
+# rerun fails on noise alone. There the gate fails only on a drop of at least
+# this many candidates; a 1-row drop is within noise. n >= 20 is unchanged.
+SMALL_N_MIN_DROP = 2
+
 
 def _load(path: str) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
@@ -107,10 +113,11 @@ def evaluate(current: dict, new: dict, band: float = DEFAULT_NOISE_BAND) -> dict
     delta = new_rate - cur_rate
     churn = disposition_churn(current, new, ids)
 
+    small_n = n < LOW_CONFIDENCE_N
     verdict = "NEITHER"
     if delta > band:
         verdict = "BETTER"
-    elif delta < -band:
+    elif (cur_n - new_n >= SMALL_N_MIN_DROP) if small_n else delta < -band:
         verdict = "WORSE"
 
     return {
@@ -121,7 +128,8 @@ def evaluate(current: dict, new: dict, band: float = DEFAULT_NOISE_BAND) -> dict
         "new_rate": new_rate, "new_candidates": new_n,
         "delta": delta, "band": band,
         "verdict": verdict,
-        "gate_pass": delta >= -band,
+        "small_n_rule": small_n,
+        "gate_pass": verdict != "WORSE",
         "churn": churn,
     }
 
@@ -159,7 +167,12 @@ def main(argv=None) -> int:
     print(f"  candidate rate: current={r['current_rate']:.4f} "
           f"({r['current_candidates']}/{r['n']})  "
           f"new={r['new_rate']:.4f} ({r['new_candidates']}/{r['n']})")
-    print(f"  delta: {r['delta']:+.4f}  (need >= {-r['band']:+.4f} to clear the noise band)")
+    if r["small_n_rule"]:
+        print(f"  delta: {r['delta']:+.4f}  (small-n rule applied: n < {LOW_CONFIDENCE_N}, "
+              f"fails only on a drop of >= {SMALL_N_MIN_DROP} candidate rows; "
+              f"a 1-row drop is within noise)")
+    else:
+        print(f"  delta: {r['delta']:+.4f}  (need >= {-r['band']:+.4f} to clear the noise band)")
 
     if r["churn"]:
         print(f"\n  disposition changed on {len(r['churn'])} of {r['n']} row(s):")
@@ -175,8 +188,8 @@ def main(argv=None) -> int:
     if r["gate_pass"]:
         print("GATE: PASS — not a regression.")
         return 0
-    print(f"GATE: FAIL — regression. The candidate rate dropped more than "
-          f"measured judge noise (±{args.band:.2%}) can explain.")
+    print("GATE: FAIL — regression. The candidate rate dropped more than "
+          "measured judge noise can explain.")
     return 1
 
 

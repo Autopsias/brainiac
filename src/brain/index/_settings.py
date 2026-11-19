@@ -63,10 +63,7 @@ _DEFAULT_BOILERPLATE_PATTERNS = (
 )
 
 def _boilerplate_patterns() -> tuple[str, ...]:
-    raw = os.environ.get("BRAIN_INTEGRITY_BOILERPLATE_PATTERNS", "").strip()
-    if not raw:
-        return _DEFAULT_BOILERPLATE_PATTERNS
-    return tuple(p.strip() for p in raw.split(",") if p.strip())
+    return _DEFAULT_BOILERPLATE_PATTERNS
 
 def _matches_boilerplate_pattern(note_id: str, patterns: tuple[str, ...]) -> str | None:
     import fnmatch

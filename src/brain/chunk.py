@@ -22,7 +22,6 @@ and is applied by the embedder (``brain.embed``), OUTSIDE this contextual prefix
 """
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import dataclass
 
@@ -43,16 +42,13 @@ MAX_CHARS = 1400
 # small models), and the corpus had few multi-section short notes anyway (only ~824
 # of 83k chunks merged). Kept as an env-gated capability for other corpora, but the
 # DEFAULT IS 0 (pure section chunking) because it is the better config here.
-# Set BRAIN_WHOLENOTE_MAX_CHARS=<chars> to re-enable. Evidence:
+# Change WHOLE_NOTE_MAX_CHARS to re-enable. Evidence:
 # docs/operations/s10-agentic-retrieval-analysis.md.
 WHOLE_NOTE_MAX_CHARS = 0
 
 
 def _whole_note_max() -> int:
-    try:
-        return int(os.environ.get("BRAIN_WHOLENOTE_MAX_CHARS", "") or WHOLE_NOTE_MAX_CHARS)
-    except ValueError:
-        return WHOLE_NOTE_MAX_CHARS
+    return WHOLE_NOTE_MAX_CHARS
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
 

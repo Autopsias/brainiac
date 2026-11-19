@@ -18,7 +18,7 @@
     {
       "file": "eval/ne_upgrade_invariants.py",
       "rule": "invalid-assignment",
-      "count": 3
+      "count": 2
     },
     {
       "file": "eval/pt_leg_attribution.py",
@@ -208,7 +208,7 @@
     {
       "file": "src/brain/core/_supersession.py",
       "rule": "unresolved-attribute",
-      "count": 26
+      "count": 27
     },
     {
       "file": "src/brain/core/_supersession_journal.py",
@@ -268,12 +268,7 @@
     {
       "file": "src/brain/embed.py",
       "rule": "unresolved-import",
-      "count": 4
-    },
-    {
-      "file": "src/brain/embed_catalog.py",
-      "rule": "unresolved-import",
-      "count": 3
+      "count": 1
     },
     {
       "file": "src/brain/embed_onnx.py",
@@ -289,11 +284,6 @@
       "file": "src/brain/embed_onnx.py",
       "rule": "unresolved-import",
       "count": 7
-    },
-    {
-      "file": "src/brain/embed_qwen.py",
-      "rule": "unresolved-import",
-      "count": 3
     },
     {
       "file": "src/brain/encryption.py",
@@ -338,7 +328,7 @@
     {
       "file": "src/brain/folds/golden.py",
       "rule": "unresolved-attribute",
-      "count": 5
+      "count": 6
     },
     {
       "file": "src/brain/folds/graph.py",
@@ -441,7 +431,7 @@
       "count": 5
     },
     {
-      "file": "src/brain/graphreport_sections_2.py",
+      "file": "src/brain/graphreport_semantic.py",
       "rule": "unresolved-import",
       "count": 1
     },
@@ -484,11 +474,6 @@
       "file": "src/brain/index/_connection.py",
       "rule": "unresolved-reference",
       "count": 1
-    },
-    {
-      "file": "src/brain/index/_families.py",
-      "rule": "unresolved-attribute",
-      "count": 4
     },
     {
       "file": "src/brain/index/_graph.py",
@@ -557,11 +542,6 @@
     },
     {
       "file": "src/brain/index_stages/near_duplicates.py",
-      "rule": "unsupported-operator",
-      "count": 1
-    },
-    {
-      "file": "src/brain/index_stages/search_finalization.py",
       "rule": "unsupported-operator",
       "count": 1
     },
@@ -721,33 +701,33 @@
       "count": 2
     },
     {
-      "file": "src/brain/maintenance_folds_2.py",
+      "file": "src/brain/maintenance_graphfolds.py",
+      "rule": "unsupported-operator",
+      "count": 1
+    },
+    {
+      "file": "src/brain/maintenance_health_trend.py",
       "rule": "invalid-argument-type",
       "count": 5
     },
     {
-      "file": "src/brain/maintenance_folds_2.py",
+      "file": "src/brain/maintenance_health_trend.py",
       "rule": "not-subscriptable",
       "count": 1
     },
     {
-      "file": "src/brain/maintenance_folds_2.py",
+      "file": "src/brain/maintenance_health_trend.py",
       "rule": "unresolved-attribute",
       "count": 5
     },
     {
-      "file": "src/brain/maintenance_folds_2.py",
+      "file": "src/brain/maintenance_health_trend.py",
       "rule": "unsupported-operator",
       "count": 1
     },
     {
-      "file": "src/brain/maintenance_folds_4.py",
+      "file": "src/brain/maintenance_organization.py",
       "rule": "invalid-return-type",
-      "count": 1
-    },
-    {
-      "file": "src/brain/maintenance_graphfolds.py",
-      "rule": "unsupported-operator",
       "count": 1
     },
     {
@@ -791,11 +771,6 @@
       "count": 2
     },
     {
-      "file": "src/brain/rerank.py",
-      "rule": "unresolved-import",
-      "count": 5
-    },
-    {
       "file": "src/brain/rerank_onnx.py",
       "rule": "not-iterable",
       "count": 1
@@ -831,12 +806,12 @@
       "count": 1
     },
     {
-      "file": "src/brain/update_channels_2.py",
+      "file": "src/brain/update_flow.py",
       "rule": "no-matching-overload",
       "count": 1
     },
     {
-      "file": "src/brain/update_channels_2.py",
+      "file": "src/brain/update_flow.py",
       "rule": "unsupported-operator",
       "count": 1
     },
@@ -944,11 +919,6 @@
       "file": "tools/migrate_corpus_steps.py",
       "rule": "unresolved-import",
       "count": 2
-    },
-    {
-      "file": "tools/probe_xlingual.py",
-      "rule": "unresolved-import",
-      "count": 1
     },
     {
       "file": "tools/publish_public.py",

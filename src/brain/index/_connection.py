@@ -30,7 +30,7 @@ class _ConnectionMixin:
         # ONCE, not on every _apply_rerank call. Without this, qwen3-embed's
         # TextCrossEncoder reloads the 573MB ONNX model per query (S11 finding),
         # making rerank-bound eval pathologically slow. The cache is keyed on the
-        # resolved model id so a mid-session BRAIN_RERANKER_MODEL change is honoured.
+        # resolved model id so a model change is honoured.
         self._reranker_cache: tuple[str, Any] | None = None
         # Logged once (not per query) when a RESOLVED reranker's .rerank() call
         # itself raises -- distinct from "no model available" (that path never

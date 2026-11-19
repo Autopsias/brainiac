@@ -71,6 +71,11 @@ jobs:
           registry-url: "https://registry.npmjs.org"
           package-manager-cache: false
 
+      - name: Run the installer tests before publishing
+        shell: bash
+        working-directory: packaging/npm/brainiac-install
+        run: npm test
+
       - name: Ensure an npm new enough for trusted publishing
         shell: bash
         run: |

@@ -25,7 +25,6 @@ RANK: dict[str, int] = {t: i for i, t in enumerate(TIERS)}
 
 # The tier an unlabelled / unrecognised note is treated as (most restrictive).
 DEFAULT_DENY_TIER = "MNPI"
-DEFAULT_DENY_RANK = RANK[DEFAULT_DENY_TIER]
 
 # Default egress cap on the TRUSTED HOST: the full vault (owner decision,
 # 2026-07-10 — the old Internal default starved every real query: a curated

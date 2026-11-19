@@ -73,7 +73,6 @@ ACTION_REQUIRED_SECONDS = 300.0         # ADR: log action_required past 5 min
 # HARDENED:grill tempering constants — small, capped nudges; cosine (already
 # floor-gated) stays the dominant term.
 _BRIDGE_BOOST_PER_SHARED = 0.05
-_BRIDGE_BOOST_CAP = 0.15
 _RECENCY_BOOST_CAP = 0.10
 _RECENCY_HALF_LIFE_DAYS = 730.0         # ~2 years: beyond this, no recency boost
 

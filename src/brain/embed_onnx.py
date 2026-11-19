@@ -286,15 +286,8 @@ class OnnxEmbedder:
                 # char-based chunk ceiling (chunk.MAX_CHARS) does NOT guarantee
                 # <=512 tokens (dense PT/ES or code text tokenises >2x), so the
                 # embedder MUST clamp — the same default fastembed/sentence-
-                # transformers apply. Override via $BRAIN_EMBED_MAX_TOKENS.
-                _max_tok = 512
-                try:
-                    _mt = os.environ.get("BRAIN_EMBED_MAX_TOKENS")
-                    if _mt and _mt.strip().isdigit():
-                        _max_tok = int(_mt)
-                except Exception:  # fail-open: truncation env var is a tuning hint; default kept
-                    pass
-                self._tok.enable_truncation(max_length=_max_tok)
+                # transformers apply.
+                self._tok.enable_truncation(max_length=512)
                 # Pad to the longest in a batch so encode_batch returns a
                 # rectangular [batch, seq] int matrix (not ragged lists).
                 self._tok.enable_padding(pad_id=0, pad_token="<pad>")

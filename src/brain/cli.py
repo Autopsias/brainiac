@@ -474,6 +474,7 @@ from .cli_render import (  # noqa: E402,F401  (facade re-export)
     _capture_rerank_metadata as _capture_rerank_metadata,
     _concealment_notice as _concealment_notice,
     _header_line as _header_line,
+    _own_mark as _own_mark,
     _egress_footer as _egress_footer,
     _render_diagnose as _render_diagnose,
     _render_explain_hit as _render_explain_hit,

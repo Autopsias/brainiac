@@ -202,10 +202,11 @@ In order:
    just don't install Brainiac Manager in Cowork either way; its skills
    mutate the host and are useless in the VM.
 4. **Paste the session prompt**: `/brainiac-cowork-setup` printed the full
-   contents of the staged `cowork-session-prompt.md` — paste it into the
-   project's instructions (or the first message of each session). Cowork does
-   not read AGENTS.md on its own; this prompt is how the agent learns the
-   brain exists (§1).
+   contents of the engine's own `docs/install/cowork-session-prompt.md` (never
+   the copy staged on the Cowork mount, which a Cowork session can rewrite) —
+   paste it into the project's instructions (or the first message of each
+   session). Cowork does not read AGENTS.md on its own; this prompt is how the
+   agent learns the brain exists (§1).
 5. **Use it**: in a Cowork session the agent calls the host `brain-mcp`
    broker's tools — search, get, recent, and draft-capture for new notes. The
    vault itself is not on the mount (§VULN-3385 above), so every read goes
@@ -298,10 +299,12 @@ sending the message `contract?` — a healthy session answers
 If the probe gets no markers (older Cowork build, or a workspace staged
 before this change), use the **fallback channel**: the installer also stages
 `<workspace>/vault/.brain/routines/cowork-session-prompt.md` — a prompt
-block that bootstraps the env AND points the agent at the contract. Put it
-in the Claude Desktop project's custom instructions (once per project) or
-paste it as the first message of each session. Source doc:
-`docs/install/cowork-session-prompt.md`.
+block that bootstraps the env AND points the agent at the contract. Put the
+engine's own `docs/install/cowork-session-prompt.md` (the source of that
+staged copy) in the Claude Desktop project's custom instructions (once per
+project) or paste it as the first message of each session. Do not paste the
+staged copy itself: it sits on the Cowork mount, where a Cowork session can
+rewrite it, and what you paste becomes the project's standing instructions.
 
 **The broker layout, in one paragraph.** The vault itself is not on the
 Cowork mount — only the staged engine, model cache, skills and routines are

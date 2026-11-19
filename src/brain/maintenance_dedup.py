@@ -4,11 +4,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-from .maintenance_folds_4 import (
-    _WIKILINK_RE,
+from .maintenance_organization import (
     _floor_bytes,
     autodedup_max_per_run,
     body_sha256,
+    iter_wikilinks,
 )
 
 def auto_dedup_tier1(core: Any) -> dict[str, Any]:
@@ -127,7 +127,7 @@ def _populate_dedup_backlinks(live: list[dict[str, Any]]) -> None:
     ids = {note["id"] for note in live}
     backlinks: dict[str, int] = {}
     for note in live:
-        for match in _WIKILINK_RE.finditer(note["body"]):
+        for match in iter_wikilinks(note["body"]):
             target = match.group(1).strip()
             if target in ids and target != note["id"]:
                 backlinks[target] = backlinks.get(target, 0) + 1

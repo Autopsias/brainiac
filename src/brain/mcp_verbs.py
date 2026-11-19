@@ -278,9 +278,7 @@ def dispatch_dossier(
     core.annotate_create_safety(str(args["query"]), decisions + sources, max_tier)
     report: dict[str, Any] = {
         key: decision_report[key] + source_report[key]
-        for key in (
-            "total", "surfaced", "withheld", "withheld_unlabelled_default_deny",
-        )
+        for key in ("total", "surfaced", "withheld", "withheld_unlabelled_default_deny")
     }
     report["max_tier"] = decision_report["max_tier"]
     casing = sorted(
@@ -293,6 +291,7 @@ def dispatch_dossier(
         "query": result["query"],
         "decisions": decisions,
         "sources": sources,
+        "own_outputs": egress.own_outputs(sources),
         "retired_excluded": result["retired_excluded"],
         "egress": report,
     }

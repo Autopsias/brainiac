@@ -34,7 +34,16 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from .cowork_leak_scan import recoverable_artifacts
+from .cowork_leak_scan import ScanBudgetExceeded, recoverable_artifacts
+
+# The clock on the staging refusal's scan. Its OWN knob, not the doctor's
+# `BRAIN_MOUNT_SCAN_BUDGET` (20 s): the doctor row runs on every `maintain` and a
+# timeout there is non-gating, whereas this is a rare, attended gate, so a
+# timeout here is a REFUSAL and a too-small default would turn every update into
+# a permanent false one. Reading the doctor's knob would also invert the layering
+# (`doctor_mount_leak` imports this module). Zero or less means no clock.
+_SCAN_BUDGET_ENV = "BRAIN_STAGING_SCAN_BUDGET"
+_SCAN_BUDGET_DEFAULT = 120.0
 
 # NOT re-exported: `Artifact` and `recoverable_artifacts` have exactly one
 # canonical import path, `brain.cowork_leak_scan`. A re-export here would give
@@ -46,6 +55,8 @@ __all__ = [
     "assert_relocated_vault_leaves_no_note_bodies",
     "vault_is_relocated",
     "staging_root",
+    "staging_root_for_write",
+    "PlantedLink",
 ]
 
 
@@ -92,6 +103,34 @@ def staging_root(
     return workspace_p / "vault" / ".brain"
 
 
+class PlantedLink(OSError):
+    """A symlink sits in the part of the staging path the Cowork VM can write."""
+
+
+def staging_root_for_write(
+    vault: str | os.PathLike[str],
+    workspace: str | os.PathLike[str] | None = None,
+) -> Path:
+    """:func:`staging_root` for callers that WRITE under it; refuses a planted link.
+
+    ``staging_root`` resolves the vault and the workspace but appends ``vault``
+    and ``.brain`` UNRESOLVED, and those two names live on the mount the
+    untrusted Cowork VM can write. ``ln -s ~/.config <ws>/vault`` would steer
+    every staged file, ELF and ``rmtree`` of the host's staging pass to that
+    directory (F85). Only the appended suffix can differ from its resolved form
+    --- the base was resolved above --- so this refuses exactly a link there
+    and never misfires on an OS-level link in the base (``/tmp``, ``/var``) or
+    on ``..``.
+    """
+    root = staging_root(vault, workspace)
+    real = root.resolve()
+    if real != root:
+        raise PlantedLink(
+            f"refusing to stage through a symlink under the attached folder: "
+            f"{root} resolves to {real}")
+    return root
+
+
 class MountLeak(RuntimeError):
     """A staging call would leave a note body inside an attached workspace."""
 
@@ -106,13 +145,39 @@ def assert_workspace_carries_no_note_bodies(
     directly, so ``/brainiac-update`` and provisioning would walk straight past
     a guard that lived only in ``tools/cowork_workspace_install.sh``.
 
+    The scan is BUDGETED (``BRAIN_STAGING_SCAN_BUDGET``, default 120 s, zero or
+    less = no clock) because the workspace is writable by the untrusted VM: a
+    symlink ``ln -s / <workspace>/x`` hands the scanner the host's whole
+    filesystem. A scan that runs out of budget is a REFUSAL, never an all-clear
+    and never a crash, and it still names whatever the partial scan found.
+
     Raises :class:`MountLeak` naming every artefact found, so an operator does
     not have to re-derive the list from a bare refusal.
     """
-    leaks = recoverable_artifacts(workspace)
-    if not leaks:
+    try:
+        budget = float(os.environ.get(_SCAN_BUDGET_ENV, _SCAN_BUDGET_DEFAULT))
+    except ValueError:  # a mistyped override falls back to the bounded default
+        budget = _SCAN_BUDGET_DEFAULT
+    unfinished = False
+    try:
+        leaks = recoverable_artifacts(
+            workspace, budget_seconds=budget if budget > 0 else None)
+    except ScanBudgetExceeded as exc:
+        leaks, unfinished = exc.found, True
+    if not leaks and not unfinished:
         return
     lines = "\n".join(f"  - {a}" for a in leaks)
+    if unfinished:
+        found = (f" Found before it stopped ({len(leaks)}, a floor, not a total):\n"
+                 f"{lines}\n" if leaks else " ")
+        raise MountLeak(
+            f"{caller}: refusing to stage into {workspace} -- the scan for note "
+            f"bodies did not finish within {budget:.0f}s, which is NOT an all-clear."
+            f"{found}Likeliest cause: a symlink out of the folder to a huge tree "
+            "(e.g. `ln -s / <folder>/x`), or a very large attached folder. Remove "
+            "the link and re-run; if the folder really is that large, re-run with "
+            f"{_SCAN_BUDGET_ENV}=<seconds> ({_SCAN_BUDGET_ENV}=0 scans with no clock)."
+        )
     raise MountLeak(
         f"{caller}: refusing to stage into {workspace} -- a Cowork sandbox attaches "
         f"this folder and {len(leaks)} artefact(s) inside it still yield note bodies "
@@ -184,7 +249,8 @@ def _main(argv: list[str] | None = None) -> int:
       itself and cannot drift from :func:`brain.update_channels
       .stage_engine_and_skills`;
     * exits **2**, printing the artefact list to stderr, when the vault is
-      relocated and the workspace still yields note bodies.
+      relocated and the workspace still yields note bodies, or when the
+      staging root is reached through a symlink the VM planted (F85).
 
     Stdlib-only on purpose: this runs BEFORE the installer has resolved a
     semantic-capable interpreter, on whatever bare ``python3`` is on PATH.
@@ -201,10 +267,11 @@ def _main(argv: list[str] | None = None) -> int:
     try:
         assert_relocated_vault_leaves_no_note_bodies(
             args.workspace, args.vault, caller=args.caller)
-    except MountLeak as exc:
+        root = staging_root_for_write(args.vault, args.workspace)
+    except (MountLeak, PlantedLink) as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    print(staging_root(args.vault, args.workspace))
+    print(root)
     return 0
 
 

@@ -203,6 +203,21 @@ def wiring_alerts() -> list[dict[str, str]]:
 # Per-vault sources — on the shared mount, so BOTH roles read them
 # ---------------------------------------------------------------------------
 
+def lever_alerts(today: datetime.date) -> list[dict[str, str]]:
+    """One alert per kept switch whose review date has arrived (package data only).
+
+    A malformed date is skipped here; tests/test_levers.py fails the suite instead.
+    """
+    from .levers import LEVERS                                  # noqa: PLC0415
+    out: list[dict[str, str]] = []
+    for lv in LEVERS:
+        due = _date(lv.review_date)
+        if due is not None and due <= today:
+            out.append(_alert(f"lever:{lv.name}",
+                              f"lever review due: {lv.name} (since {lv.review_date}): {lv.reason}"))
+    return out
+
+
 def vault_alerts(
     vault: Path, today: datetime.date, *, role: str = "host",
 ) -> list[dict[str, str]]:
@@ -218,7 +233,8 @@ def vault_alerts(
                           name))
 
     out += exceptions_alerts(vault, today, name, role=role)
-    out += degradation_alerts(vault, today, name)
+    out += degradation_alerts(vault, today, name, role=role)
+    out += lever_alerts(today)
     # OUT-OF-BAND: reads only the sheet directory's newest mtime, so a dead
     # job cannot hide by failing to write its own ledger. Imported through the
     # facade (which re-exports sheet_heartbeat) to avoid an import cycle.
@@ -294,7 +310,7 @@ def exceptions_alerts(
         # this host's own key before trusting any field in it.
         from . import exceptions_verify as _exc_verify
 
-        bad = _exc_verify.verify_host_summary(vault, summary)
+        bad = _exc_verify.verify_host_summary(vault, summary, kind="exceptions")
         if bad is not None:
             return [_alert("exceptions:unreachable",
                            f"exceptions summary unreachable — {bad}", name)]
@@ -323,8 +339,19 @@ def exceptions_alerts(
         f"(or --text), or read {page}", name)]
 
 
+def host_feed_untrusted_reason(vault: Path, feed: dict[str, Any]) -> str | None:
+    """HOST role: why the mount copy of the current-findings feed cannot be
+    trusted, or ``None``. VM-writable on a co-located vault, so trust only a
+    feed this host signed AND whose signed full-UTC ``generated_at`` is not
+    older than the one the host recorded privately when it wrote the feed
+    (``exceptions_verify.verify_host_summary``)."""
+    from . import exceptions_verify as _exc_verify
+
+    return _exc_verify.verify_host_summary(vault, feed, kind="feed")
+
+
 def degradation_alerts(
-    vault: Path, today: datetime.date, name: str,
+    vault: Path, today: datetime.date, name: str, *, role: str = "host",
 ) -> list[dict[str, str]]:
     """What is degraded RIGHT NOW, from the feed the last maintain run wrote.
 
@@ -346,6 +373,11 @@ def degradation_alerts(
                            "vault's `brain maintain` predates it, so degradation "
                            "is UNREPORTED until the next run", name)]
         return []
+    if role != "vm":
+        bad = host_feed_untrusted_reason(vault, feed)
+        if bad is not None:
+            return [_alert("maintain:unparseable-feed",
+                           f"current-findings feed unreachable — {bad}", name)]
 
     at = _date(feed.get("at"))
     if at is None:

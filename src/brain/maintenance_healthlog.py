@@ -37,7 +37,6 @@ import uuid
 #   5. a PER-METRIC daily-bucket reducer (never one generic "representative")
 #      so a single-hour blocked/latency spike survives bucketing.
 # ---------------------------------------------------------------------------
-HEALTH_HISTORY_MAX_BYTES_ENV = "BRAIN_HEALTH_HISTORY_MAX_BYTES"
 DEFAULT_HEALTH_HISTORY_MAX_BYTES = 1_000_000
 HEALTH_HISTORY_LOCK_STALE_SECONDS = 30.0
 # Fix [6]: bound the archive re-read + add retention pruning. 14 days
@@ -45,9 +44,7 @@ HEALTH_HISTORY_LOCK_STALE_SECONDS = 30.0
 # sparse-metric (golden_score/synthesis_cost_usd) lookback; retention is a
 # much longer, separate knob (mirrors scripts/brain-synthesis.sh's
 # `find -mtime +N -delete` posture for its own out-json captures).
-HEALTH_HISTORY_READ_WINDOW_DAYS_ENV = "BRAIN_HEALTH_HISTORY_READ_WINDOW_DAYS"
 DEFAULT_HEALTH_HISTORY_READ_WINDOW_DAYS = 14
-HEALTH_ARCHIVE_RETENTION_DAYS_ENV = "BRAIN_HEALTH_ARCHIVE_RETENTION_DAYS"
 DEFAULT_HEALTH_ARCHIVE_RETENTION_DAYS = 90
 
 
@@ -170,15 +167,14 @@ def append_health_record(
     ``blocked`` item, never allowed to fail the whole maintain run.
 
     Also prunes archive segments past ``archive_retention_days`` (default
-    90, env-overridable — fix [6]) every call: cheap (a small glob under the
+    90 — fix [6]) every call: cheap (a small glob under the
     lock already held) and keeps the archive dir from growing forever."""
 
     from . import config as _config
 
-    limit = max_bytes if max_bytes is not None else int(
-        os.environ.get(HEALTH_HISTORY_MAX_BYTES_ENV, DEFAULT_HEALTH_HISTORY_MAX_BYTES))
-    retention = archive_retention_days if archive_retention_days is not None else int(
-        os.environ.get(HEALTH_ARCHIVE_RETENTION_DAYS_ENV, DEFAULT_HEALTH_ARCHIVE_RETENTION_DAYS))
+    limit = max_bytes if max_bytes is not None else DEFAULT_HEALTH_HISTORY_MAX_BYTES
+    retention = (archive_retention_days if archive_retention_days is not None
+                 else DEFAULT_HEALTH_ARCHIVE_RETENTION_DAYS)
     path = _config.health_history_path(vault)
     archive_dir = _config.health_archive_dir(vault)
     lock_path = _config.health_history_lock_path(vault)
@@ -266,7 +262,7 @@ def read_health_history(
 ) -> list[dict[str, Any]]:
     """Merge the live ``health-history.jsonl`` with RECENT rotated archive
     segments — bounded to the last ``window_days`` by file mtime (default
-    14, env-overridable via ``$BRAIN_HEALTH_HISTORY_READ_WINDOW_DAYS``; fix
+    14; fix
     [6] — re-reading and re-parsing EVERY archive segment on every hourly
     run does not scale as segments accumulate). De-duplicated by ``run_id``
     and sorted by ``ts``. Read-only — safe to call from ``health_trend`` on
@@ -276,8 +272,7 @@ def read_health_history(
 
     from . import config as _config
 
-    win = window_days if window_days is not None else int(
-        os.environ.get(HEALTH_HISTORY_READ_WINDOW_DAYS_ENV, DEFAULT_HEALTH_HISTORY_READ_WINDOW_DAYS))
+    win = window_days if window_days is not None else DEFAULT_HEALTH_HISTORY_READ_WINDOW_DAYS
     cutoff = time.time() - win * 86400.0
 
     records: dict[str, dict[str, Any]] = {}
@@ -310,13 +305,12 @@ DEFAULT_GOLDEN_REGRESSION_PCT = 0.05
 #: SPD-01 — a week-over-week jump of this MULTIPLE (5x, i.e. current >=
 #: 5 * previous) in remediation branch spend is a regression, even though
 #: there is no cap on the spend itself (owner ruling: unlimited spend,
-#: trend-alerted). Env: BRAIN_HEALTH_REMEDIATION_COST_REGRESSION_MULTIPLE.
+#: trend-alerted).
 DEFAULT_REMEDIATION_COST_REGRESSION_MULTIPLE = 5.0
 #: The grill ruling's absolute floor and first-occurrence channel: a trend
 #: check has nothing to compare on the very first night any model-backed
 #: branch spends anything, so that night — and any night whose spend crosses
 #: this floor — alerts directly rather than waiting for a second data point.
-BRAIN_REMEDIATION_COST_ALERT_USD_ENV = "BRAIN_REMEDIATION_COST_ALERT_USD"
 DEFAULT_REMEDIATION_COST_ALERT_USD = 5.0
 HEALTH_TREND_MIN_DAYS = 7
 HEALTH_TREND_MIN_BASELINE_DAYS = 2
@@ -384,4 +378,4 @@ def _bucket_daily(history: list[dict[str, Any]], metric: str) -> dict[datetime.d
 
 # Cross-section binds, deferred past this module's own defs.
 from .maintenance_recommendations import parse_recommendation_lines as parse_recommendation_lines  # noqa: E402
-from .maintenance import _log as _log  # noqa: E402
+_log = logging.getLogger("brain.maintenance")  # the facade's logger, by name: no back-edge to brain.maintenance

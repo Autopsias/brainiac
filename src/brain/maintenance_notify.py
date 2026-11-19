@@ -1,6 +1,7 @@
 """Degradation notifications: the maintain notify fold and marker retention."""
 from __future__ import annotations
 
+import base64
 import datetime
 import itertools as itertools
 import json
@@ -23,7 +24,6 @@ import hashlib
 # separate, already-covered surface — WD-01's cloud push is the other leg).
 # ---------------------------------------------------------------------------
 NOTIFY_ENV = "BRAIN_NOTIFY"
-NOTIFY_MARKER_RETENTION_DAYS_ENV = "BRAIN_NOTIFY_MARKER_RETENTION_DAYS"
 DEFAULT_NOTIFY_MARKER_RETENTION_DAYS = 30
 
 
@@ -136,6 +136,7 @@ def degradation_findings(
 
 
 CURRENT_FINDINGS_FILE = "current.json"
+FRESHNESS_UNWRITTEN_KEY = "maintain:freshness-record-unwritten"
 
 
 def record_current_findings(
@@ -155,12 +156,45 @@ def record_current_findings(
     condition clears here within the hour. Best-effort: a failed write must
     never fail a maintain run, and both the missing and the stale case are
     alerts of their own on the reading side — silence never means "all clear".
+
+    The feed sits on the mount the Cowork VM can write, so it is SIGNED with
+    the host's audit key like ``exceptions.json`` (``build_json_summary``):
+    ``alerts.degradation_alerts`` refuses a host feed this key did not sign.
+    No resolvable key writes an empty signature, which reads as unreachable.
     """
+    from . import audit as _audit
+    from . import config as _config
+
     path = _notify_marker_dir(vault) / CURRENT_FINDINGS_FILE
+    generated_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    # Record BEFORE the write so a failure can ride in the feed itself instead of
+    # vanishing: without the record the host's replay check falls back to the
+    # last-run date floor alone. (A crash between the two leaves the record newer
+    # than the file, which the host refuses: fail closed until the next run.)
+    findings = list(findings)
+    try:
+        from . import maintain_state_store
+
+        maintain_state_store.record_signed_at(vault, "feed", generated_at)
+    except (OSError, _config.HostPathUnsafe) as exc:
+        _log.warning("[degradation] feed freshness record unwritable (%s); only the "
+                     "last-run date floor guards the feed against replay", exc)
+        findings.append((FRESHNESS_UNWRITTEN_KEY,
+                         "the host could not record the feed's signed timestamp"))
     payload = {
         "at": today.isoformat(),
+        # A full signed UTC stamp, also recorded host-privately above: the host
+        # refuses an older signed copy (`alerts.host_feed_untrusted_reason`).
+        "generated_at": generated_at,
         "findings": [{"key": key, "text": text} for key, text in findings],
+        "vault_id": _config.vault_id(vault, create=True) or "",
     }
+    try:
+        key, _source = _audit.resolve_signing_key()
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        payload["signature"] = base64.b64encode(key.sign(canonical)).decode("ascii")
+    except Exception:  # noqa: BLE001 — unsigned, never forged
+        payload["signature"] = ""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         write_text_atomic(path, json.dumps(payload, indent=1))
@@ -185,11 +219,11 @@ def _notify_marker_path(vault: Path, key: str, today: datetime.date) -> Path:
 
 def _prune_notify_markers(vault: Path, retention_days: int | None = None) -> None:
     """Delete per-day dedup markers older than ``retention_days`` (default
-    30, env-overridable — fix [7]): one marker file accumulates per unique
+    30 — fix [7]): one marker file accumulates per unique
     finding per day forever otherwise. Best-effort, never raises."""
 
-    retention = retention_days if retention_days is not None else int(
-        os.environ.get(NOTIFY_MARKER_RETENTION_DAYS_ENV, DEFAULT_NOTIFY_MARKER_RETENTION_DAYS))
+    retention = (retention_days if retention_days is not None
+                 else DEFAULT_NOTIFY_MARKER_RETENTION_DAYS)
     _prune_old_files(_notify_marker_dir(vault), "*.marker", retention)
 
 

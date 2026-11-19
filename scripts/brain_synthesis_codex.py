@@ -17,7 +17,7 @@ import subprocess
 import tempfile
 import time
 
-from brain import classification, config
+from brain import classification, maintain_state_store
 from brain.core import BrainCore
 from brain.audit import resolve_signing_key
 from brain.draft_drain import sanitize_untrusted_note
@@ -149,11 +149,7 @@ def make_packet(args, core):
                           "body": note["body"][:2500], "truncated": len(note["body"]) > 2500})
         if len(knowledge) >= 12:
             break
-    heartbeat = config.maintain_state_path(args.vault)
-    try:
-        state = json.loads(heartbeat.read_text())
-    except (OSError, ValueError):
-        state = {}
+    state = maintain_state_store.load(args.vault)  # host-private; the mount copy is VM-writable
     # Diagnostics expose cadence/status, not arbitrary strings from host stores.
     diagnostics = {key: {k: value.get(k) for k in ("last_run", "last_success", "date", "rc", "status", "failed", "consecutive_failures")}
                    for key, value in state.items() if isinstance(value, dict)}

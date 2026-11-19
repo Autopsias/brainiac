@@ -42,7 +42,7 @@ paths:
    constant-noise "orphans" themselves), persisted into
    `maintain-state.json` + `health-history.jsonl` and surfaced via `brain
    health-report`'s "Graph hygiene" section; an orphan-count jump past
-   `$BRAIN_GRAPH_ORPHAN_GROWTH_MAX` (default 10) since the last run logs a
+   a fixed threshold (10) since the last run logs a
    `hot.md` line for the weekly synthesis session to work — never an owner
    ritual, never an inbox item. Only SYNTHESIS (writing/promoting prose
    notes, `index.md` content) stays session work — the folds manage
@@ -264,7 +264,7 @@ deliverable its ANCHOR is retired under the new anchor too, so the shelf shows
 one version. **(2) the broker verbs** `supersede` / `unsupersede` (§5).
 **(3) the broker's `capture`**, when the captured frontmatter carries
 `replaces:`. **A declaration that cannot be applied never fails the ingest and
-is never silent:** unknown old id, old already superseded, old == new — the
+is never silent:** unknown old id, old already superseded by a different note, old == new (an identical repeat of a supersede that already went through answers `already_done: true`, not an error) — the
 document lands, and the failure is reported as `supersede_declared_failed` in
 the maintain results, on `brain alerts` and the exceptions page (counts only —
 that feed is VM-readable), and as a `corpus_invariants` metric of the same name

@@ -36,7 +36,7 @@ BRAIN_BIN="${BRAIN_SYNTHESIS_BRAIN_BIN:-$(command -v brain || true)}"
 # (80 sources into 35 notes, only the closing step lost). Earlier successful
 # runs reported num_turns 165, 206 and 255 under the same 120 cap, so the CLI
 # now enforces the cap on the count it reports. 320 = the largest seen + ~25%.
-MAX_TURNS="${BRAIN_SYNTHESIS_MAX_TURNS:-320}"
+MAX_TURNS=320
 
 log() { printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$LOG"; }
 
@@ -100,7 +100,7 @@ rather than edit when the old claim was true-then; (3) review the Sunday
 promote-scan candidates in .brain/memory/hot.md and promote the ones that meet
 the one-idea-per-note bar into typed brain/ notes; (4) LINK WORK (owner
 ruling 2026-07-20, budget raised): if .brain/curation/link-candidates-*.json
-exists, work the top ${BRAIN_SYNTHESIS_LINK_BUDGET:-25} pairs — read both
+exists, work the top 25 pairs — read both
 notes, add a wikilink under "## Related" ONLY where genuinely related (skip
 freely; forced links are worse than none), and fix any knowledge-layer
 orphans the graph_hygiene fold logged in hot.md the same way; (5) update

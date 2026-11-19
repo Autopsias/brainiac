@@ -175,7 +175,7 @@ ENGINE_ASSET_FILES = [
     # rather than reading the run's report of them (the outcome-contract verdict
     # and the ledger-derived counters), so an installed engine with no `tools/`
     # dir of its own has to carry them or every nightly scores INCONCLUSIVE.
-    "tools/cos_contract.py", "tools/cos_contract_criteria.py", "tools/cos_contract_criteria_2.py",
+    "tools/cos_contract.py", "tools/cos_contract_criteria.py", "tools/cos_contract_evaluate.py",
     "tools/cos_contract_snapshot_shape.py", "tools/cos_contract_verdict_clauses.py", "tools/cos_reconcile_metrics.py",
     # batch-2 drain: the shipped checkers import these siblings at load time
     # (the sync prunes unlisted mirrors, and an installed engine has no tools/).
@@ -196,8 +196,8 @@ ENGINE_ASSET_FILES = [
     "tools/cos_mutate_discard_manifest.py",
     "tools/cos_page_script.py", "tools/cos_capture_hook.js",
     "tools/cos_mutate_gates.py", "tools/cos_mutate_ledger.py", "tools/cos_mutate_passes.py",
-    "tools/cos_mutate_plan.py", "tools/cos_mutate_plan_aged.py", "tools/cos_mutate_plan_budget.py", "tools/cos_mutate_plan_marks.py", "tools/cos_mutate_plan_noise.py", "tools/cos_mutate_plan_rulings.py", "tools/cos_mutate_plan_stale.py", "tools/cos_mutate_policy.py", "tools/cos_mutate_rehearsal.py",
-    "tools/cos_mutate_selfcheck.py", "tools/cos_mutate_shapes.py", "tools/cos_mutate_shapestore.py", "tools/cos_mutate_retry.py",
+    "tools/cos_mutate_plan.py", "tools/cos_mutate_plan_aged.py", "tools/cos_mutate_plan_budget.py", "tools/cos_mutate_plan_marks.py", "tools/cos_mutate_plan_rulings.py", "tools/cos_mutate_plan_stale.py", "tools/cos_mutate_policy.py", "tools/cos_mutate_rehearsal.py",
+    "tools/cos_mutate_shapestore.py", "tools/cos_mutate_retry.py",
     "tools/cos_cdp_capture.py", "tools/cos_driver.py", "tools/cos_driver_accounting.py",
     "tools/cos_driver_ledger_row.py", "tools/cos_driver_calendar.py",
     "tools/cos_driver_capture.py", "tools/cos_driver_categories.py", "tools/cos_driver_cli.py",

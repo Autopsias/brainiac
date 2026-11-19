@@ -7,17 +7,16 @@ remains selectable through ``$BRAIN_EMBED_MODEL`` as the rollback model.
 
 Two implementations satisfy the ``Embedder`` protocol:
 
-  * ``ArcticEmbedder``  — the real model via ``fastembed.TextEmbedding``. Used
-                          when fastembed + onnxruntime are importable AND the
-                          model is locally available (bundled / already cached;
-                          the Cowork egress allowlist excludes HuggingFace).
+  * ``OnnxEmbedder``    — the real model via direct ONNX Runtime (see
+                          ``brain.embed_onnx``), used when onnxruntime +
+                          tokenizers are importable and the model is staged.
   * ``HashEmbedder``    — a deterministic, network-free pseudo-embedder so the
                           index, retrieval, and tests run anywhere with no model
                           download. NOT semantically strong; a stand-in only.
 
 Because both implement the protocol — including ``model_id`` and ``dim`` — the
 index stores ``embed_model`` + ``embed_dim`` and forces a **clean rebuild** when
-either changes (a HashEmbedder index must never be queried with Arctic vectors,
+either changes (a HashEmbedder index must never be queried with real-model vectors,
 and vice-versa). Swapping the embedder is a one-line change at the call site.
 
 Pooling and task prefixes belong to the resolved model specification, never to
@@ -36,17 +35,11 @@ import sys
 from dataclasses import dataclass as dataclass
 from typing import Protocol, Sequence, runtime_checkable
 
-from .embed_backends import select_embedder
+from .embed_backends import REMOVED_BACKENDS, select_embedder
 
 _TOKEN = re.compile(r"[A-Za-z0-9]+")
 
-# Canonical Arctic-embed task prefix for queries (asymmetric retrieval). Passages
-# carry no prefix. NEVER translate these — they are model control tokens.
-QUERY_PREFIX = "query: "
-
-# The model of record and its MRL storage dimension.
-ARCTIC_MODEL_ID = "snowflake/snowflake-arctic-embed-m-v2.0"
-ARCTIC_FULL_DIM = 768
+# MRL storage dimension for ``mrl_truncate``.
 MRL_DIM = 256
 
 
@@ -137,8 +130,8 @@ def _l2_normalise(vec: list[float]) -> list[float]:
 def mrl_truncate(vec: Sequence[float], dim: int = MRL_DIM) -> list[float]:
     """Matryoshka truncation: take the first ``dim`` dims and re-normalise.
 
-    Arctic-embed-v2.0 is MRL-trained, so a 256-prefix of the 768-d vector is a
-    valid (smaller, faster-to-store) embedding once re-normalised to unit length.
+    For an MRL-trained model a prefix of the vector is a valid (smaller,
+    faster-to-store) embedding once re-normalised to unit length.
     """
     return _l2_normalise(list(vec[:dim]))
 
@@ -176,72 +169,6 @@ class HashEmbedder:
         self, texts: Sequence[str], *, is_query: bool = False
     ) -> list[list[float]]:
         return [self.embed(t, is_query=is_query) for t in texts]
-
-
-class ArcticEmbedder:
-    """Snowflake Arctic-embed-m-v2.0 via fastembed/ONNX — NO PyTorch.
-
-    Lazy: the ONNX model is loaded on first ``embed``/``embed_batch`` so merely
-    constructing the embedder (to read ``model_id``/``dim`` for a meta check) is
-    cheap and offline. Raises ``EmbedderUnavailable`` if fastembed/onnxruntime
-    is not importable.
-    """
-
-    def __init__(
-        self,
-        model_id: str = ARCTIC_MODEL_ID,
-        dim: int = MRL_DIM,
-        *,
-        cache_dir: str | None = None,
-    ) -> None:
-        self.model_id = model_id
-        self.dim = dim  # MRL storage dim
-        # Bundled-model path (S06 / INT-02): on the Cowork VM, HuggingFace is NOT
-        # on the egress allowlist, so the model is shipped in the workspace and
-        # ``$BRAIN_MODEL_CACHE`` points fastembed at that mounted cache dir. ONNX
-        # Runtime memory-maps the model file from there — read in place from the
-        # mount, never copied to /tmp.
-        self._cache_dir = cache_dir or os.environ.get("BRAIN_MODEL_CACHE")
-        self._model = None  # lazily created TextEmbedding
-
-    @staticmethod
-    def available() -> bool:
-        try:
-            import fastembed  # noqa: F401
-            import onnxruntime  # noqa: F401
-
-            return True
-        except Exception:  # fail-open: optional dependency probe; False means unavailable
-            return False
-
-    def _ensure_model(self):
-        if self._model is None:
-            try:
-                from fastembed import TextEmbedding
-            except Exception as exc:  # pragma: no cover - exercised when absent
-                raise EmbedderUnavailable(
-                    f"fastembed/onnxruntime not importable; install the 'embed' "
-                    f"extra or bundle the model: {type(exc).__name__}: {exc}"
-                ) from exc
-            self._model = TextEmbedding(
-                model_name=self.model_id, cache_dir=self._cache_dir,
-                threads=_ort_threads(), providers=_ort_providers(),
-            )
-        return self._model
-
-    def _encode(self, texts: list[str], is_query: bool) -> list[list[float]]:
-        model = self._ensure_model()
-        prepared = [(QUERY_PREFIX + t) if is_query else t for t in texts]
-        return [mrl_truncate(v, self.dim) for v in _embed_length_sorted(prepared, model.embed)]
-
-    def embed(self, text: str, *, is_query: bool = False) -> list[float]:
-        return self._encode([text], is_query)[0]
-
-    def embed_batch(
-        self, texts: Sequence[str], *, is_query: bool = False
-    ) -> list[list[float]]:
-        return self._encode(list(texts), is_query)
-
 
 
 class EmbedderUnavailable(RuntimeError):
@@ -315,28 +242,19 @@ def get_embedder(prefer: str = "auto") -> Embedder:
     (bge-m3-int8, Apache-2.0); this is the MINIMAL-DEPENDENCY path the
     corporate build uses (DIST-01: no fastembed, no PyTorch). ``onnx-int8`` is
     retained as a compatibility spelling for that same shipped int8 path.
-    ``arctic``/``catalog``/``qwen`` select the legacy fastembed/qwen3-embed
-    paths (kept for A/B only; NOT in the corporate build). ``auto`` honours
-    ``$BRAIN_EMBED_MODEL``: the known direct-ONNX specs include the shipped
-    bge model and the e5-small rollback. Otherwise it follows the optional
-    catalogue paths, then degrades to HashEmbedder — but that IMPLICIT degrade
-    is never silent (S11): it warns to stderr, or fails closed under
-    ``$BRAIN_REQUIRE_REAL_EMBEDDER``.
+    ``auto`` honours ``$BRAIN_EMBED_MODEL``: the known direct-ONNX specs include
+    the shipped bge model and the e5-small rollback. With a model named and no
+    ONNX runtime it RAISES; with none named it degrades to HashEmbedder — but
+    that IMPLICIT degrade is never silent (S11): it warns to stderr, or fails
+    closed under ``$BRAIN_REQUIRE_REAL_EMBEDDER``.
     """
     return select_embedder(
         prefer,
         model_name=os.environ.get("BRAIN_EMBED_MODEL"),
         hash_factory=HashEmbedder,
         onnx_factory=OnnxEmbedder,
-        arctic_factory=ArcticEmbedder,
-        catalog_factory=CatalogEmbedder,
-        qwen_factory=QwenEmbedder,
         onnx_available=OnnxEmbedder.available,
-        arctic_available=ArcticEmbedder.available,
-        catalog_available=CatalogEmbedder.available,
-        qwen_available=QwenEmbedder.available,
         direct_model=is_direct_onnx_model,
-        qwen_model=is_qwen_model,
         unavailable_error=EmbedderUnavailable,
         implicit_hash_fallback=_implicit_hash_fallback,
     )
@@ -355,35 +273,18 @@ def probe_auto_embedder() -> tuple[str, str]:
                               (the dangerous case — semantic search goes random,
                               the exact silent failure DV-03 hardens against).
 
-    Mirrors the auto-selection in ``get_embedder`` but WITHOUT constructing a
-    HashEmbedder or emitting the fallback warning, so it is safe to call from
-    the read-only doctor. ponytail: it duplicates the ``.available()`` chain
-    rather than calling ``get_embedder`` precisely to avoid that function's
-    stderr warning + HashEmbedder construction side effects.
+    Mirrors ``get_embedder`` but WITHOUT constructing a HashEmbedder or
+    emitting the fallback warning, so it is safe to call from the read-only
+    doctor.
     """
     forced = os.environ.get("BRAIN_EMBEDDER", "auto").strip().lower()
     if forced == "hash":
         return ("explicit-hash", "hash (BRAIN_EMBEDDER=hash)")
-    cat = os.environ.get("BRAIN_EMBED_MODEL")
-    if forced in ("onnx", "onnx-int8"):
-        return ("real", "onnx") if OnnxEmbedder.available() else ("implicit-hash", "onnx-unavailable")
-    if forced == "arctic":
-        return ("real", "arctic") if ArcticEmbedder.available() else ("implicit-hash", "arctic-unavailable")
-    if forced == "qwen":
-        return ("real", "qwen") if QwenEmbedder.available() else ("implicit-hash", "qwen-unavailable")
-    if forced == "catalog":
-        ok = bool(cat) and (QwenEmbedder.available() if (cat and is_qwen_model(cat)) else CatalogEmbedder.available())
-        return ("real", "catalog") if ok else ("implicit-hash", "catalog-unavailable")
-    # auto (or unset / unrecognised) — mirror get_embedder's discovery order.
-    if cat and is_qwen_model(cat) and QwenEmbedder.available():
-        return ("real", "qwen")
+    if forced in REMOVED_BACKENDS:
+        return ("implicit-hash", f"{forced}-removed")
     if OnnxEmbedder.available():
         return ("real", "onnx")
-    if cat and CatalogEmbedder.available():
-        return ("real", "catalog")
-    if ArcticEmbedder.available():
-        return ("real", "arctic")
-    return ("implicit-hash", "no-real-embedder")
+    return ("implicit-hash", "onnx-unavailable" if forced in ("onnx", "onnx-int8") else "no-real-embedder")
 
 
 # Approximate download/staging size for the install/warmup UX hint ONLY (never a
@@ -409,7 +310,7 @@ def model_cache_ready(embedder: "Embedder | None" = None) -> bool | None:
     if isinstance(e, HashEmbedder):
         return None
     if not isinstance(e, OnnxEmbedder):
-        return None  # Arctic/Catalog/Qwen: not the S02 auto-default; not probed
+        return None  # unknown embedder shape; not probed
     local_dir = e._local_dir
     onnx_file = e._onnx_file
     if local_dir:
@@ -442,10 +343,9 @@ def model_cache_ready(embedder: "Embedder | None" = None) -> bool | None:
     except Exception:  # fail-open: offline cache probe; False means not cached
         return False
 
-# The fastembed catalog adapter, the direct-ONNX embedders of record, and the
-# Qwen leg live in their own modules since the 2026-08-16 size ratchet;
-# re-exported so every `brain.embed.<name>` caller is unchanged.
-from .embed_catalog import CatalogEmbedder as CatalogEmbedder  # noqa: E402,F401
+# The direct-ONNX embedders of record live in their own module since the
+# 2026-08-16 size ratchet; re-exported so every `brain.embed.<name>` caller is
+# unchanged.
 from .embed_onnx import (  # noqa: E402,F401  (facade re-export)
     BGE_M3_DIM as BGE_M3_DIM,
     BGE_M3_INT8_MODEL_ID as BGE_M3_INT8_MODEL_ID,
@@ -468,6 +368,4 @@ from .embed_onnx import (  # noqa: E402,F401  (facade re-export)
     _resolve_onnx_model_spec as _resolve_onnx_model_spec,
     is_direct_onnx_model as is_direct_onnx_model,
 )
-from .embed_qwen import QwenEmbedder as QwenEmbedder  # noqa: E402,F401
-from .embed_qwen import is_qwen_model as is_qwen_model  # noqa: E402,F401
 

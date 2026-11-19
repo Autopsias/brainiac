@@ -45,17 +45,14 @@ def inbox_dir(vault: Path) -> Path:
 # Compatibility aliases: callers and tests import these hardened helpers from
 # ``brain.ingest.pipeline``. Their implementations live with the filesystem
 # transitions, while the public/private import surface stays stable.
-_manifest_path = files.manifest_path
 _load_manifest = files.load_manifest
 _save_manifest = files.save_manifest
-_failures_path = files.failures_path
 _load_failures = files.load_failures
 _save_failures = files.save_failures
 _sha256_bytes = files.sha256_bytes
 read_nofollow = files.read_nofollow
 ReadRefused = files.ReadRefused
 ReadTooLarge = files.ReadTooLarge
-_content_key = files.content_key
 _slugify_stem = files.slugify_stem
 _sanitize_archive_name = files.sanitize_archive_name
 _move = files.move_path
@@ -257,19 +254,14 @@ def _meta(
     fields = provenance.claim_from(prov)
     if fields or str((prov or {}).get("lane") or "") == "attachment":
         host_verified = bool((prov or {}).get("verified"))
+        # No `verified_texts`: an .eml's subject/sender/attachment name are
+        # composed by its SENDER (host-PARSED is not host-TRUSTED; no SPF/DKIM
+        # is checked), so a mapped keyword in them must never lower the MNPI
+        # default.
         tier, _reason = provenance.email_classification(
             vault,
             proposed=(prov or {}).get("classification"),
             category=(prov or {}).get("category"),
-            verified_texts=(
-                (
-                    fields.get("subject", ""),
-                    fields.get("sender", ""),
-                    archive_path.name,
-                )
-                if host_verified
-                else ()
-            ),
         )
         meta["classification"] = tier
         meta.update(provenance.frontmatter_keys(fields, verified=host_verified))

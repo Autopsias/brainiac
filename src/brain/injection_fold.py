@@ -252,12 +252,6 @@ def coverage_bucket(meta: dict[str, Any]) -> str:
     return str(value) if str(value) in SCAN_STATES else "unknown"
 
 
-#: The RETRIEVAL verdict's closed vocabulary, plus the open ``hidden:<n>``
-#: form. Everything :func:`retrieval_verdict` can return.
-RETRIEVAL_VERDICTS = ("clean", "unknown") + tuple(
-    b for b in COVERAGE_BUCKETS if b not in ("full", "absent"))
-
-
 #: What a read surface reports when the index cannot tell it anything: a
 #: pre-column index, a row the migration left NULL, an empty string. Never
 #: ``clean`` — see :func:`retrieval_verdict`.

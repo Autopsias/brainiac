@@ -101,10 +101,10 @@ def check_vm_maintain_heartbeat(vault: Path) -> dict:
     """VM-readable mirror of ``BrainCore._maintain_heartbeat_summary`` (the VM
     can read the heartbeat file even though only the host ever runs
     ``brain maintain``)."""
-    from . import config
+    from . import maintain_state_store
 
     surface = "Maintain heartbeat (.brain/maintain-state.json)"
-    state = _read_json(config.maintain_state_path(vault))
+    state = maintain_state_store.load(vault)
     if not state:
         return _row(surface, NOT_DETECTABLE,
                     "no maintain-state.json yet — brain maintain (host-only ritual) has not run")
@@ -132,11 +132,11 @@ def check_corpus_invariants(vault: Path) -> dict:
     branches run, when it has gone older than
     ``$BRAIN_INVARIANTS_MAX_AGE_DAYS`` (default 3), or when the last run
     recorded a regression past a metric's ratcheted floor."""
-    from . import config
     from . import invariants as inv
+    from . import maintain_state_store
 
     surface = "Corpus invariants watchdog (WAT-01)"
-    state = _read_json(config.maintain_state_path(vault))
+    state = maintain_state_store.load(vault)
     if not state:
         return _row(surface, NOT_DETECTABLE,
                     "no maintain-state.json yet — brain maintain has not run here")

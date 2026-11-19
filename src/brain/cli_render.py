@@ -28,6 +28,15 @@ def _header_line(item: dict) -> str:
     return f"\n    {text}" if text else ""
 
 
+def _own_mark(item: dict) -> str:
+    """`  [own output]` on a row that is our own earlier proposal (A-19), else "".
+
+    One renderer so every text surface prints the same tag; the row key is set
+    only after the classification gate, so a withheld note never reaches here.
+    """
+    return "  [own output]" if item.get("own_output") is True else ""
+
+
 def _concealment_notice(item: dict) -> str:
     """The `!! N run(s) of text in this note's source were HIDDEN` line, or "".
 
@@ -180,7 +189,7 @@ def _render_explain_hit(hit: dict) -> list[str]:
     """Readable ADR-0008 attribution for one already-gated search result."""
     explain = hit.get("explain") or {}
     lines = [
-        f"[{hit.get('source', '?')}] {hit.get('id', '?')}  "
+        f"[{hit.get('source', '?')}] {hit.get('id', '?')}{_own_mark(hit)}  "
         f"final-rank={explain.get('final_rank')}  "
         f"pre-rerank={explain.get('pre_rerank_score')}"
     ]

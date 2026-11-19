@@ -360,7 +360,8 @@ def write_shim(brain_dir) -> Path:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as out:
             out.write(SHIM_CONTENT)
-            os.fchmod(out.fileno(), 0o755)
+            # The shim is the `brain` launcher, so it must be executable.
+            os.fchmod(out.fileno(), 0o755)  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions
         os.replace(tmp, p)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)

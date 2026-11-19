@@ -137,8 +137,6 @@ BUILTIN_PROFILES: dict[str, dict[str, Any]] = {
 }
 
 PROFILES_ENV = "BRAIN_LANGUAGE_PROFILES"
-MIN_SHARE_ENV = "BRAIN_LANGUAGE_MIN_SHARE"
-MAX_LANGUAGES_ENV = "BRAIN_LANGUAGE_MAX"
 
 #: A language must hold at least this SHARE of the classified notes to count
 #: as a vault language (and so to earn a query variant).
@@ -291,22 +289,6 @@ def classify(text: str, profiles: dict[str, dict[str, Any]] | None = None) -> st
 
 # -- census ------------------------------------------------------------------
 
-def _env_float(name: str, default: float) -> float:
-    try:
-        v = float(os.environ.get(name, "").strip())
-    except (TypeError, ValueError):
-        return default
-    return v if 0.0 <= v <= 1.0 else default
-
-
-def _env_int(name: str, default: int) -> int:
-    try:
-        v = int(os.environ.get(name, "").strip())
-    except (TypeError, ValueError):
-        return default
-    return v if v >= 1 else default
-
-
 def select_languages(
     counts: dict[str, int], *, cap: int | None = None, min_share: float | None = None,
 ) -> dict[str, Any]:
@@ -319,8 +301,8 @@ def select_languages(
     about which languages an agent should translate into. ``unknown`` is never
     a vault language and never counts toward the denominator.
     """
-    cap = cap if cap is not None else _env_int(MAX_LANGUAGES_ENV, DEFAULT_MAX_LANGUAGES)
-    min_share = min_share if min_share is not None else _env_float(MIN_SHARE_ENV, DEFAULT_MIN_SHARE)
+    cap = cap if cap is not None else DEFAULT_MAX_LANGUAGES
+    min_share = min_share if min_share is not None else DEFAULT_MIN_SHARE
     classified = sum(n for c, n in counts.items() if c != UNKNOWN)
     ranked = sorted(
         ((c, n) for c, n in counts.items() if c != UNKNOWN and n > 0),
@@ -385,16 +367,3 @@ def census(
     if detail:
         out["by_note"] = by_note
     return out
-
-
-def variant_languages(census_block: dict[str, Any] | None, query_language: str) -> list[str]:
-    """The languages a query should ALSO be issued in, per the §5 contract.
-
-    Every vault language except the one the question is already in. Empty on a
-    single-language vault (the contract's stated exemption) and on an absent
-    census — fail quiet, never fabricate a target language.
-    """
-    langs = list((census_block or {}).get("vault_languages") or [])
-    if len(langs) < 2:
-        return []
-    return [c for c in langs if c != query_language]

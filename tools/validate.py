@@ -86,6 +86,36 @@ JD_FILENAME = re.compile(r"^\d\d[. ]")          # Johnny-Decimal, e.g. "60.03 x"
 # nested brackets (e.g. "display [x]") doesn't drop the link (M-5; mirrors
 # brain.graph._WIKILINK — fix both copies).
 WIKILINK = re.compile(r"\[\[([^\]|#]+)(?:\|.+?)?\]\]")
+# F128: finditer on WIKILINK retries every "[[" inside a run that already failed and
+# rescans the alias to end-of-line from each one, so a hostile one-line body (64 MB
+# VM drafts) is quadratic. iter_wikilinks yields the same links in one linear pass;
+# scan note bodies with it, never WIKILINK.finditer (mirrors brain.graph.iter_wikilinks).
+_WIKILINK_OPEN = re.compile(r"\[\[([^\]|#]+)")
+_WIKILINK_ALIAS = re.compile(r".+?\]\]")
+
+
+def iter_wikilinks(body: str):
+    """Yield a match per wikilink in ``body``; ``.group(1)`` is the target, exactly
+    as ``WIKILINK.finditer`` gives it (other groups/spans differ)."""
+    pos = dead = 0
+    while m := _WIKILINK_OPEN.search(body, pos):
+        # Every "[[" inside this run ends at `end` too and fails or not as this one
+        # does, so resume there instead of retrying each of them.
+        pos = end = m.end()
+        if body.startswith("]]", end):
+            pos = end + 2
+        elif body.startswith("|", end) and end >= dead:
+            alias = _WIKILINK_ALIAS.match(body, end + 1)
+            if not alias:
+                # No "]]" in the rest of this line: no later "|" on it closes either.
+                nl = body.find("\n", end)
+                dead = len(body) if nl < 0 else nl
+                continue
+            pos = alias.end()
+        else:
+            continue
+        yield m
+
 
 # HYG-03 (ADR-0003) — the four PARA zones inside brain/ that get a generated
 # --catalogs catalog.md (light PARA remains the only directory taxonomy).
@@ -358,7 +388,7 @@ def _source_anchored(meta: dict, body: str, raw_ids: set) -> bool:
     frontmatter key, or at least one wikilink resolving to a raw/ note."""
     if meta.get("source"):
         return True
-    linked = {m.group(1).strip() for m in WIKILINK.finditer(body)}
+    linked = {m.group(1).strip() for m in iter_wikilinks(body)}
     return bool(linked & raw_ids)
 
 

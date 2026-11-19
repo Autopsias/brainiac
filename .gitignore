@@ -59,6 +59,12 @@ _evidence/quality-v2/*
 !_evidence/quality-v2/s13-negative-controls.txt
 !_evidence/quality-v2/s13-baseline-delta.md
 !_evidence/quality-v2/s13-containment.md
+# declutter-cleanup trial: the size-cliff baseline must survive the worktree;
+# acceptance-review.md is written by s15 and committed by s16.
+!_evidence/declutter-cleanup/
+_evidence/declutter-cleanup/*
+!_evidence/declutter-cleanup/size-cliff-baseline.json
+!_evidence/declutter-cleanup/acceptance-review.md
 # s09 exception: the two committed evidence samples for the AUT-01/AUT-03 HTML
 # brief/digest renderers — generated with the NEUTRAL FALLBACK overlay only
 # (ADR-0003 Ruling e / ADR-0001 clean-room export; never real owner content).

@@ -178,7 +178,9 @@ bundle: Settings → Extensions → add `dist/brainiac.mcpb` (read-only bridge).
   carries a `reload` line, print that `launchctl` line for the human to run
   themselves — it's the one step an unattended process can't take. Then the
   human's only manual steps are adding the workspace folder in Cowork and
-  pasting the prompt block from `<workspace>/vault/.brain/routines/cowork-session-prompt.md`.
+  pasting the prompt block from the engine's own `docs/install/cowork-session-prompt.md`
+  (never the copy staged at `<workspace>/vault/.brain/routines/`: it sits on the
+  Cowork mount, where a Cowork session can rewrite it).
   In Claude Code, `/brainiac-cowork-setup` runs this same command and prints
   everything for you. Full detail: `docs/install/cowork.md`.
 

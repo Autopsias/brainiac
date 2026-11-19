@@ -30,7 +30,7 @@ def _add_search(sub, name: str, help_text: str) -> None:
         "--rerank-top",
         type=int,
         default=RERANK_TOP_DEFAULT,
-        help="rerank window, clamped to 10-50 by default (BRAIN_RERANK_MAX raises the ceiling further; default: 20 — a wider window costs strongly super-linearly, see eval/FOLLOWUPS.md #6)",
+        help="rerank window, clamped to 10-50 (default: 20 — a wider window costs strongly super-linearly, see eval/FOLLOWUPS.md #6)",
     )
     sp.add_argument(
         "--rerank-gate",
@@ -56,7 +56,7 @@ def _add_search(sub, name: str, help_text: str) -> None:
         action="append",
         default=None,
         metavar="TEXT",
-        help=f"an alternative phrasing of the same question (repeatable) — each is searched separately and the result lists are rank-fused into one ranking (RET-05). Use it when the question's words are yours rather than the notes' (a translation, a synonym expansion). Identical variants are deduplicated; variants past {core_mod.MULTI_MAX_VARIANTS} ($BRAIN_MULTI_MAX_VARIANTS) are dropped from the tail and reported; BRAIN_VARIANTS_ENABLED=0 is the kill switch",
+        help=f"an alternative phrasing of the same question (repeatable) — each is searched separately and the result lists are rank-fused into one ranking (RET-05). Use it when the question's words are yours rather than the notes' (a translation, a synonym expansion). Identical variants are deduplicated; variants past {core_mod.MULTI_MAX_VARIANTS} are dropped from the tail and reported; BRAIN_VARIANTS_ENABLED=0 is the kill switch",
     )
     sp.add_argument(
         "--rerank-fused",

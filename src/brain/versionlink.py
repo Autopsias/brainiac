@@ -80,7 +80,7 @@ end as ``ambiguous``, are logged once, and are never proposed.
 """
 from __future__ import annotations
 
-import os
+import hashlib
 import re
 import unicodedata
 from pathlib import Path
@@ -88,7 +88,7 @@ from typing import Any, Mapping
 
 from . import frontmatter, provenance
 from .maintenance import version_family_key as version_family_key
-from .maintenance_folds_4 import RENDITION_MARKERS
+from .maintenance_organization import RENDITION_MARKERS
 from .notes import sha256_text
 
 # -- owner-tunable knobs ------------------------------------------------------
@@ -96,13 +96,10 @@ from .notes import sha256_text
 #: integrity`'s near-dup default (0.95). Documented range: 0.90-0.99 — below
 #: 0.90 template siblings start clearing it even after boilerplate stripping;
 #: above 0.99 only byte-near-identical bodies qualify (which DDP-01 already
-#: handles). Owner override: $BRAIN_VERSIONLINK_MIN_SIMILARITY.
-MIN_SIMILARITY_ENV = "BRAIN_VERSIONLINK_MIN_SIMILARITY"
+#: handles).
 DEFAULT_MIN_SIMILARITY = 0.95
-MIN_SIMILARITY_RANGE = (0.90, 0.99)
 
 #: how far back a note counts as "recently committed" (the successor side).
-WINDOW_DAYS_ENV = "BRAIN_VERSIONLINK_WINDOW_DAYS"
 DEFAULT_WINDOW_DAYS = 14
 
 #: The graduation key's ruleset component (mirrors the producer's
@@ -129,20 +126,11 @@ MAX_BODY_CHARS = 20_000    # embed input cap — a version diff is near the top
 
 
 def min_similarity() -> float:
-    raw = os.environ.get(MIN_SIMILARITY_ENV, "")
-    try:
-        val = float(raw)
-    except (TypeError, ValueError):
-        return DEFAULT_MIN_SIMILARITY
-    lo, hi = MIN_SIMILARITY_RANGE
-    return min(max(val, lo), hi)
+    return DEFAULT_MIN_SIMILARITY
 
 
 def window_days() -> int:
-    try:
-        return max(1, int(os.environ.get(WINDOW_DAYS_ENV, "")))
-    except (TypeError, ValueError):
-        return DEFAULT_WINDOW_DAYS
+    return DEFAULT_WINDOW_DAYS
 
 
 # -- name normalization (NFC FIRST — macOS readdir hands back NFD) ------------
@@ -468,21 +456,48 @@ _RECENT_SQL = (
     "AND MAX(COALESCE(created, ''), COALESCE(updated, '')) >= ?")
 
 
+def _signed_hashes(core: Any) -> dict[str, str]:
+    """Vault-relative path -> the newest content hash the HOST audit chain
+    signed for it. The chain lives off the VM-writable mount; no chain (the VM
+    leg) or an unreadable one gives ``{}``, so nothing counts as verified."""
+    audit = getattr(core, "audit", None)
+    try:
+        return audit.latest_signed_hashes() if audit is not None else {}
+    except Exception:  # noqa: BLE001 — unreadable chain: fail closed
+        return {}
+
+
 def _load(core: Any) -> list[NoteView]:
+    from .index_stages.sync import _chain_key
+
     cols = ("id", "title", "path", "zone", "classification", "content_hash",
             "created", "updated", "document_date", "effective_date",
             "is_latest_version", "superseded_by")
     out: list[NoteView] = []
+    signed: dict[str, str] | None = None     # read once, and only if a note claims it
     for row in core.index.conn.execute(_SCOPE_SQL).fetchall():
         rec = dict(zip(cols, row))
         path = Path(str(rec["path"]))
         if not path.is_absolute():
             path = Path(core.vault) / path
+        # ONE read: the bytes hashed below are the bytes parsed, so a mount
+        # writer cannot swap the file between the check and the use.
         try:
-            text = path.read_text(encoding="utf-8")
+            raw = path.read_bytes()
+            # read_text's universal newlines, so content_hash below is unchanged
+            text = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
         except (OSError, UnicodeDecodeError):
             continue
         meta, body = frontmatter.parse_text(text)
+        # F96: `provenance.verified` is host-earned but this file sits on the
+        # VM-writable mount. Honour it only while the bytes are the ones the
+        # host chain signed; else it is an unverified claim (drift).
+        if provenance.VERIFIED_KEY in meta:
+            if signed is None:
+                signed = _signed_hashes(core)
+            if (signed.get(_chain_key(str(path), Path(core.vault)))
+                    != hashlib.sha256(raw).hexdigest()):
+                meta = provenance.without_host_only(meta)
         rec["path"] = str(path)
         # The hash of what is ON DISK NOW, not the index column: this fold runs
         # BEFORE the umbrella's sync, so the indexed hash can lag the file. A

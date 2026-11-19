@@ -338,6 +338,10 @@ def _header(data: dict[str, Any], *, full: bool, ceiling: str,
 def _feed_warning(findings: dict[str, Any]) -> str:
     """A missing or stale feed is itself a finding. Silence must never read as
     'nothing to report' — the same rule ``alerts.py`` applies to this feed."""
+    if findings.get("unverified"):
+        return ('<p class="warn">&#9888; The findings file could not be verified '
+                f'({_esc(findings["unverified"])}). The two cards below are '
+                'UNKNOWN right now, not clean.</p>')
     if findings.get("missing"):
         return ('<p class="warn">&#9888; The nightly run has not left its '
                 'findings file. The two cards below are UNKNOWN right now, '
@@ -381,7 +385,7 @@ def render_page(
     only the content, never the existence, is hidden."""
     questions = data["questions"]
     findings = data["findings"]
-    feed_issue = findings.get("missing") or findings.get("stale")
+    feed_issue = findings.get("missing") or findings.get("stale") or findings.get("unverified")
     dead = findings.get("dead_automation") or []
     untriaged = findings.get("untriaged") or []
     other = findings.get("other") or []

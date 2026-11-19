@@ -1,6 +1,5 @@
 """Maintenance state methods for BrainCore."""
 from __future__ import annotations
-from ..atomic_temp import write_text_atomic
 
 from ._shared import (
     Any,
@@ -115,22 +114,18 @@ class _MaintenanceStateMixin:
         entry["consecutive_failures"] = int(prev.get("consecutive_failures", 0))
         state[branch] = entry
     def _load_maintain_state(self) -> dict[str, Any]:
-        import json as _json
+        """The HOST-PRIVATE copy (F104): the mount file is VM-writable, so it
+        is a display projection and is never what the engine decides from."""
+        from .. import maintain_state_store as _store
 
-        path = config.maintain_state_path(self.vault)
-        try:
-            state = _json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return {}
-        return state if isinstance(state, dict) else {}
+        return _store.load(self.vault)
     def _save_maintain_state(self, state: dict[str, Any]) -> None:
         """Atomic write (tmp + replace) so a crash mid-write never corrupts
-        the file the session-start hook and ``brain status`` both read."""
-        import json as _json
+        the file the session-start hook and ``brain status`` both read. Writes
+        the host-private authoritative copy, then the mount projection."""
+        from .. import maintain_state_store as _store
 
-        path = config.maintain_state_path(self.vault)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        write_text_atomic(path, _json.dumps(state, indent=2, sort_keys=True))
+        _store.save(self.vault, state)
     def _note_graphify_build_outcome(
         self, *, status: str, attempted_at: str, detail: str = "",
     ) -> None:
@@ -369,7 +364,9 @@ class _MaintenanceStateMixin:
                 seen.add(fp)
         return {"date": d.isoformat(), "findings": findings, "feedback_written": written}
     def pending_engine_feedback(self) -> list[str]:
-        """Filenames of engine-feedback prompts waiting to be fired at the repo
-        (surfaced by the SessionStart hook)."""
+        """Filenames of engine-feedback prompts waiting to be fired at the repo.
+
+        No ``src/`` code calls this: the SessionStart hooks and ``brain alerts``
+        count ``engine-feedback/*.md`` with their own glob."""
         fb_dir = self._engine_feedback_dir()
         return sorted(f.name for f in fb_dir.glob("*.md")) if fb_dir.is_dir() else []

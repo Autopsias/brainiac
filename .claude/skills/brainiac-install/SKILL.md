@@ -233,9 +233,11 @@ Desktop's Cowork and want this brain available there?" If no, tell them the
 workspace is staged and idle — it costs nothing sitting unused, and they can
 add the folder in Cowork any time later with no re-run needed. If yes, print
 what `/brainiac-cowork-setup`'s final report prints: the workspace folder to
-add in Cowork, the full contents of the staged
-`<workspace>/vault/.brain/routines/cowork-session-prompt.md`, and the
-skill-upload order (`docs/install/cowork.md` step 2) — or just hand off to
+add in Cowork, the full contents of the engine's own
+`docs/install/cowork-session-prompt.md` (never the copy staged on the Cowork
+mount, which a Cowork session can rewrite — `/brainiac-cowork-setup` (b) says
+how to find and check it), and the skill-upload order
+(`docs/install/cowork.md` step 2) — or just hand off to
 `/brainiac-cowork-setup` if it's installed and the user wants the fuller
 walkthrough (it re-runs `provision-local` too, which is a no-op here).
 

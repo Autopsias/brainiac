@@ -237,9 +237,9 @@ def _load_ranking_metadata(
     rowids = tuple(scores)
     placeholders = ",".join("?" * len(rowids))
     date_expr = "COALESCE(NULLIF(effective_date,''), NULLIF(document_date,''), created)"
-    # The resolved zone feeds the zone prior and near-dup suppression only;
-    # with neither configured it is dead work (~1.2 s on the live vault).
-    need_zone = index._zone_prior_active() or index._dedup_params()[0] is not None
+    # The resolved zone feeds the zone prior only; when it is off this is
+    # dead work (~1.2 s on the live vault).
+    need_zone = index._zone_prior_active()
     for rowid, stored_zone, path, date in index.conn.execute(
         f"SELECT rowid, zone, path, {date_expr} FROM notes "  # nosec B608
         f"WHERE rowid IN ({placeholders})",
@@ -293,9 +293,7 @@ def _apply_recency_prior(
     weight = min(1.0, max(0.0, weight))
     if weight <= 0:
         return
-    half_life = _env_float("BRAIN_RECENCY_HALFLIFE_DAYS", 90.0 if temporal else 180.0)
-    if not math.isfinite(half_life) or half_life <= 0:
-        half_life = 90.0 if temporal else 180.0
+    half_life = 90.0 if temporal else 180.0
     today = index._today_for_search()
     for rowid in scores:
         factor = _recency_factor(valid_date.get(rowid, ""), today, weight, half_life)

@@ -414,7 +414,11 @@ def phase_windows_ci(accept_reason: str | None) -> str:
             return f"NO RUNS, explicitly accepted: {accept_reason}"
         raise _pp.PublishError("distribution-matrix has no runs — pass --accept-windows-ci '<reason>'")
     latest = runs[0]
-    line = (f"{latest['conclusion']} on {latest['head_branch']} at {latest['created_at']}"
+    # Any GitHub user can pick a fork-PR branch name; it lands in the consent
+    # gate's "Verified so far" list and the evidence transcript, so keep it one
+    # short line of plain path characters.
+    branch = re.sub(r"[^A-Za-z0-9._/-]", "?", str(latest["head_branch"]))[:60]
+    line = (f"{latest['conclusion']} on {branch} at {latest['created_at']}"
             f" ({latest['html_url']})")
     if latest["conclusion"] != "success":
         if accept_reason:

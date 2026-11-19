@@ -8,7 +8,6 @@ knows what an ``Artifact`` is, which is exactly why it separates cleanly ---
 """
 from __future__ import annotations
 
-import os
 import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -126,7 +125,7 @@ def _classify_db(db: Path) -> str:
 # right here because every worker blocks in `read()` and releases the GIL; a
 # process pool would pay fork cost for a 16-byte read. If a workspace ever grows
 # past ~100k files, batch the walk instead of widening this.
-_SNIFF_WORKERS = int(os.environ.get("BRAIN_MOUNT_SCAN_WORKERS", "32"))
+_SNIFF_WORKERS = 32
 _sniff_pool: "ThreadPoolExecutor | None" = None
 
 

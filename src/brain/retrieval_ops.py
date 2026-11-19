@@ -91,7 +91,7 @@ def _prepare_fanout(
     cap = (
         max_variants
         if max_variants is not None
-        else _env_positive_int("BRAIN_MULTI_MAX_VARIANTS", MULTI_MAX_VARIANTS)
+        else MULTI_MAX_VARIANTS
     )
     dropped_over_cap = variants[cap:]
     variants = variants[:cap]

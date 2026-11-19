@@ -22,8 +22,9 @@ first ``rerank`` so merely constructing the reranker is cheap and offline.
 
 Two implementations satisfy the ``Reranker`` protocol:
 
-  * ``GteReranker``  — the real cross-encoder via fastembed/ONNX. Raises
-                       ``RerankerUnavailable`` if the runtime/model is absent.
+  * ``OnnxReranker`` — the real cross-encoder via direct ONNX Runtime (see
+                       ``brain.rerank_onnx``). Raises ``RerankerUnavailable`` if
+                       the runtime/model is absent.
   * ``NoopReranker`` — identity: returns candidates in their incoming order with
                        monotonically-decreasing synthetic scores. Always
                        available, network-free; the guaranteed fallback and the
@@ -78,8 +79,8 @@ def _ort_providers() -> list[str]:
 # EN-content note can sit at fused rank 40+ (buried under same-language
 # transcript chunks) and never enter a top-20 rerank window. A wide-candidate
 # cross-encoder pass (top 100–200) is the standard agentic "retrieve broad →
-# rerank" recovery for exactly that case, so the ceiling is env-overridable via
-# BRAIN_RERANK_MAX. The cross-encoder re-scores the full note body, giving
+# rerank" recovery for exactly that case, so the ceiling was once env-overridable (that
+# variable was removed 2026-11-14). The cross-encoder re-scores the full note body, giving
 # brain a whole-note signal at rerank time — the incumbent's structural
 # advantage, recovered post-hoc.
 #
@@ -107,9 +108,8 @@ def _ort_providers() -> list[str]:
 # eval/FOLLOWUPS.md #4, still the correct RANKING analysis) are only reachable
 # if a search is allowed to take a minute or more.
 #
-# This is a change of DEFAULT, not of capability: the ceiling stays 50, so
-# BRAIN_RERANK_TOP / BRAIN_RERANK_MAX still opt into the wide-candidate pass
-# deliberately, exactly as before.
+# The ceiling stays 50; the old BRAIN_RERANK_TOP / BRAIN_RERANK_MAX overrides
+# were removed 2026-11-14.
 RERANK_TOP_DEFAULT = 20
 
 
@@ -136,13 +136,13 @@ RERANK_TOP_MAX = 50
 # jina-reranker-v2-base-multilingual (in the fastembed catalog, ~1.1 GB int8/ONNX,
 # CC-BY-NC for the weights — gate at deploy if commercial use is required). It
 # scores cross-lingual (PT-query ↔ EN-passage) pairs correctly with a wide margin
-# where the e5-small bi-encoder cannot. Override via BRAIN_RERANKER_MODEL.
+# where the e5-small bi-encoder cannot.
 GTE_RERANKER_MODEL_ID = "jinaai/jina-reranker-v2-base-multilingual"
 
 
 def _resolve_reranker_model() -> str:
-    """The reranker model id, env-overridable via ``BRAIN_RERANKER_MODEL``."""
-    return os.environ.get("BRAIN_RERANKER_MODEL") or GTE_RERANKER_MODEL_ID
+    """The reranker model id."""
+    return GTE_RERANKER_MODEL_ID
 
 
 @runtime_checkable
@@ -174,126 +174,6 @@ class NoopReranker:
         return [float(n - i) for i in range(n)]
 
 
-class GteReranker:
-    """gte-multilingual-reranker-base via fastembed/ONNX — NO PyTorch.
-
-    Lazy: the ONNX cross-encoder is created on first ``rerank`` so constructing
-    the reranker (to read ``model_id``) is cheap and offline. Raises
-    ``RerankerUnavailable`` if fastembed's cross-encoder support or the model is
-    not importable/available.
-    """
-
-    def __init__(
-        self,
-        model_id: str | None = None,
-        *,
-        cache_dir: str | None = None,
-    ) -> None:
-        self.model_id = model_id or _resolve_reranker_model()
-        self._cache_dir = cache_dir or os.environ.get("BRAIN_FASTEMBED_CACHE")
-        self._model = None  # lazily created TextCrossEncoder
-
-    @staticmethod
-    def available() -> bool:
-        try:
-            from fastembed.rerank.cross_encoder import TextCrossEncoder  # noqa: F401
-
-            return True
-        except Exception:  # fail-open: optional dependency probe; False means unavailable
-            return False
-
-    def _ensure_model(self):
-        if self._model is None:
-            try:
-                from fastembed.rerank.cross_encoder import TextCrossEncoder
-            except Exception as exc:  # pragma: no cover - exercised when absent
-                raise RerankerUnavailable(
-                    "fastembed cross-encoder support not importable; install the "
-                    "'embed' extra or bundle the reranker model"
-                ) from exc
-            try:
-                self._model = TextCrossEncoder(
-                    model_name=self.model_id, cache_dir=self._cache_dir,
-                    threads=_ort_threads(), providers=_ort_providers(),
-                )
-            except Exception as exc:  # pragma: no cover - model unavailable offline
-                raise RerankerUnavailable(
-                    f"reranker model {self.model_id!r} unavailable: {exc}"
-                ) from exc
-        return self._model
-
-    def rerank(self, query: str, passages: Sequence[str]) -> list[float]:
-        if not passages:
-            return []
-        model = self._ensure_model()
-        return [float(s) for s in model.rerank(query, list(passages))]
-
-
-class QwenReranker:
-    """Qwen3-Reranker-0.6B via the ``qwen3-embed`` lib (ONNX INT8, Apache-2.0).
-
-    The 2025-2026 best-in-class small multilingual reranker (MMTEB-R 66.36).
-    Shipped in S11 (UPG-03) as the upgrade over ``jina-reranker-v2`` — BOTH a
-    quality gain (largest on long multilingual docs, +27 on MLDR per the tech
-    report) AND a licence fix (jina-reranker-v2 is CC-BY-NC-4.0, a corporate-
-    deployment blocker; Qwen3 is Apache-2.0). ~573 MB INT8 ONNX.
-
-    Loaded via the same ``qwen3-embed`` lib as the embedder (it exposes a
-    ``TextCrossEncoder`` with a fastembed-compatible ``rerank(query, docs)``
-    API). Lazy: the ONNX session is created on first ``rerank``.
-    """
-
-    def __init__(
-        self,
-        model_id: str | None = None,
-        *,
-        cache_dir: str | None = None,
-    ) -> None:
-        self.model_id = model_id or _resolve_reranker_model()
-        self._cache_dir = cache_dir or os.environ.get("BRAIN_FASTEMBED_CACHE")
-        self._model = None
-
-    @staticmethod
-    def available() -> bool:
-        try:
-            import qwen3_embed  # noqa: F401
-            import onnxruntime  # noqa: F401
-
-            return True
-        except Exception:  # fail-open: optional dependency probe; False means unavailable
-            return False
-
-    def _ensure_model(self):
-        if self._model is None:
-            try:
-                from qwen3_embed import TextCrossEncoder
-            except Exception as exc:  # pragma: no cover
-                raise RerankerUnavailable(
-                    "qwen3-embed not importable; pip install qwen3-embed"
-                ) from exc
-            try:
-                self._model = TextCrossEncoder(
-                    model_name=self.model_id, cache_dir=self._cache_dir,
-                    threads=_ort_threads(), providers=_ort_providers(),
-                )
-            except Exception as exc:  # pragma: no cover - model unavailable offline
-                raise RerankerUnavailable(
-                    f"reranker model {self.model_id!r} unavailable: {exc}"
-                ) from exc
-        return self._model
-
-    def rerank(self, query: str, passages: Sequence[str]) -> list[float]:
-        if not passages:
-            return []
-        model = self._ensure_model()
-        return [float(s) for s in model.rerank(query, list(passages))]
-
-
-def _is_qwen_reranker(model_id: str) -> bool:
-    low = (model_id or "").lower()
-    return "qwen3-reranker" in low or "qwen-rerank" in low
-
-
 # The ONNX-Runtime-direct reranker adapter (gte-multilingual-reranker-base,
 # the fully-open OPEN_DEFAULT_RERANKER of record) lives in ``brain.rerank_onnx``
 # — its own module since it carries the tokenizer/session plumbing that is
@@ -319,53 +199,25 @@ def get_reranker(prefer: str = "noop") -> Reranker:
     ``noop`` forces the identity fallback (the DEFAULT — reranking is OPT-IN at
     the call site, because even the open reranker is ~4 s/query on a corporate
     HP). ``onnx`` selects ``OnnxReranker`` — the fully-open model of record
-    (gte-multilingual-reranker-base, Apache-2.0; the CC-BY-NC jina-reranker-v2
-    replacement). ``gte`` selects the legacy fastembed ``GteReranker`` (the
-    CC-BY-NC jina-v2 catalogue path — AVOID for commercial use).
-    ``qwen`` selects ``QwenReranker`` (decoder; fails the HP latency gate —
-    legacy only). ``auto`` prefers a Qwen reranker when ``$BRAIN_RERANKER_MODEL``
-    names one, else the open OnnxReranker (gte), else the legacy fastembed path,
-    else noop.
+    (gte-multilingual-reranker-base, Apache-2.0). ``auto`` uses the
+    OnnxReranker when its weights are available, else noop.
     """
     env = os.environ.get("BRAIN_RERANKER_PREFER", "").strip().lower()
-    if env in {"noop", "gte", "qwen", "onnx"}:
+    if env in {"noop", "onnx"}:
         prefer = env  # eval/AB-test override: force a specific reranker
     if prefer == "noop":
         return NoopReranker()
-    if prefer == "qwen":
-        return QwenReranker()
-    if prefer == "gte":
-        return GteReranker()
     if prefer == "onnx":
         return OnnxReranker()
     # auto
-    rid = _resolve_reranker_model()
-    if _is_qwen_reranker(rid) and QwenReranker.available():
-        return QwenReranker()
-    # OPEN DEFAULT: gte-multilingual-reranker-base via OnnxReranker (Apache-2.0;
-    # replaces the CC-BY-NC jina-reranker-v2). Preferred over the fastembed path.
     if OnnxReranker.available():
         return OnnxReranker()
-    # NOT GteReranker here any more (0.20.1). Its `available()` answers "is
-    # fastembed importable?", so auto used to fall through to it whenever the
-    # open ONNX weights were uncached — and it would then download from
-    # fastembed's own catalogue mid-search, which is the very thing this
-    # release stops. It is also the CC-BY-NC jina path, which auto should
-    # never reach for on its own. Still selectable deliberately, with
-    # `BRAIN_RERANKER_PREFER=gte` or `get_reranker("gte")`.
     return NoopReranker()
 
 
 def clamp_rerank_top(n: int) -> int:
-    """Clamp the rerank window to [RERANK_TOP_MIN, ceiling], where the ceiling is
-    RERANK_TOP_MAX (50) by default but raisable via ``BRAIN_RERANK_MAX`` for a
-    still-wider candidate pass. A bad/zero env value falls back to the default."""
-    try:
-        hi = int(os.environ.get("BRAIN_RERANK_MAX", "") or RERANK_TOP_MAX)
-    except ValueError:
-        hi = RERANK_TOP_MAX
-    hi = max(RERANK_TOP_MAX, hi)  # never below the design floor of 50
-    return max(RERANK_TOP_MIN, min(hi, n))
+    """Clamp the rerank window to [RERANK_TOP_MIN, RERANK_TOP_MAX]."""
+    return max(RERANK_TOP_MIN, min(RERANK_TOP_MAX, n))
 
 
 def rerank_timeout_seconds() -> float:
@@ -388,8 +240,7 @@ def rerank_timeout_seconds() -> float:
     path. (It emphatically was NOT a safety valve at window 50, where 85% of
     the same queries blew it and silently fell back to the bare ordering.
     That is the defect the window ruling fixed, not this constant.) A
-    wide-candidate pass via ``BRAIN_RERANK_TOP``/``BRAIN_RERANK_MAX`` will
-    need this raised with it. Override via ``$BRAIN_RERANK_TIMEOUT_S``."""
+    wider candidate pass would need this raised with it. Override via ``$BRAIN_RERANK_TIMEOUT_S``."""
     raw = os.environ.get("BRAIN_RERANK_TIMEOUT_S")
     if raw:
         try:

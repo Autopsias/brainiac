@@ -171,6 +171,7 @@ PUSH=$(python3 - "$VAULT_DIR" <<'PYEOF'
 import glob
 import json
 import os
+import re
 import sys
 
 # EVERY registered vault, not just this project's (field 2026-07-16). The PUSH
@@ -201,10 +202,18 @@ def _registered() -> list[str]:
             if isinstance(e, dict) and e.get("vault_path")]
 
 
+def _runtime_dir(vault: str) -> str:
+    """Mirror of ``config.brain_runtime_dir()``: $BRAIN_RUNTIME_DIR wins over
+    ``<vault>/.brain``. Re-derived, not imported, so a broken engine cannot
+    silence the push that reports it."""
+    override = os.environ.get("BRAIN_RUNTIME_DIR")
+    return os.path.expanduser(override) if override else os.path.join(vault, ".brain")
+
+
 def _open_count(vault: str) -> int:
     n = 0
     try:
-        with open(os.path.join(vault, ".brain", "memory", "inbox.jsonl"),
+        with open(os.path.join(_runtime_dir(vault), "memory", "inbox.jsonl"),
                   encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
@@ -221,17 +230,28 @@ def _open_count(vault: str) -> int:
     return n
 
 
+def _one_line(text: str) -> str:
+    """The folder may come from $BRAIN_RUNTIME_DIR and this line sits outside
+    the fence: a newline in it would start a line of its own in the context."""
+    return re.sub(r"[\x00-\x1f\x7f-\x9f  ]", " ", text)
+
+
+_seen_runtimes = set()
 for vault in _candidate_vaults(sys.argv[1]):
+    rt = _runtime_dir(vault)
+    if rt in _seen_runtimes:
+        continue
+    _seen_runtimes.add(rt)
     open_n = _open_count(vault)
-    fb_n = len(glob.glob(os.path.join(vault, ".brain", "engine-feedback", "*.md")))
-    label = os.path.basename(os.path.dirname(vault)) or vault
+    fb_n = len(glob.glob(os.path.join(rt, "engine-feedback", "*.md")))
+    label = _one_line(os.path.basename(os.path.dirname(vault)) or vault)
     if open_n:
         print(f"OWNER INBOX ({label}): {open_n} decision(s) pending — ask me to "
               f"open them, or run /brain-inbox. Each is one question with options "
               f"and a default (~{open_n} min).")
     if fb_n:
         print(f"ENGINE FEEDBACK ({label}): {fb_n} engine-bug prompt(s) waiting in "
-              f"{vault}/.brain/engine-feedback/.")
+              f"{_one_line(os.path.join(rt, 'engine-feedback'))}/.")
 PYEOF
 )
 

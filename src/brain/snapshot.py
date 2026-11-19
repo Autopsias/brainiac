@@ -5,7 +5,7 @@ Application Support (WAL, single-writer). The Cowork VM must NEVER write it.
 Instead the host publishes a **read-only snapshot** that the VM mounts read-only
 in ``./.brain/``.
 
-Two correctness properties this module guarantees:
+Three correctness properties this module guarantees:
 
 1. **Atomic publish.** The snapshot DB is written to a temp file then
    ``os.replace``d into place (atomic on POSIX & Windows for same-filesystem
@@ -17,6 +17,12 @@ Two correctness properties this module guarantees:
    ``snapshot.manifest.json``. ``brain status`` reports the generation + age so a
    VM session can tell whether its read-only view is fresh or stale.
 
+3. **Signed.** The manifest carries an Ed25519 signature by the HOST audit key.
+   The DB is built, hashed and signed in a host-private file and only then copied
+   into the (possibly VM-writable) snapshot dir, so ``check_signed_snapshot``
+   (used by ``restore-index``) can tell a snapshot this host published from one
+   the VM swapped in. The VM's own read path does not verify it (A-13).
+
 WAL caveat (documented, S06): SQLCipher + WAL over VirtioFS with two concurrent
 Cowork sessions on one mounted index risks lock contention / corruption. The
 snapshot is therefore a *copy*, published by the single host writer — the VM
@@ -25,6 +31,7 @@ so a corrupt snapshot is always recoverable by re-publishing.
 """
 from __future__ import annotations
 
+import base64
 import logging
 import json
 import os
@@ -60,6 +67,9 @@ class SnapshotManifest:
     # VULN-3387: notes removed from THIS copy because their current bytes
     # match nothing the audit chain signed and no disposition explains them.
     withheld_drift: int = 0
+    # Base64 Ed25519 signature by the HOST audit key over every other field
+    # (canonical JSON, same scheme as exceptions.json); "" = published unsigned.
+    signature: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -128,10 +138,65 @@ def read_manifest(dest_dir: Path) -> SnapshotManifest | None:
         return None
     try:
         d = json.loads(p.read_text(encoding="utf-8"))
-        return SnapshotManifest(**d)
+        # Tolerate keys a newer engine added; check_signed_snapshot reads the raw dict.
+        return SnapshotManifest(**{k: v for k, v in d.items() if k in SnapshotManifest.__dataclass_fields__})
     except Exception:  # fail-open: unreadable manifest reads as no snapshot
         logger.warning("snapshot manifest unreadable; treated as no snapshot", exc_info=True)
         return None
+
+
+def _untrusted_reason(dest_dir: Path, db_path: Path) -> str | None:
+    try:
+        raw = json.loads((dest_dir / MANIFEST).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "snapshot manifest is missing or unreadable"
+    if not isinstance(raw, dict) or not raw.get("signature"):
+        return "snapshot manifest is unsigned"
+    try:
+        from . import audit
+
+        pem = audit.public_key_pem().decode("utf-8")
+    except Exception:  # noqa: BLE001 — no resolvable key is "not verified"
+        return "no host signing key available to verify the snapshot"
+    from .exceptions_verify import _verify_signature
+
+    if not _verify_signature(raw, pem):
+        return "snapshot manifest signature is invalid"
+    try:
+        digest = _sha256_file(db_path)
+    except OSError:
+        return "snapshot DB is unreadable"
+    if digest != raw.get("sha256"):
+        return "snapshot DB does not match its signed sha256"
+    return None
+
+
+def check_signed_snapshot(dest_dir: Path, db_path: Path) -> None:
+    """HOST-side: raise ``ValueError`` unless ``db_path`` is a snapshot THIS host
+    published, i.e. the manifest in ``dest_dir`` is signed by this host's own
+    audit key and its ``sha256`` equals the bytes at ``db_path``.
+
+    The key is ``audit.public_key_pem()``, never the pin or a key in the
+    manifest: on a co-located Cowork workspace the VM can rewrite every file on
+    the mount, so only a signature it cannot mint proves the DB is the one the
+    host published. Fails closed: no key, no manifest, no signature."""
+    reason = _untrusted_reason(Path(dest_dir), Path(db_path))
+    if reason:
+        raise ValueError(f"refusing to restore an untrusted snapshot: {reason} ({db_path})")
+
+
+def stage_signed_snapshot(db_path: Path, stage: Path) -> None:
+    """Copy ``db_path`` to the host-private ``stage`` and verify the COPY.
+
+    The mount file can be swapped between a first ``check_signed_snapshot`` and
+    the copy, so what gets installed must be the bytes checked here. On any
+    failure ``stage`` is removed and the error propagates."""
+    try:
+        shutil.copy2(db_path, stage)
+        check_signed_snapshot(Path(db_path).parent, stage)
+    except BaseException:
+        Path(stage).unlink(missing_ok=True)
+        raise
 
 
 def _withhold_paths(db: Path, paths: set[str]) -> int:
@@ -235,6 +300,11 @@ def _checkpoint_source(source_db: Path) -> None:
         con.close()
 
 
+def _unlink_with_sidecars(db: Path) -> None:
+    for suffix in ("", "-wal", "-shm"):
+        Path(str(db) + suffix).unlink(missing_ok=True)
+
+
 def _sweep_stale_temps(dest_dir: Path) -> int:
     """Delete temp copies an EARLIER publish left behind, and report the count.
 
@@ -276,6 +346,11 @@ def publish_snapshot(
 
     final_db = dest_dir / SNAPSHOT_DB
     _sweep_stale_temps(dest_dir)
+    # Everything the manifest hashes and signs is built in a HOST-PRIVATE file
+    # beside the live index, never in ``dest_dir``: on a co-located Cowork
+    # workspace that directory is VM-writable, so a DB finished there could be
+    # swapped before it is hashed and the host would sign the VM's bytes.
+    staged = source_db.with_name(source_db.name + ".snapshot-stage")
     tmp_db = dest_dir / (SNAPSHOT_DB + f".tmp.{os.getpid()}.{generation}")
     # The `finally` covers the COPY and the withhold, not just the swap. It
     # guarded only `os.replace` until 2026-08-31, so any failure inside
@@ -283,28 +358,34 @@ def publish_snapshot(
     # day on a live vault: 20 leftovers of 6 MB each -- 123 MB, one per hourly
     # run since the withhold started raising at 22:55 the night before -- and every one of them invisible,
     # because the run that made it reported only its own exception.
+    _unlink_with_sidecars(staged)  # a stale -wal would replay onto the new copy
     try:
-        shutil.copy2(source_db, tmp_db)
-        withheld = _withhold_paths(tmp_db, withhold_paths) if withhold_paths else 0
+        shutil.copy2(source_db, staged)
+        withheld = _withhold_paths(staged, withhold_paths) if withhold_paths else 0
+        # Make the snapshot a self-contained rollback-journal DB BEFORE tightening
+        # its permissions, so a VM read-only open needs no -wal/-shm sidecars.
+        _finalize_readonly(staged)
+        cm = _read_counts_and_meta(staged)
+        sha256, size = _sha256_file(staged), staged.stat().st_size
+        # Owner-only (0600), NOT the previous world-readable 0444 -- the snapshot
+        # can carry note bodies up to and including MNPI-tier content, and a
+        # shared/multi-user machine is exactly the case the classification gate
+        # cannot protect against (it is an egress *decision*, not containment; see
+        # docs/operations/egress-provider-posture.md §2). Real read-only
+        # enforcement is the ``mode=ro`` + ``PRAGMA query_only=ON`` SQLite connection
+        # (BrainIndex.conn, read_only=True), NOT the filesystem bit, so this change
+        # does not weaken the write-protection guarantee -- it only removes the
+        # world-readable exposure. O_EXCL: never write through a name the mount
+        # already holds (a planted symlink).
+        fd = os.open(tmp_db, os.O_WRONLY | os.O_CREAT | os.O_EXCL, config.SECURE_FILE_MODE)
+        with os.fdopen(fd, "wb") as out, staged.open("rb") as src:
+            shutil.copyfileobj(src, out, 1 << 20)
+        config.secure_file_permissions(tmp_db)
         os.replace(tmp_db, final_db)  # atomic swap
     finally:
-        if tmp_db.exists():
-            tmp_db.unlink()
-    # Make the snapshot a self-contained rollback-journal DB BEFORE tightening
-    # its permissions, so a VM read-only open needs no -wal/-shm sidecars.
-    _finalize_readonly(final_db)
-    # Owner-only (0600), NOT the previous world-readable 0444 -- the snapshot
-    # can carry note bodies up to and including MNPI-tier content, and a
-    # shared/multi-user machine is exactly the case the classification gate
-    # cannot protect against (it is an egress *decision*, not containment; see
-    # docs/operations/egress-provider-posture.md §2). Real read-only
-    # enforcement is the ``mode=ro`` + ``PRAGMA query_only=ON`` SQLite connection
-    # (BrainIndex.conn, read_only=True), NOT the filesystem bit, so this change
-    # does not weaken the write-protection guarantee -- it only removes the
-    # world-readable exposure.
-    config.secure_file_permissions(final_db)
+        tmp_db.unlink(missing_ok=True)
+        _unlink_with_sidecars(staged)
 
-    cm = _read_counts_and_meta(final_db)
     now = time.time()
     manifest = SnapshotManifest(
         generation=generation,
@@ -312,8 +393,8 @@ def publish_snapshot(
         created_iso=time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(now)) + "Z",
         source_db=str(source_db),
         snapshot_db=str(final_db),
-        sha256=_sha256_file(final_db),
-        bytes=final_db.stat().st_size,
+        sha256=sha256,
+        bytes=size,
         notes=cm["notes"],
         chunks=cm["chunks"],
         embed_model=cm["embed_model"],
@@ -321,6 +402,15 @@ def publish_snapshot(
         schema_version=cm["schema_version"],
         withheld_drift=withheld,
     )
+    try:
+        from . import audit
+
+        key, _source = audit.resolve_signing_key()
+        unsigned = {k: v for k, v in manifest.to_dict().items() if k != "signature"}
+        canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        manifest.signature = base64.b64encode(key.sign(canonical)).decode("ascii")
+    except Exception as exc:  # noqa: BLE001 — publish unsigned; restore-index refuses it
+        logger.warning("snapshot manifest published unsigned: %s", exc)
     # Write manifest LAST, atomically — a present manifest always implies a
     # complete DB at the recorded generation.
     tmp_man = dest_dir / (MANIFEST + f".tmp.{os.getpid()}")

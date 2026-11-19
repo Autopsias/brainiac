@@ -1,0 +1,276 @@
+{
+  "system": "cos-replay-baseline",
+  "captured": "2026-11-14T19:05:47+00:00",
+  "config": {
+    "name": "cos-replay-baseline",
+    "doctrine_path": ".claude/skills/chief-of-staff/SKILL.md",
+    "doctrine_section": "## Phase 1.6 — Ingestion proposal engine",
+    "doctrine_section_end": "## Phase 1.6b",
+    "taxonomy_path": null,
+    "window_chars": 4000,
+    "window_from": "tail",
+    "substance_bar": null,
+    "judge": "codex",
+    "model": "gpt-5.6-sol",
+    "reasoning_effort": "high",
+    "timeout_seconds": 300,
+    "price_per_mtok": null,
+    "doctrine_sha256": "f43839f2493456c221fb829987c90ca938821b86df612dac96b5bf2415f69895",
+    "doctrine_chars": 86179,
+    "config_path": "eval/configs/cos-replay-baseline.json",
+    "skill_sha256": "fda658372cc20df9a45a2054341c74c28aca0e99ee6403876259445f77af036b"
+  },
+  "corpus": {
+    "path": "eval/fixtures/cos-corpus-synthetic.jsonl",
+    "rows": 7,
+    "closed": true,
+    "bad_lines": 0
+  },
+  "verdicts": {
+    "<renewal-2026-08-01@contoso.example>": {
+      "conversation_id": "<renewal-2026-08-01@contoso.example>",
+      "text_sha256": "d1cc5a1fb2bdc70cd2a876ec12c785d7c2d18fa58080455709d0950ca408ff5b",
+      "chars": 335,
+      "latency_ms": 47055.9,
+      "usage": {
+        "input_tokens": 50733,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 390,
+        "reasoning_output_tokens": 284
+      },
+      "truncated": false,
+      "prompt_sha256": "788a1acf6186073c4fcec87d87db4a5092a9d8b3fa48fefacb54569faf56d1ca",
+      "verdict": "candidate",
+      "disposition": "candidate",
+      "held_reason": null,
+      "kind": "position",
+      "evidence": "Following our call, Contoso agrees to renew the Northwind master services agreement for another 12 months at the revised rate ($42,000/mo), effective October 1st.",
+      "owner": "Contoso",
+      "due": "October 1st",
+      "category": null,
+      "reason": "Contoso states its renewal position, including the 12-month term, monthly rate, and effective date.",
+      "judged": true
+    },
+    "<newsletter-2026-08-01@northwind.example>": {
+      "conversation_id": "<newsletter-2026-08-01@northwind.example>",
+      "text_sha256": "5c9eca77fc4d474fe7b90d8feb767b6cd06d85a200c96db7f71ea8030bc5e4ba",
+      "chars": 143,
+      "latency_ms": 40757.8,
+      "usage": {
+        "input_tokens": 50691,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 134,
+        "reasoning_output_tokens": 61
+      },
+      "truncated": false,
+      "prompt_sha256": "c73e7934765397ff6be2daad9aac1f30390d118ed2e8fde0a548562e40753cc9",
+      "verdict": "not_candidate",
+      "disposition": "no-substance",
+      "held_reason": "no-substance",
+      "kind": null,
+      "evidence": null,
+      "owner": null,
+      "due": null,
+      "category": null,
+      "reason": "The newsletter contains general tips and a recap, but no qualifying decision, commitment, position, or key number.",
+      "judged": true
+    },
+    "<scheduling-2026-08-01@contoso.example>": {
+      "conversation_id": "<scheduling-2026-08-01@contoso.example>",
+      "text_sha256": "cbc345686d3d3c8a1f83aa6212ce087933aa55df22dd84c13080e96517d1e20c",
+      "chars": 84,
+      "latency_ms": 47051.5,
+      "usage": {
+        "input_tokens": 50674,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 343,
+        "reasoning_output_tokens": 278
+      },
+      "truncated": false,
+      "prompt_sha256": "f99c57dd4cfd7eeae49051bc1646a2232427cddb169d8c8bbc0aeddee1c047b5",
+      "verdict": "candidate",
+      "disposition": "candidate",
+      "held_reason": null,
+      "kind": "position",
+      "evidence": "Either room is fine.",
+      "owner": "Avery Contoso",
+      "due": null,
+      "category": null,
+      "reason": "Avery states a clear position that either room is acceptable.",
+      "judged": true
+    },
+    "<notification-2026-08-01@billing.example>": {
+      "conversation_id": "<notification-2026-08-01@billing.example>",
+      "text_sha256": "53242c8c4853102b204d1d60676658cadb3295ab1cc40e990fd81fcc57ffebc9",
+      "chars": 137,
+      "latency_ms": 48054.6,
+      "usage": {
+        "input_tokens": 50680,
+        "cached_input_tokens": 21248,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 217,
+        "reasoning_output_tokens": 137
+      },
+      "truncated": false,
+      "prompt_sha256": "bd30958869fdc5537d1f3c79ca0e2303d63dbea5d788effae01f44c1cd347f73",
+      "verdict": "candidate",
+      "disposition": "candidate",
+      "held_reason": null,
+      "kind": "number",
+      "evidence": "Your invoice #88213 for $1,240.00 has been generated and is available in your account.",
+      "owner": "Billing",
+      "due": null,
+      "category": null,
+      "reason": "The invoice amount is a key number supported by an exact quote.",
+      "judged": true
+    },
+    "<empty-body-2026-08-01@contoso.example>": {
+      "conversation_id": "<empty-body-2026-08-01@contoso.example>",
+      "text_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "chars": 0,
+      "verdict": "refuse",
+      "disposition": null,
+      "reason": "no body text in the corpus row — nothing to judge",
+      "judged": false,
+      "latency_ms": 0,
+      "usage": {}
+    },
+    "<long-thread-2026-07-15@contoso.example>": {
+      "conversation_id": "<long-thread-2026-07-15@contoso.example>",
+      "text_sha256": "cf87c122198cdf2468fd87aa0ddf930701074c36a57917cae6956936287240da",
+      "chars": 6724,
+      "latency_ms": 43375.4,
+      "usage": {
+        "input_tokens": 51696,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 289,
+        "reasoning_output_tokens": 180
+      },
+      "truncated": true,
+      "prompt_sha256": "192d2a3e50359ceb568a1f91798f3b214155f532ea4099beae950d393ab1c4f1",
+      "verdict": "candidate",
+      "disposition": "candidate",
+      "held_reason": null,
+      "kind": "position",
+      "evidence": "Agreed on the indemnity cap. We accept the residency clause as drafted if Contoso confirms the Q4 renewal date stays October 1st. Please countersign and return by Friday so procurement can close the quarter.",
+      "owner": "Niko Northwind",
+      "due": "Friday",
+      "category": null,
+      "reason": "Niko states Northwind's conditional acceptance and requests the countersigned agreement by Friday.",
+      "judged": true
+    },
+    "<urgent-subject-2026-08-01@contoso.example>": {
+      "conversation_id": "<urgent-subject-2026-08-01@contoso.example>",
+      "text_sha256": "4ec3aafa229ec856aedb75a1a564f2026036f155f00c1d1dcaa0721da76f6fba",
+      "chars": 104,
+      "latency_ms": 44984.5,
+      "usage": {
+        "input_tokens": 50682,
+        "cached_input_tokens": 21248,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 156,
+        "reasoning_output_tokens": 89
+      },
+      "truncated": false,
+      "prompt_sha256": "7e335f48c5f935cc5a189f8528deb29fc9df9e954f5fd32443f7372900f8d66d",
+      "verdict": "not_candidate",
+      "disposition": "no-substance",
+      "held_reason": "no-substance",
+      "kind": null,
+      "evidence": null,
+      "owner": null,
+      "due": null,
+      "category": null,
+      "reason": "The body states no decision, commitment, counterparty position, or key number.",
+      "judged": true
+    }
+  },
+  "timing": {
+    "wall_clock_s": 48.08,
+    "workers": 8,
+    "per_judgment_ms_median": 46018.0,
+    "per_judgment_ms_max": 48054.6
+  },
+  "cost": {
+    "input_tokens": 305156,
+    "cached_input_tokens": 42496,
+    "cache_write_input_tokens": 0,
+    "output_tokens": 1529,
+    "reasoning_output_tokens": 1029,
+    "model_calls": 6,
+    "usd": null,
+    "usd_basis": "not priced — the codex lane is quota-billed; set price_per_mtok in the config to convert"
+  },
+  "scope": {
+    "rows": 7,
+    "judged": 6,
+    "judgeable": 6,
+    "bodyless": 1,
+    "refused": 1,
+    "errors": 0,
+    "candidates": 4,
+    "replayed_rules": "1.75 + 2 (+ the priority invariant); scope/lane/staging/ledger are not replayed"
+  },
+  "accuracy": {
+    "n": 7,
+    "agree": 5,
+    "rate": 0.7143,
+    "rows": {
+      "<empty-body-2026-08-01@contoso.example>": {
+        "expected": "refuse",
+        "got": "refuse",
+        "agree": true,
+        "why_expected": "LOAD-BEARING for WIR-02: an empty body with body_opened=False. The judge must REFUSE this row (missing input), never emit a verdict for it; this is what proves the body-pass precondition actually refuses rather than silently judging on the subject alone.",
+        "why_judged": "no body text in the corpus row — nothing to judge"
+      },
+      "<long-thread-2026-07-15@contoso.example>": {
+        "expected": "candidate",
+        "got": "candidate",
+        "agree": true,
+        "why_expected": "unusually long thread (23 replies, ~6724 chars) to exercise the extraction window; the substantive decision is in the LAST two replies, past where a naive head-only extraction would stop.",
+        "why_judged": "Niko states Northwind's conditional acceptance and requests the countersigned agreement by Friday."
+      },
+      "<newsletter-2026-08-01@northwind.example>": {
+        "expected": "not_candidate",
+        "got": "not_candidate",
+        "agree": true,
+        "why_expected": "newsletter - no decision, no thread-specific content, addressed to a distribution list.",
+        "why_judged": "The newsletter contains general tips and a recap, but no qualifying decision, commitment, position, or key number."
+      },
+      "<notification-2026-08-01@billing.example>": {
+        "expected": "not_candidate",
+        "got": "candidate",
+        "agree": false,
+        "why_expected": "automated notification - a no-reply system message, not a human correspondence.",
+        "why_judged": "The invoice amount is a key number supported by an exact quote."
+      },
+      "<renewal-2026-08-01@contoso.example>": {
+        "expected": "candidate",
+        "got": "candidate",
+        "agree": true,
+        "why_expected": "substantive, decision-bearing: a contract renewal with a rate, an effective date, and an action (countersign) - the reference case for a genuine candidate.",
+        "why_judged": "Contoso states its renewal position, including the 12-month term, monthly rate, and effective date."
+      },
+      "<scheduling-2026-08-01@contoso.example>": {
+        "expected": "not_candidate",
+        "got": "candidate",
+        "agree": false,
+        "why_expected": "scheduling chatter - a meeting-time negotiation with nothing else in the body.",
+        "why_judged": "Avery states a clear position that either room is acceptable."
+      },
+      "<urgent-subject-2026-08-01@contoso.example>": {
+        "expected": "not_candidate",
+        "got": "not_candidate",
+        "agree": true,
+        "why_expected": "subject looks important, body is empty of substance - the case a subject-only judge gets wrong; the body must win over the subject line.",
+        "why_judged": "The body states no decision, commitment, counterparty position, or key number."
+      }
+    }
+  },
+  "skill_sha256": "fda658372cc20df9a45a2054341c74c28aca0e99ee6403876259445f77af036b",
+  "baseline_note": "Recorded 2026-11-14 (plan declutter-cleanup s10) from one run of eval/cos_replay.py over the synthetic fixture. doctrine_sha256 = hash of the extracted Phase 1.6 section; skill_sha256 = hash of the whole chief-of-staff SKILL.md at record time."
+}

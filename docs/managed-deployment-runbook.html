@@ -211,8 +211,8 @@ BRAIN_DEFAULT_MAX_TIER=Internal
 # when wiring Claude Desktop, bake the ceiling into the MCP stanza:
 brain connect --client claude-desktop --max-tier Internal</code></pre>
   <div class="callout"><strong>Boundary detail:</strong> a host caller may change its per-call
-    <code>--max-tier</code>; the VM caller cannot raise itself past the operator-owned
-    <code>$BRAIN_VM_MAX_EGRESS_TIER</code> ceiling (default <code>Internal</code>). The strongest
+    <code>--max-tier</code>; the VM caller cannot raise itself past the
+    host-signed <code>vm_ceiling.resolved_ceiling</code> ceiling (default <code>Internal</code>; the VM ignores <code>$BRAIN_VM_MAX_EGRESS_TIER</code>). The strongest
     containment for an untrusted consumer is still a physically-filtered projection:
     <code>brain project --dest &lt;dir&gt; --max-tier Internal</code> ships only the allowed tiers.</div>
 

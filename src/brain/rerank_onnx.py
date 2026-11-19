@@ -193,15 +193,8 @@ class OnnxReranker:
                 # (_apply_rerank -> [:2000]), so at the default 1024 this
                 # truncation effectively never fires for gte/jina and does NOT
                 # change the S11-frozen rerank numbers — it is pure crash
-                # insurance. Override via $BRAIN_RERANK_MAX_TOKENS.
-                _rmax = 1024
-                try:
-                    _rt = os.environ.get("BRAIN_RERANK_MAX_TOKENS")
-                    if _rt and _rt.strip().isdigit():
-                        _rmax = int(_rt)
-                except Exception:  # fail-open: truncation env var is a tuning hint; default kept
-                    pass
-                self._tok.enable_truncation(max_length=_rmax)
+                # insurance.
+                self._tok.enable_truncation(max_length=1024)
                 # Truncation alone leaves each passage's encoded length free to
                 # differ (the normal case for real, variously-sized note
                 # bodies), and encode_batch then returns a RAGGED list of ids

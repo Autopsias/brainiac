@@ -225,10 +225,16 @@ def parse_text(text: str) -> tuple[dict[str, Any], str]:
     return parse(fm[0]), fm[1]
 
 
+#: Every character ``str.splitlines()`` (and YAML 1.1) treats as a line end.
+_LINE_BREAKS = {ord(c): " " for c in "\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029"}
+
+
 def _scalar(v: Any) -> str:
     if isinstance(v, bool):
         return "true" if v else "false"
-    return str(v)
+    # A line end in a value would start a new frontmatter line, i.e. forge a key
+    # (F107); flatten it to a space so a write is never refused.
+    return str(v).translate(_LINE_BREAKS)
 
 
 #: Words PyYAML resolves to a BOOLEAN under YAML 1.1, so a STRING that spells

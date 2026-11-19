@@ -31,8 +31,7 @@ BR-03 rerank default (owner ruling 2026-08-04, window revised same day):
   window-20 row mislabelled; at 50 it really costs p50 68.0s and 85% of
   queries blow the 30s timeout and get the BARE ordering anyway
   (eval/FOLLOWUPS.md #6). Window 20 is the latency actually accepted and it
-  reranks every query. The CEILING stays 50, so BRAIN_RERANK_TOP /
-  BRAIN_RERANK_MAX still opt into the wide pass deliberately. Skippable per
+  reranks every query. The CEILING stays 50. Skippable per
   call (--no-rerank) or globally:
     BRAIN_RERANK_DISABLED=1 <restart the invoking process>
   An explicit --rerank/--no-rerank always wins over the env var. A slow
@@ -42,8 +41,6 @@ BR-03 rerank default (owner ruling 2026-08-04, window revised same day):
   running in the background and its result is discarded (BrainIndex._rerank_impl).
   At window 20 the slowest golden query measures 10.5s, so 30s is ~2.9x the
   measured worst case; raise it alongside any wide-candidate pass.
-  BRAIN_RERANK_MAX raises the window ceiling further; BRAIN_RERANK_TOP
-  overrides the requested window size itself.
 
 RK-02 adaptive rerank gate (2026-08-04):
   reranking is default-on but not always worth what it costs. When ADR-0008
@@ -119,7 +116,7 @@ RET-01 zone-authority prior — a measured OPT-IN, off by default (s06, 2026-08-
   separate and moves only via BRAIN_MULTI_RRF_K (default 60) — deliberately
   not a flag, since a non-60 rrf_k would silently disable the exact leg.
   Guards: identical variants deduplicate, an empty variant contributes
-  nothing, variants past BRAIN_MULTI_MAX_VARIANTS (default 4) are dropped
+  nothing, variants past the fixed limit of 4 are dropped
   from the TAIL and reported (supply variants in descending vault-language
   prevalence), BRAIN_MULTI_GUARD=1 arms the correlated-vote guard (a document
   some variant ranked in its top 3 outranks one no variant did), and

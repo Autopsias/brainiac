@@ -61,6 +61,10 @@ is a check that cannot fail.
 
 While working, run only the tests you changed. Run the whole suite ONCE, at the
 gate.
+Before you close a session, also run every test file that names a symbol you
+changed: `git grep -l '<function or flag>' tests`. A changed required input of a
+private function, or a changed shell flag, is the usual miss (2026-11-19: three
+tests turned red and showed only at the plan's last gate).
 
 After a run with ONE failure you have diagnosed and fixed, re-run that test
 alone and count the suite as green. Do not run the suite "once more for a

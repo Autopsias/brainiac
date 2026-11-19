@@ -216,9 +216,12 @@ def stage_engine_and_skills(
     one relocation-aware resolver, so this entry point and
     ``tools/cowork_workspace_install.sh`` cannot drift apart.
     """
-    from .cowork_staging import assert_relocated_vault_leaves_no_note_bodies, staging_root
+    from .cowork_staging import (
+        assert_relocated_vault_leaves_no_note_bodies,
+        staging_root_for_write,
+    )
 
-    brain_dir = staging_root(vault_path, workspace_path)
+    brain_dir = staging_root_for_write(vault_path, workspace_path)
     # THE REFUSAL, at THIS entry point and not only in the shell script.
     # `/brainiac-update` and provisioning reach this function directly
     # (`update.py:288` -> here), so a guard that lived only in

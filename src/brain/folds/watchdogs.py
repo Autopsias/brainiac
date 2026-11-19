@@ -40,7 +40,7 @@ def _merge_remediation_branch_report(
     """Fold ``synthesis_retry``'s own outcome into ``run.results["remediation"]``
     — the SAME per-run structure ``remediation_folds.BranchOutcome.report()``
     populates for the sign_repair/reguard/extract_retry branches, so
-    ``maintenance_folds_2._remediation_fields`` sums cost across every branch
+    ``maintenance_health_trend._remediation_fields`` sums cost across every branch
     without a special case for this one. ``remediation_fold`` runs earlier in
     ``daily_fold`` and always leaves a dict here (even when disabled or
     writer-busy), so this only ever ADDS a key, never replaces the dict."""

@@ -543,15 +543,32 @@ cp -f "$REPO/AGENTS.md" "$BRAIN_DIR/AGENTS.md"
 #   2. CLAUDE.md exists but is hand-maintained with no marker block → never
 #      clobber; tell the operator how to opt in.
 #   3. No CLAUDE.md → generate the full file (banner + marker block).
+# WORKSPACE_ROOT is the VM-writable mount: the VM can plant a symlink at CLAUDE.md,
+# CLAUDE.md.tmp or any fixed name here, and a write through it lands on a HOST file.
+# noclobber makes every `>` below refuse an existing regular file, and open a path
+# that does not exist with O_EXCL, which also refuses a dangling symlink. The
+# re-sync writes a random name and, once complete, rename(2)s it over CLAUDE.md:
+# os.replace swaps a symlink there out, where `mv` would follow one to a directory.
+_publish_claude_md() {
+  "$HOST_PY" -c 'import os, sys; os.replace(sys.argv[1], sys.argv[2])' \
+    "$_claude_tmp" "$WORKSPACE_ROOT/CLAUDE.md" || { rm -f "$_claude_tmp"; return 1; }
+}
+# A name only, drawn before the check so no call sits between it and awk's read;
+# nothing is created until a branch writes (a read-only root must not abort).
+_claude_tmp="$WORKSPACE_ROOT/CLAUDE.md.$("$HOST_PY" -c 'import secrets; print(secrets.token_hex(8))')"
+set -o noclobber
 if [ -f "$WORKSPACE_ROOT/CLAUDE.md" ] && \
    grep -q "BEGIN BRAIN-CONTRACT" "$WORKSPACE_ROOT/CLAUDE.md"; then
   echo "[install] re-syncing BRAIN-CONTRACT block in $WORKSPACE_ROOT/CLAUDE.md"
-  awk -v src="$BRAIN_DIR/AGENTS.md" '
+  if awk -v src="$BRAIN_DIR/AGENTS.md" '
     /<!-- BEGIN BRAIN-CONTRACT/ { print; while ((getline line < src) > 0) print line; close(src); skip=1; next }
     /<!-- END BRAIN-CONTRACT/   { skip=0 }
     !skip
-  ' "$WORKSPACE_ROOT/CLAUDE.md" > "$WORKSPACE_ROOT/CLAUDE.md.tmp" \
-    && mv "$WORKSPACE_ROOT/CLAUDE.md.tmp" "$WORKSPACE_ROOT/CLAUDE.md"
+  ' "$WORKSPACE_ROOT/CLAUDE.md" > "$_claude_tmp"; then
+    _publish_claude_md
+  else
+    rm -f "$_claude_tmp"  # awk failed: CLAUDE.md stays as it was, and the install goes on
+  fi
 elif [ -f "$WORKSPACE_ROOT/CLAUDE.md" ]; then
   echo "[install] NOTE: $WORKSPACE_ROOT/CLAUDE.md exists and is hand-maintained — left untouched."
   echo "[install]       To get auto-synced Cowork context, wrap an inline copy of the contract in"
@@ -586,6 +603,7 @@ HDR
     echo '<!-- END BRAIN-CONTRACT -->'
   } > "$WORKSPACE_ROOT/CLAUDE.md"
 fi
+set +o noclobber
 echo "[install] session prompt -> $BRAIN_DIR/routines/cowork-session-prompt.md"
 cp -f "$REPO/docs/install/cowork-session-prompt.md" "$BRAIN_DIR/routines/cowork-session-prompt.md"
 
@@ -642,8 +660,10 @@ Next steps:
      time, send the message "contract?" in a Cowork session — the reply
      must be "[brain contract loaded] [contract inlined]". If the probe
      gets no markers, fall back to the old channel: put the prompt block from
-     $BRAIN_DIR/routines/cowork-session-prompt.md into the Claude Desktop
-     project's CUSTOM INSTRUCTIONS (once per project) — or paste it as the
-     first message of each Cowork session. It bootstraps the env and points
-     the agent at $BRAIN_DIR/AGENTS.md (the conventions contract).
+     $REPO/docs/install/cowork-session-prompt.md (the engine's own copy — NOT
+     the staged one in $BRAIN_DIR/routines/, which a Cowork session can
+     rewrite) into the Claude Desktop project's CUSTOM INSTRUCTIONS (once per
+     project) — or paste it as the first message of each Cowork session. It
+     bootstraps the env and points the agent at $BRAIN_DIR/AGENTS.md (the
+     conventions contract).
 EOF

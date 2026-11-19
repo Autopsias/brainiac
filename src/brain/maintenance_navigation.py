@@ -4,15 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .maintenance_folds_4 import _PARA_ZONES, _WIKILINK_RE
-
-def refresh_navigation(vault: Path) -> dict[str, Any]:
-    """NAV-01: regenerate the human navigation surfaces nightly —
-    ``brain/backlinks.md`` + one ``catalog.md`` per PARA zone. Byte-compatible
-    with ``tools/validate.py --backlinks --catalogs`` (same formats, both
-    deterministic, no wall-clock timestamps), so either producer yields a
-    no-op diff over an unchanged vault."""
-    return _refresh_navigation_impl(vault)
+from .maintenance_organization import _PARA_ZONES, iter_wikilinks
 
 
 def _load_navigation_notes(vault: Path) -> list[dict[str, Any]]:
@@ -42,7 +34,7 @@ def _write_navigation_backlinks(
     backlinks: dict[str, set[str]] = {}
     for note in notes:
         source = note["meta"].get("id")
-        for match in _WIKILINK_RE.finditer(note["body"]):
+        for match in iter_wikilinks(note["body"]):
             target = match.group(1).strip()
             if target in ids:
                 backlinks.setdefault(target, set()).add(source)
@@ -97,7 +89,12 @@ def _write_navigation_catalogs(
     return {zone: len(by_zone[zone]) for zone in _PARA_ZONES}
 
 
-def _refresh_navigation_impl(vault: Path) -> dict[str, Any]:
+def refresh_navigation(vault: Path) -> dict[str, Any]:
+    """NAV-01: regenerate the human navigation surfaces nightly —
+    ``brain/backlinks.md`` + one ``catalog.md`` per PARA zone. Byte-compatible
+    with ``tools/validate.py --backlinks --catalogs`` (same formats, both
+    deterministic, no wall-clock timestamps), so either producer yields a
+    no-op diff over an unchanged vault."""
     brain_dir = vault / "brain"
     notes = _load_navigation_notes(vault)
     backlink_targets = _write_navigation_backlinks(brain_dir, notes)

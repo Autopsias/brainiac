@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import os
 import platform
 import re
 import shutil
@@ -108,8 +109,23 @@ def backup_original(path: Path) -> Optional[Path]:
     if not path.exists():
         return None
     bak = _backup_path(path)
-    if not bak.exists():
-        shutil.copy2(path, bak)
+    # The original can carry the vault's private signing PEM (the installed
+    # launchd plist). ``shutil.copy2`` creates the backup under the ambient
+    # umask (0644) and narrows it only at its trailing copystat, so the bytes
+    # sat world-readable meanwhile. Create it 0600 with O_EXCL (never an
+    # existing or planted file/symlink), copy the bytes, and only THEN copystat
+    # the original's mode and times onto it, as copy2 did.
+    try:
+        fd = os.open(bak, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return bak
+    try:
+        with os.fdopen(fd, "wb") as out, path.open("rb") as src:
+            shutil.copyfileobj(src, out)
+        shutil.copystat(path, bak)
+    except BaseException:
+        bak.unlink(missing_ok=True)  # a partial backup would block the real one
+        raise
     return bak
 
 

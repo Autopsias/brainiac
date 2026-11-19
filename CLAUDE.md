@@ -55,8 +55,8 @@ leaves nothing behind. **If you ever render these jobs, name the vault:**
     COS_PYTHON=$HOME/.brainiac/venv/bin/python \
     bash tools/launchd/install-cos-jobs.sh
 
-It renders THREE jobs (nightly, read-back, remind) — read all three back from
-`launchctl print`. It is NOT `tools/launchd/reload-cos-nightly.sh` (below).
+It renders SIX jobs (nightly, read-back, remind, sheet-ready, sheet-listener,
+signin-watch) — read all six back from `launchctl print`. It is NOT `tools/launchd/reload-cos-nightly.sh` (below).
 
 **Owner ruling 2026-09-04: the P0 exemption is retired.** A thread with no action
 for him is archived whatever its priority, P0 included. Read it back, not from here:

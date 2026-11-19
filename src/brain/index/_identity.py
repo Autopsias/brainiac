@@ -55,10 +55,6 @@ class _IdentityMixin:
         )
 
     @staticmethod
-    def _title_phrase_eligible(query: str, title: str) -> bool:
-        return _IdentityMixin._title_phrase_tokens_eligible(phrase_tokens(query), title)
-
-    @staticmethod
     def _title_phrase_tokens_eligible(qtokens: list[str], title: str) -> bool:
         """Contiguous title-phrase check using already-tokenized query text."""
         ttokens = phrase_tokens(title)

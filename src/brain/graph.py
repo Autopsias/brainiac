@@ -32,7 +32,7 @@ import sqlite3
 
 from .link_targets import _build_resolver, resolve_target  # noqa: F401
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 # [[target]] | [[target|alias]] | [[target#heading]] | [[target#heading|alias]]
 # Alias text is matched non-greedily and right-anchored to the FINAL ]] so an
@@ -44,6 +44,36 @@ from typing import Any, Iterable
 # link whose "]]" it stole (field bug 2, 2026-07-13). The alias branch uses
 # "." which already excludes newlines without re.DOTALL, so it needs no change.
 _WIKILINK = re.compile(r"\[\[([^\]\|#\n\r]+)(?:#[^\]\|\n\r]+)?(?:\|.+?)?\]\]")
+# F128: finditer on _WIKILINK retries every "[[" inside a run that already failed and
+# rescans the alias to end-of-line from each one, so a hostile one-line body (64 MB
+# VM drafts) is quadratic. iter_wikilinks yields the same links in one linear pass;
+# scan note bodies with it, never _WIKILINK.finditer (mirrored in tools/validate.py).
+_WIKILINK_OPEN = re.compile(r"\[\[([^\]\|#\n\r]+)(?:#[^\]\|\n\r]+)?")
+_WIKILINK_ALIAS = re.compile(r".+?\]\]")
+
+
+def iter_wikilinks(body: str) -> Iterator[re.Match[str]]:
+    """Yield a match per wikilink in ``body``; ``.group(1)`` is the target, exactly
+    as ``_WIKILINK.finditer`` gives it (other groups/spans differ)."""
+    pos = dead = 0
+    while m := _WIKILINK_OPEN.search(body, pos):
+        # Every "[[" inside this run ends at `end` too and fails or not as this one
+        # does, so resume there instead of retrying each of them.
+        pos = end = m.end()
+        if body.startswith("]]", end):
+            pos = end + 2
+        elif body.startswith("|", end) and end >= dead:
+            alias = _WIKILINK_ALIAS.match(body, end + 1)
+            if not alias:
+                # No "]]" in the rest of this line: no later "|" on it closes either.
+                nl = body.find("\n", end)
+                dead = len(body) if nl < 0 else nl
+                continue
+            pos = alias.end()
+        else:
+            continue
+        yield m
+
 
 PROVENANCE = "graph-derived (discovery-only)"
 
@@ -54,7 +84,7 @@ def parse_wikilinks(body: str) -> list[str]:
     Strips ``#heading`` anchors and ``|alias`` display text; the target is the
     note reference (an id, a path stem, or a title)."""
     seen: dict[str, None] = {}
-    for m in _WIKILINK.finditer(body or ""):
+    for m in iter_wikilinks(body or ""):
         target = m.group(1).strip()
         if target:
             seen.setdefault(target, None)
@@ -128,15 +158,6 @@ def bulk_linked_ids(conn: sqlite3.Connection, vault: Any) -> set[str]:
         if meta and str(meta.get(BULK_LINK_KEY) or "").strip():
             out.add(str(nid))
     return out
-
-
-def build_graph_without_bulk(
-    conn: sqlite3.Connection, vault: Any, **kwargs: Any
-) -> LinkGraph:
-    """The graph as if no bulk-stamped note had ever been written — the
-    counterfactual arm for measuring what a bulk relinking pass actually
-    bought (or cost)."""
-    return build_graph(conn, exclude_ids=bulk_linked_ids(conn, vault), **kwargs)
 
 
 def build_graph(

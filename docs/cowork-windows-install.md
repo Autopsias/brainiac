@@ -30,7 +30,7 @@ The Cowork sandbox sees the workspace root. We place the runtime under
         ├── model/                       ← bundled bge-m3-int8 cache (model_int8.onnx + tokenizer)
         ├── snapshot/
         │   ├── index.snapshot.sqlite    ← READ-ONLY published index (single file)
-        │   └── snapshot.manifest.json   ← generation id + age + counts + sha256
+        │   └── snapshot.manifest.json   ← generation id + age + counts + sha256 + host signature
         └── capture-inbox/               ← WRITABLE: VM drops drafts here
 ```
 

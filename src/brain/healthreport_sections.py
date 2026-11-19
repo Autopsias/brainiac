@@ -13,14 +13,6 @@ from . import maintenance as maint
 from .healthreport_unsigned import _unsigned_notes_context
 
 
-def collect_health_report_data(core: Any, *, today: datetime.date | None = None) -> dict[str, Any]:
-    """Gather every render input from data the engine already collects
-    elsewhere. Read-only, best-effort per section — one section failing
-    (e.g. doctor raising on an odd install) degrades that section, never
-    aborts the whole report."""
-    return _collect_health_report_data_impl(core, today=today)
-
-
 def _health_report_doctor() -> tuple[dict[str, Any], list[dict[str, Any]]]:
     try:
         doctor_report = brain_doctor.run_doctor()
@@ -129,9 +121,13 @@ def _health_report_actions(
     return actions
 
 
-def _collect_health_report_data_impl(
+def collect_health_report_data(
     core: Any, *, today: datetime.date | None = None,
 ) -> dict[str, Any]:
+    """Gather every render input from data the engine already collects
+    elsewhere. Read-only, best-effort per section — one section failing
+    (e.g. doctor raising on an odd install) degrades that section, never
+    aborts the whole report."""
     from . import __version__ as engine_version
 
     report_date = today or datetime.date.today()
@@ -183,15 +179,6 @@ def _unreachable_gold_extra(m: dict[str, Any]) -> str:
         f"{brief_mod._esc(k)} {brief_mod._esc(v)}" for k, v in b.items()) if b else "")
     return (f"of {brief_mod._esc(m.get('labels', '?'))} gold label(s), "
             f"measured {brief_mod._esc(m.get('generated') or 'never')}{bucket_txt}")
-
-
-def _corpus_invariants_html(
-    state: dict[str, Any], trend: list[dict[str, Any]],
-    today: datetime.date | None = None,
-) -> str | None:
-    """WAT-01: corpus invariants against their RATCHETED floors, plus the
-    fold's liveness and a trend table. ``None`` when it has never run."""
-    return _corpus_invariants_html_impl(state, trend, today=today)
 
 
 def _unlinked_extra(metric: dict[str, Any]) -> str:
@@ -358,10 +345,12 @@ def _render_invariant_trend(trend: list[dict[str, Any]]) -> str | None:
     return f'<table class="tbl">{head}{body}</table>'
 
 
-def _corpus_invariants_html_impl(
+def _corpus_invariants_html(
     state: dict[str, Any], trend: list[dict[str, Any]],
     today: datetime.date | None = None,
 ) -> str | None:
+    """WAT-01: corpus invariants against their RATCHETED floors, plus the
+    fold's liveness and a trend table. ``None`` when it has never run."""
     entry = state.get(inv.STATE_KEY)
     if not isinstance(entry, dict):
         return None

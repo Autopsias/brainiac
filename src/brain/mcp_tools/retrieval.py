@@ -69,7 +69,11 @@ def register(server: Any, *, core: Any) -> None:
         ``incomplete``, …) means not searched, or not fully.
 
         A row from an email note also carries ``sender``, ``sent`` and
-        ``subject`` (its ``provenance.*`` header); other notes carry none."""
+        ``subject`` (its ``provenance.*`` header); other notes carry none.
+        A row for our own earlier proposal also carries ``own_output: true``
+        and ``produced_by``: never cite it as evidence for a claim — trace the
+        claim to a source or a decision. It marks who produced the note, not
+        whether it is true."""
         return dispatch(
             "grep",
             {"pattern": pattern, "k": k, "regex": regex, "max_tier": max_tier,
@@ -132,7 +136,11 @@ def _register_alias_verbs(server: Any, *, core: Any) -> None:
 
         ``frontmatter`` is the note's frontmatter as indexed — for an email,
         ``provenance.sender``/``.sent``/``.subject``/``.conversation_id``.
-        ``_truncated: true`` means only the ``provenance.*`` keys were kept."""
+        ``_truncated: true`` means only the ``provenance.*`` keys were kept.
+        A row for our own earlier proposal also carries ``own_output: true``
+        and ``produced_by``: never cite it as evidence for a claim — trace the
+        claim to a source or a decision. It marks who produced the note, not
+        whether it is true."""
         return dispatch("read", {"id": id, "max_tier": max_tier}, core=core)
 
     @server.tool()
@@ -157,7 +165,11 @@ def _register_alias_verbs(server: Any, *, core: Any) -> None:
         ``incomplete``, …) means not searched, or not fully.
 
         A row from an email note also carries ``sender``, ``sent`` and
-        ``subject`` (its ``provenance.*`` header); other notes carry none."""
+        ``subject`` (its ``provenance.*`` header); other notes carry none.
+        A row for our own earlier proposal also carries ``own_output: true``
+        and ``produced_by``: never cite it as evidence for a claim — trace the
+        claim to a source or a decision. It marks who produced the note, not
+        whether it is true."""
         return dispatch(
             "hybrid_search",
             {"query": query, "variants": variants or [], "k": k,

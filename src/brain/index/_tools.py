@@ -13,6 +13,7 @@ from ..provenance import CONVERSATION_KEY, SENDER_KEY, header_row_fields, parse_
 _FRONTMATTER_FILTERS = {
     CONVERSATION_KEY: f'$."{CONVERSATION_KEY}"',
     SENDER_KEY: f'$."{SENDER_KEY}"',
+    "provenance.produced_by": '$."provenance.produced_by"',
 }
 
 

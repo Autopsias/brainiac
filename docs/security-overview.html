@@ -197,8 +197,8 @@
     <li><strong>Role-split defaults:</strong> a trusted host session defaults to the full vault;
       the untrusted sandbox leg (<code>--role vm</code>) defaults to <code>Internal</code> and below.
       On the host, <code>--max-tier</code> may narrow or raise the per-call cap. On the VM it is
-      clamped to the operator-owned <code>$BRAIN_VM_MAX_EGRESS_TIER</code> ceiling (default
-      <code>Internal</code>), so a model-controlled argv cannot self-elevate; the elevation hint is
+      clamped to the host-signed VM ceiling, <code>vm_ceiling.resolved_ceiling</code> (default
+      <code>Internal</code>; the <code>$BRAIN_VM_MAX_EGRESS_TIER</code> variable is ignored for the VM), so a model-controlled argv cannot self-elevate; the elevation hint is
       suppressed there as well. A physically filtered <code>brain project</code> workspace remains
       the stronger containment boundary because it omits sensitive files entirely (see §2.2 /
       §6.3).</li>
@@ -449,7 +449,7 @@
       (an unrecognised value fails closed to <code>Internal</code>, never to the permissive default).
       Narrow it via managed config the AI client cannot edit if a capped MCP surface is wanted; and
       (b) a host caller can still change a narrowed host default with <code>--max-tier</code>, while
-      the VM caller is hard-clamped to <code>$BRAIN_VM_MAX_EGRESS_TIER</code>. For the strongest
+      the VM caller is hard-clamped to the host-signed <code>vm_ceiling.resolved_ceiling</code> (the <code>$BRAIN_VM_MAX_EGRESS_TIER</code> variable is ignored for the VM). For the strongest
       untrusted-leg containment, use <code>brain project</code> (physical omission) as well as the
       cap. (Code: <code>src/brain/mcp_verbs.py:_egress_ceiling_tier</code>,
       <code>src/brain/classification.py:HOST_MCP_DEFAULT_MAX_TIER</code>.)</p>
@@ -583,7 +583,7 @@
     <tr><th>Knob</th><th>Effect</th><th>Default</th></tr>
     <tr><td><code>BRAIN_MANAGED=1</code></td><td>corporate lockdown: ignores env/shell key custody (keystore-only), refuses <code>brain update</code> self-update</td><td>off</td></tr>
     <tr><td><code>--role vm</code> / <code>BRAIN_ROLE=vm</code></td><td>read+draft-only mode, snapshot reads, <code>Internal</code> cap</td><td>host role</td></tr>
-    <tr><td><code>--max-tier</code> / <code>BRAIN_DEFAULT_MAX_TIER</code> / <code>BRAIN_VM_MAX_EGRESS_TIER</code></td><td>host per-call/default cap; VM requests are hard-clamped to the operator-owned VM ceiling (§2.1)</td><td>host: full vault (MNPI); VM ceiling: Internal</td></tr>
+    <tr><td><code>--max-tier</code> / <code>BRAIN_DEFAULT_MAX_TIER</code> / <code>BRAIN_VM_MAX_EGRESS_TIER</code></td><td>host per-call/default cap; VM requests are hard-clamped to the host-signed VM ceiling (§2.1); the VM ignores <code>BRAIN_VM_MAX_EGRESS_TIER</code></td><td>host: full vault (MNPI); VM ceiling: Internal</td></tr>
     <tr><td><code>BRAIN_MAX_EGRESS_TIER</code> (MCP)</td><td>hard server-side ceiling for the MCP read surface; unset means the full vault (same as the host CLI, owner ruling 2026-08-17); a set-but-unrecognised value fails closed to <code>Internal</code></td><td><strong>full vault (MNPI)</strong> — narrow to <code>Internal</code> or below for a capped MCP server</td></tr>
     <tr><td><code>BRAIN_AUDIT_KEY_CMD</code></td><td>external signing-key custody command (shell) — disable on managed builds (§6.6)</td><td>Keychain / Credential Manager</td></tr>
     <tr><td><code>BRAIN_ENCRYPTION_KEY_CMD</code> + module enable</td><td>AES-256-GCM — <strong>backups only</strong> today, not the live index/vault (§6.8)</td><td>off (FDE baseline)</td></tr>

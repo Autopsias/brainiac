@@ -7,9 +7,10 @@ scheduled task, so it rides the umbrella's run-lock, state file, escalation and
 health-history plumbing for free (AGENTS.md §6: recurring vault-metadata work
 joins ``brain-nightly`` rather than growing a second plist).
 
-It goes in ``folds/`` and nowhere else: ``maintenance_folds*.py`` are s15-era
-re-export shims (``maintenance.py:248-252``), and a fold written there is never
-composed onto ``BrainCore`` and never fires.
+It goes in ``folds/`` and nowhere else: ``maintenance_*.py`` hold plain
+fold helper functions that ``maintenance.py`` re-exports (its last lines), not
+``BrainCore`` mixins, so a fold written there is never composed onto
+``BrainCore`` and never fires.
 """
 
 from __future__ import annotations

@@ -10,7 +10,6 @@ from tools import validate as _source
 from tools.validate import (
     CLASSIFICATIONS,
     PARA_ZONES,
-    WIKILINK,
     build_zone_catalog,
     check_alias_collisions,
     check_note,
@@ -18,6 +17,7 @@ from tools.validate import (
     err,
     errors,
     iter_md,
+    iter_wikilinks,
     link_id,
     parse_bool,
     warn,
@@ -272,7 +272,7 @@ def _resolve_links(notes: list[dict]) -> dict[str, set[str]]:
     backlinks: dict[str, set[str]] = {}
     for note in notes:
         source = note["meta"].get("id")
-        for match in WIKILINK.finditer(note["body"]):
+        for match in iter_wikilinks(note["body"]):
             target = match.group(1).strip()
             if target not in ids:
                 warn(f"{note['rel']}: wikilink [[{target}]] does not resolve")

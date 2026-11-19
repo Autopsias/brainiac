@@ -191,23 +191,6 @@ def _egress_after_alias_hop(root: Path) -> bool:
     )
 
 
-def _near_duplicate_exemption(root: Path) -> bool:
-    """Full identities are exempt even after score ordering reaches the
-    near-duplicate pass."""
-    dedup_idx = BrainIndex(
-        db_path=root / "dedup.sqlite", backend=get_backend("brute-force"),
-        embedder=get_embedder("hash"),
-    )
-    with _env(BRAIN_DEDUP_THRESHOLD="0.5", BRAIN_DEDUP_SCOPE="all"):
-        dedup_idx.backend.get_vectors = lambda conn, ids: {  # type: ignore[method-assign]
-            1: [1.0, 0.0], 2: [1.0, 0.0]
-        }
-        return dedup_idx._suppress_near_dups(
-            [10, 20], {10: 1, 20: 2}, {10: "brain", 20: "brain"},
-            {10: "brain", 20: "brain"}, set(), {20},
-        ) == [10, 20]
-
-
 def _invariants() -> dict[str, Any]:
     """Exercise the exact behavior independently of aggregate ranking metrics."""
     with tempfile.TemporaryDirectory(prefix="brain-s02-ne-") as temp:
@@ -215,7 +198,6 @@ def _invariants() -> dict[str, Any]:
         with _env(
             BRAIN_EXACT_LEG_ENABLED="1", BRAIN_RECENCY_WEIGHT="0",
             BRAIN_ZONE_WEIGHTS=None, BRAIN_ZONE_SCOPE="semantic_only",
-            BRAIN_DEDUP_THRESHOLD=None, BRAIN_DEDUP_SCOPE=None,
         ):
             idx = _index(FIXTURE, root, "fixture")
             rerank_off_checks = {
@@ -230,8 +212,6 @@ def _invariants() -> dict[str, Any]:
             }
             rerank_off_checks["partial_phrase_bound"] = _partial_phrase_bound(root)
             rerank_off_checks["egress_after_alias_hop"] = _egress_after_alias_hop(root)
-            rerank_off_checks["full_exact_near_duplicate_exemption"] = (
-                _near_duplicate_exemption(root))
 
     return {
         "rerank_off": {

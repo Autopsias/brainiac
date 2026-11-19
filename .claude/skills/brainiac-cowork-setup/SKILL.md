@@ -106,10 +106,31 @@ Then print, in the chat, exactly these three things:
 mount). The staged runtime lives inside it; the vault does not, unless the
 two are still co-located.
 
-**(b) The full contents** of `<workspace>/vault/.brain/routines/cowork-session-prompt.md`
-— paste the entire file verbatim so the user can copy it straight from this
-conversation into the Cowork project's custom instructions (or as their
-first message there).
+**(b) The full contents of the ENGINE's own copy** of the session prompt —
+`docs/install/cowork-session-prompt.md` in the engine checkout wire 2 staged
+from (wire 2's `cowork.checkout` in the `--json` report when this run staged
+it; otherwise the clone whose `pyproject.toml` version equals `brain --version`,
+as `/brainiac-update` Step 1 resolves it) — paste the entire file verbatim so
+the user can copy it straight from this conversation into the Cowork project's
+custom instructions (or as their first message there).
+
+**Never print the staged copy** at
+`<workspace>/vault/.brain/routines/cowork-session-prompt.md`: it sits on the
+Cowork mount, where a Cowork session can rewrite it, and whatever the user
+pastes becomes that project's standing instructions. Use it for one check
+only, and never `cat` it:
+
+```bash
+cmp -s "<checkout>/docs/install/cowork-session-prompt.md" \
+  "<workspace>/vault/.brain/routines/cowork-session-prompt.md" || echo MISMATCH
+```
+
+On a mismatch, say so plainly in the report (the staged session prompt differs
+from the engine's: stale, or changed from inside Cowork), still print only the
+engine's copy, and tell the user `/brainiac-update` re-stages the copy from the
+engine. If no checkout matching `brain --version` can be found, or the one
+found sits inside `<workspace>` (that is the mount too), print NO prompt: say
+why, and give only (a) and (c).
 
 **(c) Skills — default vs optional, do not blur the two (ADR-0005 Ruling 4 +
 s04 addendum: the Desktop/Cowork plugin store has no scriptable host-side

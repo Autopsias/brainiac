@@ -50,8 +50,6 @@ class BrainIndex(
     _ZONE_WEIGHT_MIN = 1e-6
     _ZONE_WEIGHT_MAX = 1e6
     _ZONE_SCOPES = ("all", "semantic_only")
-    _DEFAULT_DEDUP_THRESHOLD = None
-    _DEFAULT_TRANSCRIPT_ZONES = frozenset({"raw"})
 
     def _resolve_embedder(self, prefer: str):
         """Resolve the patchable public embedder seam."""

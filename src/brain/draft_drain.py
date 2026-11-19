@@ -127,8 +127,9 @@ class _UnsafeDraft(Exception):
     """A capture-inbox entry that is a symlink or not a regular file."""
 
 
-def _read_text_nofollow(path: Path) -> str:
+def _read_text_nofollow(path: Path, max_bytes: int | None = None) -> str:
     """Read a draft without following a symlink (copy of cos/_io's guard, ADR 0013)."""
+    cap = MAX_DRAFT_BYTES if max_bytes is None else max_bytes
     if path.is_symlink():
         raise _UnsafeDraft(f"{path.name} is a symlink")
     # O_NONBLOCK: a planted FIFO must not block the open before the S_ISREG check.
@@ -142,8 +143,8 @@ def _read_text_nofollow(path: Path) -> str:
         while b := os.read(fd, 1 << 16):
             chunks.append(b)
             total += len(b)
-            if total > MAX_DRAFT_BYTES:  # cap on the open fd, never on stat() (INT-04)
-                raise _UnsafeDraft(f"{path.name} exceeds the {MAX_DRAFT_BYTES}-byte cap")
+            if total > cap:  # cap on the open fd, never on stat() (INT-04)
+                raise _UnsafeDraft(f"{path.name} exceeds the {cap}-byte cap")
     finally:
         os.close(fd)
     return b"".join(chunks).decode("utf-8")

@@ -135,7 +135,7 @@ def _tension_candidates(core: Any, state: dict[str, Any], today: _dt.date,
 def _decision_candidates(core: Any, state: dict[str, Any], today: _dt.date):
     """Fresh sources carrying decision language and no decision note (the
     ``decision_capture_scan`` the daily fold already runs)."""
-    from .maintenance_folds_4 import decision_capture_scan  # noqa: PLC0415
+    from .maintenance_organization import decision_capture_scan  # noqa: PLC0415
     for c in decision_capture_scan(core.index.conn, today):
         sid = str(c.get("id") or "")
         if (not sid or is_loop_id(sid)

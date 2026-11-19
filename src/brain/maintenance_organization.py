@@ -8,7 +8,7 @@ import hashlib
 import os
 
 # One wikilink pattern for graph and folds (it strips #heading and |alias).
-from .graph import _WIKILINK as _WIKILINK_RE  # noqa: F401
+from .graph import _WIKILINK as _WIKILINK_RE, iter_wikilinks  # noqa: F401
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +126,7 @@ def _group_versions(core: Any) -> tuple[
     renditions: dict[tuple[str, int], list[tuple[str, dict[str, str]]]] = {}
     primaries: dict[tuple[str, int], list[str]] = {}
     successor_of = {str(nid): str(sup_by or "") for nid, _ilv, sup_by, _vd, _p in rows}
-    from .maintenance_folds import _dedup_trust_checker
+    from .maintenance_dedup import _dedup_trust_checker
 
     is_untrusted = _dedup_trust_checker(core)
     for nid, ilv, sup_by, vdate, npath in rows:

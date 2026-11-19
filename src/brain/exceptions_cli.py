@@ -22,7 +22,6 @@ from __future__ import annotations
 import datetime
 import html.parser
 import json
-import os
 import platform
 import subprocess
 from pathlib import Path
@@ -143,7 +142,7 @@ def vault_row(vault: Path, *, role: str,
                               "summary yet"}
         from . import exceptions_verify as _verify
 
-        bad = _verify.verify_host_summary(vault, summary)
+        bad = _verify.verify_host_summary(vault, summary, kind="exceptions")
         if bad is not None:
             return {"vault": str(vault), "name": name, "page": str(page),
                     "count": None, "exists": page.is_file(),
@@ -247,7 +246,3 @@ def render_text(report: dict[str, Any]) -> str:
 def open_all(report: dict[str, Any]) -> str:
     return "\n".join(open_in_desktop(Path(r["page"]))
                      for r in report["vaults"]) or "no vault to open"
-
-
-def _demo() -> None:  # pragma: no cover - hand probe
-    print(render_human(collect(role=os.environ.get("BRAIN_ROLE", "host"))))

@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # /brain-grill — ask me now
 
-Host-only: `brain interview` reads `.brain/interview/state.json` and writes
+Host-only: `brain interview` reads the host-private interview state (off the mount) and writes
 notes through `write_note`, both host surfaces. On a Cowork VM leg, say so
 and stop. `$BRAIN_VAULT` is the vault.
 

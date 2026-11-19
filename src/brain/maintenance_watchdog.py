@@ -208,7 +208,6 @@ def synthesis_retry_observation(
 # OBS-02 already uses — deliberately not a new outbound/remote channel).
 # See docs/operations/wd01-offhost-watchdog-spec.md.
 # ---------------------------------------------------------------------------
-OFFHOST_DAILY_STALE_HOURS_ENV = "BRAIN_OFFHOST_DAILY_STALE_HOURS"
 DEFAULT_OFFHOST_DAILY_STALE_HOURS = 26
 
 
@@ -256,11 +255,9 @@ def offhost_watchdog_findings(
        (WATCHDOG-01) UNCHANGED — itself a staleness (last-success-too-old)
        check.
     """
-    import os as _os
-
     now = now or datetime.datetime.now(datetime.timezone.utc)
-    stale_hours = daily_stale_hours if daily_stale_hours is not None else float(
-        _os.environ.get(OFFHOST_DAILY_STALE_HOURS_ENV, DEFAULT_OFFHOST_DAILY_STALE_HOURS))
+    stale_hours = (daily_stale_hours if daily_stale_hours is not None
+                   else DEFAULT_OFFHOST_DAILY_STALE_HOURS)
     findings: list[str] = []
 
     merged = _union_by_run_id(read_health_history(vault), read_sparse_history(vault))

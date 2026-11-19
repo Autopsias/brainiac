@@ -23,7 +23,11 @@ pass, checked in this order:
    ``min_engine`` (version skew — a stale staged runtime says so instead of
    misreading a schema it predates).
 5. freshness — the same staleness window ``alerts.py`` applies to the
-   sibling ``notify-sent/current.json`` feed.
+   sibling ``notify-sent/current.json`` feed, read off the signed
+   ``generated_at`` (a full UTC stamp; an older bare date still passes within
+   the window). The VM cannot see the host's private record of the newest
+   ``generated_at`` it wrote, so replay inside the window is refused only on
+   the host (``verify_host_summary``).
 6. ``html_hash`` recomputed over the MOUNTED ``exceptions.html`` equals the
    signed value (HTML tamper: an edit to the page after signing is caught
    here, not silently served).
@@ -142,6 +146,8 @@ def _version_tuple(v: str) -> tuple[int, ...]:
 
 
 def _parse_date(value: Any) -> datetime.date | None:
+    """The calendar day of a signed ``generated_at``. It is a full UTC stamp
+    on a current host and a bare date on an older one; both read here."""
     try:
         return datetime.date.fromisoformat(str(value)[:10])
     except (TypeError, ValueError):
@@ -297,12 +303,16 @@ def _check_html_hash(
     return None
 
 
-def verify_host_summary(vault: Path, raw: dict[str, Any]) -> str | None:
-    """HOST-role check of the mount copy of ``exceptions.json``. Returns
-    ``None`` when the summary is signed by THIS host's own key for THIS vault,
-    else a reason. The key is the host's own (``audit.public_key_pem()``),
-    never a pin read from the mount, because on a co-located vault the VM can
-    rewrite the file and the pin beside it."""
+def verify_host_summary(vault: Path, raw: dict[str, Any], *, kind: str) -> str | None:
+    """HOST-role check of the mount copy of ``exceptions.json`` (``kind``
+    ``"exceptions"``) or the current-findings feed (``"feed"``). Returns
+    ``None`` when the file is signed by THIS host's own key for THIS vault AND
+    is not older than the newest ``generated_at`` this host recorded off the
+    mount for ``kind`` (a signed copy of an older file would otherwise
+    replay); else a reason. With no record yet the age check is skipped. The
+    key is the host's own (``audit.public_key_pem()``), never a pin read from
+    the mount, because on a co-located vault the VM can rewrite the file and
+    the pin beside it."""
     _schema, reason = _check_schema(raw)
     if reason is not None:
         return reason
@@ -318,6 +328,23 @@ def verify_host_summary(vault: Path, raw: dict[str, Any]) -> str | None:
         return "host summary signature is invalid"
     if str(raw.get("vault_id") or "") != str(_config.vault_id(vault) or ""):
         return "host summary vault_id does not match this vault"
+    from . import maintain_state_store as _store
+
+    recorded = _store.last_signed_at(vault, kind)
+    if recorded is not None:
+        stamp = _store.parse_stamp(raw.get("generated_at"))
+        if stamp is None or stamp < recorded:
+            return (f"host {kind} is older than the last one this host wrote "
+                    f"({recorded.isoformat()}) or carries no signed generated_at "
+                    "— replayed or stale copy")
+    # Second check, kept for a host with no record yet (or one that could not
+    # write it): never older than the newest maintain run the private state saw.
+    signed = _parse_date(raw.get("generated_at") or raw.get("at"))
+    runs = [d for e in _store.load(vault).values() if isinstance(e, dict)
+            for d in [_parse_date(e.get("last_run"))] if d is not None]
+    if signed is not None and runs and signed < max(runs):
+        return (f"host {kind} signed {signed.isoformat()} is older than the last "
+                f"maintain run ({max(runs).isoformat()}) — replayed or stale copy")
     return None
 
 
@@ -390,12 +417,12 @@ def stage_pin(vault: Path, workspace: Path | None = None) -> dict[str, Any]:
     honoured that override and ``staging_root`` does not. The reader's
     legacy fallback still finds a pin staged under that override."""
     from . import audit as _audit
-    from .cowork_staging import staging_root
+    from .cowork_staging import staging_root_for_write
 
     vid = _config.vault_id(vault, create=True) or ""
     pem = _audit.public_key_pem().decode("utf-8")
     data = {"vault_id": vid, "public_key_pem": pem}
-    path = staging_root(vault, workspace) / PINNED_FILENAME
+    path = staging_root_for_write(vault, workspace) / PINNED_FILENAME
     path.parent.mkdir(parents=True, exist_ok=True)
     write_text_atomic(path, json.dumps(data, indent=1, sort_keys=True))
     return data
@@ -424,10 +451,10 @@ def publish_summary(vault: Path, workspace: Path | None = None) -> None:
     Best-effort: a missing source file (a vault that has never run `brain
     maintain`) is silently skipped, never a crash — the caller already
     wraps this in its own best-effort posture."""
-    from .cowork_staging import staging_root
+    from .cowork_staging import staging_root_for_write
 
     src_dir = _config.brain_runtime_dir(vault)
-    dest_dir = staging_root(vault, workspace)
+    dest_dir = staging_root_for_write(vault, workspace)
     if src_dir == dest_dir:
         return
     dest_dir.mkdir(parents=True, exist_ok=True)

@@ -54,15 +54,6 @@ OPERATIONAL_SOURCE_TYPES = frozenset({
     "workspace",
 })
 
-EXCLUSION_REASONS = (
-    "quarantined",       # verification or signing FAILED — never expected to be linked
-    "superseded",        # is_latest_version: false — the successor carries the links
-    "non_knowledge_zone",  # inbox/ overlay/ .brain/ — not knowledge, never indexed
-    "generated_map",     # backlinks.md / catalog.md — generated, not authored
-    "operational_artifact",  # this vault's own audit/log/alert output, re-ingested
-    "emitter_output",    # a SCRIPT declares it wrote this — orthogonal to type
-)
-
 
 # A source whose own frontmatter names the PROGRAM that produced it.
 #

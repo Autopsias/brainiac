@@ -47,6 +47,7 @@ import base64
 import datetime
 import hashlib
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +63,8 @@ from . import remediation as _rem
 from . import remediation_exceptions as _rex
 from .exceptions_render import render_page  # re-exported: the page's one
 # renderer, split out on 2026-08-22 when this file hit the 500-line bound.
+
+_log = logging.getLogger(__name__)
 
 SCHEMA = "brain-exceptions/v1"
 MOUNT_FILENAME = "exceptions.html"
@@ -81,7 +84,7 @@ def _current_findings(vault: Path, today: datetime.date) -> dict[str, Any]:
     either."""
     out: dict[str, Any] = {
         "dead_automation": [], "untriaged": [], "other": [],
-        "stale": None, "missing": False,
+        "stale": None, "missing": False, "unverified": None,
     }
     feed = _alerts._read_json(vault / ".brain" / "notify-sent"
                               / _alerts.CURRENT_FINDINGS_FILE)
@@ -91,6 +94,12 @@ def _current_findings(vault: Path, today: datetime.date) -> dict[str, Any]:
         # only a vault WITH a maintain-state.json but no feed predates the
         # feed (an engine upgrade mid-history) and that IS reportable.
         out["missing"] = _config.maintain_state_path(vault).exists()
+        return out
+    # Host-side page and signed summary: never use findings from a feed this
+    # host did not sign (or a replayed old one) — say so instead.
+    bad = _alerts.host_feed_untrusted_reason(vault, feed)
+    if bad is not None:
+        out["unverified"] = bad
         return out
     at = _alerts._date(feed.get("at"))
     if at is None or (today - at).days > _alerts.FINDINGS_STALE_DAYS:
@@ -117,14 +126,13 @@ def _healed_summary(vault: Path) -> dict[str, Any]:
     """Today's per-branch snapshot (``maintain-state.json``'s
     ``_remediation`` row) plus a 7-day AGGREGATE healed total from
     ``health-history.jsonl`` — the history only carries the branches' SUMMED
-    total per run (``maintenance_folds_2._remediation_fields``), never a
+    total per run (``maintenance_health_trend._remediation_fields``), never a
     per-branch breakdown, so the two are reported side by side rather than
     merged into one number that would misrepresent either."""
     per_branch: dict[str, dict[str, Any]] = {}
-    try:
-        state = json.loads(_config.maintain_state_path(vault).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        state = {}
+    from . import maintain_state_store  # host-private copy; the mount one is VM-writable
+
+    state = maintain_state_store.load(vault)
     branches_now = (state.get("_remediation") or {}).get("branches") or {}
     for name in sorted(_rem.BRANCH_CADENCE_DAYS):
         row = branches_now.get(name) if isinstance(branches_now.get(name), dict) else {}
@@ -206,7 +214,9 @@ def exception_keys(data: dict[str, Any]) -> list[str]:
     # lists for "nothing needs you" — an all-clear from an input that never
     # reached the check. The key is STATIC text, never the stale date, so a
     # feed that stays broken re-pings once instead of every night.
-    if findings.get("missing"):
+    if findings.get("unverified"):
+        keys.add("exceptions-feed-unverified")
+    elif findings.get("missing"):
         keys.add("exceptions-feed-missing")
     elif findings.get("stale"):
         keys.add("exceptions-feed-stale")
@@ -220,7 +230,7 @@ def exception_keys(data: dict[str, Any]) -> list[str]:
 # ---------------------------------------------------------------------------
 def build_json_summary(
     vault: Path, *, html_bytes: bytes, count: int, keys: list[str],
-    page_path: str, generated_at: datetime.date, ceiling: str,
+    page_path: str, generated_at: datetime.date | datetime.datetime, ceiling: str,
 ) -> dict[str, Any]:
     """The signed ``exceptions.json`` payload. A signing failure (no key
     resolvable, e.g. a headless/CI run with no OS secret store) degrades to
@@ -348,11 +358,23 @@ def generate(core: Any, today: datetime.date | None = None) -> dict[str, Any]:
         page_path = str(mount_path.relative_to(vault))
     except ValueError:
         page_path = mount_path.name
+    # A full signed UTC stamp (a bare date on older hosts): the host refuses an
+    # older signed copy, the VM keeps its day window on the date part.
+    generated_at = datetime.datetime.now(datetime.timezone.utc)
     summary = build_json_summary(
         vault, html_bytes=html_bytes, count=len(keys), keys=keys,
-        page_path=page_path, generated_at=d, ceiling=ceiling)
+        page_path=page_path, generated_at=generated_at, ceiling=ceiling)
     json_path = runtime_dir / JSON_FILENAME
     _atomic_write(json_path, json.dumps(summary, indent=1, sort_keys=True))
+    if summary["signature"]:
+        # After the write: a crash in between leaves the file NEWER than the record.
+        try:
+            from . import maintain_state_store
+
+            maintain_state_store.record_signed_at(vault, "exceptions", generated_at.isoformat())
+        except (OSError, _config.HostPathUnsafe):
+            _log.warning("exceptions freshness record unwritable; only the last-run "
+                         "date floor guards exceptions.json against replay")
 
     ping = maybe_ping(vault, keys, full_path)
     return {

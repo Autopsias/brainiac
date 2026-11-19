@@ -32,18 +32,8 @@ def _source(ranking: FusedRanking, rowid: int) -> str:
 def suppress_candidates(
     index: Any, ranking: FusedRanking, trace: Any | None
 ) -> list[int]:
-    """Apply near-duplicate suppression after score ordering."""
+    """Order candidates by score (no near-duplicate suppression remains)."""
     ordered = sorted(ranking.scores, key=lambda rid: (-ranking.scores[rid], rid))
-    suppressed: set[int] | None = set() if trace is not None else None
-    ordered = index._suppress_near_dups(
-        ordered,
-        ranking.candidates.best_chunk_rowid,
-        ranking.zone,
-        ranking.column_zone,
-        ranking.candidates.in_lexical,
-        ranking.candidates.exact.full_rowids,
-        suppressed=suppressed,
-    )
     if trace is not None:
         trace.pre_rerank_order = list(ordered)
         for rank, rowid in enumerate(ordered, start=1):
@@ -51,7 +41,7 @@ def suppress_candidates(
             record["pre_rerank_rank"] = rank
             record["near_duplicate"] = {
                 "exempt": rowid in ranking.candidates.exact.full_rowids,
-                "suppressed": rowid in suppressed,
+                "suppressed": False,
             }
     return ordered
 

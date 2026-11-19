@@ -317,14 +317,19 @@ def email_classification(
     - the ingest category's ``min_tier`` FLOOR (docs/cos-ingest-taxonomy.md).
 
     **UNVERIFIED PROVENANCE NEVER LOWERS THE TIER** (R1, 2026-07-30 review,
-    CRITICAL). Lowering is driven exclusively by ``verified_texts`` — text the
-    HOST itself parsed out of the archived original (``provenance.verified``,
-    earned only by the ``.eml`` handler). A subject/sender/filename a VM
-    authored is a CLAIM: passing it here would let a producer plant a mapped
-    keyword in its own ``provenance.subject``, bind Restricted material to a
-    graduated ``Internal`` evidence key and reach the auto lane. The parameter
-    is named for the rule so every caller — this lane, the attachment lane and
-    any future one — inherits it instead of re-deciding at the call site.
+    CRITICAL). Lowering is driven exclusively by ``verified_texts`` — text
+    whose AUTHOR the host trusts. Text the host merely PARSED out of an
+    ``.eml`` (``provenance.verified``) does not qualify: its subject, sender
+    and attachment names are composed by the email's own sender and nothing
+    authenticates them, so a mapped keyword planted there would downgrade the
+    sender's own email. The ingest pipeline therefore supplies none, and every
+    email-derived source lands at MNPI or higher. A subject/sender/filename a
+    VM authored is likewise a CLAIM: passing it here would let a producer
+    plant a mapped keyword in its own ``provenance.subject``, bind Restricted
+    material to a graduated ``Internal`` evidence key and reach the auto lane.
+    The parameter is named for the rule so every caller — this lane, the
+    attachment lane and any future one — inherits it instead of re-deciding at
+    the call site.
     With no verified text there is simply no lowering input, and ``proposed``
     plus the category floor can still only RAISE the MNPI default.
     """

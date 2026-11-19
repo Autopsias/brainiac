@@ -284,8 +284,18 @@ def _hot_queue_tail(vault: Path, n: int = HOT_QUEUE_TAIL_ENTRIES) -> list[str]:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return []
-    headings = [ln.strip("# ").strip() for ln in text.splitlines() if ln.startswith("## ")]
-    return headings[-n:]
+    # hot.md is free text the weekly synthesis model writes while reading
+    # attacker-sent mail (docs/security-acceptances.md A-08), and this report
+    # is relayed to the host agent. Only a re-formatted ISO date leaves here,
+    # never any heading text.
+    dates: list[str] = []
+    for ln in text.splitlines():
+        if ln.startswith("## "):
+            try:
+                dates.append(datetime.date.fromisoformat(ln[3:13]).isoformat())
+            except ValueError:
+                dates.append("undated")
+    return dates[-n:]
 
 
 def _surface_problems(doctor: Any, doctor_err: str, status: Any,
@@ -454,7 +464,8 @@ def render_vault(report: dict) -> str:
     hot = report.get("hot_queue") or []
     if hot:
         lines.append("")
-        lines.append(f"Hot-queue tail ({len(hot)} most recent, `.brain/memory/hot.md`):")
+        lines.append(f"Hot-queue tail ({len(hot)} most recent entries, dates only — "
+                     "titles withheld: `.brain/memory/hot.md` is untrusted free text):")
         for h in hot:
             lines.append(f"  - {h}")
     lines.append("")

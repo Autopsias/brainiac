@@ -137,7 +137,7 @@ def engine_path() -> str:
     return shutil.which("brain") or ""
 
 
-def _write_engine_pin(destination: Path) -> str:
+def _write_engine_pin(destination: Path, *, clear_stale: bool = False) -> str:
     """Write ``<script>.engine`` beside a freshly placed hook script.
 
     Returns what happened, for the install report. A pin that cannot be written
@@ -147,6 +147,11 @@ def _write_engine_pin(destination: Path) -> str:
     pin = destination.with_suffix(".engine")
     engine = engine_path()
     if not engine:
+        if clear_stale:  # a stale pin would outlive the engine it names; fall back to fixed locations
+            try:
+                pin.unlink(missing_ok=True)
+            except OSError:  # pragma: no cover - rare
+                pass
         return "unresolved"
     try:
         pin.write_text(engine + "\n", encoding="utf-8")
@@ -282,6 +287,12 @@ def install(
     if spec.script == GUARD_SCRIPT:
         result["engine_pin"] = _write_engine_pin(destination)
         result["registry_pin"] = _write_registry_pin(destination)
+    elif spec.script == HOOK_SCRIPT and not _is_windows():
+        # The alerts caller reads the same pin (F79): it must not resolve
+        # `brain` from the PATH a project's settings can set. NOT on Windows:
+        # the pin would be a native `C:\...` path the script cannot use, so
+        # the script keeps its old PATH lookup there instead.
+        result["engine_pin"] = _write_engine_pin(destination, clear_stale=True)
     # Bound the guard's per-session state on the ordinary update cadence rather
     # than with a scheduled task of its own (s06 round 7, Claude). Imported here
     # because `guard_settings` imports this module.

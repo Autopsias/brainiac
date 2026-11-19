@@ -7,15 +7,6 @@ import json
 from .. import cli as shared
 
 _emit = shared._emit
-_excluded_note = shared._excluded_note
-_filter_dicts = shared._filter_dicts
-_freshness_block = shared._freshness_block
-_egress_footer = shared._egress_footer
-_variant_block = shared._variant_block
-_render_variant_block = shared._render_variant_block
-_render_explain_hit = shared._render_explain_hit
-_render_diagnose = shared._render_diagnose
-_capture_rerank_metadata = shared._capture_rerank_metadata
 
 
 def _run_eval(args, ctx) -> int:

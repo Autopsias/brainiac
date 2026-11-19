@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from typing import Any
 
 from .context import MaintenanceRun
@@ -51,12 +50,7 @@ class GraphFoldsMixin:
             return
         marker = run.state.get("_graphify_drift")
         marker = marker if isinstance(marker, dict) else None
-        cooldown_days = int(
-            os.environ.get(
-                maintenance.GRAPHIFY_COOLDOWN_DAYS_ENV,
-                maintenance.DEFAULT_GRAPHIFY_COOLDOWN_DAYS,
-            )
-        )
+        cooldown_days = maintenance.DEFAULT_GRAPHIFY_COOLDOWN_DAYS
         if not maintenance.graphify_drift_marker_due(marker, run.date, cooldown_days):
             run.results["graphify"] = {
                 "ritual": "graphify",

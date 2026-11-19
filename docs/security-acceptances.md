@@ -1307,6 +1307,43 @@ finding one.
 
 ---
 
+## A-19 · A result row says a note is our own output, from the note's own frontmatter
+
+**Raised as:** the 2026-11-17 retrospective: an agent treated its own earlier
+proposal as outside evidence because both came back as `type: source`,
+`content_trust: untrusted-source`. `egress.apply_gate` now adds `own_output:
+true` (and `produced_by` when the value is a known surface) to a surfaced note
+row.
+
+**Egress decision (hardening, 2026-11-17).** The two keys are emitted at every
+tier the ROW passes, like `concealment` (M-3b): `ClassificationFilter` drops rows
+and never strips fields, so this is a decision, not an accident. It is safe
+because the value is a closed vocabulary (`true`, plus one of five fixed surface
+names) about a row the caller may already see. It runs after the filter, so a
+note withheld at retrieval is never looked up and leaks no id, mark or value.
+A note whose indexed tier was raised after retrieval still passes today's
+filter (out of scope); it gets NO mark, because the mark is applied only when
+the index's tier equals the row's own.
+
+**Signal.** `deliverable` true/"true"/"yes", or `provenance.produced_by` equal
+to `inbox-deliverables` or `brainiac-codex-weekly-synthesis`. `promote`,
+`save-conversation` and `kb-curator` stamp every note they write, decisions
+included, so they never mark a note alone. This narrows the brief's "any
+`provenance.produced_by`" rule on purpose.
+
+**Residual risk.** `capture` keeps caller keys, so a captured OUTSIDE note can
+claim `produced_by: inbox-deliverables`, or carry `deliverable: true`, and be
+marked own output; both signals are spoofable. The mark then
+tells the agent to distrust it as evidence, which is the safe direction, and it
+cannot be used to raise trust: no field says "trusted". An unknown string is never
+echoed. Frontmatter over 4096 characters is cut by the indexer and carries
+`_truncated`; such a row carries no mark (absent is not an assurance).
+
+**What would reopen it:** a mark used to RAISE trust anywhere, or a new
+producing surface that should mark notes.
+
+---
+
 ## Not accepted, and deliberately absent
 
 The synthesis sign-drain finding ("Synthesis sign-drain signs untrusted

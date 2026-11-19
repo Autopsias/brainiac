@@ -182,6 +182,23 @@ class _SupersessionTransactionMixin:
                 expect, old_id=old_id, new_id=new_id, old_before=old_before,
                 new_before=new_before, old_meta=old_meta, new_meta=new_meta)
 
+        # An identical repeat (the agent retried after a timeout): the pair is
+        # already written. Answer "already done", write nothing. Only the exact
+        # pair on both sides counts; anything else still raises below.
+        if (str(old_meta.get("superseded_by") or "").strip() == new_id
+                and str(new_meta.get("previous_version") or "").strip() == old_id
+                and str(old_meta.get("is_latest_version", "")).strip().lower() == "false"):
+            # The journal clears BEFORE the sync below, so a crash between them
+            # leaves both notes written and the index stale: sync here too.
+            sync_res = self.sync(drain=False) if reindex else None
+            return {
+                "old_id": old_id, "new_id": new_id,
+                "old_write": None, "new_write": None, "already_done": True,
+                "reindexed": None if sync_res is None else {
+                    "added": sync_res.get("added", 0),
+                    "updated": sync_res.get("updated", 0)},
+            }
+
         # -- chain invariants + classification ruling (refused before any write) --
         if old_meta.get("superseded_by") or str(old_meta.get("is_latest_version", "")).strip().lower() == "false":
             raise ValueError(f"supersede: {old_id!r} is already superseded — no re-superseding")

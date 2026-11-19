@@ -8,7 +8,13 @@ from pathlib import Path
 from typing import Any
 
 from .context import MaintenanceRun
-from .. import maintenance
+from .. import config, maintenance
+from ..atomic_temp import atomic_temp_path
+
+#: Stable ``notify_key`` of the refusal below. Without one the action item never
+#: reaches ``degradation_findings`` -> ``notify-sent/current.json`` -> ``brain
+#: alerts`` and dies in the log; registered as a banner in ``remediation.py``.
+PROBES_CHANGED_KEY = "golden-probes-changed"
 
 
 class GoldenFoldsMixin:
@@ -89,11 +95,14 @@ class GoldenFoldsMixin:
         now: dt.datetime,
     ) -> None:
         """Persist an attempt, execute the scorer, then classify its result."""
+        frozen = self._frozen_golden_probes(run, probes_path)
+        if frozen is None:
+            return
         original_failures, provisional = self._provisional_golden_marker(marker, now)
         run.state["_golden_attempt"] = provisional
         self._save_maintain_state(run.state)
         runner = run.golden_runner or self._run_golden_probe
-        result = runner(probes_path=probes_path)
+        result = runner(probes_path=frozen)
         run.results["golden"] = result
         exit_code = result.get("exit_code")
         transient = exit_code not in (
@@ -115,16 +124,66 @@ class GoldenFoldsMixin:
             return
         self._record_deterministic_golden(run, probes_path, result, exit_code)
 
+    def _frozen_golden_probes(
+        self, run: MaintenanceRun, probes_path: Path
+    ) -> Path | None:
+        """Return the host-private copy of the probes file to score, or None
+        (recorded as an owner action) when the live file no longer matches it.
+
+        The live file sits in the vault, which the Cowork VM can write, so
+        scoring it directly let the VM swap in trivially-passing probes and
+        record a healthy golden_score over a real regression (F127). The first
+        run pins the file as it stands (trust on first use, so a vault that
+        already has one keeps running; shortcut: a file tampered with BEFORE
+        that run is pinned as is). Later runs refuse a changed file, and the
+        scorer reads only the pinned bytes, so there is no check-then-read
+        race. To accept an edit the owner deletes the pin the action item
+        names; the next run re-pins. An unprovable or unwritable pin store
+        raises into golden_fold's handler: nothing is scored, nothing crashes.
+        """
+        pin = config.golden_probes_pin_path(self.vault)
+        live = probes_path.read_bytes()
+        if not pin.is_file():
+            pin.parent.mkdir(parents=True, exist_ok=True)
+            config.secure_file_permissions(pin.parent, 0o700)
+            tmp = atomic_temp_path(pin)
+            try:
+                tmp.write_bytes(live)
+                os.replace(tmp, pin)
+            except BaseException:
+                tmp.unlink(missing_ok=True)
+                raise
+        elif pin.read_bytes() != live:
+            run.results["golden"] = {
+                "score": None,
+                "runner": None,
+                "degraded": False,
+                "disposition": "action_required",
+                "exit_code": maintenance.GOLDEN_EXIT_ACTION_REQUIRED,
+                "skipped": "probes file changed since pinned",
+            }
+            run.action_required.append({
+                **maintenance.action_required_item(
+                    f"golden-probe branch refused: {probes_path} changed since "
+                    "it was pinned; it was NOT scored",
+                    "the probes file lives in the vault, where a Cowork VM can "
+                    "write it; a rewritten file could score 1.0 over a real "
+                    "retrieval regression",
+                    f"if you made the change, delete {pin} (the next golden "
+                    "run pins the file as it stands); if not, restore the "
+                    "probes file from backup",
+                    str(probes_path),
+                ),
+                "notify_key": PROBES_CHANGED_KEY,
+            })
+            return None  # not marked done: stays due, so it is re-raised until resolved
+        return pin
+
     def _provisional_golden_marker(
         self, marker: dict[str, Any] | None, now: dt.datetime
     ) -> tuple[int, dict[str, Any]]:
         """Build the escalating marker written before the scorer starts."""
-        base_minutes = int(
-            os.environ.get(
-                maintenance.GOLDEN_RETRY_BASE_MINUTES_ENV,
-                maintenance.DEFAULT_GOLDEN_RETRY_BASE_MINUTES,
-            )
-        )
+        base_minutes = maintenance.DEFAULT_GOLDEN_RETRY_BASE_MINUTES
         original_failures = int((marker or {}).get("consecutive_transient_failures", 0))
         provisional_failures = original_failures + 1
         provisional = dict(marker or {})
@@ -213,15 +272,7 @@ class GoldenFoldsMixin:
             existing = self._parse_golden_retry_at(current.get("next_retry_at"))
             if existing is not None and existing > now:
                 return
-            try:
-                base_minutes = int(
-                    os.environ.get(
-                        maintenance.GOLDEN_RETRY_BASE_MINUTES_ENV,
-                        maintenance.DEFAULT_GOLDEN_RETRY_BASE_MINUTES,
-                    )
-                )
-            except ValueError:
-                base_minutes = maintenance.DEFAULT_GOLDEN_RETRY_BASE_MINUTES
+            base_minutes = maintenance.DEFAULT_GOLDEN_RETRY_BASE_MINUTES
             current["last_attempt"] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
             current["next_retry_at"] = (
                 now + dt.timedelta(minutes=base_minutes)

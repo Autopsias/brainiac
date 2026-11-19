@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import contextvars as _contextvars
 import weakref
-from pathlib import Path
 from typing import Any, Iterable
 
 from . import classification as cls
@@ -89,6 +88,7 @@ def apply_gate(
     surfaced = flt.filter(items, key=key)
     _mark_content_trust(surfaced)
     _mark_drift(surfaced)
+    _mark_own_output(surfaced, key)
     report = flt.redaction_report(items, key=key)
     _tally(len(surfaced), int(report.get("withheld", 0) or 0))
     return surfaced, report
@@ -237,6 +237,61 @@ def _mark_drift(items: list[dict]) -> None:
         if verdict:
             item[DRIFT_KEY] = verdict
 
+OWN_OUTPUT_KEY = "own_output"
+PRODUCED_BY_KEY = "produced_by"
+#: The two PROPOSAL surfaces: a note they stamp is an agent's own proposal, not
+#: evidence. `promote`, `save-conversation` and `kb-curator` stamp EVERY note
+#: they write (decisions included), so they do not mark a note by themselves —
+#: this deliberately narrows the brief's "any provenance.produced_by" rule.
+_PROPOSAL_SURFACES = frozenset({"inbox-deliverables", "brainiac-codex-weekly-synthesis"})
+#: The five producing surfaces whose name may be echoed on a row. Closed
+#: vocabulary: `capture` keeps caller keys, so any other string is outside text.
+_KNOWN_SURFACES = _PROPOSAL_SURFACES | {"save-conversation", "promote", "kb-curator"}
+
+
+def _own_output_verdict(fm: dict) -> dict:
+    """`{own_output, produced_by?}` for one indexed frontmatter, `{}` if not own."""
+    if fm.get("_truncated"):  # a cut frontmatter is no signal (A-19)
+        return {}
+    by = fm.get("provenance.produced_by")
+    by = by if isinstance(by, str) and by in _KNOWN_SURFACES else None
+    d = fm.get("deliverable")
+    d = d if isinstance(d, bool) else (isinstance(d, str) and d.strip().lower() in ("true", "yes"))
+    if not (d or by in _PROPOSAL_SURFACES):
+        return {}
+    return {OWN_OUTPUT_KEY: True, **({PRODUCED_BY_KEY: by} if by else {})}
+
+
+def _mark_own_output(items: list[dict], key: str = "classification") -> None:
+    """A-19: stamp `own_output: true` (+ `produced_by`) on each surfaced NOTE row
+    whose indexed frontmatter says an agent produced it. Runs AFTER the
+    classification filter, so a withheld note is never looked up. One batched
+    lookup for the surfaced ids; a row is marked only when the index's tier for
+    it equals the row's own (a tier raised since retrieval gets no mark). Absent
+    is "not own output" and also "could not look it up" (no core, no index,
+    `_truncated` frontmatter) — never an assurance. Must never break a read."""
+    core = _drift_source() if _drift_source is not None else None
+    conn = getattr(getattr(core, "index", None), "conn", None)
+    rows = [i for i in items if isinstance(i, dict) and i.get("id") and i.get("zone")]
+    if conn is None or not rows:
+        return
+    from .provenance import parse_index_frontmatter
+
+    found: dict[str, tuple] = {}
+    try:
+        ids = sorted({str(r["id"]) for r in rows})
+        for n in range(0, len(ids), 500):
+            chunk = ids[n:n + 500]
+            found.update((r[0], (r[1], r[2])) for r in conn.execute(
+                "SELECT id, classification, frontmatter FROM notes WHERE id IN (%s)"  # nosec B608
+                % ",".join("?" * len(chunk)), chunk))
+    except Exception:  # noqa: BLE001 — a marker must never break a read
+        return
+    for r in rows:
+        hit = found.get(str(r["id"]))
+        if hit and hit[0] == r.get(key):
+            r.update(_own_output_verdict(parse_index_frontmatter(hit[1])))
+
 
 def gate_dossier_tensions(decisions: list[dict], surfaced_sources: list[dict]) -> None:
     """Re-gate each decision's ``tensions`` against the POST-EGRESS sources.
@@ -248,18 +303,15 @@ def gate_dossier_tensions(decisions: list[dict], surfaced_sources: list[dict]) -
     because BOTH transports gate the two dossier layers separately and would
     otherwise each need their own copy of this rule.
     """
-    surfaced_ids = {s["id"] for s in surfaced_sources}
+    surfaced = {s["id"]: s for s in surfaced_sources}
     for d in decisions:
-        d["tensions"] = [t for t in d.get("tensions", []) if t["id"] in surfaced_ids]
+        d["tensions"] = [t for t in d.get("tensions", []) if t["id"] in surfaced]
+        for t in d["tensions"]:  # the mark comes only from the post-gate source (A-19)
+            src = surfaced[t["id"]]
+            if src.get(OWN_OUTPUT_KEY):
+                t.update({k: src[k] for k in (OWN_OUTPUT_KEY, PRODUCED_BY_KEY) if k in src})
 
 
-# --------------------------------------------------------------------------
-# Trusted-harness allowlist (SEC-01, HARDENED:claude / r2-claude)
-# --------------------------------------------------------------------------
-# Reconciles openness vs control. "Openness" does NOT mean "any app" — it means
-# any harness that PASSES the vendor-posture bar (no-train/ZDR scope covering
-# tool-call/API egress of vault content + MNPI). The bar is owned here as a
-# gating checklist; val-03's cross-harness set must EQUAL this allowlist. The
-# register itself is data (docs/harness-allowlist.json) so it is reviewable and
-# diffable; this loader is the typed accessor + invariants.
-ALLOWLIST_PATH = Path(__file__).resolve().parents[2] / "docs" / "harness-allowlist.json"
+def own_outputs(surfaced_sources: list[dict]) -> list[dict]:
+    """Copies of the final, post-gate source rows that are our own earlier output."""
+    return [dict(s) for s in surfaced_sources if s.get(OWN_OUTPUT_KEY)]

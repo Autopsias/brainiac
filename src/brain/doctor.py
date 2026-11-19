@@ -388,45 +388,6 @@ def render_human(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _demo() -> None:
-    """ponytail self-check: an all-fixture run classifies every row and the
-    exit-code gate only counts stale/unknown scriptable rows, never the
-    always-manual-required Desktop row."""
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as td:
-        root = Path(td)
-        (root / "pyproject.toml").write_text('version = "1.2.3"\n', encoding="utf-8")
-        brain_dir = root / "src" / "brain"
-        brain_dir.mkdir(parents=True)
-        (brain_dir / "_version.py").write_text('__version__ = "1.2.3"\n', encoding="utf-8")
-        for pname in PLUGIN_NAMES:
-            pdir = root / "plugins" / pname / ".claude-plugin"
-            pdir.mkdir(parents=True)
-            (pdir / "plugin.json").write_text(json.dumps({"name": pname, "version": "1.2.3"}), encoding="utf-8")
-        claude_home = root / "claude_home"
-        app_support = root / "app_support"
-        report = run_doctor(
-            repo_root=root, brainiac_home=root / "brainiac_home",
-            claude_home=claude_home, app_support_dir=app_support,
-            registry_entries=[],
-            marketplace_dir=claude_home / "plugins" / "marketplaces" / "brainiac",
-        )
-        assert report["ssot_version"] == "1.2.3"
-        stamp_row = next(r for r in report["rows"] if "Committed stamp" in r["surface"])
-        assert stamp_row["status"] == CURRENT
-        desktop_rows = [r for r in report["rows"] if "Desktop/Cowork" in r["surface"]]
-        assert all(r["status"] == MANUAL_REQUIRED for r in desktop_rows)
-        # Manual-required rows never gate the exit code even though found.
-        assert report["stale_count"] == sum(
-            1 for r in report["rows"] if r["status"] in _GATING_STATUSES
-        )
-        text = render_human(report)
-        assert "brain doctor" in text
-    print("OK: doctor self-check passed")
-
-
-
 # The plugin/marketplace, staged-workspace, VM-stage, desktop-registration,
 # surface-resolution, and liveness checks live in their own modules since the
 # 2026-08-16/2026-08-21 size ratchets; re-exported so every
@@ -490,11 +451,3 @@ from .doctor_vm import (  # noqa: E402,F401  (facade re-export)
     check_vm_snapshot as check_vm_snapshot,
     looks_like_vm_stage as looks_like_vm_stage,
 )
-
-
-# The ``__main__`` guard lives at the very END of the module, AFTER the
-# facade re-exports above: under runpy (``python -m brain.<mod>``) the guard
-# fires at its source position, and every facade name must already be bound
-# by then (2026-08-16 size-ratchet fix).
-if __name__ == "__main__":
-    _demo()

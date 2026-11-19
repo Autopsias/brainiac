@@ -271,6 +271,23 @@ def supersede_journal_path(vault: str | os.PathLike[str] | None = None) -> Path:
     return d / f"supersede-pending-{vault_slug8(vault)}.json"
 
 
+def golden_probes_pin_path(vault: str | os.PathLike[str] | None = None) -> Path:
+    """The host-private frozen copy of ``<vault>/eval/golden-probes.json`` (F127).
+
+    OFF THE MOUNT. The live probes file sits in the vault, which a Cowork VM
+    can write, so the golden fold scores THIS copy and refuses a live file that
+    no longer matches it (``folds/golden.py``). Same treatment, helper and
+    app-data fallback as the supersede crash journal above; keyed by vault
+    identity so two vaults never share one pin."""
+    try:
+        d = proven_off_mount(host_private_base() / "golden-pin", vault,
+                             what="golden probes pin store")
+    except HostPathUnsafe:
+        d = proven_off_mount(_config._app_data_base() / "golden-pin", vault,
+                             what="golden probes pin store (app-data fallback)")
+    return d / f"golden-probes-{vault_slug8(vault)}.json"
+
+
 def cos_run_records_dir(vault: str | os.PathLike[str] | None = None) -> Path:
     """The COS run manifest / validity / plan-binding store.
 
@@ -350,6 +367,29 @@ def audit_drift_dispositions_path(vault: str | os.PathLike[str] | None = None) -
     Callers must treat that as "nothing is explained" — never as a clean bill.
     Keyed by vault identity so two vaults never share one triage file."""
     return audit_drift_dispositions_dir(vault) / f"dispositions-{vault_slug8(vault)}.json"
+
+
+def maintain_state_private_path(vault: str | os.PathLike[str] | None = None) -> Path:
+    """The AUTHORITATIVE ``maintain-state`` copy (F104), OFF THE MOUNT.
+
+    ``<vault>/.brain/maintain-state.json`` sits on the mount a Cowork VM can
+    write, yet it decides which date-gated maintain branches run and feeds
+    every liveness/regression alarm for them: a VM that writes
+    ``last_run: today`` there silences both. The engine now reads this copy
+    (``brain.maintain_state_store``) and treats the mount file as a display
+    projection, the rule ``remediation_state`` already follows.
+
+    Keyed by the path-derived vault identity, never by ``index_dir`` (which
+    follows the mount-resident ``.brain/vault-id``). Same helper and same
+    app-data fallback as the supersede journal. Raises
+    :class:`HostPathUnsafe` only when even the fallback is VM-visible."""
+    try:
+        d = proven_off_mount(host_private_base() / "maintain-state", vault,
+                             what="maintain state store")
+    except HostPathUnsafe:
+        d = proven_off_mount(_config._app_data_base() / "maintain-state", vault,
+                             what="maintain state store (app-data fallback)")
+    return d / f"maintain-state-{vault_slug8(vault)}.json"
 
 
 def graph_dir(vault: str | os.PathLike[str] | None = None) -> Path:

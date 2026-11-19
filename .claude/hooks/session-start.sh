@@ -171,6 +171,7 @@ PUSH=$(python3 - "$VAULT_DIR" <<'PYEOF'
 import glob
 import json
 import os
+import re
 import sys
 
 # EVERY registered vault, not just this project's (field 2026-07-16). The PUSH
@@ -236,6 +237,12 @@ def _open_count(vault: str) -> int:
     return n
 
 
+def _one_line(text: str) -> str:
+    """The folder may come from $BRAIN_RUNTIME_DIR and this line sits outside
+    the fence: a newline in it would start a line of its own in the context."""
+    return re.sub(r"[\x00-\x1f\x7f-\x9f  ]", " ", text)
+
+
 _seen_runtimes = set()
 for vault in _candidate_vaults(sys.argv[1]):
     # A global $BRAIN_RUNTIME_DIR collapses every vault onto one runtime dir;
@@ -246,14 +253,14 @@ for vault in _candidate_vaults(sys.argv[1]):
     _seen_runtimes.add(rt)
     open_n = _open_count(vault)
     fb_n = len(glob.glob(os.path.join(rt, "engine-feedback", "*.md")))
-    label = os.path.basename(os.path.dirname(vault)) or vault
+    label = _one_line(os.path.basename(os.path.dirname(vault)) or vault)
     if open_n:
         print(f"OWNER INBOX ({label}): {open_n} decision(s) pending — ask me to "
               f"open them, or run /brain-inbox. Each is one question with options "
               f"and a default (~{open_n} min).")
     if fb_n:
         print(f"ENGINE FEEDBACK ({label}): {fb_n} engine-bug prompt(s) waiting in "
-              f"{os.path.join(rt, 'engine-feedback')}/.")
+              f"{_one_line(os.path.join(rt, 'engine-feedback'))}/.")
 PYEOF
 )
 

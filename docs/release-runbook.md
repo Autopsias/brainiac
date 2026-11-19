@@ -736,6 +736,16 @@ per-act `--confirm` consent recorded in evidence.
 .venv/bin/python tools/publish_public.py v<X.Y.Z> --denylist <path> --from public-git  # resume a partial run
 ```
 
+**After a passing dry-run, start the real run with `--from export`, not from
+the top.** The suite-result cache (`phase_tests`, `reuse_pass_for_sha`) applies
+only on a resume, and only to the same commit. A real run started without
+`--from` re-ran the full suite (v0.20.53: 36 min and 15 min, both red from
+60 s test timeouts at load 27 to 50, about 1 h 20 min lost). Read `uptime`
+first. `--confirm` is repeatable and takes ACT names (`testpypi`, `pypi`,
+`public-git`, `release-asset`), never a version. If `brain update` times out
+at the deploy phase (1800 s under load), check `brain --version` on the host,
+then resume with `--from deploy`.
+
 **Run it with the project's own interpreter, not bare `python3`.** The test
 phase runs the suite under whatever interpreter launched the pipeline. This
 runbook said `python3` until 0.20.37, and on the release host that resolves to

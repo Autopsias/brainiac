@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import concurrent.futures
-import os
 import sys
 from typing import Any
 
@@ -11,12 +10,6 @@ from .. import rerank as rerank_mod
 
 
 def _requested_window(rerank_top: int) -> int:
-    configured = os.environ.get("BRAIN_RERANK_TOP")
-    if configured:
-        try:
-            rerank_top = int(configured)
-        except ValueError:
-            pass
     return rerank_mod.clamp_rerank_top(rerank_top)
 
 

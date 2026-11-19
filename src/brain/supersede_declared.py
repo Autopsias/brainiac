@@ -46,6 +46,11 @@ SIDECAR_SUFFIX = ".supersedes"
 FAILED = "supersede_declared_failed"
 PENDING = "supersede_declared"
 
+# The sidecar sits in the mount-writable drop lane (INT-04): read it capped, and
+# keep only the first ids. A real declaration is a handful of short slugs.
+MAX_SIDECAR_BYTES = 64 * 1024
+MAX_SIDECAR_IDS = 100
+
 _WIKILINK = re.compile(r"^\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]$")
 
 
@@ -53,9 +58,10 @@ _WIKILINK = re.compile(r"^\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]$")
 # reading a declaration
 # ---------------------------------------------------------------------------
 
-def parse_ids(value: Any) -> list[str]:
+def parse_ids(value: Any, limit: int | None = None) -> list[str]:
     """Bare ids or ``[[wikilinks]]`` (``[[raw/<id>]]``, ``[[id|alias]]``), one
-    per line. Order kept, duplicates dropped, ``#`` lines ignored."""
+    per line. Order kept, duplicates dropped, ``#`` lines ignored; stops at
+    ``limit`` ids when one is given."""
     lines = value if isinstance(value, (list, tuple)) else str(value or "").splitlines()
     out: list[str] = []
     for raw in lines:
@@ -67,6 +73,8 @@ def parse_ids(value: Any) -> list[str]:
         ident = ident.rsplit("/", 1)[-1] if match else ident
         if ident and ident not in out:
             out.append(ident)
+            if limit is not None and len(out) >= limit:
+                break
     return out
 
 
@@ -80,6 +88,7 @@ def declared_ids(record: Any) -> tuple[list[str], str]:
     The sidecar still sits in the drop folder — the claim moved only the
     payload — so ``record.path`` finds it. A dropped ``.md`` may declare the
     same thing in its own leading frontmatter."""
+    from . import draft_drain
     from . import frontmatter as fm
 
     sidecar = sidecar_for(record.path)
@@ -87,8 +96,9 @@ def declared_ids(record: Any) -> tuple[list[str], str]:
     where = ""
     if sidecar.is_file() and not sidecar.is_symlink():
         try:
-            ids = parse_ids(sidecar.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError):
+            ids = parse_ids(draft_drain._read_text_nofollow(sidecar, MAX_SIDECAR_BYTES),
+                            limit=MAX_SIDECAR_IDS)
+        except (OSError, UnicodeDecodeError, draft_drain._UnsafeDraft):
             ids = []
         where = f"inbox/_deliverables/{sidecar.name}"
     markdown = getattr(record.result, "markdown", "") if record.result else ""
@@ -377,8 +387,9 @@ def guarded(core: Any, old_id: str, new_id: str, *, reason: str, max_tier: str,
                             "the pair; relate the notes first (a trusted new note "
                             f"declaring `replaces: {old_id}`)",
                             **sides(core, old_id, new_id))
-        core.supersede(old_id, new_id, reason=f"{declared_by} ({why}): {reason}")
+        res = core.supersede(old_id, new_id, reason=f"{declared_by} ({why}): {reason}")
     except ValueError as exc:  # the core's own chain invariants, named
         return _refused(str(exc), **sides(core, old_id, new_id))
-    return {"applied": True, "proposed": False, "related": why,
+    extra = {"already_done": True} if res.get("already_done") else {}
+    return {"applied": True, "proposed": False, "related": why, **extra,
             **sides(core, old_id, new_id)}

@@ -9,8 +9,10 @@ each one into ONE decidable question with enumerated options and a default,
 puts it on the morning sheet beside the verdict marks, and applies the answer
 on the next night through the audited write path (``interview_apply``).
 
-State: ``<vault>/.brain/interview/state.json`` — every question ever asked,
-its status, and the last applied lines. Host-only, never indexed.
+State: ``<host-private base>/interview/<vault slug>/state.json`` — every
+question ever asked, its status, and the last applied lines. OFF THE MOUNT
+(F89): the apply half signs edits and decision notes from these rows, so a
+file a Cowork VM can write must never be where they are read from.
 
 The budget is what keeps this from becoming a nag: at most ``MAX_PER_DAY`` new
 questions a day and ``MAX_OPEN`` open at once; a question expires after
@@ -27,9 +29,12 @@ import os
 import re
 from pathlib import Path
 from typing import Any
+from . import config
 from .atomic_temp import atomic_temp_path
 
 SCHEMA = "brain-interview/1"
+#: The LEGACY, VM-writable location. Never read as authority any more: only
+#: its closed rows are carried forward once (`read_state`).
 STATE_RELPATH = ".brain/interview/state.json"
 MAX_PER_DAY = 3
 MAX_OPEN = 5
@@ -80,7 +85,17 @@ _ACTION_RE = re.compile(r"^[a-z]+(:[A-Za-z0-9._-]{1,255})?$")
 # state
 # --------------------------------------------------------------------------
 def state_path(vault: Any) -> Path:
-    return Path(vault) / STATE_RELPATH
+    """HOST-PRIVATE, proven off every VM-visible root (F89). Raises
+    ``config.HostPathUnsafe`` when ``$BRAIN_INDEX_DIR`` puts it back on the mount.
+
+    The rows decide which note ``interview_apply`` edits and what a signed
+    decision note says; `<vault>/.brain/` is on the mount a Cowork VM writes, so
+    a forged row there reached the signed write path. Placement is the control,
+    as for the approved queue and the feedback ledger; keyed on the resolved
+    vault path, never on `.brain/vault-id`."""
+    return config.proven_off_mount(
+        config.host_private_base() / "interview" / config.vault_slug8(vault),
+        vault, what="the interview state") / "state.json"
 
 
 def empty_state() -> dict[str, Any]:
@@ -88,8 +103,7 @@ def empty_state() -> dict[str, Any]:
             "last_answer_on": ""}
 
 
-def read_state(vault: Any) -> dict[str, Any]:
-    p = state_path(vault)
+def _load(p: Path) -> dict[str, Any]:
     try:
         d = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -101,9 +115,31 @@ def read_state(vault: Any) -> dict[str, Any]:
     return base
 
 
+def read_state(vault: Any) -> dict[str, Any]:
+    """The lane's state; empty (nothing to ask, nothing to apply) when the
+    private path is unsafe. Before the first private write, the legacy mount
+    file is carried forward WITHOUT its open rows: a VM could have written
+    them, and the detectors redraw the real ones. The closed rows only
+    silence evidence, they never reach a write."""
+    try:
+        p = state_path(vault)
+    except config.HostPathUnsafe:
+        return empty_state()
+    if p.exists():
+        return _load(p)
+    legacy = _load(Path(vault) / STATE_RELPATH)
+    rows = legacy["rows"] if isinstance(legacy["rows"], list) else []
+    state = empty_state()
+    state["rows"] = [r for r in rows if isinstance(r, dict)
+                     and r.get("status") in (ANSWERED, EXPIRED, SKIPPED)]
+    state["last_answer_on"] = str(legacy["last_answer_on"])
+    return state
+
+
 def write_state(vault: Any, state: dict[str, Any]) -> Path:
     p = state_path(vault)
     p.parent.mkdir(parents=True, exist_ok=True)
+    config.secure_file_permissions(p.parent, 0o700)
     tmp = atomic_temp_path(p)
     tmp.write_text(json.dumps(state, ensure_ascii=False, sort_keys=True,
                               indent=1) + "\n", encoding="utf-8")

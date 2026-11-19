@@ -1,7 +1,7 @@
 """Explicit engine-only update path for hosts that do not manage Claude plugins."""
 from __future__ import annotations
 
-from .update_channels_2 import (
+from .update_flow import (
     _finalize_update, _run_dist_rebuild, _run_engine_refresh, _run_workspace_restage,
 )
 

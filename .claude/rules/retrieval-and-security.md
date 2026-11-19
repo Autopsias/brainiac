@@ -20,7 +20,7 @@ links for multi-hop questions, read full notes on demand.
 
 | Tool | What it does | Embeds the query? |
 |---|---|---|
-| **search** / **hybrid-search** | fused **RRF** — BM25 + dense + bounded exact alias/title leg in one ranking, fused at **`RRF_K_FUSE = 3`** (RET-11, 2026-08-05; rollback `BRAIN_RRF_K=60`, no rebuild — the separate `rrf_k = 60` below is ADR-0008's exact-leg calibration key, not the fusing constant); the skippable cross-encoder reranks the top 20 by default (BR-03, owner ruling 2026-08-04; ceiling 50 via `BRAIN_RERANK_TOP`/`BRAIN_RERANK_MAX`) — opt out with `--no-rerank` or `BRAIN_RERANK_DISABLED=1`; RK-02 skips that rerank on a query already decided by a unique exact-identity pin (`--no-rerank-gate` forces it back on); `--explain` emits gated per-stage attribution | yes (lazy — only here) |
+| **search** / **hybrid-search** | fused **RRF** — BM25 + dense + bounded exact alias/title leg in one ranking, fused at **`RRF_K_FUSE = 3`** (RET-11, 2026-08-05; rollback `BRAIN_RRF_K=60`, no rebuild — the separate `rrf_k = 60` below is ADR-0008's exact-leg calibration key, not the fusing constant); the skippable cross-encoder reranks the top 20 by default (BR-03, owner ruling 2026-08-04; fixed ceiling 50) — opt out with `--no-rerank` or `BRAIN_RERANK_DISABLED=1`; RK-02 skips that rerank on a query already decided by a unique exact-identity pin (`--no-rerank-gate` forces it back on); `--explain` emits gated per-stage attribution | yes (lazy — only here) |
 | **diagnose** | runs the production hybrid ranking unchanged, then reports only the gated target's stage presence/rank/cutoff; a withheld target is the opaque `withheld` sentinel | yes (same production search) |
 | **grep** | exact / `--regex` scan over note bodies | **no** (cheap first probe) |
 | **bases-query** | structured frontmatter view (`--where type=note --where classification=Internal`) | **no** |
@@ -52,6 +52,20 @@ one visible, unique full alias/title owner. Any full-identity collision, or any
 full owner withheld by egress, degrades the public answer to `probable` or
 `unknown` without exposing owner counts, hidden ids, ranks, titles, or a
 collision label.
+
+**A row marked `own_output: true` is our own earlier proposal, never evidence
+(A-19, 2026-11-17).** A surfaced note row carries `own_output: true` (and
+`produced_by`) when the note's `deliverable` is truthy or its
+`provenance.produced_by` is `inbox-deliverables` or
+`brainiac-codex-weekly-synthesis`, so only drop-lane and weekly-synthesis
+proposals are marked; a note that only `promote`, `save-conversation` or
+`kb-curator` stamped is not. `dossier` also returns an `own_outputs` list of
+copies of those rows (JSON/MCP only, not the plain-text view, and without
+own-output rows from the `decisions` layer), and a `tensions` entry carries the
+keys when the newer note is an own output; the text views print `[own output]`
+on such a row. Never cite an `own_output` row as evidence for a claim: trace the
+claim to a source or a decision. The mark shows who produced a note; it does not
+make the content true or false, and it never raises trust.
 
 **The concealment verdict rides on every hit (M-3b, 2026-09-04).** Ingest
 searches a document for text HIDDEN from a human reader — white-on-white,
@@ -99,7 +113,7 @@ Read it literally:
   having been checked.
 
 **Rerank-safe exact matching.** Reranking is bounded to the top 10-50
-candidates (default window 20, ceiling raisable via `BRAIN_RERANK_MAX`). A
+candidates (default window 20, fixed ceiling 50). A
 unique full alias/title owner is pinned outside the reranker; multi-owner
 collisions are not globally pinned, but their internal live-before-retired
 order is restored inside the slots the reranker selected. Reranker scores
@@ -114,9 +128,8 @@ the owner explicitly accepted for the quality gain. The default is 20, not 50
 (owner ruling): at window 50 the p50 is 68.0s and
 85% of golden queries hit the 30s timeout and return the BARE ordering anyway
 — quality you receive beats quality that expires (`eval/FOLLOWUPS.md` #6).
-The CEILING stays 50: `BRAIN_RERANK_TOP`/`BRAIN_RERANK_MAX` still opt into
-the wide-candidate pass deliberately, and a wide pass needs
-`BRAIN_RERANK_TIMEOUT_S` raised with it. Opt out per call with `--no-rerank`; the global kill switch is
+The CEILING stays 50 and is no longer settable by environment variable;
+a wide pass would need `BRAIN_RERANK_TIMEOUT_S` raised with it. Opt out per call with `--no-rerank`; the global kill switch is
 `BRAIN_RERANK_DISABLED=1` (mirrors `BRAIN_EXACT_LEG_ENABLED`'s env contract)
 — an explicit `--rerank`/`--no-rerank` always wins over the env var. A slow
 rerank call is caller-bounded, not hung forever: an ONNX forward pass cannot

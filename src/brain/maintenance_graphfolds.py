@@ -19,7 +19,6 @@ import os as os
 # above), escalating to a hot.md LOG line (never a queue/ritual) when
 # knowledge-layer orphans grow past a threshold since the last run.
 # ---------------------------------------------------------------------------
-GRAPH_ORPHAN_GROWTH_MAX_ENV = "BRAIN_GRAPH_ORPHAN_GROWTH_MAX"
 DEFAULT_GRAPH_ORPHAN_GROWTH_MAX = 10
 
 
@@ -36,10 +35,7 @@ def graph_hygiene_orphan_growth(
 
 
 def should_alert_graph_hygiene_growth(growth: int, *, max_growth: int | None = None) -> bool:
-    import os as _os
-
-    threshold = max_growth if max_growth is not None else int(
-        _os.environ.get(GRAPH_ORPHAN_GROWTH_MAX_ENV, DEFAULT_GRAPH_ORPHAN_GROWTH_MAX))
+    threshold = max_growth if max_growth is not None else DEFAULT_GRAPH_ORPHAN_GROWTH_MAX
     return growth > threshold
 
 
@@ -75,7 +71,6 @@ def render_graph_hygiene_hot_entry(
 # multi-day drift is visible even though the full graph_hygiene branch (with
 # its own separate, single-prior-run growth alarm) only runs weekly.
 # ---------------------------------------------------------------------------
-KL_ORPHAN_SUSTAINED_GROWTH_ENV = "BRAIN_ORPHAN_SUSTAINED_GROWTH"
 DEFAULT_KL_ORPHAN_SUSTAINED_GROWTH = 5
 KL_ORPHAN_TRAILING_DAYS = 7
 
@@ -99,12 +94,9 @@ def kl_orphan_sustained_growth(
 def should_alert_kl_orphan_sustained_growth(
     growth: int | None, *, max_growth: int | None = None,
 ) -> bool:
-    import os as _os
-
     if growth is None:
         return False
-    threshold = max_growth if max_growth is not None else int(
-        _os.environ.get(KL_ORPHAN_SUSTAINED_GROWTH_ENV, DEFAULT_KL_ORPHAN_SUSTAINED_GROWTH))
+    threshold = max_growth if max_growth is not None else DEFAULT_KL_ORPHAN_SUSTAINED_GROWTH
     return growth > threshold
 
 
@@ -149,9 +141,7 @@ def render_kl_orphan_sustained_growth_hot_entry(
 # BEFORE the build runs) and backs off exponentially (capped) on consecutive
 # failures, resetting only after a build that actually publishes.
 # ---------------------------------------------------------------------------
-GRAPHIFY_DRIFT_PCT_ENV = "BRAIN_GRAPHIFY_DRIFT_PCT"
 DEFAULT_GRAPHIFY_DRIFT_PCT = 0.15
-GRAPHIFY_COOLDOWN_DAYS_ENV = "BRAIN_GRAPHIFY_COOLDOWN_DAYS"
 DEFAULT_GRAPHIFY_COOLDOWN_DAYS = 2
 GRAPHIFY_BACKOFF_MAX_MULTIPLIER = 8  # capped exponential backoff on consecutive overruns
 
@@ -225,12 +215,8 @@ def should_trigger_drift_graphify(
     (``maintain_branches``) remains the FLOOR trigger, independent of this
     function — a maintain run ORs the two triggers together (session
     context bundle FRESH-01)."""
-    import os as _os
-
-    pct = drift_pct if drift_pct is not None else float(
-        _os.environ.get(GRAPHIFY_DRIFT_PCT_ENV, DEFAULT_GRAPHIFY_DRIFT_PCT))
-    days = cooldown_days if cooldown_days is not None else int(
-        _os.environ.get(GRAPHIFY_COOLDOWN_DAYS_ENV, DEFAULT_GRAPHIFY_COOLDOWN_DAYS))
+    pct = drift_pct if drift_pct is not None else DEFAULT_GRAPHIFY_DRIFT_PCT
+    days = cooldown_days if cooldown_days is not None else DEFAULT_GRAPHIFY_COOLDOWN_DAYS
     if ratio <= pct:
         return False
     return graphify_drift_marker_due(marker, today, days)

@@ -20,7 +20,7 @@ from .graphreport_sections import (
     _union_find_clusters,
     build_link_section,
 )
-from .graphreport_sections_2 import build_semantic_section, build_targets_section
+from .graphreport_semantic import build_semantic_section, build_targets_section
 
 __all__ = [
     "TEMPLATE_PLACEHOLDER", "NEAR_DUP_THRESHOLD", "MISMATCH_LOW",

@@ -82,11 +82,24 @@ import time as _time
 import argparse
 import json
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from . import __version__, classification as cls
 from . import egress
-from .core import BrainCore
+if TYPE_CHECKING:
+    from .core import BrainCore
+
+
+def __getattr__(name: str) -> Any:
+    # brain.core is ~80% of this module's import cost; load it on first use so
+    # coreless verbs (check-egress, run by the PreToolUse guard on every tool
+    # call) never pay for it. Tests still monkeypatch cli.BrainCore.
+    if name == "BrainCore":
+        from .core import BrainCore as _core_cls
+
+        globals()["BrainCore"] = _core_cls
+        return _core_cls
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 def _json_default(o: Any) -> Any:
     """Coerce non-JSON-native values to native types for ``json.dump``.
@@ -240,10 +253,11 @@ def build_parser() -> argparse.ArgumentParser:
 def _make_core(args: Any, role: str) -> BrainCore:
     """Construct BrainCore with the resolved role. Tolerant of a test double that
     patched ``cli.BrainCore`` with a vault-only signature (back-compat)."""
+    core_cls = globals().get("BrainCore") or __getattr__("BrainCore")
     try:
-        return BrainCore(vault=args.vault, role=role)
+        return core_cls(vault=args.vault, role=role)
     except TypeError:
-        return BrainCore(vault=args.vault)
+        return core_cls(vault=args.vault)
 
 
 # Commands the read+draft-only VM leg may run. Everything else is host-broker.

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from .. import core as core_mod
+from ..retrieval_ops import MULTI_MAX_VARIANTS
 from ..cli import EPILOG
 from ..rerank import RERANK_TOP_DEFAULT
 from .common_parser import add_common
@@ -56,7 +56,7 @@ def _add_search(sub, name: str, help_text: str) -> None:
         action="append",
         default=None,
         metavar="TEXT",
-        help=f"an alternative phrasing of the same question (repeatable) — each is searched separately and the result lists are rank-fused into one ranking (RET-05). Use it when the question's words are yours rather than the notes' (a translation, a synonym expansion). Identical variants are deduplicated; variants past {core_mod.MULTI_MAX_VARIANTS} are dropped from the tail and reported; BRAIN_VARIANTS_ENABLED=0 is the kill switch",
+        help=f"an alternative phrasing of the same question (repeatable) — each is searched separately and the result lists are rank-fused into one ranking (RET-05). Use it when the question's words are yours rather than the notes' (a translation, a synonym expansion). Identical variants are deduplicated; variants past {MULTI_MAX_VARIANTS} are dropped from the tail and reported; BRAIN_VARIANTS_ENABLED=0 is the kill switch",
     )
     sp.add_argument(
         "--rerank-fused",

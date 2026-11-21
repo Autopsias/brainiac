@@ -72,6 +72,8 @@ state `not running` (correct — `RunAtLoad` is false).
 fires a real night against the live mailbox.** To swap a path without running
 anything, run it with no argument or use `bootout` then `bootstrap` by hand.
 
+**A public release follows `.claude/skills/publish-release/SKILL.md`.** The skill is not model-invocable, so it never shows in the skill list: read the file. Cut it in a worktree, and fast-forward the main checkout to the release commit before the run: the deploy step reads the main checkout. *Why:* on 2026-11-19 a hand-run release failed its deploy step because the main checkout was still at the old version, and skipped the manual Cowork plugin store step.
+
 **Required status checks on the public `main` are CLOSED: the owner declined them on 2026-09-05. Do not re-raise them.**
 
 *Why:* nothing merges into `Autopsias/brainiac`'s `main`. Every commit in its history is a release squash that `tools/publish_public_uploads.py:259` pushes directly (`git push origin main`), and every pull request against `main` — ten of them, all Dependabot — was closed unmerged. Required status checks would therefore gate a path nobody uses and **block the only path anybody uses**. **If you ever want the guarantee, the fix is to move releases to a pull request — not to switch `enforce_admins` off.**

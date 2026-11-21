@@ -733,6 +733,7 @@ per-act `--confirm` consent recorded in evidence.
 ```
 .venv/bin/python tools/publish_public.py v<X.Y.Z> --denylist ~/brainiac-release-groundtruth.txt
 .venv/bin/python tools/publish_public.py v<X.Y.Z> --denylist <path> --dry-run     # verify only
+semgrep --config p/python --config p/secrets --config p/github-actions --timeout 30 --error --skip-unknown-extensions src tools scripts .github packaging   # the public semgrep check; the pipeline does not run it
 .venv/bin/python tools/publish_public.py v<X.Y.Z> --denylist <path> --from public-git  # resume a partial run
 ```
 

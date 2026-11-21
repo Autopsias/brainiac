@@ -7,6 +7,10 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.55] — 2026-11-21
+### Fixed
+- **`brain check-egress` starts about 40% faster, so the Claude Code egress guard no longer times out on a loaded machine.** The guard runs this verb on every tool call. The CLI loaded the whole engine core at start-up, and one parser loaded it for a help-text constant, though `check-egress` never uses it. The core now loads only for verbs that need it. Measured in one shell at load 31: median about 300 ms before, about 186 ms after.
+
 ## [0.20.54] — 2026-11-19
 ### Fixed
 - **The public `semgrep` check is green again.** It failed on every release since 0.20.50 on one false finding: the `brain` launcher shim is written with mode `0o755` because it must be executable. The line now carries a reviewed inline suppression with the reason.

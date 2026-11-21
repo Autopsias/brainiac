@@ -122,6 +122,8 @@ Runs the full suite in a clean worktree at the tag, the export, both
 contamination gates (self-test first), the build, and the Windows CI check,
 then stops before anything uploads. Two expected stops and their meanings:
 
+Before the step-4 card, also run the public CI's semgrep command on the tag (the pipeline does not): `semgrep --config p/python --config p/secrets --config p/github-actions --timeout 30 --error --skip-unknown-extensions src tools scripts .github packaging`. A finding is a stop. *Why:* v0.20.50 to v0.20.53 went public with a red semgrep check (one commit got past the hook).
+
 - **Contamination hits** — scrub the named class in the tracked files,
   re-commit, re-tag (delete + recreate the LOCAL tag), re-run step 3.
 - **Windows CI red/unreachable** — read the linked run log first. Only if
@@ -210,6 +212,8 @@ curl -s -o /dev/null -w '%{http_code}\n' https://pypi.org/pypi/brainiac-cli/0.20
 Likewise, never report an outcome from a harness "task completed" summary —
 three times on 2026-08-16 one arrived saying exit 0 while the run's own log
 ended `EXIT=1`. Read the log and the transcript.
+
+Read the public checks on the release commit: `gh run list -R Autopsias/brainiac -L 12`. Report any red check and fix it; never call the release done while one is red.
 
 Link the evidence transcript (`_evidence/releases/publish-<X.Y.Z>.md`). If any
 act was declined or failed, state plainly what is NOT published and what the

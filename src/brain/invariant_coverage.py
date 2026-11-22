@@ -417,15 +417,19 @@ def lane_consumption(previous: dict[str, Any] | None,
     the generated date rolls over. A week of daily records reading 0 while
     candidates exist is the stalled-consumer signal."""
     if not isinstance(previous, dict):
-        return {"previous_generated": None, "consumed_today": 0}
+        return {"previous_generated": None, "consumed_today": 0, "last_consumed_on": None}
     prev_ids = [str(c.get("id", "")) for c in previous.get("candidates") or []
                 if isinstance(c, dict)]
     newly = sum(1 for i in prev_ids if i and i not in current_unlinked_ids)
     base = previous.get("consumed_today")
     carried = base if (isinstance(base, int)
                        and previous.get("generated") == today_iso) else 0
+    consumed = carried + newly
+    # The lane is weekly but the count resets daily: keep the last day anything
+    # left, so lane_health can judge the week, not only today.
+    last = today_iso if consumed > 0 else previous.get("last_consumed_on")
     return {"previous_generated": previous.get("generated"),
-            "consumed_today": carried + newly}
+            "consumed_today": consumed, "last_consumed_on": last}
 
 
 def write_link_lane(conn: Any, vault: Path, *, limit: int | None = None) -> dict[str, Any]:

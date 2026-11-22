@@ -7,6 +7,10 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.56] — 2026-11-21
+### Fixed
+- **The linking-lane health check no longer reports a working lane as stalled.** The weekly linking lane runs once a week, but its health check counted only sources linked *today*, a count that resets at midnight. So it failed six days in seven, and after two such weeks `invariant:unlinked_sources` raised "linking lane unhealthy" while the lane was linking 64 to 80 sources each Sunday. The lane's worklist now keeps `last_consumed_on`, the last day a source left it, and the check passes while that day is at most 8 days old. A lane that links nothing for more than 8 days still fails.
+
 ## [0.20.55] — 2026-11-21
 ### Fixed
 - **`brain check-egress` starts about 40% faster, so the Claude Code egress guard no longer times out on a loaded machine.** The guard runs this verb on every tool call. The CLI loaded the whole engine core at start-up, and one parser loaded it for a help-text constant, though `check-egress` never uses it. The core now loads only for verbs that need it. Measured in one shell at load 31: median about 300 ms before, about 186 ms after.

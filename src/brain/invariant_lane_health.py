@@ -17,7 +17,8 @@ below compares today's reading to a prior one.
    ``LANE_MAX_AGE_DAYS``.
 2. ``consumption_recorded``    — the lane's own stalled-consumer signal
    (`invariant_coverage.lane_consumption`'s docstring): candidates exist and
-   NONE left the population today.
+   NONE left the population within ``LANE_MAX_AGE_DAYS`` (the lane runs
+   weekly; a today-only reading failed six days in seven, 2026-11-21).
 3. ``backlog_within_headroom`` — the lane consumed its full weekly budget and
    the backlog is STILL above that budget — a structural overload, not a lazy
    session (a session that did not use its full budget fails leg 2 instead).
@@ -107,9 +108,11 @@ def lane_health(
     total_unlinked = int(lane.get("total_unlinked") or 0)
     budget = int(lane.get("budget") or 0)
     consumed_today = int(lane.get("consumed_today") or 0)
+    last_consumed_age = _lane_age_days(lane.get("last_consumed_on"), today)
     # The stalled-consumer signal `lane_consumption` was built for: candidates
-    # exist and nothing left the population today.
-    consumption_recorded = total_unlinked == 0 or consumed_today > 0
+    # exist and nothing left the population within one weekly cadence.
+    consumption_recorded = (total_unlinked == 0 or consumed_today > 0 or (
+        last_consumed_age is not None and last_consumed_age <= LANE_MAX_AGE_DAYS))
     # The lane worked its FULL budget and the backlog is still above it — a
     # structural overload, not a session that simply skipped this week (that
     # is `consumption_recorded` failing instead).
@@ -119,13 +122,13 @@ def lane_health(
     legs = {"worklist_fresh": worklist_fresh, "consumption_recorded": consumption_recorded,
             "backlog_within_headroom": backlog_within_headroom, "age_days": age,
             "total_unlinked": total_unlinked, "budget": budget,
-            "consumed_today": consumed_today}
+            "consumed_today": consumed_today, "last_consumed_age_days": last_consumed_age}
     reasons = []
     if not worklist_fresh:
         reasons.append("worklist has never been produced" if age is None
                         else f"worklist {age}d old (> {LANE_MAX_AGE_DAYS}d)")
     if not consumption_recorded:
-        reasons.append(f"{total_unlinked} candidate(s) and 0 consumed today")
+        reasons.append(f"{total_unlinked} candidate(s) and 0 consumed in {LANE_MAX_AGE_DAYS}d")
     if not backlog_within_headroom:
         reasons.append(f"backlog {total_unlinked} > budget {budget} even at full consumption")
     healthy = worklist_fresh and consumption_recorded and backlog_within_headroom

@@ -901,10 +901,17 @@ case "$tool" in
     chome="$(canon "$HOME" "$PWD")"
     ctarget="$(canon "$target" "$hook_cwd")"
     if [ -n "$ctarget" ]; then
-      for base in "$hook_cwd" "$PWD" "$GUARD_VAULT"; do
+      # The session scratchpad (`/private/tmp/claude-<uid>` on macOS, where
+      # `/tmp` is a symlink) is Claude Code's private temp root. A write there
+      # stays on this host, so it skips the engine start. `canon` still sends
+      # a symlinked path to the check.
+      for base in "$hook_cwd" "$PWD" "$GUARD_VAULT" \
+                 "/private/tmp/claude-$UID" "/tmp/claude-$UID"; do
         [ -n "$base" ] || continue
         cbase="$(canon "$base" "$PWD")"
         [ -n "$cbase" ] || continue
+        # /tmp is shared: a scratchpad folder another user made is not ours.
+        case "$base" in */tmp/claude-*) [ -O "$cbase" ] || continue ;; esac
         [ "$cbase" = "/" ] && continue
         [ -n "$chome" ] && [ "$cbase" = "$chome" ] && continue
         case "$ctarget" in

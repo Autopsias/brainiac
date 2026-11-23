@@ -7,6 +7,10 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.58] — 2026-11-23
+### Fixed
+- **A write to the session's own scratchpad no longer starts the engine.** The egress guard checked an Edit or Write to Claude Code's private temp folder (`/tmp/claude-<uid>/…`) for restricted terms, which cost one engine start (about 0.5 s) per write. A file there cannot leave the machine, so the guard now allows it at once. It skips the check only for a folder the current user owns: `/tmp` is shared, and a folder another user made is still checked. A symlink or a `..` path out of the scratchpad, a sibling folder and plain `/tmp` are still checked.
+
 ## [0.20.57] — 2026-11-23
 ### Fixed
 - **`brain doctor` finds the egress guard in the global Claude Code settings.** The guard row read only the project's `.claude/settings.local.json`, so a host that registers the guard once in `~/.claude/settings.json` showed a false `warn`, and the only way to clear it was a second registration that ran the guard twice on every tool call. The row now also reads the global file, including an entry that a deploy tool wraps in its fixed timing wrapper. Only the exact wrapper text counts: a wrapper with an early `exit` or an `|| true` still reads as not registered. The installer keeps its strict rule.

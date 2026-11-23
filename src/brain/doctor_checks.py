@@ -221,7 +221,7 @@ def _terminal_rows(
     # M-2: `.claude/settings.local.json` is gitignored, so no test or CI leg
     # can see whether the owner applied the permission edit. This row is the
     # only surface that can.
-    rows.append(_guard_settings_row(context.repo_root))
+    rows.append(_guard_settings_row(context.repo_root, context.claude_home))
     # And the guard's own accumulated session state, whose degraded mode —
     # an unwritable directory — silently narrows the guard to one vault.
     rows.append(_session_state_row())

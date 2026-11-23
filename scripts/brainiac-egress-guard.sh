@@ -66,12 +66,13 @@
 # `brain doctor`'s SEC-07 rows are the only surface that reports whether a
 # given machine actually has it.
 #
-# FAIL-CLOSED HAS A CEILING TOO. Claude Code CANCELS a `PreToolUse` command
-# hook that exceeds its `timeout`, and a cancelled hook is not a block — the
-# tool call proceeds. This script cannot convert a timeout into a refusal, so
-# the 5-second budget below is FAIL-OPEN and no amount of fail-closed logic in
-# here changes that. It is a platform property, recorded rather than claimed
-# away. TWO states this script deliberately ALLOWS, for the same reason: no
+# A TIMEOUT IS A REFUSAL, NOT AN ALLOW (corrected 2026-11-23). Claude Code
+# CANCELS a `PreToolUse` command hook that exceeds its `timeout`. Sessions on
+# 2026-11-22 showed what happens next: the call is REFUSED ("the hook did not
+# finish, so this call was not run"). This header used to say the call
+# proceeds; that was wrong, and the "FAIL-OPEN budget" wording below inherits
+# it. A slow guard therefore costs the owner refused calls, not a disarmed
+# guard — which is why per-call speed matters. TWO states this script deliberately ALLOWS, for the same reason: no
 # `brain` resolvable at all, and no vault resolvable for this session. Neither
 # is a check that FAILED; each is an absence of any decoder ring to judge
 # against, and so an absence of authority to refuse. A ring that EXISTS and
@@ -300,7 +301,7 @@ PreToolUse block of ~/.claude/settings.json OUTSIDE a session." >&2
   fi
 fi
 
-payload="$(cat)"
+payload="$(</dev/stdin)"            # builtin read: `cat` is a process start
 tool=""
 text="$payload"
 target=""
@@ -400,7 +401,7 @@ if [ -n "$JQ" ]; then
     IFS= read -r hook_cwd
     IFS= read -r hook_session
     IFS= read -r _named_join
-    extracted="$(cat)"
+    extracted="$(</dev/stdin)"
   } <<GUARD_FIELDS
 $_fields
 GUARD_FIELDS
@@ -442,7 +443,7 @@ Re-run it with the payload on stdin to see why, or remove this hook entry \
 from the PreToolUse block of ~/.claude/settings.json OUTSIDE a session." >&2
       exit 2 ;;
   esac
-  named_paths="$(printf '%s' "$_named_join" | tr '\001' '\n')"
+  named_paths="${_named_join//$'\001'/$'\n'}"
   [ -n "$extracted" ] && text="$extracted"
 else
   # NO jq (s06 round 1, H-5). This used to leave `$tool` empty, which silently
@@ -675,8 +676,13 @@ if [ -n "$GUARD_REGISTRY" ] && [ -n "$hook_session" ]; then
   # prevent. Correctness never depended on it — the merge is idempotent — but
   # every duplicate line costs another ring resolution inside a 5-second budget
   # that FAILS OPEN. `sort -u` on the read side has no race to lose.
-  _record="$(printf '%s\n%s\n' "$GUARD_VAULT" "$GUARD_NAMED" \
-             | grep -v '^$' | sort -u)"
+  # Nothing to record (the usual Read/Bash call) -> skip the grep|sort
+  # processes: each process start can stall ~0.3 s on a loaded host.
+  _record=""
+  if [ -n "$GUARD_VAULT$GUARD_NAMED" ]; then
+    _record="$(printf '%s\n%s\n' "$GUARD_VAULT" "$GUARD_NAMED" \
+               | grep -v '^$' | sort -u)"
+  fi
   if [ -n "$_record" ]; then
     if [ ! -d "$_sdir" ]; then
       mkdir -p "$_sdir" 2>/dev/null && chmod 700 "$_sdir" 2>/dev/null || true
@@ -944,9 +950,9 @@ esac
 # ONE CALL, EVERY RING THIS SESSION HAS ENTERED (s06 round 6). The first cut of
 # the session set ran the engine once per vault, and that does not fit the
 # budget: measured 0.96s for one vault and 2.19s for two, against a 5-second
-# hook timeout that Claude Code resolves by CANCELLING the hook — which is an
-# ALLOW. Four registered vaults on the reference host would therefore have
-# disarmed the guard by being slow. `--extra-vault` merges the rings inside the
+# hook timeout that Claude Code resolves by CANCELLING the hook — which, per
+# the 2026-11-23 correction at the top, REFUSES the call. Four registered
+# vaults on the reference host would therefore have refused calls by being slow. `--extra-vault` merges the rings inside the
 # engine instead, so the cost is one process for any number of vaults.
 _primary=""
 _extra=""

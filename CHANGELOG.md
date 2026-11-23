@@ -7,6 +7,11 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.20.57] — 2026-11-23
+### Fixed
+- **`brain doctor` finds the egress guard in the global Claude Code settings.** The guard row read only the project's `.claude/settings.local.json`, so a host that registers the guard once in `~/.claude/settings.json` showed a false `warn`, and the only way to clear it was a second registration that ran the guard twice on every tool call. The row now also reads the global file, including an entry that a deploy tool wraps in its fixed timing wrapper. Only the exact wrapper text counts: a wrapper with an early `exit` or an `|| true` still reads as not registered. The installer keeps its strict rule.
+- **The egress guard starts fewer processes on each tool call.** It reads its input and splits paths with shell builtins, so a `Read` call no longer starts eight processes. The decisions are the same. The script header now also says that Claude Code refuses a call whose guard does not finish in time.
+
 ## [0.20.56] — 2026-11-21
 ### Fixed
 - **The linking-lane health check no longer reports a working lane as stalled.** The weekly linking lane runs once a week, but its health check counted only sources linked *today*, a count that resets at midnight. So it failed six days in seven, and after two such weeks `invariant:unlinked_sources` raised "linking lane unhealthy" while the lane was linking 64 to 80 sources each Sunday. The lane's worklist now keeps `last_consumed_on`, the last day a source left it, and the check passes while that day is at most 8 days old. A lane that links nothing for more than 8 days still fails.

@@ -211,6 +211,12 @@ ENGINE_ASSET_FILES = [
     # `cos_mutate_*` siblings above — an installed engine has no `tools/` dir
     # of its own and would score every mutating night INCONCLUSIVE without it.
     "tools/cos_signals_sent.py",
+    # today-v2 CX-01/02: the night asks Memento, and the judgment reads the
+    # stakeholder list; an installed engine has no tools/ dir of its own.
+    "tools/cos_memento_ask.py", "tools/cos_today_stakeholders.py",
+    # today-v2 JD-01: the Today judge and its prompt file, read beside it.
+    "tools/cos_today_judge.py", "tools/cos_today_judge_prompt.md",
+    "tools/cos_today_payoff.py",
     # `brain graph-report` HTML shell — the payload <script type="application/
     # json"> block is spliced in at render time by src/brain/graphreport.py;
     # everything else here is static (CSS/JS/WebGL viewer).

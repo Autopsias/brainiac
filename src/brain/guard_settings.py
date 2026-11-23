@@ -21,12 +21,22 @@ from .session_hook import (
     HOOKS,
     _event_groups,
     _read_settings,
+    _program_path,
     _registration,
     managed_programs,
     registry_path,
 )
 
 LOCAL_SETTINGS = ".claude/settings.local.json"
+
+# The deploy repo's timing wrapper, matched as its EXACT text with only the program
+# free: any other statement (an early exit, an ||) would run instead of the guard.
+# A READ-ONLY match for this row; the installer keeps its strict first-word rule (H-3/H-4).
+_WRAPPER_TEXT = ('p="{P}"; { printf \'%s %s %s start\\n\' "$(date +%s)" "${p##*/}" $$'
+                 ' >> "$HOME/.dyno/hook-timing.log"; } 2>/dev/null; "$p"; s=$?;'
+                 ' { printf \'%s %s %s end %s\\n\' "$(date +%s)" "${p##*/}" $$ $s'
+                 ' >> "$HOME/.dyno/hook-timing.log"; } 2>/dev/null; exit $s')
+_WRAPPER = re.compile(re.escape(_WRAPPER_TEXT).replace(re.escape("{P}"), '([^"]+)'))
 
 #: A `Bash(...)` allow entry whose WHOLE payload is an interpreter or a code
 #: runner, left OPEN by a wildcard (or by `-`, "read the program from stdin").
@@ -197,7 +207,33 @@ def _set_vars(settings: Any) -> list[str]:
         or (isinstance(env, dict) and v in env and _loosens(v, env[v])))
 
 
-def guard_settings_row(repo_root: Path) -> dict[str, Any]:
+def _wrapped_program(command: Any) -> Path | None:
+    """The program a timing-wrapper command runs, or None for any other shape."""
+    m = _WRAPPER.fullmatch(str(command or "").strip())
+    return _program_path(m.group(1)) if m else None
+
+
+def _global_registration(claude_home: Path) -> tuple[bool, Any]:
+    """``(present, matcher)`` for the guard in the global settings.json,
+    plain or behind the deploy repo's timing wrapper."""
+    groups = _event_groups(_read_settings(claude_home / "settings.json") or {},
+                           GUARD_EVENT)
+    dests = managed_programs(None, GUARD_SCRIPT)
+    present, found = _registration(groups, HOOKS[1], dests)
+    if present and found == GUARD_MATCHER:
+        return present, found
+    for group in groups:
+        if isinstance(group, dict) and any(
+                _wrapped_program(e.get("command")) in dests
+                for e in group.get("hooks") or [] if isinstance(e, dict)):
+            if (group.get("matcher") or None) == GUARD_MATCHER:
+                return True, GUARD_MATCHER
+            present, found = True, group.get("matcher") or None
+    return present, found
+
+
+def guard_settings_row(repo_root: Path,
+                       claude_home: Path | None = None) -> dict[str, Any]:
     """`brain doctor`'s row for the repo-local M-2 permission edit.
 
     **Why a doctor row and not a test.** `.claude/settings.local.json` is
@@ -243,6 +279,10 @@ def guard_settings_row(repo_root: Path) -> dict[str, Any]:
     present, found = _registration(
         _event_groups(settings, GUARD_EVENT), HOOKS[1],
         managed_programs(None, GUARD_SCRIPT))
+    if not (present and found == GUARD_MATCHER) and claude_home is not None:
+        # A global entry runs the same guard on every call; a second local copy
+        # only runs it twice per call (the 2026-11-22 hook timeouts).
+        present, found = _global_registration(claude_home)
     registered = present and found == GUARD_MATCHER
     faults = _escape_faults(settings)
     if broad:

@@ -54,8 +54,8 @@ resistance.
 **Run these four assertions FIRST — each one cost a failed run on 2026-08-16.**
 
 ```
-PY=~/.brainiac/venv/bin/python3          # the interpreter that has all three
-$PY -c "import pytest, build, twine"     # must ALL import, from ONE interpreter
+PY=.venv/bin/python                      # the project env: suite extras + build + twine
+$PY -c "import pytest, build, twine, fastembed, ranx"   # must ALL import, from ONE interpreter
 git rev-parse --verify refs/tags/v<X.Y.Z>   # the pipeline needs the tag to exist
 ls ~/brainiac-release-groundtruth.txt    # the denylist
 ```
@@ -64,8 +64,10 @@ ls ~/brainiac-release-groundtruth.txt    # the denylist
   twine with the same `sys.executable`. Homebrew's `python3` has pytest but
   no twine; a bare venv with twine has no pytest. Installing twine into a
   fresh venv "to fix it" swaps a step-7 failure for a step-3 failure. On this
-  host `~/.brainiac/venv/bin/python3` is the one that satisfies all three —
-  verify, never assume, and invoke the pipeline with it explicitly.
+  host the project's `.venv/bin/python` satisfies all of them; since 0.20.56
+  `~/.brainiac/venv` lacks the suite extras (fastembed, ranx, ruff) and the
+  pipeline refuses it at its gate. Verify, never assume, and invoke the
+  pipeline (steps 3 and 5) with it explicitly.
 - **Do NOT check `npm whoami`, and never run `npm login`.** The pipeline does
   not publish npm at all: the tag push fires `npm-publish.yml`, which
   publishes over OIDC with no credential and with a provenance attestation.
@@ -114,7 +116,7 @@ git tag -a v<X.Y.Z> -m "brainiac <X.Y.Z> — <one line>"
 ### 3 · Verify — the pipeline's dry-run
 
 ```
-python3 tools/publish_public.py v<X.Y.Z> \
+$PY tools/publish_public.py v<X.Y.Z> \
   --denylist ~/brainiac-release-groundtruth.txt --dry-run
 ```
 
@@ -157,8 +159,14 @@ now and the rest later, that later approval is its own card and its own
 
 ### 5 · Execute
 
+First check that no other run of this tag is under way:
+`pgrep -fl 'publish_public.py v<X.Y.Z>'` must print nothing. If it prints a
+run, stop and wait for it; do not start a second one. *Why:* on 2026-11-22
+two sessions ran v0.20.56 at the same time; the second stopped at the
+public-git gate ("public clone shows no changes") after re-running TestPyPI.
+
 ```
-python3 tools/publish_public.py v<X.Y.Z> \
+$PY tools/publish_public.py v<X.Y.Z> \
   --denylist ~/brainiac-release-groundtruth.txt \
   --skip-tests \
   --confirm <act> [--confirm <act> ...] \

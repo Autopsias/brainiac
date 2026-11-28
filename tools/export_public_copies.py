@@ -133,14 +133,15 @@ def regenerate_type_baseline(output_dir: Path) -> None:
     """The private baseline counts COS files and imports of modules the export
     drops, so the public CI would judge the public tree against the wrong
     numbers. Re-record it ON the export, in the environment that CI judges
-    with: Python 3.12 holding only ty, at the pin the workflow installs."""
+    with: Python 3.12 with project runtime + mcp/eval extras and pinned ty."""
     pin = re.search(r"\bty==[\w.]+", (output_dir / RATCHET_WORKFLOW).read_text(encoding="utf-8"))
     uv = shutil.which("uv")
     if not pin or not uv:
         raise SystemExit(f"FAIL: cannot re-record {TYPE_BASELINE} for the export: "
                          f"{'uv is not on PATH' if pin else f'no ty pin in {RATCHET_WORKFLOW}'}")
     env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV" and not k.startswith(("BRAIN", "PYTHON"))}
-    p = subprocess.run([uv, "run", "-q", "--no-project", "--isolated", "--python", "3.12",
+    p = subprocess.run([uv, "run", "-q", "--isolated", "--frozen", "--python", "3.12",
+                        "--extra", "mcp", "--extra", "eval",
                         "--with", pin.group(0), "python", "tools/check_types.py", "--generate-baseline"],
                        cwd=output_dir, env=env, capture_output=True, text=True, timeout=300)
     if p.returncode != 0:

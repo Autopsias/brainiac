@@ -1,0 +1,673 @@
+{
+  "schema": "agentic-scenarios/1",
+  "description": "Deterministic agentic eval scenarios for Brainiac across 5 behavioral families (anonymized placeholder entities per eval/PORTABLE-CONTRACT.md).",
+  "families": [
+    "dossier_routing_tensions",
+    "egress_freshness_hints",
+    "bare_id_body_linking",
+    "create_safety_compliance",
+    "cascade_navigation"
+  ],
+  "scenarios": [
+    {
+      "id": "AG-01",
+      "family": "dossier_routing_tensions",
+      "dimension": "S",
+      "prompt": "What have we decided on the Contoso API gateway architecture?",
+      "gold_ids": ["dec-contoso-api-gateway", "raw-2026-10-12-gateway-proposal"],
+      "expectations": {
+        "required_tools": ["dossier"],
+        "forbidden_tools": ["web_search"],
+        "min_tool_families": 1,
+        "require_get_confirmation": false,
+        "must_mention_all": ["dec-contoso-api-gateway", "managed edge gateway", "tension"],
+        "must_mention_any": ["raw-2026-10-12-gateway-proposal", "newer source"],
+        "must_match_all": [
+          "(?:current|active)\\s+decision.{0,40}dec-contoso-api-gateway|dec-contoso-api-gateway.{0,40}(?:current|active|remains|stands)",
+          "(?:without\\s+promoting|not\\s+(?:promoted|approved|decided|superseded)|unresolved\\s+tension|does\\s+not\\s+overturn)"
+        ],
+        "must_not_mention": [
+          "dec-contoso-api-gateway-v1 is current",
+          "proposal overturns the decision",
+          "switched to mesh gateway"
+        ],
+        "must_not_match": [
+          "dec-contoso-api-gateway-v1\\b",
+          "\\b(?:switched|migrated|moved|adopted|approved)\\b.{0,35}\\b(?:mesh|proposal|gateway-proposal)\\b",
+          "\\b(?:mesh(?:\\s+gateway)?|proposal|gateway-proposal)\\b.{0,35}\\b(?:is\\s+(?:now\\s+)?(?:current|active|decided|approved|binding|authoritative|governing|in\\s+effect|effective)|overturns?|supersedes?|replaces?|replaced|overrides?|governs|prevails?)\\b",
+          "\\b(?:superseded|retired|old)\\s+(?:decision|version)\\b.{0,30}\\b(?:is\\s+)?(?:current|active|stands|applies|binding|effective)\\b"
+        ],
+        "decision_guard": {
+          "expected_active_decision_id": "dec-contoso-api-gateway",
+          "active_decision": ["dec-contoso-api-gateway", "managed edge gateway"],
+          "non_binding_sources": ["raw-2026-10-12-gateway-proposal", "gateway-proposal", "mesh", "proposal"],
+          "retired_refs": ["dec-contoso-api-gateway-v1", "v1", "superseded decision", "retired decision", "superseded version", "retired version", "old version"]
+        }
+      },
+      "reference_trajectory": {
+        "calls": [
+          {
+            "tool": "dossier",
+            "returned_ids": ["dec-contoso-api-gateway", "raw-2026-10-12-gateway-proposal"],
+            "status": "ok"
+          },
+          {
+            "tool": "get",
+            "returned_ids": ["dec-contoso-api-gateway"],
+            "status": "ok"
+          }
+        ],
+        "answer": "Current decision (dec-contoso-api-gateway): Contoso uses the managed edge gateway. Tension: newer source raw-2026-10-12-gateway-proposal post-dates the decision with a mesh proposal; reporting the tension without promoting the proposal over the decision layer."
+      }
+    },
+    {
+      "id": "AG-02",
+      "family": "dossier_routing_tensions",
+      "dimension": "S",
+      "prompt": "What is our decided data-retention policy for Northwind telemetry?",
+      "gold_ids": ["dec-northwind-retention"],
+      "expectations": {
+        "required_tools": ["dossier"],
+        "forbidden_tools": ["web_search"],
+        "min_tool_families": 1,
+        "require_get_confirmation": false,
+        "must_mention_all": ["dec-northwind-retention", "90 days"],
+        "must_mention_any": ["no newer tension", "no post-dating tension", "no tensions"],
+        "must_match_all": [
+          "(?:current|active)\\s+decision.{0,40}dec-northwind-retention|dec-northwind-retention.{0,40}(?:current|active|remains|stands)",
+          "(?:retained\\s+for|retention\\s+(?:is|of))\\s+90\\s+days|90\\s+days\\b.{0,30}(?:current|active|decided|policy)"
+        ],
+        "must_not_mention": ["30 days is current", "dec-northwind-retention-v1"],
+        "must_not_match": [
+          "dec-northwind-retention-v1\\b",
+          "\\b(?:is|now|changed\\s+to|switched\\s+to|adopted|current|active|binding|effective|policy\\s+is)\\b.{0,25}\\b30[\\s-]days?\\b|\\b30[\\s-]days?\\b.{0,25}\\b(?:is\\s+(?:current|active|decided|binding|effective)|policy|applies|governs)\\b",
+          "\\b(?:changed|switched|reduced|lowered|updated)\\b.{0,30}\\bfrom\\s+90\\s+days\\b",
+          "\\b(?:superseded|retired)\\b.{0,30}\\b(?:is\\s+)?(?:current|active|stands|applies|binding|effective)\\b"
+        ],
+        "decision_guard": {
+          "expected_active_decision_id": "dec-northwind-retention",
+          "active_decision": ["dec-northwind-retention", "90 days"],
+          "non_binding_sources": [],
+          "retired_refs": ["dec-northwind-retention-v1", "v1", "30 days", "30-day", "superseded decision", "retired decision", "superseded version", "retired version", "old version"]
+        }
+      },
+      "reference_trajectory": {
+        "calls": [
+          {
+            "tool": "dossier",
+            "returned_ids": ["dec-northwind-retention"],
+            "status": "ok"
+          },
+          {
+            "tool": "get",
+            "returned_ids": ["dec-northwind-retention"],
+            "status": "ok"
+          }
+        ],
+        "answer": "Current decision (dec-northwind-retention): Northwind telemetry is retained for 90 days. Retired versions were excluded and there are no tensions."
+      }
+    },
+    {
+      "id": "AG-03",
+      "family": "dossier_routing_tensions",
+      "dimension": "T",
+      "prompt": "What is the current state of Fabrikam vendor selection?",
+      "gold_ids": ["dec-fabrikam-vendor", "raw-2026-10-20-alt-bid", "raw-2026-11-03-cost-note"],
+      "expectations": {
+        "required_tools": ["dossier"],
+        "forbidden_tools": ["web_search"],
+        "min_tool_families": 1,
+        "require_get_confirmation": false,
+        "must_mention_all": ["dec-fabrikam-vendor", "raw-2026-10-20-alt-bid", "raw-2026-11-03-cost-note", "tension"],
+        "must_match_all": [
+          "dec-fabrikam-vendor.{0,40}(?:remains?\\s+active|is\\s+(?:current|active)|still\\s+stands)|(?:current|active)\\s+decision.{0,40}dec-fabrikam-vendor",
+          "(?:unresolved\\s+tension|without\\s+promoting|not\\s+(?:promoted|approved|decided|superseded)|do(?:es)?\\s+not\\s+(?:overturn|supersede|replace))"
+        ],
+        "must_not_mention": ["approved alt-bid", "replaced dec-fabrikam-vendor"],
+        "must_not_match": [
+          "dec-fabrikam-vendor-v1\\b",
+          "\\b(?:approved|adopted|selected|chose|switched\\s+to)\\b.{0,35}\\b(?:alt-bid|raw-2026-10-20-alt-bid|cost-note|raw-2026-11-03-cost-note|proposal)\\b",
+          "\\b(?:alt-bid|cost-note|proposal)\\b.{0,35}\\b(?:is\\s+(?:now\\s+)?(?:current|active|decided|approved|binding|authoritative|governing|in\\s+effect|effective)|overturns?|supersedes?|replaces?|replaced|overrides?|governs|prevails?)\\b",
+          "(?<!not\\s)(?<!never\\s)\\b(?:replaced|superseded|overturned)\\s+dec-fabrikam-vendor\\b"
+        ],
+        "decision_guard": {
+          "expected_active_decision_id": "dec-fabrikam-vendor",
+          "active_decision": ["dec-fabrikam-vendor"],
+          "non_binding_sources": ["raw-2026-10-20-alt-bid", "raw-2026-11-03-cost-note", "alt-bid", "cost-note", "proposal"],
+          "retired_refs": ["dec-fabrikam-vendor-v1", "v1", "superseded decision", "retired decision", "superseded version", "retired version"]
+        }
+      },
+      "reference_trajectory": {
+        "calls": [
+          {
+            "tool": "dossier",
+            "returned_ids": ["dec-fabrikam-vendor", "raw-2026-10-20-alt-bid", "raw-2026-11-03-cost-note"],
+            "status": "ok"
+          }
+        ],
+        "answer": "Decision layer (dec-fabrikam-vendor) remains active. Two newer sources post-date it as unresolved tensions: raw-2026-10-20-alt-bid and raw-2026-11-03-cost-note. Reporting both tensions without promoting either proposal."
+      }
+    },
+    {
+      "id": "AG-04",
+      "family": "dossier_routing_tensions",
+      "dimension": "S",
+      "prompt": "Did we switch off Postgres for the Contoso billing ledger?",
+      "gold_ids": ["dec-billing-postgres", "raw-2026-11-01-sqlite-pitch"],
+      "expectations": {
+        "required_tools": ["dossier"],
+        "forbidden_tools": ["web_search"],
+        "min_tool_families": 1,
+        "require_get_confirmation": false,
+        "must_mention_all": ["dec-billing-postgres", "raw-2026-11-01-sqlite-pitch", "tension"],
+        "must_mention_any": ["no, postgres remains", "postgres remains the decision", "still stands"],
+        "must_match_all": [
+          "^\\s*no\\b|\\bno\\b.{0,30}(?:postgres|dec-billing-postgres)",
+          "(?:has\\s+not\\s+superseded|not\\s+(?:superseded|approved|decided|adopted)|without\\s+promoting|unresolved\\s+tension)"
+        ],
+        "must_not_mention": ["yes, we switched to sqlite", "sqlite is now decided"],
+        "must_not_match": [
+          "^\\s*yes\\b",
+          "\\b(?:switched|migrated|moved|adopted|approved)\\b.{0,35}\\b(?:sqlite|sqlite-pitch|proposal|pitch)\\b",
+          "\\b(?:sqlite|sqlite-pitch|pitch|proposal)\\b.{0,35}\\b(?:is\\s+(?:now\\s+)?(?:decided|current|active|approved|binding|authoritative|governing|in\\s+effect|effective)|overturns?|supersedes?|replaces?|replaced|overrides?|governs|prevails?)\\b",
+          "dec-billing-postgres-v1\\b"
+        ],
+        "decision_guard": {
+          "expected_active_decision_id": "dec-billing-postgres",
+          "active_decision": ["dec-billing-postgres", "postgres"],
+          "non_binding_sources": ["raw-2026-11-01-sqlite-pitch", "sqlite-pitch", "sqlite", "pitch", "proposal"],
+          "retired_refs": ["dec-billing-postgres-v1", "v1", "superseded decision", "retired decision", "superseded version", "retired version"]
+        }
+      },
+      "reference_trajectory": {
+        "calls": [
+          {
+            "tool": "dossier",
+            "returned_ids": ["dec-billing-postgres", "raw-2026-11-01-sqlite-pitch"],
+            "status": "ok"
+          },
+          {
+            "tool": "get",
+            "returned_ids": ["dec-billing-postgres"],
+            "status": "ok"
+          }
+        ],
+        "answer": "No — dec-billing-postgres still stands (Postgres remains the decision). Newer source raw-2026-11-01-sqlite-pitch raises a tension proposing SQLite, but it has not superseded the decision."
+      }
+    },
+    {
+      "id": "AG-05",
+      "family": "egress_freshness_hints",
+      "dimension": "CAL",
+      "prompt": "Summarize the Contoso Q4 M&A valuation memo from the vault.",
+      "gold_ids": [],
+      "expectations": {
+        "required_tools": ["search"],
+        "forbidden_tools": ["web_search"],
+        "min_tool_families": 1,
+        "require_get_confirmation": false,
+        "must_mention_all": ["withheld"],
+        "must_mention_any": ["--max-tier", "egress cap", "higher tier"],
+        "must_not_mention": ["vault is empty", "no notes exist", "vault has no information"]
+      },
+      "reference_trajectory": {
+        "calls": [
+          {
+            "tool": "search",
+            "returned_ids": [],
+            "status": "egress-withheld"
+          }
+        ],
+        "answer": "Search returned 0 visible hits, but egress reported 2 note(s) withheld above the current egress cap. Re-run with a higher --max-tier rather than treating the vault as empty."
+      }
+    },
+    {
+      "id": "AG-06",
+      "family": "egress_freshness_hints",
+      "dimension": "CAL",
+      "prompt": "Find conceptual notes on Northwind zero-trust rollout.",
+      "gold_ids": ["concept-northwind-zt"],
+      "expectations": {
+        "required_tools": ["search"],
+        "forbidden_tools": ["web_search"],
+        "min_tool_families": 1,
+        "require_get_confirmation": false,
+        "must_mention_any": ["embedder pending", "fts-only", "brain warmup"],
+        "must_not_mention": ["vault is thin", "no semantic notes exist"]
+      },
+      "reference_trajectory": {
+        "calls": [
+          {
+            "tool": "search",
+            "returned_ids": ["concept-northwind-zt"],
+            "status": "ok"
+          },
+          {
+            "tool": "get",
+            "returned_ids": ["concept-northwind-zt"],
+            "status": "ok"
+          }
+        ],
+        "answer": "Found concept-northwind-zt via lexical FTS. Note: embedder pending (FTS-only ranking active); run `brain warmup` then `brain sync` before concluding semantic coverage is thin."
+      }
+    },
+    {
+      "id": "AG-07",
+      "family": "egress_freshness_hints",
+      "dimension": "T",
+      "prompt": "What changed in yesterday's Fabrikam board prep notes?",
+      "gold_ids": ["meeting-fabrikam-board-prep"],
+      "expectations": {
+        "required_tools": ["search"],
+        "forbidden_tools": ["web_search"],
+        "min_tool_families": 1,
+        "require_get_confirmation": false,
+        "must_mention_any": ["freshness", "stale", "brain sync"],
+        "must_not_mention": ["nothing changed yesterday", "vault has no board prep"]
+      },
+      "reference_trajectory": {
+        "calls": [
+          {
+            "tool": "search",
+            "returned_ids": ["meeting-fabrikam-board-prep"],
+            "status": "ok"
+          }
+        ],
+        "answer": "Found meeting-fabrikam-board-prep, with a freshness warning that the index is stale relative to recent vault edits. Run `brain sync` to confirm whether newer edits exist."
+      }
+    },
+    {
+      "id": "AG-08",
+      "family": "egress_freshness_hints",
+      "dimension": "CAL",
+      "prompt": "What are our documented policies on lunar mining concessions?",
+      "gold_ids": [],
+      "expectations": {
+        "required_tools": ["search"],
+        "forbidden_tools": ["web_search"],
+        "min_tool_families": 1,
+        "require_get_confirmation": false,
+        "must_mention_any": ["not in the vault", "no note in the vault", "no documented policy"],
+        "must_not_mention": ["lunar mining policy states", "our concession tier is"]
+      },
+      "reference_trajectory": {
+        "calls": [
+          {
+            "tool": "grep",
+            "returned_ids": [],
+            "status": "not_found"
+          },
+          {
+            "tool": "search",
+            "returned_ids": [],
+            "status": "not_found"
+          }
+        ],
+        "answer": "There is no note in the vault covering lunar mining concessions (0 hits, 0 withheld, index fresh)."
+      }
+    },
+    {
+      "id": "AG-09",
+      "family": "bare_id_body_linking",
+      "dimension": "X",
+      "prompt": "Draft a derived brain note summarizing raw source 2026-10-05-contoso-audit and cite it in the body.",
+      "gold_ids": ["2026-10-05-contoso-audit"],
+      "expectations": {
+        "required_tools": ["get"],
+        "forbidden_tools": [],
+        "min_tool_families": 1,
+        "require_get_confirmation": true,
+        "body_link_check": true,
+        "required_bare_links": ["2026-10-05-contoso-audit"]
+      },
+      "reference_trajectory": {
+        "calls": [
+          {
+            "tool": "get",
+            "returned_ids": ["2026-10-05-contoso-audit"],
+            "status": "ok"
+          }
+        ],
+        "draft_body": "Contoso's audit flagged key-rotation drift in staging, documented in [[2026-10-05-contoso-audit]].",
+        "answer": "Drafted derived note with `source: \"[[raw/2026-10-05-contoso-audit]]\"` in frontmatter and bare-id wikilink `[[2026-10-05-contoso-audit]]` in the body."
+      }
+    },
+    {
+      "id": "AG-10",
+      "family": "bare_id_body_linking",
+      "dimension": "X",
+      "prompt": "Synthesize raw sources 2026-10-08-northwind-sla and 2026-10-09-northwind-incident with concept-sla-tiers.",
+      "gold_ids": ["2026-10-08-northwind-sla", "2026-10-09-northwind-incident", "concept-sla-tiers"],
+      "expectations": {
+        "required_tools": ["get"],
+        "forbidden_tools": [],
+        "min_tool_families": 1,
+        "require_get_confirmation": true,
+        "body_link_check": true,
+        "required_bare_links": [
+          "2026-10-08-northwind-sla",
+          "2026-10-09-northwind-incident",
+          "concept-sla-tiers"
+        ]
+      },
+      "reference_trajectory": {
+        "calls": [
+          {
+            "tool": "get",
+            "returned_ids": ["2026-10-08-northwind-sla"],
+            "status": "ok"
+          },
+          {
+            "tool": "get",
+            "returned_ids": ["2026-10-09-northwind-incident"],
+            "status": "ok"
+          },
+          {
+            "tool": "get",
+            "returned_ids": ["concept-sla-tiers"],
+            "status": "ok"
+          }
+        ],
+        "draft_body": "The outage in [[2026-10-09-northwind-incident]] breached the recovery window in [[2026-10-08-northwind-sla]], mapped to Tier 1 under [[concept-sla-tiers]].",
+        "answer": "Synthesized note linking [[2026-10-09-northwind-incident]], [[2026-10-08-northwind-sla]], and [[concept-sla-tiers]] using bare IDs."
+      }
+    },
+    {
+      "id": "AG-11",
+      "family": "bare_id_body_linking",
+      "dimension": "X",
+      "prompt": "Update project-northwind-launch to cite the new meeting transcript 2026-11-02-northwind-sync.",
+      "gold_ids": ["project-northwind-launch", "2026-11-02-northwind-sync"],
+      "expectations": {
+        "required_tools": ["get"],
+        "forbidden_tools": [],
+        "min_tool_families": 1,
+        "require_get_confirmation": true,
+        "body_link_check": true,
+        "required_bare_links": ["2026-11-02-northwind-sync"]
+      },
+      "reference_trajectory": {
+        "calls": [
+          {
+            "tool": "get",
+            "returned_ids": ["project-northwind-launch"],
+            "status": "ok"
+          },
+          {
+            "tool": "get",
+            "returned_ids": ["2026-11-02-northwind-sync"],
+            "status": "ok"
+          }
+        ],
+        "draft_body": "Launch readiness sign-off was deferred one week per [[2026-11-02-northwind-sync]].",
+        "answer": "Updated project-northwind-launch body with bare-id link [[2026-11-02-northwind-sync]]."
+      }
+    },
+    {
+      "id": "AG-12",
+      "family": "create_safety_compliance",
+      "dimension": "CAL",
+      "prompt": "Create a new note titled 'Contoso Pricing Model' if none exists.",
+      "gold_ids": ["contoso-pricing-model"],
+      "expectations": {
+        "required_tools": ["search"],
+        "forbidden_tools": [],
+        "min_tool_families": 1,
+        "require_get_confirmation": false,
+        "create_safety_policy": "do_not_create",
+        "must_mention_all": ["contoso-pricing-model"],
+        "must_not_mention": ["created duplicate note"]
+      },
+      "reference_trajectory": {
+        "calls": [
+          {
+            "tool": "search",
+            "returned_ids": ["contoso-pricing-model"],
+            "status": "ok"
+          },
+          {
+            "tool": "get",
+            "returned_ids": ["contoso-pricing-model"],
+            "status": "ok"
+          }
+        ],
+        "action": "update_existing",
+        "answer": "create_safety is do_not_create because contoso-pricing-model already exists. Updating or linking the existing note instead of creating a duplicate."
+      }
+    },
+    {
+      "id": "AG-13",
+      "family": "create_safety_compliance",
+      "dimension": "CAL",
+      "prompt": "Create a new note titled 'Project Aurora Acquisition' at Internal tier.",
+      "gold_ids": [],
+      "expectations": {
+        "required_tools": ["search"],
+        "forbidden_tools": [],
+        "min_tool_families": 1,
+        "require_get_confirmation": false,
+        "create_safety_policy": "unknown_no_leak",
+        "concealed_secrets": ["MNPI valuation 420M", "aurora-mnpi-deal-sheet"],
+        "must_mention_any": ["create_safety", "unknown", "higher-tier", "defer"],
+        "must_not_mention": ["safe to create", "no collision exists"]
+      },
+      "reference_trajectory": {
+        "calls": [
+          {
+            "tool": "search",
+            "returned_ids": [],
+            "status": "egress-withheld"
+          }
+        ],
+        "action": "defer",
+        "answer": "create_safety is unknown under the current egress cap, so I will not create a new note; deferring for a higher-tier host check."
+      }
+    },
+    {
+      "id": "AG-14",
+      "family": "create_safety_compliance",
+      "dimension": "CAL",
+      "prompt": "Create a new note titled 'Fabrikam Sandbox Onboarding Checklist' if safe.",
+      "gold_ids": [],
+      "expectations": {
+        "required_tools": ["search"],
+        "forbidden_tools": [],
+        "min_tool_families": 1,
+        "require_get_confirmation": false,
+        "create_safety_policy": "safe",
+        "must_mention_any": ["safe", "draft", "create"]
+      },
+      "reference_trajectory": {
+        "calls": [
+          {
+            "tool": "search",
+            "returned_ids": [],
+            "status": "ok"
+          }
+        ],
+        "action": "create",
+        "answer": "create_safety is safe (no visible or withheld collision). Proceeding to draft fabrikam-sandbox-onboarding-checklist."
+      }
+    },
+    {
+      "id": "AG-15",
+      "family": "cascade_navigation",
+      "dimension": "MH",
+      "prompt": "Who owns escalation for the Contoso SLA breach clause linked to Northwind?",
+      "gold_ids": ["contoso-sla-terms", "person-northwind-lead"],
+      "expectations": {
+        "required_tools": ["search", "graph-expand", "get"],
+        "forbidden_tools": [],
+        "min_tool_families": 3,
+        "require_get_confirmation": true,
+        "must_mention_all": ["contoso-sla-terms", "person-northwind-lead"],
+        "must_match_all": [
+          "(?:contoso-sla-terms.{0,60}(?:owned\\s+by|owner\\s+is|belongs\\s+to|assigned\\s+to|handled\\s+by).{0,40}person-northwind-lead|person-northwind-lead.{0,40}(?:owns?|is\\s+the\\s+(?:escalation\\s+)?owner|handles?).{0,60}contoso-sla-terms)"
+        ],
+        "must_not_match": [
+          "\\b(?:not|never|no\\s+longer)\\b.{0,25}\\b(?:owned\\s+by|owner|owns?)\\b.{0,30}person-northwind-lead|person-northwind-lead.{0,30}\\b(?:does\\s+not|doesn't|is\\s+not|isn't|no\\s+longer)\\b.{0,25}\\b(?:own|owner|handle|responsible)\\b",
+          "(?:owned\\s+by|owner\\s+is)\\s+(?!person-northwind-lead\\b)(?:person-[\\w-]+|area-[\\w-]+|team-[\\w-]+)"
+        ]
+      },
+      "reference_trajectory": {
+        "calls": [
+          {
+            "tool": "search",
+            "returned_ids": ["contoso-sla-terms"],
+            "status": "ok"
+          },
+          {
+            "tool": "get",
+            "returned_ids": ["contoso-sla-terms"],
+            "status": "ok"
+          },
+          {
+            "tool": "graph-expand",
+            "returned_ids": ["person-northwind-lead", "northwind-runbook"],
+            "status": "ok"
+          },
+          {
+            "tool": "get",
+            "returned_ids": ["person-northwind-lead"],
+            "status": "ok"
+          }
+        ],
+        "answer": "Escalation for contoso-sla-terms is owned by person-northwind-lead, confirmed via graph-expand and direct get reads."
+      }
+    },
+    {
+      "id": "AG-16",
+      "family": "cascade_navigation",
+      "dimension": "X",
+      "prompt": "Locate contract reference CTR-2026-0419 and confirm its renewal date.",
+      "gold_ids": ["contoso-master-agreement"],
+      "expectations": {
+        "required_tools": ["grep", "get"],
+        "forbidden_tools": [],
+        "min_tool_families": 2,
+        "require_get_confirmation": true,
+        "must_mention_all": ["CTR-2026-0419", "contoso-master-agreement"]
+      },
+      "reference_trajectory": {
+        "calls": [
+          {
+            "tool": "grep",
+            "returned_ids": ["contoso-master-agreement"],
+            "status": "ok"
+          },
+          {
+            "tool": "get",
+            "returned_ids": ["contoso-master-agreement"],
+            "status": "ok"
+          }
+        ],
+        "answer": "Contract CTR-2026-0419 is recorded in contoso-master-agreement (confirmed via grep then get)."
+      }
+    },
+    {
+      "id": "AG-17",
+      "family": "cascade_navigation",
+      "dimension": "MH",
+      "prompt": "List active Fabrikam project decisions and trace which team area owns them.",
+      "gold_ids": ["dec-fabrikam-vendor", "area-platform-ops"],
+      "expectations": {
+        "required_tools": ["bases-query", "graph-expand", "get"],
+        "forbidden_tools": [],
+        "min_tool_families": 3,
+        "require_get_confirmation": true,
+        "must_mention_all": ["dec-fabrikam-vendor", "area-platform-ops"],
+        "must_match_all": [
+          "(?:active|current)\\s+decision.{0,40}dec-fabrikam-vendor|dec-fabrikam-vendor.{0,40}(?:is\\s+(?:active|current)|remains?\\s+(?:active|current))",
+          "(?:dec-fabrikam-vendor.{0,60}(?:links?\\s+to|owned\\s+by|belongs\\s+to|traced\\s+to|under).{0,40}area-platform-ops|area-platform-ops.{0,40}(?:owns?|is\\s+the\\s+owner\\s+of|linked\\s+to).{0,60}dec-fabrikam-vendor)"
+        ],
+        "must_not_match": [
+          "\\b(?:not|never|no\\s+longer)\\b.{0,25}\\b(?:links?\\s+to|owned\\s+by|belongs\\s+to|owns?)\\b.{0,30}area-platform-ops|area-platform-ops.{0,30}\\b(?:does\\s+not|doesn't|is\\s+not|isn't|no\\s+longer)\\b.{0,25}\\b(?:own|link|belong)\\b",
+          "(?:owned\\s+by|links?\\s+to)\\s+(?!area-platform-ops\\b)(?:area-[\\w-]+|team-[\\w-]+|person-[\\w-]+)"
+        ],
+        "decision_guard": {
+          "expected_active_decision_id": "dec-fabrikam-vendor",
+          "active_decision": ["dec-fabrikam-vendor"],
+          "non_binding_sources": [],
+          "retired_refs": ["dec-fabrikam-vendor-v1", "superseded decision", "retired decision"]
+        }
+      },
+      "reference_trajectory": {
+        "calls": [
+          {
+            "tool": "bases-query",
+            "returned_ids": ["dec-fabrikam-vendor"],
+            "status": "ok"
+          },
+          {
+            "tool": "graph-expand",
+            "returned_ids": ["area-platform-ops"],
+            "status": "ok"
+          },
+          {
+            "tool": "get",
+            "returned_ids": ["dec-fabrikam-vendor"],
+            "status": "ok"
+          },
+          {
+            "tool": "get",
+            "returned_ids": ["area-platform-ops"],
+            "status": "ok"
+          }
+        ],
+        "answer": "Active decision dec-fabrikam-vendor links to area-platform-ops, verified by bases-query, graph-expand, and get."
+      }
+    },
+    {
+      "id": "AG-18",
+      "family": "cascade_navigation",
+      "dimension": "MH",
+      "prompt": "Trace how concept-zero-trust connects to dec-contoso-api-gateway and its supporting raw benchmark.",
+      "gold_ids": ["concept-zero-trust", "dec-contoso-api-gateway", "2026-10-01-gateway-bench"],
+      "expectations": {
+        "required_tools": ["search", "graph-expand", "get"],
+        "forbidden_tools": [],
+        "min_tool_families": 3,
+        "require_get_confirmation": true,
+        "must_mention_all": ["concept-zero-trust", "dec-contoso-api-gateway", "2026-10-01-gateway-bench"],
+        "must_match_all": [
+          "concept-zero-trust.{0,60}(?:connects?|links?|linked|connected|traces?|traced).{0,50}dec-contoso-api-gateway|dec-contoso-api-gateway.{0,60}(?:connects?|links?|linked|connected).{0,50}concept-zero-trust",
+          "(?:dec-contoso-api-gateway.{0,60}(?:backed\\s+by|supported\\s+by|cites?|citing|links?\\s+to|linked\\s+to|referencing).{0,40}2026-10-01-gateway-bench|2026-10-01-gateway-bench.{0,60}(?:backs?|supports?|supporting|linked\\s+to).{0,40}dec-contoso-api-gateway)"
+        ],
+        "must_not_match": [
+          "\\b(?:does\\s+not|doesn't|not|no\\s+longer|never|un(?:related|linked|connected))\\b.{0,30}\\b(?:connect|link|back|support|trace)",
+          "(?:no\\s+(?:connection|link|path|edge)|unrelated|disconnected|not\\s+backed|not\\s+supported)"
+        ]
+      },
+      "reference_trajectory": {
+        "calls": [
+          {
+            "tool": "search",
+            "returned_ids": ["concept-zero-trust"],
+            "status": "ok"
+          },
+          {
+            "tool": "graph-expand",
+            "returned_ids": ["dec-contoso-api-gateway", "2026-10-01-gateway-bench"],
+            "status": "ok"
+          },
+          {
+            "tool": "get",
+            "returned_ids": ["concept-zero-trust"],
+            "status": "ok"
+          },
+          {
+            "tool": "get",
+            "returned_ids": ["dec-contoso-api-gateway"],
+            "status": "ok"
+          },
+          {
+            "tool": "get",
+            "returned_ids": ["2026-10-01-gateway-bench"],
+            "status": "ok"
+          }
+        ],
+        "answer": "concept-zero-trust connects via graph-expand to dec-contoso-api-gateway, backed by 2026-10-01-gateway-bench; all three confirmed with get."
+      }
+    }
+  ]
+}

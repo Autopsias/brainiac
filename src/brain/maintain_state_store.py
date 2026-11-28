@@ -24,22 +24,95 @@ Three properties, each deliberate:
   that save; a forged row in it can suppress a branch for at most one cadence,
   because the next real run rewrites it. Nothing a VM does can bring it back —
   the private path is derived from the host's own path and configuration.
+
+``load`` also checks the SHAPE of what it reads (``sanitize``): a branch field the
+engine does arithmetic on (``last_run``, ``writer_busy_since``, the two streak
+counters) that is not a date or a small count is dropped, so it reads as never-run /
+0 / absent, and one line per defect goes to the caller. A forged value in the
+carry-forward window therefore cannot crash the run before ``save`` closes it.
 """
 from __future__ import annotations
 
 import datetime
 import json
 import os
+import reprlib
 from pathlib import Path
 from typing import Any
 
 from .atomic_temp import write_text_atomic
 
+# A real streak is a handful of runs; the cap keeps a forged count from bloating
+# every notification line it is formatted into.
+_MAX_COUNT = 1_000_000
 
-def load(vault: str | os.PathLike[str] | None) -> dict[str, Any]:
-    """The verified maintain state, or ``{}`` when it cannot be read or trusted."""
+
+def parse_day(value: Any) -> datetime.date | None:
+    """``value`` as a date (an ISO string or a ``date``), or ``None``. Never raises."""
+    if isinstance(value, datetime.date):
+        return value
+    try:
+        return datetime.date.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_count(value: Any) -> int | None:
+    """``value`` as a streak counter in ``0.._MAX_COUNT``, or ``None``. Never raises."""
+    try:
+        count = int(value)
+    except (TypeError, ValueError, OverflowError):  # NaN is ValueError, inf OverflowError
+        return None
+    return count if 0 <= count <= _MAX_COUNT else None
+
+
+def _show(value: Any) -> str:
+    """A bounded, escaped one-line sketch of ``value`` for a defect line."""
+    return reprlib.repr(value)[:40]
+
+
+_FIELD_PARSERS = {
+    "last_run": parse_day, "writer_busy_since": parse_day,
+    "consecutive_failures": parse_count, "consecutive_skips": parse_count,
+}
+
+
+def sanitize(state: dict[str, Any], defects: list[str] | None = None) -> dict[str, Any]:
+    """``state`` with every malformed branch field removed, so each reads as never-run /
+    0 / absent and the other fields and branches stay as they were.
+
+    A ``_``-prefixed key is a marker its own readers shape-check, left alone. A branch
+    row that is not an object is dropped, except a bare ISO date (the old per-branch
+    shape). Each drop adds one line to ``defects``: where, the value's type, and a
+    bounded escaped repr of it, never the raw value (it came from a file a VM can write)."""
+    defects = [] if defects is None else defects
+    clean: dict[str, Any] = {}
+    for branch, entry in state.items():
+        where = _show(str(branch))
+        if str(branch).startswith("_") or (
+                not isinstance(entry, dict) and parse_day(entry) is not None):
+            clean[branch] = entry
+        elif not isinstance(entry, dict):
+            defects.append(f"{where}: {type(entry).__name__} {_show(entry)}")
+        else:
+            clean[branch] = row = dict(entry)
+            for field, parse in _FIELD_PARSERS.items():
+                if field in row and parse(row[field]) is None:
+                    value = row.pop(field)
+                    defects.append(f"{where}.{field}: {type(value).__name__} {_show(value)}")
+    return clean
+
+
+def load(
+    vault: str | os.PathLike[str] | None, defects: list[str] | None = None,
+) -> dict[str, Any]:
+    """The verified maintain state, or ``{}`` when it cannot be read or trusted.
+
+    The state is shape-checked (``sanitize``); when ``defects`` is given it receives
+    one line per malformed field, or one line when the file is not a JSON object."""
     from . import config
 
+    defects = [] if defects is None else defects
     try:
         path = config.maintain_state_private_path(vault)
     except config.HostPathUnsafe:
@@ -48,9 +121,15 @@ def load(vault: str | os.PathLike[str] | None) -> dict[str, Any]:
         path = config.maintain_state_path(vault)  # one-time carry-forward, see module doc
     try:
         state = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except OSError:
         return {}
-    return state if isinstance(state, dict) else {}
+    except (ValueError, RecursionError):  # RecursionError: a forged, deeply nested file
+        defects.append("the file: not valid JSON")
+        return {}
+    if not isinstance(state, dict):
+        defects.append(f"the file: {type(state).__name__}, not a JSON object")
+        return {}
+    return sanitize(state, defects)
 
 
 def save(vault: str | os.PathLike[str] | None, state: dict[str, Any]) -> None:

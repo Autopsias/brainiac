@@ -218,6 +218,52 @@ def lever_alerts(today: datetime.date) -> list[dict[str, str]]:
     return out
 
 
+def _extension_vault_alerts(
+    vault: Path, today: datetime.date, name: str, *, role: str,
+) -> list[dict[str, str]]:
+    """Collect host-hook alerts, legacy COS heartbeat, or missing-COS notice."""
+    from . import host_hooks as _host_hooks  # noqa: PLC0415
+
+    out: list[dict[str, str]] = []
+    all_hooks = _host_hooks.load_host_hooks(role=role, vault=vault) if role != "vm" else ()
+    hooks = _host_hooks.providers_with(all_hooks, "vault_alerts")
+    if hooks:
+        for provider in hooks:
+            try:
+                rows = _host_hooks.call_hook_method(
+                    provider, "vault_alerts", vault, today, default=[],
+                ) or []
+                for row in rows:
+                    row_key = row.get("key") or row.get("source") if isinstance(row, dict) else None
+                    if row_key and row.get("text"):
+                        out.append(_alert(str(row_key), str(row["text"]),
+                                          str(row.get("scope") or row.get("vault") or name)))
+            except Exception as exc:  # noqa: BLE001 — hook failure stays non-silent
+                out.append(_alert(
+                    f"hook:{getattr(provider, 'name', 'unknown')}",
+                    f"host hook vault_alerts failed: {type(exc).__name__}: {exc}",
+                    name,
+                ))
+    elif _optional.cos_available():
+        if role != "vm":
+            from . import cos_runverify as _cos_alerts         # noqa: PLC0415
+            heartbeat = _cos_alerts.sheet_heartbeat(
+                vault,
+                now=datetime.datetime.combine(
+                    today, datetime.time(12, 0), tzinfo=datetime.timezone.utc),
+            )
+            if heartbeat.get("firing"):
+                out.append(_alert("cos:sheet-heartbeat", heartbeat["text"], name))
+    elif (vault / "cos-ops").is_dir() or _config.cos_ops_dir(vault).is_dir():
+        out.append(_alert("cos:code-missing", "this vault runs the COS nightly, but the "
+                          "installed engine has no COS code — reinstall the private build",
+                          name))
+    if role != "vm" and _host_hooks.providers_with(all_hooks, "private_state_warnings"):
+        for warning in _config.collect_private_state_warnings(vault, hooks=all_hooks):
+            out.append(_alert("hook:private-state", warning, name))
+    return out
+
+
 def vault_alerts(
     vault: Path, today: datetime.date, *, role: str = "host",
 ) -> list[dict[str, str]]:
@@ -235,23 +281,7 @@ def vault_alerts(
     out += exceptions_alerts(vault, today, name, role=role)
     out += degradation_alerts(vault, today, name, role=role)
     out += lever_alerts(today)
-    # OUT-OF-BAND: reads only the sheet directory's newest mtime, so a dead
-    # job cannot hide by failing to write its own ledger. Imported through the
-    # facade (which re-exports sheet_heartbeat) to avoid an import cycle.
-    if _optional.cos_available():
-        from . import cos_runverify as _cos_alerts             # noqa: PLC0415
-        heartbeat = _cos_alerts.sheet_heartbeat(
-            vault,
-            now=datetime.datetime.combine(
-                today, datetime.time(12, 0), tzinfo=datetime.timezone.utc),
-        )
-        if heartbeat.get("firing"):
-            out.append(_alert("cos:sheet-heartbeat", heartbeat["text"], name))
-    elif (vault / "cos-ops").is_dir() or _config.cos_ops_dir(vault).is_dir():
-        # COS ran here but this engine has none: say so, or the nightly dies silently.
-        out.append(_alert("cos:code-missing", "this vault runs the COS nightly, but the "
-                          "installed engine has no COS code — reinstall the private build",
-                          name))
+    out += _extension_vault_alerts(vault, today, name, role=role)
     if role != "vm":
         # Host-only: the capture inbox and the fix (`brain sync`/`brain write`)
         # are host-side; a VM zero here would be fabricated.
@@ -463,6 +493,8 @@ def collect(
             "run `brain alerts` on the host Mac",
             "weekly synthesis task health (~/.brain/synthesis-state.json) — "
             "host-only, run `brain alerts` on the host Mac", RETRIEVAL_WATCH_UNREACHABLE,
+            "COS sheet heartbeat (the host's private sheet records) — host-only, "
+            "run `brain alerts` on the host Mac",
         ]
         vaults = [Path(vault)] if vault else []
         if not vaults:

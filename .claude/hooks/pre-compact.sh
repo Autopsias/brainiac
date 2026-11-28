@@ -9,7 +9,13 @@
 # ADR-0003 Appendix B), adapted: vault root resolved dynamically
 # ($BRAIN_VAULT > $CLAUDE_PROJECT_DIR/vault) instead of a hardcoded path.
 set -e
-PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+if [ -n "${CLAUDE_PROJECT_DIR:-}" ]; then
+  PROJECT_DIR="$CLAUDE_PROJECT_DIR"
+elif command -v git >/dev/null 2>&1 && _GIT_TOP=$(git rev-parse --show-toplevel 2>/dev/null) && [ -n "$_GIT_TOP" ]; then
+  PROJECT_DIR="$_GIT_TOP"
+else
+  PROJECT_DIR="$(pwd)"
+fi
 VAULT_DIR="${BRAIN_VAULT:-$PROJECT_DIR/vault}"
 MEMORY_DIR="$VAULT_DIR/.brain/memory"
 HANDOFF="$MEMORY_DIR/handoff.md"

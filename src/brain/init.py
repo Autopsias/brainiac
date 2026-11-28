@@ -35,9 +35,11 @@ from __future__ import annotations
 import datetime as _dt  # noqa: F401
 import importlib.util
 import os
+import re
 import shutil
 import subprocess as subprocess
 import sys as sys
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -83,23 +85,29 @@ def packaged_assets_root() -> Path | None:
 def discover_repo_root() -> Path | None:
     """Best-effort locate the scaffold/registration asset root.
 
-    Precedence: ``$BRAIN_REPO_ROOT`` (explicit override) > the wheel-shipped
-    ``brain/_assets`` mirror (importlib.resources — PYP-02 resolution order:
-    package resources first) > first ancestor of this file that carries
-    ``scripts/register_tasks.py`` (plain source checkout on ``sys.path``) >
-    ``None``.
+    Precedence: the wheel-shipped ``brain/_assets`` mirror (importlib.resources
+    — PYP-02 resolution order: package resources first) > first ancestor of
+    this file that carries ``scripts/register_tasks.py`` (plain source checkout
+    on ``sys.path``) > ``$BRAIN_REPO_ROOT`` (last resort, absolute existing
+    directory only) > ``None``.
+
+    The env override no longer beats the installed engine: ``load_registrar``
+    executes ``scripts/register_tasks.py`` from this root, and a cloned
+    project's committed Claude Code settings can set the environment without an
+    approval gate. It is honoured only when the engine carries no assets of its
+    own, and a relative value is ignored (it would resolve against the cwd).
     """
-    env = os.environ.get("BRAIN_REPO_ROOT")
-    if env:
-        p = Path(env).expanduser()
-        if p.is_dir():
-            return p.resolve()
     packaged = packaged_assets_root()
     if packaged is not None:
         return packaged
     for parent in Path(__file__).resolve().parents:
         if (parent / "scripts" / "register_tasks.py").exists():
             return parent
+    env = os.environ.get("BRAIN_REPO_ROOT")
+    if env:
+        p = Path(env).expanduser()
+        if p.is_absolute() and p.is_dir():
+            return p.resolve()
     return None
 
 
@@ -211,6 +219,56 @@ def detect_client(role: str) -> str:
     return "cowork" if role == config.ROLE_VM else "host"
 
 
+_TASK_ID_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
+_LABEL_MAX = 400  # longest shipped cadence is ~290 chars
+_HIDDEN_CATS = frozenset({"Cf", "Zl", "Zp", "Cs", "Co", "Cn"})  # Cc is stripped per field below
+
+
+def _neutralise_cowork_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Copy of ``manifest`` whose vm_eligible task text cannot break out of the
+    paste-prompt (F71): the vault copy is VM-writable, and the owner pastes the
+    rendered text into Cowork. Labels become one line; ``command`` loses control
+    characters and can no longer close the prompt's code fence. Only ``str``
+    values are touched (anything else behaves as before); the shipped manifest
+    passes through byte-identical. The text itself is NOT judged: only the owner
+    reading it can do that."""
+    def strip(v: str) -> str:  # drop control AND invisible format chars (Cf/Zl/Zp: bidi, ZW, tags)
+        return "".join(c for c in v if unicodedata.category(c) not in _HIDDEN_CATS)
+
+    def one(t: dict[str, Any]) -> dict[str, Any]:
+        if not t.get("vm_eligible"):
+            return t
+        t = dict(t)
+        for k in ("id", "disposition", "cadence"):
+            if isinstance(t.get(k), str):
+                t[k] = " ".join(strip(t[k]).split())[:_LABEL_MAX]
+        if isinstance(t.get("id"), str) and not _TASK_ID_RE.fullmatch(t["id"]):
+            t["id"] = "invalid-task-id"  # fail closed: an id is a plain slug
+        if isinstance(t.get("command"), str):
+            cmd = re.sub(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]", "", strip(t["command"]))
+            t["command"] = re.sub(r"`{3,}|~{3,}", lambda m: "'" * len(m.group()), cmd)
+        return t
+    return {**manifest, "tasks": [one(t) for t in manifest["tasks"]]}
+
+
+def _cowork_provenance(manifest: dict[str, Any], registrar) -> dict[str, Any]:
+    """Is the PARSED vault manifest (what the prompt was built from; never
+    re-read, the VM can swap the file between reads) the engine's own? Anything
+    but True carries a warning, so an uncheckable manifest fails closed."""
+    try:
+        shipped = registrar.load_manifest(discover_repo_root() / "routines" / "manifest.json")
+        same: bool | None = manifest == shipped
+    except (Exception, SystemExit):  # no shipped copy, unreadable or unparsable
+        same = None
+    if same:
+        return {"manifest_matches_shipped": True}
+    why = ("differs from the one the engine ships" if same is False
+           else "could not be compared with the engine's own")
+    return {"manifest_matches_shipped": same,
+            "warning": f"this manifest {why}: read every command in the "
+                       "paste-prompt before pasting it into Cowork"}
+
+
 def _register_tasks(
     *, client: str, registrar, manifest_path: Path | None, apply: bool,
     save_cowork_prompt: str | os.PathLike[str] | None,
@@ -234,11 +292,16 @@ def _register_tasks(
         out["host"] = registrar.register_host_leg(manifest, apply=apply)
         out["apply"] = apply
     else:  # cowork / vm — paste-prompt only, never host mutation
-        prompt = registrar.build_cowork_prompt(manifest)
+        safe = _neutralise_cowork_manifest(manifest)
+        prompt = registrar.build_cowork_prompt(safe)
         out["cowork"] = {
-            "vm_eligible_tasks": [t["id"] for t in manifest["tasks"] if t.get("vm_eligible")],
+            "vm_eligible_tasks": [t["id"] for t in safe["tasks"] if t.get("vm_eligible")],
             "prompt": prompt,
         }
+        out["cowork"].update(_cowork_provenance(manifest, registrar))  # vault copy is VM-writable
+        if out["cowork"].get("warning"):  # the warning leads the prompt the owner pastes
+            prompt = f"WARNING: {out['cowork']['warning']}\n\n{prompt}"
+            out["cowork"]["prompt"] = prompt
         if save_cowork_prompt:
             dest = Path(save_cowork_prompt)
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -313,7 +376,7 @@ from .init_import import (  # noqa: E402,F401  (facade re-export)
     ImportSafetyError as ImportSafetyError,
     _flatten_relpath as _flatten_relpath,
     _realpath as _realpath,
-    _unique_inbox_dest as _unique_inbox_dest,
+    _create_unique_inbox_dest as _create_unique_inbox_dest,
     build_import_dry_run as build_import_dry_run,
     check_import_caps as check_import_caps,
     render_import_dry_run as render_import_dry_run,

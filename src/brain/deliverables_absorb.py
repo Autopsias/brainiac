@@ -14,13 +14,16 @@ recorded hashes:** ``raw/`` is IMMUTABLE. A failure at row 90 of 120 cannot be
 rolled back and must not re-ingest rows 1-89, so resumability is the only
 available guarantee and it has to be exact.
 
-**The row-done test is the vault's own ingest manifest, not this journal.**
-``ingest-manifest.json`` maps the sha256 of an original file's BYTES to the
-raw id it became — the same record the pipeline's own duplicate detection
-reads. So "is this row already absorbed" is answered by the vault, and the
-journal only records what was attempted and what it produced. A journal that
-was the sole authority would be a second opinion about the vault's contents,
-and the disagreement would surface as a double ingest.
+**The row-done test is the host's record of what the lane ingested, not this
+journal and not the mount's manifest.** ``ingest-manifest.json`` maps the sha256
+of an original file's BYTES to the raw id it became, but it sits on the mount a
+Cowork VM writes, so this driver never reads it (F33): one forged line made the
+host sign an anchor for a file it never ingested. "Present" means the lane
+ingested these bytes on this host, kept off the mount (``deliverables_ingested``)
+and written by the lane's own stage hook from the bytes it archived and signed,
+never from a file name. The journal only records what was attempted and what it
+produced. A journal that was the sole authority would be a second opinion about
+the vault's contents, and the disagreement would surface as a double ingest.
 
 **Two journals, one recovery order, and it is exercised** (see
 ``tests/test_deliverables_apply.py``). The drop lane has its OWN inner journal
@@ -28,7 +31,7 @@ spanning the archived original, the raw note and the anchor, and a kill INSIDE
 a row lands between them. The order is: the drain's own recovery pass first
 (``run_ingest`` calls ``deliverables.recover`` before it scans for candidates,
 so the interrupted anchor is finished from the inner journal), and only then
-this driver's manifest check, which now sees a completed row. Reversing that
+this driver's record check, which now sees a completed row. Reversing that
 order re-stages a payload the vault already holds.
 
 **Copy, never move.** The owner's folder is left exactly as found; a
@@ -272,7 +275,7 @@ def _absorb_locked(core: Any, planned: list[dict[str, Any]]) -> dict[str, Any]:
     # is the only thing that makes it real. The drop lane spans three writes
     # per file (archived original, signed raw note, anchor) under its own
     # forward-recovery journal, and a kill INSIDE a row lands between them.
-    # Finishing that here, BEFORE any row asks the manifest whether it is
+    # Finishing that here, BEFORE any row asks the record whether it is
     # already absorbed, is what stops a resume re-staging a payload the vault
     # already holds and leaving a second copy of it in `raw/`.
     recovery: dict[str, Any] = {}
@@ -315,9 +318,12 @@ def _absorb_locked(core: Any, planned: list[dict[str, Any]]) -> dict[str, Any]:
 def _absorb_row(core: Any, row: dict[str, Any]) -> dict[str, Any]:
     """One row: finish it if the vault already holds it, else stage and drain.
 
-    The manifest is consulted FIRST and again after the drain, because those
+    The record is consulted FIRST and again after the drain, because those
     are two different questions — "was this row already done" and "what did
-    this drain make of it"."""
+    this drain make of it". The lane writes the record from the bytes it signed,
+    before the anchor, so a crash after the drain still resumes through it; a
+    drain that ingested other bytes (a swapped copy) leaves this row's sha
+    unrecorded, and the row reports why instead of a wrong ``already_present``."""
     existing = _manifest_id(core.vault, row["sha"])
     if existing:
         conflict = _refuse_low_twin(core.vault, existing, row)
@@ -354,11 +360,17 @@ def _row_result(row: dict[str, Any], note_id: str) -> dict[str, Any]:
 
 
 def _manifest_id(vault: Path, sha: str) -> str:
-    """The raw id these BYTES already became, or ``""``. The vault's own
-    record, never this driver's journal."""
-    from .ingest import pipeline as facade
+    """The raw id the lane ingested these BYTES as on this host, or ``""``.
 
-    return str(facade._load_manifest(Path(vault)).get(sha) or "")
+    Despite the name this never reads ``ingest-manifest.json``: a Cowork VM writes
+    it, and one forged line made the host sign an anchor for a file it never
+    ingested (F33). It reads the host-private record the lane writes
+    (``deliverables_ingested``), and only while that entry is a plain slug whose
+    ``raw/<id>.md`` is a real file under ``raw/``. The name stays because callers
+    and tests patch it. Not this driver's journal either."""
+    from .deliverables_ingested import present_id
+
+    return present_id(vault, sha)
 
 
 def _refuse_low_twin(vault: Path, existing_id: str,

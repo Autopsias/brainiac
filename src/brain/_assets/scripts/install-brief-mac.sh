@@ -143,7 +143,10 @@ SCRIPTS_SED="$(xml_sed_escape "$SCRIPTS")"
 # §3): reinstall/reload iff the rendered body actually changed, otherwise report
 # unchanged and touch nothing (idempotent re-runs, no needless launchctl churn).
 PLIST_NEW="$(mktemp "${TMPDIR:-/tmp}/brain-brief-mac.plist.XXXXXX")"
-trap 'rm -f "$PLIST_NEW"' EXIT
+# The awk stage below writes the PEM-bearing render here; mktemp (0600) rather
+# than a new `$PLIST_NEW.awk` redirect, which would sit at 0666 & ~umask.
+PLIST_AWK="$(mktemp "${TMPDIR:-/tmp}/brain-brief-mac.plist.XXXXXX")"
+trap 'rm -f "$PLIST_NEW" "$PLIST_AWK"' EXIT
 
 sed -e "s|LABEL_PLACEHOLDER|$LABEL|g" \
     -e "s|SCRIPTS_DIR|$SCRIPTS_SED|g" \
@@ -193,7 +196,7 @@ AUDIT_KEY="$AUDIT_KEY_TRIMMED" awk '
             for (i = 2; i <= n; i++) printf "\n%s", xml_awk_escape(pem[i])
             print suffix
         }
-    ' "$PLIST_NEW" > "$PLIST_NEW.awk" && mv "$PLIST_NEW.awk" "$PLIST_NEW"
+    ' "$PLIST_NEW" > "$PLIST_AWK" && mv "$PLIST_AWK" "$PLIST_NEW"
 
 # ponytail: real launchctl talks to the login launchd domain by uid, not by
 # $HOME — a sandboxed HOME does NOT sandbox launchctl. BRAIN_LAUNCHD_DRY_RUN=1

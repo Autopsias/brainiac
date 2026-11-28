@@ -78,7 +78,7 @@ def write_unlabelled_ids(vault: Path, pairs: Mapping[str, Any]) -> str | None:
         if not ids:
             path.unlink(missing_ok=True)
             return None
-        path.parent.mkdir(parents=True, exist_ok=True)
+        _rs.private_dir(vault, DIRNAME)
         path.write_text("\n".join(ids) + "\n", encoding="utf-8")
     except OSError:
         return None
@@ -119,14 +119,13 @@ def _read_records(path: Path, vault: str | os.PathLike[str]) -> list[dict[str, A
 
 def _append(path: Path, vault: str | os.PathLike[str], row: Mapping[str, Any]) -> None:
     payload = {"schema_version": SCHEMA, "vault": _rs.vault_binding(vault), **dict(row)}
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _rs.private_dir(vault, DIRNAME)
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(payload, sort_keys=True) + "\n")
 
 
 def _write_proposal(vault: str | os.PathLike[str], meta: Mapping[str, Any]) -> None:
-    d = exceptions_dir(vault) / PENDING_DIRNAME
-    d.mkdir(parents=True, exist_ok=True)
+    d = _rs.private_dir(vault, DIRNAME, PENDING_DIRNAME)
     path = d / f"{meta['id']}.json"
     write_text_atomic(path, json.dumps(dict(meta), indent=1, sort_keys=True))
 

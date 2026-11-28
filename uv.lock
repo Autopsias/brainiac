@@ -18,13 +18,8 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-11-06T21:59:09.845495Z"
+exclude-newer = "2026-11-21T03:34:24.575855Z"
 exclude-newer-span = "P7D"
-
-[options.exclude-newer-package]
-pypdf = false
-certifi = false
-filelock = false
 
 [manifest]
 overrides = [
@@ -75,7 +70,7 @@ wheels = [
 
 [[package]]
 name = "brainiac-cli"
-version = "0.20.51"
+version = "0.21.0"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },

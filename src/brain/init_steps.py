@@ -340,6 +340,8 @@ def _render_tasks(report: dict[str, Any]) -> list[str]:
             f"  cowork leg: {len(cowork['vm_eligible_tasks'])} poke-only "
             f"trigger(s) to register: {', '.join(cowork['vm_eligible_tasks'])}"
         )
+        if cowork.get("warning"):
+            lines.append(f"    WARNING: {cowork['warning']}")
         if cowork.get("saved_to"):
             lines.append(f"    paste-prompt saved to: {cowork['saved_to']}")
         else:

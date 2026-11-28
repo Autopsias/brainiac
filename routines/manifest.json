@@ -29,22 +29,23 @@
       "persistence_cost": 1,
       "cadence": "HOURLY (StartInterval 3600; amended 2026-07-11, owner decision: ingestion must be frequent — a captured document is searchable within the hour, not the next morning). Every firing runs the unconditional work (workspace sweep + inbox ingest + capture drain + incremental sync + snapshot publish + self-organization folds — all idempotent/incremental, single-runner lock prevents overlap); the date-gated branches (Mon=health, Tue=integrity, Sun=digest+curate+promote-scan, 1st=graphify) still fire once per their own schedule via .brain/maintain-state.json markers (ADR-0003 Ruling 5/(d) due-since-last-run).",
       "command": "brain maintain --json",
-      "command_notes": "brain maintain is the umbrella CLI verb (src/brain/core/ BrainCore.maintain, src/brain/maintenance.py maintain_branches): it runs sync --publish + brief + a cheap unconditional recommendations-aging scan every run, then runs health/integrity/digest for real on their date-gated day (1st-of-month graphify now invokes a REAL bounded build via BrainCore.graphify -- ADR-0003 Ruling 6/(a) supersedes this manifest's earlier row-7 \"documented only\" disposition; see the graphify-discovery row below). The Sunday digest branch now ALSO runs curate (stale-wikilink-target detection + an age x centrality revisit sample) and promote-scan, queuing findings into .brain/memory/hot.md (idempotent per branch/run-date via a hot.md idempotency-key marker); the graphify branch queues its own egress-gated link candidates into hot.md the same way. A single-runner file lock (.brain/maintain.lock) makes a concurrent maintain skip rather than race; a crash mid-branch leaves that branch's last-run marker unadvanced (still due next run) without blocking the branches that already succeeded. .brain/maintain-state.json is ONE file serving both the catch-up markers and the heartbeat (brain status surfaces a stale >48h daily branch or repeated branch failures) -- the same file src/brain/config.py maintain_state_path() and the session-start.sh hook's stale-nightly check both read. This single command IS the full date-gated heartbeat this manifest's locked_counts promises. Nightly REGISTRATION (not what it runs) is owned by /brainiac-install (per-vault launchd label com.profile-a-brain.daily-brief / Windows task brain-daily-brief, via `brain init --full --apply`) -- see docs/adr/0003-parity-architecture.md 'Settled context'; this manifest's registration block below documents the underlying scripts /brainiac-install drives.",
+      "command_notes": "brain maintain is the umbrella CLI verb (src/brain/core/ BrainCore.maintain, src/brain/maintenance.py maintain_branches): it runs sync --publish + brief + a cheap unconditional recommendations-aging scan every run, then runs health/integrity/digest for real on their date-gated day (1st-of-month graphify now invokes a REAL bounded build via BrainCore.graphify -- ADR-0003 Ruling 6/(a) supersedes this manifest's earlier row-7 \"documented only\" disposition; see the graphify-discovery row below). The Sunday digest branch now ALSO runs curate (stale-wikilink-target detection + an age x centrality revisit sample) and promote-scan, queuing findings into .brain/memory/hot.md (idempotent per branch/run-date via a hot.md idempotency-key marker); the graphify branch queues its own egress-gated link candidates into hot.md the same way. A single-runner file lock (.brain/maintain.lock) makes a concurrent maintain skip rather than race; a crash mid-branch leaves that branch's last-run marker unadvanced (still due next run) without blocking the branches that already succeeded. .brain/maintain-state.json is ONE file serving both the catch-up markers and the heartbeat (brain status surfaces a stale >48h daily branch or repeated branch failures) -- the same file src/brain/config.py maintain_state_path() and the session-start.sh hook's stale-nightly check both read. This single command IS the full date-gated heartbeat this manifest's locked_counts promises. Nightly REGISTRATION (not what it runs) is owned by /brainiac-install (per-vault launchd label com.brainiac.nightly.<id>, retiring legacy com.profile-a-brain.daily-brief, / Windows task brain-daily-brief-<id>, via `brain init --full --apply`) -- see docs/adr/0003-parity-architecture.md 'Settled context'; this manifest's registration block below documents the underlying scripts /brainiac-install drives.",
       "connectors": [
-        "macOS launchd (LaunchAgent com.profile-a-brain.daily-brief)",
-        "Windows Task Scheduler (task brain-daily-brief)"
+        "macOS launchd (LaunchAgent com.brainiac.nightly.<id>, per-vault)",
+        "Windows Task Scheduler (task brain-daily-brief-<id>, per-vault)"
       ],
       "registration": {
         "mac": {
           "mechanism": "launchd LaunchAgent",
-          "label": "com.profile-a-brain.daily-brief",
+          "label": "com.brainiac.nightly.<id>",
+          "legacy_label": "com.profile-a-brain.daily-brief",
           "install_script": "scripts/install-brief-mac.sh",
           "plist": "scripts/brain-brief-mac.plist",
           "runtime_script": "scripts/brain-brief.sh"
         },
         "windows": {
           "mechanism": "Task Scheduler",
-          "task_name": "brain-daily-brief",
+          "task_name": "brain-daily-brief-<id>",
           "install_script": "scripts/install-brief-windows.ps1"
         }
       },
@@ -247,10 +248,10 @@
     }
   ],
   "totals": {
-    "tasks_listed": 14,
-    "host_os_scheduled_entries": 1,
+    "tasks_listed": 15,
+    "host_os_scheduled_entries": 2,
     "vm_os_scheduled_entries": 0,
     "vm_eligible_on_invoke_tasks": 2,
-    "check": "14 manifest rows = 1 umbrella (brain-nightly) + 10 disposition-tagged tasks it folds/hosts/on-invokes + 2 roster-reconciliation pass-throughs (handoff-freshness, write-audit) + 1 app-scheduled-note (offhost-watchdog, s07/WD-01) that deliberately sits OUTSIDE locked_counts (it is not an OS scheduler entry). recommendations-aging moved from a roster pass-through to a real brain-nightly FOLD in AUT-02/MEM-03 (s08). persistence accounting matches this manifest's locked_counts exactly: 1 host, 0 VM (offhost-watchdog adds 0 to both, by design). autoresearch-cascade dropped from vm_eligible_on_invoke_tasks (3 -> 2) in AUT-04/s11: it needs the profile-a-brain dev checkout (src/, eval/), not something a Cowork VM session (vault/.brain/ runtime only) can run -- see that row's command_notes."
+    "check": "15 manifest rows = 1 umbrella (brain-nightly) + 10 disposition-tagged tasks it folds/hosts/on-invokes + 2 roster-reconciliation pass-throughs (handoff-freshness, write-audit) + 1 weekly synthesis session (brain-synthesis-weekly, os_scheduled=true) + 1 app-scheduled-note (offhost-watchdog, s07/WD-01) that deliberately sits OUTSIDE locked_counts (it is not an OS scheduler entry). recommendations-aging moved from a roster pass-through to a real brain-nightly FOLD in AUT-02/MEM-03 (s08). persistence accounting matches this manifest's locked_counts exactly: 2 host (brain-nightly + brain-synthesis-weekly), 0 VM (offhost-watchdog adds 0 to both, by design). autoresearch-cascade dropped from vm_eligible_on_invoke_tasks (3 -> 2) in AUT-04/s11: it needs the profile-a-brain dev checkout (src/, eval/), not something a Cowork VM session (vault/.brain/ runtime only) can run -- see that row's command_notes."
   }
 }

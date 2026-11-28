@@ -74,9 +74,25 @@ def _query_capture_status(core: Any) -> dict[str, Any]:
 
 
 def _cos_status(core: Any) -> dict[str, Any] | None:
-    """Read COS queue observability without crashing the status surface.
+    """Read extension/COS queue observability without crashing the status surface.
 
-    ``None`` when the engine carries no COS code: no block, not a fake one."""
+    ``None`` when neither an approved HostHookProvider nor legacy COS code is present."""
+    from . import host_hooks as _host_hooks
+
+    hooks = _host_hooks.providers_with(
+        _host_hooks.load_core_hooks(core), "status_extension",
+    )
+    if hooks:
+        for provider in hooks:
+            try:
+                ext = _host_hooks.call_hook_method(
+                    provider, "status_extension", core, default=None,
+                )
+                if isinstance(ext, dict) and "data" in ext:
+                    return ext["data"]
+            except Exception as exc:
+                return {"error": f"{type(exc).__name__}: {exc}"}
+        return None
     if not _optional.cos_available():
         return None
     try:

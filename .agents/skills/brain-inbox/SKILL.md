@@ -110,10 +110,15 @@ only enqueue, never ask.
 
 ## Steps
 
-1. **Read the queue.** Run `brain inbox --json`. It returns
+1. **Read the queue of EVERY registered vault.** A bare `brain inbox --json`
+   reads only the default vault, so on its own it can report 0 while another
+   vault has an open question. First run `brain exceptions --json` and take
+   each `vaults[].vault` path. Then, for each vault, run
+   `brain --vault <vault> inbox --json`. Each returns
    `{"open": [ {key, question, options, default, context, source, created}, … ],
-   "count": N}`. If `count` is 0, tell the owner "inbox is empty — nothing
-   pending" and stop.
+   "count": N}`. Only when `count` is 0 for every vault, tell the owner
+   "inbox is empty — nothing pending" and stop. Name the vault with each
+   question you ask.
 
 2. **Ask each question, one at a time**, using an `AskUserQuestion`-style
    accept-an-option prompt:
@@ -125,7 +130,8 @@ only enqueue, never ask.
      each entry is already one decidable question; keep it that way.
 
 3. **Record the answer** for each: run
-   `brain inbox --answer <key> --value '<the chosen option text>'`.
+   `brain --vault <vault> inbox --answer <key> --value '<the chosen option text>'`,
+   with the vault the question came from.
    Use the exact option string the owner picked (or their free-text override).
    Exit code 0 = recorded; 1 = no open question with that key (re-read the
    queue — it may have changed).

@@ -62,7 +62,7 @@ jobs:
         # QUALITY_RATCHET_RUFF (e.g. 0.16.6) so the complexity counts in its
         # baseline keep the version they were recorded with.
         env:
-          RUFF_VERSION: ${{ vars.QUALITY_RATCHET_RUFF || '0.14.10' }}
+          RUFF_VERSION: ${{ vars.QUALITY_RATCHET_RUFF || '0.16.6' }}
         run: uv pip install "ruff==$RUFF_VERSION"
 
       - name: Prove the checkers can still fail
@@ -103,14 +103,14 @@ jobs:
         # repo with no baseline would count every diagnostic as a rise.
         # ty pinned: a bump changes which rules fire, so bump and re-record
         # .type-exceptions in one commit. Record the baseline in THIS
-        # environment (Python 3.12, only ruff and ty installed). Positive
-        # control first, as above: a planted error must block, a recorded one
-        # must pass, a rise must block, a fall must pass, before the repo's own
-        # all-clear is trusted.
+        # environment (Python 3.12, project runtime + mcp/eval extras + ty).
+        # Positive control first, as above: a planted error must block, a
+        # recorded one must pass, a rise must block, a fall must pass, before
+        # the repo's own all-clear is trusted.
         if: hashFiles('tools/check_types.py') != ''
         run: |
           set -euo pipefail
-          uv pip install ty==0.0.89
+          uv pip install ".[mcp,eval]" ty==0.0.89
           plant=$(mktemp -d)
           mkdir "$plant/src"
           printf '[tool.ty.src]\ninclude = ["src"]\n' > "$plant/pyproject.toml"

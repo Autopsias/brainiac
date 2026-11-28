@@ -99,7 +99,7 @@
     },
     {
       "name": "supersede",
-      "description": "Retire note old_id in favour of new_id (a new version). Host-only. Applied only when the vault itself relates the pair (a wikilink, replaces:, or a shared document name); otherwise staged as a proposal for the owner's nightly question. reason is required."
+      "description": "Retire note old_id in favour of new_id (a new version). Host-only. Applied only when the vault itself relates the pair (a trusted replaces:, or a shared document name); otherwise staged as a proposal for the owner's nightly question. reason is required."
     },
     {
       "name": "unsupersede",

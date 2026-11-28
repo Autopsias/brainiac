@@ -6,8 +6,7 @@
 > nothing you do to the folder itself is ever read back as authority.
 
 Design of record: [ADR 0010](adr/0010-deliverables-shelf-outside-the-vault.md).
-Capture rule (what makes a note a deliverable in the first place): AGENTS.md §4,
-mirrored for Claude Code at `.claude/rules/capture-and-invariants.md`.
+Capture rule (what makes a note a deliverable in the first place): AGENTS.md §4.
 
 ---
 
@@ -109,7 +108,11 @@ vault/inbox/_deliverables/<project>/ASR-2026-final.xlsx.supersedes
 The sidecar's body is the old note id, bare or as `[[wikilink]]`; one per line,
 `#` starts a comment. A dropped `.md` may carry `replaces: <id>` in its own
 frontmatter instead. The next ingest lands payload and anchor as always, then
-retires each old id under the new one through the audited `supersede`. When
+stages each old id as a default-reject owner question (the drop folder is
+VM-writable, so the file alone retires nothing); the owner's accept retires
+it under the new one through the audited `supersede`. An old id above the tier
+a Cowork VM may read (`Internal` at most) is refused as unknown, so a drop
+admitted at the default `MNPI` is retired with `brain supersede`. When
 the old id was itself a drop-lane deliverable, its anchor is retired too, so
 the shelf shows one version. The sidecar is consumed; it is never ingested.
 
@@ -244,10 +247,54 @@ ingest route is a second thing to keep correct forever.
   either**: it still needs the brain-zone anchor that puts it on the shelf.
   "Already present" describes the payload, never the outcome.
 - `raw/` is immutable, so a failure at row 90 of 120 cannot be rolled back. The
-  driver's guarantee is **resumability**, and the row-done test is the vault's
-  own `ingest-manifest.json`, never the driver's journal — a journal that was
-  the sole authority would be a second opinion about the vault's contents, and
-  the disagreement would surface as a double ingest.
+  driver's guarantee is **resumability**, and the row-done test is the host's own
+  record of what the lane ingested, never the driver's journal — a journal that
+  was the sole authority would be a second opinion about the vault's contents,
+  and the disagreement would surface as a double ingest. "Present" means **the
+  lane ingested these bytes on this host**. The lane's own stage hook
+  (`deliverables.anchor_for`) writes the hash of the bytes the drain read,
+  archived and signed, and the final raw id into a host-private record
+  (`deliverables_ingested`, off the mount beside the drop-lane journal, 0700 dir
+  / 0600 file), as its **first** statement, before the anchor write. The record
+  is keyed by bytes, never by a file name: a decoy dropped into another lane
+  folder, or a staged copy swapped before the drain, is recorded under its own
+  hash and cannot stand in for the owner's file (that row stays visibly open, for
+  example `quarantined: archive_collision`). The driver reads the mount's
+  `ingest-manifest.json` **nowhere**: a Cowork VM writes that file, and one
+  forged line used to make the host sign an anchor for a file it never ingested.
+  An entry counts only while it is a plain slug and `raw/<id>.md` is a real file
+  under `raw/`.
+  - **Owner-visible consequences.** The record starts empty, so (a) a file
+    absorbed through the driver *before* it existed is not recognised: a re-run
+    files the copy into `inbox/_duplicate` and its row reports
+    `ingested: false`, `reason: "duplicates: <id>"` and stays open, while the
+    anchor the original absorption wrote is untouched; (b) a file that entered
+    the vault by an *ordinary* drop (no lane, no anchor) is not recognised
+    either, so it cannot be anchored through the driver and needs the batch stamp
+    route of section 5.4 (`deliverables_apply.apply_batch`); (c) a lost manifest
+    line no longer makes the driver say `already_present`. Each is a visible row
+    with a named reason. Renaming the file repairs none of them, because the
+    drain keys on the bytes.
+  - **Crash window, stated exactly.** The record exists before the anchor write
+    and before the driver sees the drain's report, so a kill inside the anchor
+    write, or after the drain returned, resumes as `already_present`. One
+    sub-window remains, not zero: between the signed raw note write returning and
+    the first statement of `anchor_for` (the manifest save, the claim unlink, the
+    guard admit). A kill there falls back to the drain's own visible
+    `duplicates: <id>` outcome.
+  - **What this does not close** (same class, not touched here; checked against
+    the tree at the time of this change). `pipeline_stages.py:163-173`
+    `_manifest_gate`: the drain still files a drop of forged-line bytes aside as a
+    duplicate — a visible veto, no anchor is written. `ingest/transcript.py:170`:
+    a forged line makes `ingest-transcript` answer `duplicate: true` and write
+    nothing. `maintenance_retention.py:154`: the duplicate-retention fold reads
+    it and prunes a parked duplicate only after re-hashing the archived original
+    the line leads to (`_verify_duplicate_provenance`), which is itself on the
+    mount. `remediation_extract_retry.py:178`: a forged
+    line can mark an extraction-retry target done, which stops the retry.
+    `cos/_attachment_store.py:97`: the attachment undo and join take the id from
+    it (a plain slug) as the note an undo retires — the most consequential of the
+    five. An owner-level host process is out of scope (A-14).
 
 ### 5.6 Fold and verify — render it, never a count
 

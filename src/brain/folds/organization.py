@@ -135,6 +135,7 @@ class OrganizationFoldsMixin:
                 ),
                 "autodedup_skipped_recurring": len(result["skipped_recurring"]),
                 "autodedup_skipped_trust": len(result["skipped_trust"]),
+                "autodedup_skipped_unverified": len(result["skipped_unverified"]),
             }
             self._record_auto_dedup_outcomes(run, result)
         except Exception as exc:

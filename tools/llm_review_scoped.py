@@ -92,7 +92,7 @@ def _blocks(severity) -> bool:
     if gate is not None:
         sys.path.insert(0, str(gate.parent))
         try:
-            import llm_review_ledger as ledger
+            import llm_review_ledger as ledger  # ty: ignore[unresolved-import]
             return ledger.blocks(sev, BLOCKING)
         except ImportError:
             pass

@@ -70,7 +70,7 @@ def _registered_host_vaults(repo_src: Path | None) -> list[str]:
         if (tools_dir / "workspace_registry.py").is_file():
             sys.path.insert(0, str(tools_dir))
             try:
-                import workspace_registry as _wr  # noqa: PLC0415
+                import workspace_registry as _wr  # noqa: PLC0415  # ty: ignore[unresolved-import]
 
                 return sorted({e["vault_path"] for e in _wr.list_entries(target="host")})
             except Exception:  # fail-open: registry import is optional; falls through to the JSON file

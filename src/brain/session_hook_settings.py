@@ -15,15 +15,25 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import sys
 from pathlib import Path
 from typing import Any
 
-from .session_hook_spec import HOOK_EVENT, HOOKS, HookSpec
+from .session_hook_spec import GUARD_SCRIPT, HOOK_EVENT, HOOKS, HookSpec
 from .atomic_temp import write_json_atomic
+
+_PY_BASENAMES = frozenset({"python", "python3", "python.exe", "python3.exe", "pythonw.exe"})
+_PY_NOARG_FLAGS = frozenset({"-I", "-s", "-S", "-E", "-u", "-B", "-O", "-OO", "-P"})
 
 
 def _write_json_atomic(path: Path, payload: Any) -> None:
     write_json_atomic(path, payload)
+
+
+def _is_win_abs(text: str) -> bool:
+    return (
+        len(text) >= 3 and text[0].isalpha() and text[1] == ":" and text[2] in ("\\", "/")
+    ) or text.startswith("\\\\")
 
 
 def _program_path(token: str) -> Path | None:
@@ -38,10 +48,115 @@ def _program_path(token: str) -> Path | None:
     command is never treated as ours.
     """
     text = os.path.expandvars(os.path.expanduser(token.strip()))
+    if _is_win_abs(text):
+        return Path(os.path.normpath(text.replace("\\", "/")))
     if "/" not in text:
         return None
     path = Path(os.path.normpath(text))
     return path if path.is_absolute() else None
+
+
+def _is_python_exe(token: str) -> bool:
+    """True when ``token`` is an absolute path to a Python interpreter."""
+    cleaned = token.strip("\"'")
+    if not (cleaned.startswith("/") or _is_win_abs(cleaned)):
+        return False
+    base = os.path.basename(cleaned.replace("\\", "/")).lower()
+    return base in _PY_BASENAMES or base.startswith("python3.")
+
+
+def _split_command_tokens(command: Any) -> list[str]:
+    text = str(command or "").strip()
+    if not text:
+        return []
+    try:
+        return shlex.split(text, posix=not ("\\" in text and not text.startswith("/")))
+    except ValueError:          # unbalanced quotes: not something we wrote
+        return []
+
+
+def _parse_python_guard(tokens: list[str], dests: set[Path]) -> tuple[bool, bool]:
+    """Return ``(owned, has_isolated_flag)`` for ``<abs-python> ... -m brain.egress_guard``."""
+    if len(tokens) < 3 or not _is_python_exe(tokens[0]):
+        return (False, False)
+    has_isolated = False
+    i = 1
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok == "-m":
+            if i + 1 >= len(tokens) or tokens[i + 1] != "brain.egress_guard":
+                return (False, False)
+            rest = tokens[i + 2:]
+            if len(rest) != 2 or rest[0] != "--hooks-dir":
+                return (False, False)
+            allowed_dirs = {d.parent for d in dests}
+            hd = _program_path(rest[1].strip("\"'"))
+            return (hd is not None and hd in allowed_dirs, has_isolated)
+        if tok in _PY_NOARG_FLAGS:
+            if tok == "-I":
+                has_isolated = True
+            i += 1
+            continue
+        if tok == "-X" and i + 1 < len(tokens):
+            i += 2
+            continue
+        return (False, False)
+    return (False, False)
+
+
+def _owns_python_guard(
+    tokens: list[str], dests: set[Path], *, require_isolated: bool = False,
+) -> bool:
+    """True when ``tokens`` runs our ``brain.egress_guard`` via an absolute Python."""
+    owned, has_isolated = _parse_python_guard(tokens, dests)
+    return owned and (has_isolated or not require_isolated)
+
+
+def _norm_exe_path(path_str: str) -> str:
+    cleaned = path_str.strip("\"'")
+    if _is_win_abs(cleaned):
+        return os.path.normpath(cleaned.replace("\\", "/")).lower()
+    return os.path.normpath(os.path.abspath(os.path.expanduser(cleaned)))
+
+
+def _expected_python_exes(expected_command: str | None = None) -> set[str]:
+    if expected_command:
+        toks = _split_command_tokens(expected_command)
+        if toks:
+            return {_norm_exe_path(toks[0])}
+    exes = {_norm_exe_path(sys.executable)}
+    try:
+        exes.add(_norm_exe_path(os.path.realpath(sys.executable)))
+    except OSError:
+        pass
+    return exes
+
+
+def _command_ok(
+    command: Any,
+    spec: HookSpec,
+    dests: set[Path] | None = None,
+    *,
+    windows: bool | None = None,
+    expected_command: str | None = None,
+) -> bool:
+    """True when an owned command is valid for this platform.
+
+    On Windows, the SEC-07 guard MUST invoke the expected pinned Python
+    interpreter with ``-I -m brain.egress_guard --hooks-dir <managed>``
+    (never a legacy ``.sh`` launcher, never without ``-I``, and never an
+    unrelated Python executable).
+    """
+    is_win = (os.name == "nt") if windows is None else windows
+    if not (is_win and spec.script == GUARD_SCRIPT):
+        return True
+    tokens = _split_command_tokens(command)
+    if not tokens:
+        return False
+    resolved_dests = dests if dests is not None else managed_programs(None, spec.script)
+    if not _owns_python_guard(tokens, resolved_dests, require_isolated=True):
+        return False
+    return _norm_exe_path(tokens[0]) in _expected_python_exes(expected_command)
 
 
 def managed_programs(claude_home: Path | None, script: str) -> set[Path]:
@@ -85,19 +200,16 @@ def _owns(command: Any, script: str, dests: set[Path] | None = None) -> bool:
     cost of being wrong this way round is an extra entry of our own, never an
     edit to someone else's.
     """
-    text = str(command or "").strip()
-    if not text:
-        return False
-    try:
-        tokens = shlex.split(text)
-    except ValueError:          # unbalanced quotes: not something we wrote
-        return False
+    tokens = _split_command_tokens(command)
     if not tokens:
         return False
-    program = _program_path(tokens[0])
+    resolved_dests = dests if dests is not None else managed_programs(None, script)
+    if script == GUARD_SCRIPT and _owns_python_guard(tokens, resolved_dests):
+        return True
+    program = _program_path(tokens[0].strip("\"'"))
     if program is None:
         return False
-    return program in (dests if dests is not None else managed_programs(None, script))
+    return program in resolved_dests
 
 
 def _owning_groups(groups: list[Any], script: str,
@@ -139,26 +251,55 @@ def _matcher_ok(found: Any, spec: HookSpec) -> bool:
     return True if spec.matcher is None else found == spec.matcher
 
 
+def _group_commands_ok(
+    group: dict[str, Any],
+    spec: HookSpec,
+    dests: set[Path] | None = None,
+    *,
+    windows: bool | None = None,
+    expected_command: str | None = None,
+) -> bool:
+    ours = [
+        e for e in (group.get("hooks") or [])
+        if isinstance(e, dict) and _owns(e.get("command"), spec.script, dests)
+    ]
+    return bool(ours) and all(
+        _command_ok(
+            e.get("command"),
+            spec,
+            dests,
+            windows=windows,
+            expected_command=expected_command,
+        )
+        for e in ours
+    )
+
+
 def _registration(groups: list[Any], spec: HookSpec,
-                  dests: set[Path] | None = None) -> tuple[bool, Any]:
+                  dests: set[Path] | None = None,
+                  *, windows: bool | None = None) -> tuple[bool, Any]:
     """``(present, matcher)`` for this spec's entry. ``matcher`` is ``None``
     for a matcher-less group and meaningless when ``present`` is False.
 
-    With SEVERAL owning groups, a correctly-matched one wins — the hook does
-    run on the doors it names — and otherwise the first is reported, so the row
-    names a real stale matcher rather than an invented one.
+    With SEVERAL owning groups, a correctly-matched one with a valid command
+    wins — the hook does run on the doors it names — and otherwise the first is
+    reported, so the row names a real stale matcher rather than an invented one.
     """
     found = _owning_groups(groups, spec.script, dests)
     if not found:
         return (False, None)
-    for group in found:
+    valid = [g for g in found if _group_commands_ok(g, spec, dests, windows=windows)]
+    if not valid:
+        return (False, None)
+    for group in valid:
         if _matcher_ok(group.get("matcher") or None, spec):
             return (True, group.get("matcher") or None)
-    return (True, found[0].get("matcher") or None)
+    return (True, valid[0].get("matcher") or None)
 
 
 def _already_registered(groups: list[Any], spec: HookSpec = HOOKS[0],
-                        dests: set[Path] | None = None) -> bool:
+                        dests: set[Path] | None = None,
+                        *, windows: bool | None = None) -> bool:
     """True only when this spec's entry sits under THE MATCHER IT SHIPS.
 
     Path alone is not registration. Claude Code decides which tool calls reach
@@ -169,7 +310,7 @@ def _already_registered(groups: list[Any], spec: HookSpec = HOOKS[0],
     on every machine that already had the guard (adversarial review, s06
     round 1, H-1).
     """
-    present, matcher = _registration(groups, spec, dests)
+    present, matcher = _registration(groups, spec, dests, windows=windows)
     return present and _matcher_ok(matcher, spec)
 
 
@@ -193,8 +334,10 @@ def _group_for(groups: list[Any], matcher: str | None) -> dict[str, Any]:
 
 
 def _migrate_matcher(groups: list[Any], stale: dict[str, Any], spec: HookSpec,
-                     dests: set[Path] | None = None) -> None:
-    """Move this spec's OWN entries out from under a stale matcher.
+                     dests: set[Path] | None = None,
+                     *, command: str | None = None,
+                     windows: bool | None = None) -> None:
+    """Move this spec's OWN entries out from under a stale matcher or invalid command.
 
     Two shapes, and the difference matters: a group holding nothing but our
     entries can have its matcher corrected in place, which preserves anything
@@ -205,6 +348,18 @@ def _migrate_matcher(groups: list[Any], stale: dict[str, Any], spec: HookSpec,
     """
     entries = [e for e in (stale.get("hooks") or []) if isinstance(e, dict)]
     ours = [e for e in entries if _owns(e.get("command"), spec.script, dests)]
+    if command is not None:
+        for entry in ours:
+            if not _command_ok(
+                entry.get("command"),
+                spec,
+                dests,
+                windows=windows,
+                expected_command=command,
+            ):
+                entry["command"] = command
+    if _matcher_ok(stale.get("matcher") or None, spec):
+        return
     if len(ours) == len(stale.get("hooks") or []):
         if spec.matcher is None:
             stale.pop("matcher", None)
@@ -260,7 +415,8 @@ def _dedupe(groups: list[Any], spec: HookSpec, dests: set[Path] | None) -> bool:
     return json.dumps(groups, sort_keys=True) != before
 
 
-def _register(settings_path: Path, command: str, spec: HookSpec) -> str:
+def _register(settings_path: Path, command: str, spec: HookSpec,
+              *, windows: bool | None = None) -> str:
     """Add this spec's entry unless one is already there, under the right matcher.
 
     Returns ``"added"``, ``"already-registered"``, ``"migrated"``, or
@@ -287,7 +443,13 @@ def _register(settings_path: Path, command: str, spec: HookSpec) -> str:
     if here is not None:
         dests.add(here)
     owning = _owning_groups(groups, spec.script, dests)
-    stale = [g for g in owning if not _matcher_ok(g.get("matcher") or None, spec)]
+    stale = [
+        g for g in owning
+        if not _matcher_ok(g.get("matcher") or None, spec)
+        or not _group_commands_ok(
+            g, spec, dests, windows=windows, expected_command=command
+        )
+    ]
     if owning and not stale:
         # NOTHING IS WRITTEN unless the dedupe actually removed a duplicate.
         # This module's contract is that a no-op run touches no file — a
@@ -300,7 +462,7 @@ def _register(settings_path: Path, command: str, spec: HookSpec) -> str:
         # EVERY stale group, not the first (H-3). One decoy ahead of the real
         # entry used to consume the whole migration.
         for group in stale:
-            _migrate_matcher(groups, group, spec, dests)
+            _migrate_matcher(groups, group, spec, dests, command=command, windows=windows)
         outcome = "migrated"
     else:
         group = _group_for(groups, spec.matcher)

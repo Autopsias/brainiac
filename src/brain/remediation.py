@@ -291,13 +291,17 @@ _EXACT: dict[str, Remedy] = {
                      "against a replayed older copy"),
     "cos:sheet-heartbeat": Remedy(
         BANNER,
-        note="out-of-band COS liveness: the sheets directory, not a run "
-             "record the dead night would have needed to write, missed its "
-             "configured publication window"),
+        note="out-of-band COS liveness: the host-private sheet records, not a "
+             "run record the dead night would have needed to write or a file "
+             "on the mount, missed their configured publication window"),
     "cos:code-missing": Remedy(
         BANNER,
         note="ADR 0013: this vault has COS folders but the installed engine "
              "has no COS code, so the nightly cannot run; never silent"),
+    "hook:private-state": Remedy(
+        BANNER,
+        note="ADR 0015: an approved host-hook provider reported private-state "
+             "health or maintenance warnings for this vault"),
     "cos-calendar-read-failed": Remedy(BANNER, note="next night retries; a good read clears it"),
     "golden-probes-changed": Remedy(
         BANNER, note="F127: the golden probes file no longer matches its "

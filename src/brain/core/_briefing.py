@@ -162,7 +162,20 @@ class _CoreBriefingMixin:
         cos_liveness: dict[str, Any] | None = None
         if self.role == config.ROLE_HOST:
             try:
-                if _optional.cos_available():
+                from .. import host_hooks as _host_hooks
+
+                hooks = _host_hooks.providers_with(
+                    _host_hooks.load_core_hooks(self), "brief_hook_liveness",
+                )
+                if hooks:
+                    for provider in hooks:
+                        cand = _host_hooks.call_hook_method(
+                            provider, "brief_hook_liveness", self, default=None,
+                        )
+                        if cand is not None:
+                            cos_liveness = cand
+                            break
+                elif _optional.cos_available():
                     from .. import cos as cos_mod
                     cos_liveness = cos_mod.batch_liveness(self.vault)
             except Exception:  # noqa: BLE001 — a liveness read never breaks the brief

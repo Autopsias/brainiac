@@ -15,7 +15,9 @@ Three properties this module exists to hold, each one a hardening finding:
   FORWARD only — finish the anchor, never roll the archived original back. The
   journal is host-private for the supersede journal's reason: it is replayed
   through the audited ``write_note``, so a VM-writable one is an unsigned host
-  write command.
+  write command. Beside it, ``anchor_for`` keeps a host-private sha256 -> raw id
+  record (F33, ``deliverables_ingested``): the absorb driver's "already ingested",
+  since the mount's VM-writable ``ingest-manifest.json`` no longer decides that.
 
 * **The lane declares its own classification, and it governs ADMISSION.**
   ``pipeline._meta`` declares ``Internal`` for every drop-zone ingest and
@@ -188,6 +190,11 @@ def anchor_for(record: "ClaimRecord", entry: dict[str, Any]) -> None:
     saying otherwise would misreport the run. The journal entry survives, so the
     next drain finishes the anchor — or reports the payload unanchored.
     """
+    # FIRST, so a kill in or after the anchor write still leaves it: the signed bytes'
+    # sha -> final id. Unguarded, like ``journal_open`` in the same drain's private
+    # dir. A kill before this line falls back to the drain's visible ``duplicates``.
+    from ..deliverables_ingested import remember
+    remember(record.drain.vault, record.original_sha, record.slug)
     try:
         entry["deliverable_anchor"] = write_anchor(record.drain.core, _payload(record))
     except Exception as exc:  # noqa: BLE001 — reported, and retried next run

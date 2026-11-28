@@ -119,6 +119,140 @@ def proven_off_mount(d: Path, vault: str | os.PathLike[str] | None = None, *,
     return d
 
 
+def _env_vm_visible_roots() -> list[Path]:
+    """VM-visible roots derivable from env config when no vault is selected."""
+    roots: list[Path] = []
+    raw_ws = os.environ.get(WORKSPACE_ROOT_ENV, "")
+    for part in raw_ws.split(os.pathsep):
+        part = part.strip()
+        if part:
+            roots.append(Path(part).expanduser().resolve())
+    raw_rt = os.environ.get("BRAIN_RUNTIME_DIR", "").strip()
+    if raw_rt:
+        rt = Path(raw_rt).expanduser().resolve()
+        roots.append(rt)
+        if any((rt / marker).exists() for marker in ("bin", "model", "vendor")):
+            roots.append(rt.parent)
+    return roots
+
+
+def _read_registry_entries(reg_path: Path) -> list[dict]:
+    """Load and validate registry entries from ``reg_path``, failing closed on corruption."""
+    import json
+
+    if reg_path.is_symlink():
+        raise HostPathUnsafe(
+            f"workspace registry {reg_path} is a symlink (cannot verify mount boundaries)"
+        )
+    try:
+        raw_text = reg_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return []
+    except (OSError, UnicodeDecodeError) as exc:
+        raise HostPathUnsafe(
+            f"unreadable workspace registry {reg_path} (cannot verify mount boundaries): {exc}"
+        ) from exc
+    try:
+        data = json.loads(raw_text)
+    except ValueError as exc:
+        raise HostPathUnsafe(
+            f"malformed workspace registry {reg_path} (cannot verify mount boundaries): {exc}"
+        ) from exc
+    if not isinstance(data, dict):
+        raise HostPathUnsafe(
+            f"malformed workspace registry {reg_path}: expected JSON object"
+        )
+    entries = data.get("entries")
+    if not isinstance(entries, list):
+        raise HostPathUnsafe(
+            f"malformed workspace registry {reg_path}: 'entries' must be a list"
+        )
+    return entries
+
+
+def _parse_registry_entry_paths(entry: object, reg_path: Path) -> list[Path]:
+    """Extract and resolve ``vault_path``/``workspace_path`` from one entry, failing closed."""
+    if not isinstance(entry, dict):
+        raise HostPathUnsafe(
+            f"malformed workspace registry {reg_path}: non-object entry"
+        )
+    paths: list[Path] = []
+    for key in ("vault_path", "workspace_path"):
+        if key not in entry:
+            continue
+        raw = entry[key]
+        if not isinstance(raw, str) or not raw.strip():
+            raise HostPathUnsafe(
+                f"malformed workspace registry {reg_path}: {key} must be a non-empty string"
+            )
+        try:
+            paths.append(Path(raw).expanduser().resolve())
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise HostPathUnsafe(
+                f"malformed workspace registry {reg_path}: invalid {key} {raw!r}: {exc}"
+            ) from exc
+    if not paths:
+        raise HostPathUnsafe(
+            f"malformed workspace registry {reg_path}: entry missing vault_path/workspace_path"
+        )
+    return paths
+
+
+def _registry_vm_visible_roots() -> list[Path]:
+    """Read all vault/workspace paths from the host registry, failing closed on corruption."""
+    home = os.environ.get(_REGISTRY_HOME_ENV) or str(Path.home() / ".brainiac")
+    reg_path = Path(home).expanduser() / "workspaces.json"
+    out: list[Path] = []
+    for entry in _read_registry_entries(reg_path):
+        out.extend(_parse_registry_entry_paths(entry, reg_path))
+    return out
+
+
+def all_registered_vm_visible_roots(
+    vault: str | os.PathLike[str] | None = None,
+) -> list[Path]:
+    """Every VM-visible root for ``vault`` PLUS every vault/workspace in the host registry.
+
+    Used for host-wide security files (such as the host-hooks allowlist) that
+    apply across ALL vaults on the machine, so a path inside another registered
+    vault's VM mount is rejected even when running against a different vault.
+    When invoked without a vault (e.g. ``brain --help`` outside a vault dir),
+    still inspects env overrides and every registered vault/workspace."""
+    roots: list[Path] = []
+    try:
+        roots.extend(_config.vm_visible_roots(vault))
+    except _config.VaultNotFoundError:
+        if vault is not None and str(vault):
+            raise
+        roots.extend(_env_vm_visible_roots())
+    seen: set[Path] = set()
+    deduped: list[Path] = []
+    for candidate in [*roots, *_registry_vm_visible_roots()]:
+        if candidate not in seen:
+            seen.add(candidate)
+            deduped.append(candidate)
+    return deduped
+
+
+def proven_off_all_mounts(
+    d: Path, vault: str | os.PathLike[str] | None = None, *, what: str,
+) -> Path:
+    """``d`` resolved and PROVEN outside every VM-visible root across all registered vaults."""
+    d = d.expanduser().resolve()
+    for root in all_registered_vm_visible_roots(vault):
+        if d == root or root in d.parents:
+            raise HostPathUnsafe(
+                f"{what} {d} resolves inside {root}, which a Cowork VM "
+                f"session can reach. Move {what} to a host-only path "
+                f"outside every workspace.")
+    return d
+
+
+def app_data_base() -> Path:
+    """Re-export of :func:`brain.config.app_data_base` (ADR-0015 §1.3)."""
+    return _config.app_data_base()
+
+
 def host_private_base() -> Path:
     """The host-controlled root for state a Cowork VM must not reach at all.
 
@@ -179,6 +313,31 @@ def host_lock_dir(vault: str | os.PathLike[str] | None = None, *,
 _LOCK_FALLBACK_REPORTED: set[tuple[str, str]] = set()
 
 
+def collect_private_state_warnings(
+    vault: str | os.PathLike[str] | None = None,
+    *,
+    hooks: tuple[object, ...] | None = None,
+) -> list[str]:
+    """Collect host-private state warnings from approved host hooks."""
+    from . import host_hooks as _host_hooks
+
+    vroot = vault_root(vault)
+    loaded = _host_hooks.load_host_hooks(vault=vroot) if hooks is None else hooks
+    warnings: list[str] = []
+    for provider in _host_hooks.providers_with(loaded, "private_state_warnings"):
+        try:
+            got = _host_hooks.call_hook_method(
+                provider, "private_state_warnings", vroot, default=[],
+            ) or []
+            warnings.extend(str(item) for item in got if item)
+        except Exception as exc:  # noqa: BLE001 — non-silent diagnostic
+            warnings.append(
+                f"host hook {getattr(provider, 'name', 'unknown')} "
+                f"private_state_warnings failed: {type(exc).__name__}: {exc}"
+            )
+    return warnings
+
+
 def warn_if_lock_dir_fallback(vault: str | os.PathLike[str] | None = None) -> None:
     """Diagnose an index directory that pushed the writer lock to app-data.
 
@@ -206,12 +365,24 @@ def warn_if_lock_dir_fallback(vault: str | os.PathLike[str] | None = None) -> No
         f"still the VM-writable path — so repoint $BRAIN_INDEX_DIR at a "
         f"host-only directory.")
     try:
-        if _optional.cos_available():
+        from . import host_hooks as _host_hooks
+
+        loaded = _host_hooks.load_host_hooks(vault=Path(vault) if vault else None)
+        extra = collect_private_state_warnings(vault, hooks=loaded)
+        full_message = message if not extra else f"{message} ({'; '.join(extra)})"
+        hooks = _host_hooks.providers_with(loaded, "log_ingest_defect")
+        if hooks:
+            for provider in hooks:
+                _host_hooks.call_hook_method(
+                    provider, "log_ingest_defect",
+                    vault_root(vault), "host-lock-dir-fallback", full_message,
+                )
+        elif _optional.cos_available():
             from . import cos
 
-            cos.log_defect(vault, "host-lock-dir-fallback", message)
+            cos.log_defect(vault, "host-lock-dir-fallback", full_message)
         else:  # no COS defect log in this engine (ADR 0013): say it on stderr
-            sys.stderr.write(f"brain: host-lock-dir-fallback: {message}\n")
+            sys.stderr.write(f"brain: host-lock-dir-fallback: {full_message}\n")
     except Exception:  # noqa: BLE001 — diagnosis must never break the lock path
         pass
 
@@ -288,6 +459,23 @@ def golden_probes_pin_path(vault: str | os.PathLike[str] | None = None) -> Path:
     return d / f"golden-probes-{vault_slug8(vault)}.json"
 
 
+def egress_ring_pin_path(vault: str | os.PathLike[str] | None = None) -> Path:
+    """The host-private pin of this vault's outbound-guard decoder ring (F17).
+
+    OFF THE MOUNT. ``overlay/keywords*/`` sits in the vault, which a Cowork VM
+    can write, so ``overlay_keywords.resolve_egress_keyword_tiers`` keeps every
+    term this pin has seen at the highest tier it has seen it at. Same
+    treatment, helper and app-data fallback as the golden probes pin above;
+    keyed by vault identity so two vaults never share one pin."""
+    try:
+        d = proven_off_mount(host_private_base() / "egress-ring-pin", vault,
+                             what="egress ring pin store")
+    except HostPathUnsafe:
+        d = proven_off_mount(_config._app_data_base() / "egress-ring-pin", vault,
+                             what="egress ring pin store (app-data fallback)")
+    return d / f"egress-ring-{vault_slug8(vault)}.json"
+
+
 def cos_run_records_dir(vault: str | os.PathLike[str] | None = None) -> Path:
     """The COS run manifest / validity / plan-binding store.
 
@@ -301,7 +489,7 @@ def cos_run_records_dir(vault: str | os.PathLike[str] | None = None) -> Path:
     visible on that mount, and ``0700`` is only a boundary if the VM runs as a
     different uid AND VirtioFS honours mode bits (neither is established)".
 
-    Three files live here and each is an authority a run is judged BY, not an
+    Five files live here and each is an authority a run is judged BY, not an
     artifact a run writes:
 
     * ``<run>.json`` — the manifest, which freezes which bundle, which commit
@@ -311,7 +499,12 @@ def cos_run_records_dir(vault: str | os.PathLike[str] | None = None) -> Path:
     * ``_cos_plan_binding_<run>.json`` — the record of WHICH frozen plan the
       apply dispatched, the one control standing between a rebuilt plan and a
       clean K1 verdict, and (s10) the remaining forgery path against the
-      mutation counters.
+      mutation counters;
+    * ``_cos_judged_ledger_<run>.json`` — the digests of the ledger rows and
+      pending drafts the host judge wrote, which `build_plan` checks the
+      VM-writable ``cos-ops`` copies against (F9);
+    * ``_cos_driver_ledger_<run>.json`` — the digests of the ledger rows the
+      read pass wrote, which the judge checks its input against (F9).
 
     Same treatment, same helper and same fallback as the writer lock (INT-05),
     the supersede journal (ENF-01) and the drift dispositions: being

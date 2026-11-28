@@ -52,6 +52,7 @@ from . import atomic_temp, workspaces
 # third-party file with a third party still writing to it). Re-exported here
 # because this module is the one every caller already imports.
 from .pathkey import real_key
+from .provision_claim import guarded, pin_claim, refuse, watched_run
 from .provision_mcp import mcp_server_name, register_mcp  # noqa: F401
 from .provision_summary import _wire_summary
 
@@ -271,7 +272,8 @@ def _staging_root(vault: Path, workspace: Path) -> Path:
 def _provision_one(vault: Path, workspace: Path, *, entries: list[dict],
                    registered_vaults: set[Path],
                    registry_path: Path, lock_path: Path,
-                   runner: Callable[..., Any]) -> dict[str, Any]:
+                   runner: Callable[..., Any],
+                   still_claimed: Optional[Callable[[], bool]] = None) -> dict[str, Any]:
     """The DRAIN's wrapper around the six wires.
 
     Everything policy lives here and nowhere else: the ``already-registered``
@@ -280,9 +282,14 @@ def _provision_one(vault: Path, workspace: Path, *, entries: list[dict],
     lookup over the registry, the model-copy + ``sync --publish`` FALLBACK for
     when the Cowork staging could not run, and the report shape the maintain
     fold and ``provision-result.json`` already speak.
+
+    ``still_claimed`` (F37) pins the claimed vault: a step with a check just before it
+    is skipped once its path changed (``drain`` then records ``skipped-symlink-escape``);
+    steps before the first check are not held back. Limits: ``provision_claim``.
     """
     from .provision_wire import _OK, sweep_status, wire_vault
 
+    claimed = still_claimed or (lambda: True)
     res: dict[str, Any] = {"vault": str(vault), "workspace": str(workspace)}
     if Path(real_key(vault)) in registered_vaults:
         # The short-circuit returns before any wire runs, so the sweep-gap
@@ -303,10 +310,12 @@ def _provision_one(vault: Path, workspace: Path, *, entries: list[dict],
     # `init --full --apply` renders the plist from the merged list.
     wires = wire_vault(vault, workspace, model_dir=str(model_src) if model_src else None,
                        registry_path=registry_path, lock_path=lock_path,
-                       sweep_repair=False, runner=runner)
+                       sweep_repair=False, runner=runner, still_claimed=still_claimed)
     res["init"] = wires["1"].get("init", {})
     res["wires"] = {k: {"status": v["status"], "detail": v.get("detail", "")}
                     for k, v in wires.items()}
+    if not claimed():
+        return refuse(res)
     if wires["1"]["status"] == "failed":
         res.update({"status": "init-failed", "ok": False})
         return res
@@ -330,10 +339,11 @@ def _provision_one(vault: Path, workspace: Path, *, entries: list[dict],
                   "reason": wires["2"].get("detail", "")}
     res["cowork"] = cowork
     if cowork["status"] != "staged":
+        # F37: only the check above guards this copytree; a swap during it is not caught.
         res["model"] = (_stage_model(vault, model_src) if model_src
                         else {"status": "no-local-source"})
-        res["sync"] = _run_engine(vault, ["sync", "--publish", "--json"],
-                                  timeout=_SYNC_TIMEOUT_S, runner=runner)
+        res["sync"] = guarded(_run_engine, claimed)(vault, ["sync", "--publish", "--json"],
+                                                    timeout=_SYNC_TIMEOUT_S, runner=runner)
         sync_ok = bool(res["sync"].get("ok", False))
     else:
         sync_ok = True
@@ -454,15 +464,24 @@ def drain(*, registry_path: Optional[Path] = None,
                                 "ok": False})
                 continue
             vault = real_vault
+            # `vault` is only a string the VM can re-point (F37): pin the directory. The real
+            # `subprocess.run` becomes a watchdog that stops a running child on loss; a test fake is not watched.
+            # A watched child leaves the drain's group, so a SIGTERM to the drain kills it first; SIGKILL, SIGHUP do not.
+            still_claimed = pin_claim(real_vault)
+            run = watched_run(still_claimed) if runner is subprocess.run else runner
             try:
                 res = _provision_one(
-                    vault, workspace, entries=entries,
+                    vault, real_workspace, entries=entries,
                     registered_vaults=registered_vaults,
                     registry_path=registry_path, lock_path=lock_path,
-                    runner=runner)
+                    runner=run, still_claimed=still_claimed)
+                res["workspace"] = str(workspace)  # as found; every step acted on the resolved one
             except Exception as exc:  # noqa: BLE001 — report, never abort the fold
                 res = {"vault": str(vault), "status": "error",
                        "ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            if not still_claimed():  # swapped while a child ran: write nothing through it
+                handled.append(refuse(res))
+                continue  # the claim stays for inspection, like the re-check refusal above
             res["completed_at"] = _now_iso()
             result_file = vault / ".brain" / RESULT_NAME
             try:

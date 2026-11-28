@@ -164,6 +164,7 @@ def record_current_findings(
     """
     from . import audit as _audit
     from . import config as _config
+    from . import exceptions_verify as _verify
 
     path = _notify_marker_dir(vault) / CURRENT_FINDINGS_FILE
     generated_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -188,6 +189,8 @@ def record_current_findings(
         "generated_at": generated_at,
         "findings": [{"key": key, "text": text} for key, text in findings],
         "vault_id": _config.vault_id(vault, create=True) or "",
+        # Path-derived host identity (`exceptions_verify.verify_host_summary`).
+        "vault_path_sha256": _verify.vault_path_sha256(vault),
     }
     try:
         key, _source = _audit.resolve_signing_key()

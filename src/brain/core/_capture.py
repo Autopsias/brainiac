@@ -83,8 +83,24 @@ class _CoreCaptureMixin:
         # approved queue, which is the only copy of owner-accepted content until
         # it is signed. Rebuild guidance ("just delete it and rebuild") is
         # exactly the habit that would destroy it, so never let it be silent.
+        from .. import host_hooks as _host_hooks
+
+        hooks = _host_hooks.providers_with(
+            _host_hooks.load_core_hooks(self), "rebuild_warnings",
+        )
+        hook_warnings: list[str] = []
         waiting = anchors = 0
-        if _optional.cos_available():  # ADR 0013: both live only in COS
+        if hooks:
+            for provider in hooks:
+                try:
+                    hook_warnings.extend(
+                        _host_hooks.call_hook_method(
+                            provider, "rebuild_warnings", self, default=[],
+                        ) or []
+                    )
+                except Exception:  # noqa: BLE001 — never fail a rebuild on the check
+                    continue
+        elif _optional.cos_available():  # ADR 0013: both live only in COS
             try:
                 from .. import cos as _cos_q
 
@@ -96,7 +112,13 @@ class _CoreCaptureMixin:
                 anchors = _cos_q.attachment_anchors_awaiting_drain(self.vault)
             except Exception:  # noqa: BLE001 — never fail a rebuild on the check
                 waiting = anchors = 0
-        if waiting or anchors:
+        if hook_warnings:
+            res["warning"] = "; ".join(hook_warnings)
+            from ..progress import progress_note
+
+            progress_note("WARNING: " + res["warning"], json_mode=json_mode,
+                          verb="rebuild")
+        elif waiting or anchors:
             # A `progress_note` here was a TTY-gated whisper: a headless
             # launchd rebuild — the exact context that would then delete the
             # dir — saw nothing at all. Put it in the RESULT, where every
@@ -217,9 +239,31 @@ class _CoreCaptureMixin:
         path. Verifying per item instead would turn every key outage into a
         pile of security-worded refusals over perfectly good owner-approved
         work."""
+        from .. import host_hooks as _host_hooks
+
         out: list[tuple[Path, bool, Any]] = []
         refusals: list[dict[str, str]] = []
-        if _optional.cos_available():  # ADR 0013: the approved queue is COS's
+        hooks = _host_hooks.providers_with(
+            _host_hooks.load_core_hooks(self), "drain_sources",
+        )
+        if hooks:
+            for provider in hooks:
+                try:
+                    for item in (
+                        _host_hooks.call_hook_method(
+                            provider, "drain_sources", self, default=[],
+                        ) or []
+                    ):
+                        if len(item) >= 3:
+                            out.append((Path(item[1]), bool(item[2]),
+                                        item[3] if len(item) > 3 else None))
+                except Exception as exc:  # noqa: BLE001 — fail closed on hook error
+                    refusals.append({
+                        "draft": f"({getattr(provider, 'name', 'hook')})",
+                        "source": "approved-queue",
+                        "reason": f"not drained (fail-closed): {exc}",
+                    })
+        elif _optional.cos_available():  # ADR 0013: the approved queue is COS's
             from .. import cos as _cos_mod
 
             try:
@@ -435,7 +479,21 @@ class _CoreCaptureMixin:
             if ddir.is_dir():
                 n += len(list(ddir.glob("*.md")))
         if self.role == config.ROLE_HOST:
-            if _optional.cos_available():  # ADR 0013: the approved queue is COS's
+            from .. import host_hooks as _host_hooks
+
+            hooks = _host_hooks.providers_with(
+                _host_hooks.load_core_hooks(self), "count_pending_approved",
+            )
+            if hooks:
+                for provider in hooks:
+                    try:
+                        n += int(_host_hooks.call_hook_method(
+                            provider, "count_pending_approved",
+                            getattr(self, "vault", None), default=0,
+                        ) or 0)
+                    except Exception:  # noqa: BLE001
+                        continue
+            elif _optional.cos_available():  # ADR 0013: the approved queue is COS's
                 from .. import cos as _cos_q
 
                 n += len(_cos_q.approved_pending(self.vault))

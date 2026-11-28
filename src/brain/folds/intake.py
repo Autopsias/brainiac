@@ -45,6 +45,28 @@ class IntakeFoldsMixin:
                 sweep_dirs, self.vault / "inbox", sweep_age
             )
             run.results["workspace_sweep"] = result
+            for refused in result["refused_dirs"]:
+                run.blocked.append(
+                    maintenance.blocked_item(
+                        f"workspace sweep refused {refused}: it is a symlink "
+                        "(a Cowork session can plant one to pull owner files "
+                        "into the vault)",
+                        "filesystem",
+                        "after the link is removed or the source points at the "
+                        "real folder",
+                    )
+                )
+            for refused in result["refused_inbox"]:
+                run.blocked.append(
+                    maintenance.blocked_item(
+                        f"workspace sweep refused to move files into {refused}: "
+                        "it (or the vault folder above it) is a symlink (a "
+                        "Cowork session can plant one to send owner files "
+                        "outside the vault)",
+                        "filesystem",
+                        "after the link is removed and the real folder is back",
+                    )
+                )
             if result["swept"]:
                 run.auto_fixed.append(
                     maintenance.auto_fixed_item(
@@ -85,6 +107,24 @@ class IntakeFoldsMixin:
 
     def cos_ingest_sweep_fold(self, run: MaintenanceRun) -> None:
         """Quarantine manifest-named downloads for the current owner batch."""
+        from .. import host_hooks as _host_hooks
+
+        hooks = _host_hooks.providers_with(
+            _host_hooks.load_core_hooks(self), "pre_sync_folds",
+        )
+        if hooks:
+            for provider in hooks:
+                try:
+                    _host_hooks.call_hook_method(provider, "pre_sync_folds", self, run)
+                except Exception as exc:  # noqa: BLE001 — plugin isolation rule
+                    run.blocked.append(
+                        maintenance.blocked_item(
+                            f"host hook {getattr(provider, 'name', 'unknown')} pre_sync_folds failed",
+                            f"{type(exc).__name__}: {exc}",
+                            "inspect hook plugin and re-run maintain",
+                        )
+                    )
+            return
         if not _optional.cos_available():
             return  # ADR 0013: `daily.py` already skips it; this states it here too.
         try:

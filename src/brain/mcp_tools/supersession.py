@@ -4,7 +4,8 @@ Cowork has no terminal that can type ``brain supersede``, so a new version
 dropped from a Cowork session left the old one live in search. These two tools
 are that verb, reached through the host-run broker — see
 :mod:`brain.supersede_declared` for the guards and for why a pair the vault
-does not itself relate is PROPOSED to the owner rather than applied.
+does not itself relate is PROPOSED to the owner rather than applied, and
+why a drop-lane successor is refused outright (F53).
 """
 from __future__ import annotations
 
@@ -21,8 +22,11 @@ def register(server: Any, *, core: Any) -> None:
         """Retire note ``old_id`` in favour of ``new_id`` (a new version).
 
         APPLIED only when the vault itself relates the pair: ``new_id`` (or its
-        deliverable anchor) wikilinks or declares ``replaces:`` ``old_id``, or
-        the two share a document name. Otherwise NOT applied — it is staged for
+        deliverable anchor) declares ``replaces:`` ``old_id``, or the two share
+        a document name (a body ``[[link]]`` is a citation, not a declaration).
+        A successor that came in through the ``inbox/`` drop lane is REFUSED
+        (``drop-lane-successor``): the owner runs ``brain supersede`` on the
+        host. Otherwise NOT applied — it is staged for
         the owner's nightly question and this returns
         ``{applied: false, proposed: true}``. A note written by ``capture`` is
         untrusted and is never related by its own say-so. Both ids must be

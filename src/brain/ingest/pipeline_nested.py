@@ -53,9 +53,7 @@ def process_nested(
         try:
             from . import pipeline_files as files
 
-            files.refuse_symlinked_dirs(drain.processing_dir, 2)
-            drain.processing_dir.mkdir(parents=True, exist_ok=True)
-            files.write_new_nofollow(temp_path, data)
+            files.write_new_nofollow(temp_path, data, 2)
         except OSError as exc:
             drain.report["skipped"].append({
                 "file": name,

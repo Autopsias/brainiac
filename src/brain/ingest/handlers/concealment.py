@@ -96,9 +96,15 @@ implementing it, so ordinary standards-valid CSS defeats it. Closing that is
 session **s05d / item med-11**, deliberately NOT a fourth ad-hoc special case
 here (owner ruling, 2026-09-02):
 
-9. **``!important``.** REPRODUCED. ``style="display:none!important"`` yields
-   zero concealed runs — the literal value match never sees past the token.
-   → s05d.
+9. **``!important``.** PARTLY CLOSED 2026-11-22 (F34): :func:`declarations`
+   drops a trailing flag, so ``style="display:none!important"`` convicts. Its
+   WEIGHT is still not resolved: ``display:none!important;display:block`` reads
+   ``block`` (a browser hides it), as it did before. A flagged ``visible`` is
+   deliberately NOT read: a browser may let a heavier hide outrank it, and an
+   unread reveal leaves the inherited hide convicting, as it did before. The
+   flag is also kept on ``background``, ``background-color`` and ``font-size``,
+   where reading a flagged ``transparent`` or ``16 ! important`` would let a
+   child reset a dark ground or a tiny size: those read as before. → s05d.
 10. **Class source order.** REPRODUCED. ``class="hide show"`` with
     ``.show{display:block}.hide{display:none}`` is admitted: declarations are
     concatenated in ATTRIBUTE order, so the last class named wins instead of
@@ -206,10 +212,10 @@ TINY_PX = TINY_PT * 4 / 3
 #: An offset at least this far negative is off the page, not a layout nudge.
 OFFSCREEN_PX = 1000.0
 
-_HEX8 = re.compile(r"#([0-9a-f]{8})\b", re.I)
-_HEX6 = re.compile(r"#([0-9a-f]{6})\b", re.I)
-_HEX4 = re.compile(r"#([0-9a-f]{4})\b", re.I)
-_HEX3 = re.compile(r"#([0-9a-f]{3})\b", re.I)
+_HEX8 = re.compile(r"#([0-9a-f]{8})(?![A-Za-z0-9_\-\u0080-\U0010ffff])", re.I)
+_HEX6 = re.compile(r"#([0-9a-f]{6})(?![A-Za-z0-9_\-\u0080-\U0010ffff])", re.I)
+_HEX4 = re.compile(r"#([0-9a-f]{4})(?![A-Za-z0-9_\-\u0080-\U0010ffff])", re.I)
+_HEX3 = re.compile(r"#([0-9a-f]{3})(?![A-Za-z0-9_\-\u0080-\U0010ffff])", re.I)
 #: The CSS named colours. Only `white` and `black` were known, so `snow`,
 #: `ivory` or `whitesmoke` text on white passed (VULN-3418 retest, 2026-11-12).
 _NAMED = dict(pair.split(":") for pair in """
@@ -247,16 +253,28 @@ slategrey:708090 snow:fffafa springgreen:00ff7f steelblue:4682b4 tan:d2b48c
 teal:008080 thistle:d8bfd8 tomato:ff6347 turquoise:40e0d0 violet:ee82ee
 wheat:f5deb3 white:ffffff whitesmoke:f5f5f5 yellow:ffff00 yellowgreen:9acd32
 """.split())
+_CSS_WS = " \t\n\r\f"
+_WS_RE = r"[ \t\n\r\f]"
 _RGB = re.compile(
-    r"rgba?\(\s*([0-9.]+)\s*[, ]\s*([0-9.]+)\s*[, ]\s*([0-9.]+)"
-    r"(?:\s*[,/]\s*([0-9.%]+))?", re.I)
+    rf"rgba?\({_WS_RE}*([0-9.]+){_WS_RE}*[, ]{_WS_RE}*([0-9.]+)"
+    rf"{_WS_RE}*[, ]{_WS_RE}*([0-9.]+)"
+    rf"(?:{_WS_RE}*[,/]{_WS_RE}*([0-9.%]+))?", re.I)
 _HSL = re.compile(
-    r"hsla?\(\s*(-?[0-9.]+)\s*(?:deg)?\s*[, ]\s*([0-9.]+)%\s*[, ]\s*([0-9.]+)%"
-    r"(?:\s*[,/]\s*([0-9.%]+))?", re.I)
+    rf"hsla?\({_WS_RE}*(-?[0-9.]+){_WS_RE}*(?:deg)?{_WS_RE}*[, ]{_WS_RE}*([0-9.]+)%"
+    rf"{_WS_RE}*[, ]{_WS_RE}*([0-9.]+)%"
+    rf"(?:{_WS_RE}*[,/]{_WS_RE}*([0-9.%]+))?", re.I)
 _SIZE = re.compile(
-    r"(-?[0-9.]+)\s*(px|pt|rem|em|pc|in|cm|mm|vmin|vmax|vw|vh|ex|ch|%)", re.I)
-_BARE = re.compile(r"(-?[0-9]*\.?[0-9]+)\s*(?:!important)?\s*$", re.I)
-_DECL = re.compile(r"([a-z-]+)\s*:\s*([^;]+)", re.I)
+    rf"(?<![A-Za-z0-9_.\u0080-\U0010ffff])(-?[0-9.]+){_WS_RE}*"
+    r"(px|pt|rem|em|pc|in|cm|mm|vmin|vmax|vw|vh|ex|ch|%)"
+    r"(?![A-Za-z0-9_\-\u0080-\U0010ffff])", re.I)
+_BARE = re.compile(rf"(-?[0-9]*\.?[0-9]+){_WS_RE}*(?:!important)?{_WS_RE}*$", re.I)
+_DECL = re.compile(r"([a-z-]+)[ \t\n\r\f]*:[ \t\n\r\f]*([^;]+)", re.I)
+# Trailing !important with ASCII CSS whitespace only (F20/F34); leaves bare
+# `opacity:!important` and flagged `visible` unread (s05d).
+_IMPORTANT = re.compile(r"(?<=\S)(?<!visible)[ \t\n\r\f]*![ \t\n\r\f]*important$", re.I)
+# These keep their flag: a value read here can UN-hide text (a child resets a
+# dark ground or a tiny size), so they read exactly as before F34.
+_FLAG_KEPT = frozenset({"background", "background-color", "font-size"})
 # shortcut: relative units resolve against a 16px font and a 1280x720
 # viewport, not the real parent or window; exact for zero, which is the attack.
 _UNIT_PX = {"px": 1.0, "pt": 4 / 3, "em": 16.0, "rem": 16.0,
@@ -278,12 +296,12 @@ def parse_colour(value: str) -> tuple[int, int, int, float] | None:
     silently dropped: ``rgba(0,0,0,0)`` is invisible text, and reading it as
     opaque black is the bug this function exists to avoid.
     """
-    v = (value or "").strip().lower()
+    v = (value or "").strip(_CSS_WS).lower()
     if not v or v in ("inherit", "initial", "unset", "revert", "none", "currentcolor"):
         return None
     if v == "transparent":
         return (0, 0, 0, 0.0)
-    name = v.split("!")[0].strip()
+    name = v.split("!")[0].strip(_CSS_WS)
     if name in _NAMED:
         h = _NAMED[name]
         return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), 1.0)
@@ -391,7 +409,7 @@ def to_px(value: str) -> float | None:
     2026-11-12). In standards mode a unitless non-zero is dropped by the
     browser, so reading it as px can over-flag; it never under-flags.
     """
-    v = (value or "").strip()
+    v = (value or "").strip(_CSS_WS)
     m = _SIZE.search(v)
     if m:
         return float(m.group(1)) * _UNIT_PX[m.group(2).lower()]
@@ -415,7 +433,7 @@ def collapsed(own: dict[str, str]) -> bool:
     the display type is not resolved here, so an inline ``<span>`` with
     ``height:0;overflow:hidden`` is flagged though it shows. That over-flags;
     it never misses."""
-    if own.get("mso-hide", "").strip().lower().startswith("all"):
+    if own.get("mso-hide", "").strip(_CSS_WS).lower().startswith("all"):
         return True
     overflow = " ".join(own.get(k, "") for k in ("overflow", "overflow-x", "overflow-y"))
     if re.search(r"hidden|clip", overflow, re.I):
@@ -427,7 +445,10 @@ def collapsed(own: dict[str, str]) -> bool:
     args += own.get("scale", "").split()
     for arg in args:
         try:
-            if abs(float(arg.strip().rstrip("%")) / (100 if "%" in arg else 1)) < 0.05:
+            raw_arg = arg.strip(_CSS_WS).rstrip("%")
+            if not raw_arg.isascii():
+                continue
+            if abs(float(raw_arg) / (100 if "%" in arg else 1)) < 0.05:
                 return True
         except ValueError:  # coverage-audit: a scale this walk cannot read
             # (`calc()`, a variable) is judged visible, as a browser that
@@ -436,8 +457,55 @@ def collapsed(own: dict[str, str]) -> bool:
     return False
 
 
+def _scan_to(style: str, start: int, stop: str) -> int:
+    """Scan from ``start`` past backslash escapes up to and including ``stop``."""
+    j, n = start, len(style)
+    while j < n and style[j] != stop:
+        j += 2 if style[j] == "\\" else 1
+    return min(j + 1, n)
+
+
+def _strip_css_comments(style: str) -> str:
+    """Strip ``/* ... */`` comments in O(n), preserving strings and unquoted ``url(...)``."""
+    if "/*" not in style:
+        return style
+    out: list[str] = []
+    i, n = 0, len(style)
+    while i < n:
+        ch = style[i]
+        if ch in ("'", '"'):
+            j = _scan_to(style, i + 1, ch)
+            out.append(style[i:j])
+            i = j
+        elif (style[i:i + 4].lower() == "url("
+              and (i == 0 or not (style[i - 1].isalnum() or style[i - 1] in "_-"))):
+            k = i + 4
+            while k < n and style[k] in _CSS_WS:
+                k += 1
+            j = k if k < n and style[k] in ("'", '"') else _scan_to(style, k, ")")
+            out.append(style[i:j])
+            i = j
+        elif style.startswith("/*", i):
+            end = style.find("*/", i + 2)
+            out.append(" ")
+            if end < 0:
+                break
+            i = end + 2
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
 def declarations(style: str | None) -> dict[str, str]:
-    return {k.strip().lower(): v.strip() for k, v in _DECL.findall(style or "")}
+    """``{property: value}``, last wins; strips CSS comments (O(n), preserving
+    quoted strings) and trailing ``!important`` (ASCII whitespace, F20/F34),
+    keeping flags on ``visible`` and :data:`_FLAG_KEPT`."""
+    out: dict[str, str] = {}
+    for k, v in _DECL.findall(_strip_css_comments(style or "")):
+        k, v = k.strip(_CSS_WS).lower(), v.strip(_CSS_WS)
+        out[k] = v if k in _FLAG_KEPT else _IMPORTANT.sub("", v)
+    return out
 
 
 def normalise(text: str) -> str:

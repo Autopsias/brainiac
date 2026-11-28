@@ -80,6 +80,10 @@ HOOKS: tuple[HookSpec, ...] = (
 )
 
 
-# A `~/.claude` that some harness repo DEPLOYS carries its own tooling. Two
-# marker files are enough to recognise one, and both are cheap file reads.
-HARNESS_MARKERS = ("scripts/gearbox", "scripts/deploy.pathspec")
+# A `~/.claude` that an external harness repo DEPLOYS declares ownership via
+# this explicit sentinel file. Existing harness-managed installs migrate by
+# placing an empty `.brainiac-external-harness` file at the root of `~/.claude`
+# (replacing the earlier repo-specific marker pair). Never leave this empty:
+# `harness_managed()` also guards against empty tuples so `all([]) == True`
+# can never mark every standalone host as harness-managed.
+HARNESS_MARKERS: tuple[str, ...] = (".brainiac-external-harness",)

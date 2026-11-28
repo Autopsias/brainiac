@@ -56,7 +56,7 @@ def _llm():
     if not model_path:
         return None
     try:
-        from llama_cpp import Llama
+        from llama_cpp import Llama  # ty: ignore[unresolved-import]
     except ImportError:
         return None
     try:

@@ -11,11 +11,18 @@ keeps working unchanged. Covered by ``tests/test_doctor_workspace.py``.
 """
 from __future__ import annotations
 
+import heapq
+import io
+import os
 import re
+import stat
+import zipfile
+import zlib
 from pathlib import Path
 from typing import Optional
 
 from .doctor_plugins import PLUGIN_NAMES
+from .zip_bounded import read_member_bounded
 
 # --------------------------------------------------------------------------
 # Surface — Desktop MCP registration collision (SUI-03 hardening addendum).
@@ -132,6 +139,71 @@ _STAMP = re.compile(rb"<!-- SKILL_VERSION:[^\n]*-->\n?")
 # Cowork store is the expected state, not a step the owner owes.
 _OPTIONAL_IN_COWORK = {"brainiac-manager"}
 
+# The staged `.skill` bundles sit on the mount the Cowork VM writes, and every
+# host doctor run reads them (F40), so each read is capped. Sized from the real
+# bundles `tools/package_clients.py build_cowork_zips` makes (14 skills,
+# measured 2026-11-23): biggest zip 271 KB, 3 members at most, biggest member
+# (chief-of-staff SKILL.md) 631 KB, worst compression 2.7:1, every SKILL.md
+# together 827 KB. Each cap leaves 4x or more over that.
+_SKILL_ZIP_MAX_BYTES = 2 * 1024 * 1024     # the bundle file: it is read into memory whole
+_SKILL_MAX_ENTRIES = 64                    # entries per bundle (real: 3)
+_SKILL_MAX_BUNDLES = 64                    # bundles looked at per workspace (real: 14)
+_SKILL_MEMBER_MAX_BYTES = 4 * 1024 * 1024  # one SKILL.md, uncompressed (real: 631 KB)
+_SKILL_VERSION_MAX_BYTES = 1024            # VERSION holds "x.y.z\n"
+_SKILL_MAX_RATIO = 100                     # uncompressed:compressed per member (real: 2.7, a deflate bomb ~1000)
+_SKILL_TOTAL_MAX_BYTES = 8 * 1024 * 1024   # every SKILL.md kept, all bundles together (real: 827 KB)
+
+
+def _read_member_capped(zf: zipfile.ZipFile, name: str, cap: int, raw: bytes) -> Optional[bytes]:
+    """One member's bytes, or None when it is over ``cap`` or its compression
+    ratio. The header is judged first, so a bomb is refused unread; the read is
+    bounded too, because a header can lie. Stored/deflated members are read by
+    zipfile, which gives zlib an output limit. It gives bzip2, lzma and zstd none,
+    so ``read(cap + 1)`` does not bound them: ``zip_bounded`` decompresses those
+    from ``raw`` (the bundle's bytes) with an explicit limit."""
+    info = zf.getinfo(name)
+    if info.file_size > cap or info.file_size > _SKILL_MAX_RATIO * info.compress_size:
+        return None
+    with zf.open(info) as fh:  # checks the local header (and refuses encryption); reads nothing yet
+        if info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+            return read_member_bounded(raw, info)
+        data = fh.read(cap + 1)
+    return data if len(data) <= cap else None
+
+
+def _read_staged_skill(bundle: Path, ssot: str) -> Optional[bytes]:
+    """SKILL.md bytes (version stamp stripped) of one staged bundle at the SSOT
+    version, or None: another version, over a cap above, or unreadable (not a regular
+    file, corrupt, truncated, encrypted or an unsupported compression)."""
+    try:
+        # The VM can plant any name the glob matches: a FIFO, or a link to a pipe, a
+        # tty or a directory. O_NONBLOCK keeps open() from waiting on a FIFO, and the
+        # type is judged on the open fd (no stat-then-open gap) before any read.
+        fd = os.open(bundle, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                return None
+            with os.fdopen(fd, "rb", closefd=False) as fh:
+                raw = fh.read(_SKILL_ZIP_MAX_BYTES + 1)
+        finally:
+            os.close(fd)
+        # Every central-directory entry starts with this signature, so the count
+        # bounds the entries before ZipFile() builds one ZipInfo per entry.
+        if len(raw) > _SKILL_ZIP_MAX_BYTES or raw.count(b"PK\x01\x02") > _SKILL_MAX_ENTRIES:
+            return None
+        with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+            version = _read_member_capped(zf, f"{bundle.stem}/VERSION", _SKILL_VERSION_MAX_BYTES, raw)
+            if version is None or version.decode("utf-8").strip() != ssot:
+                return None
+            text = _read_member_capped(zf, f"{bundle.stem}/SKILL.md", _SKILL_MEMBER_MAX_BYTES, raw)
+    # What a hostile zip really raises here (fuzzed on 3.14): BadZipFile, zlib.error,
+    # EOFError, ValueError (also UnicodeDecodeError), RuntimeError (encrypted,
+    # NotImplementedError), OverflowError (a zip64 offset past 2**63); MemoryError too.
+    except (OSError, KeyError, ValueError, EOFError, OverflowError, RuntimeError,
+            MemoryError, zlib.error, zipfile.BadZipFile):
+        return None
+    return None if text is None else _STAMP.sub(b"", text)
+
 
 def _skill_reference(registry_entries: Optional[list[dict]], ssot: str) -> dict[str, bytes]:
     """name -> current SKILL.md bytes (version stamp stripped), read from the
@@ -142,25 +214,24 @@ def _skill_reference(registry_entries: Optional[list[dict]], ssot: str) -> dict[
     0.20.39 installed, text identical to 0.20.41). Comparing TEXT against the
     bundles `brain update` just staged is what tells the owner whether to act.
     """
-    import zipfile
-
     from .vmstaging import _cowork_staging_root
 
     ref: dict[str, bytes] = {}
+    kept = 0
     for entry in registry_entries or []:
         if entry.get("target") == "host":
             continue
         skills_dir = _cowork_staging_root(entry) / "skills"
-        for bundle in sorted(skills_dir.glob("*.skill")) if skills_dir.is_dir() else []:
+        # nsmallest keeps only the first N names, not a sorted list of all of them
+        # (glob still walks the whole folder).
+        for bundle in (heapq.nsmallest(_SKILL_MAX_BUNDLES, skills_dir.glob("*.skill"))
+                       if skills_dir.is_dir() else []):
             if bundle.stem in ref:
                 continue
-            try:
-                with zipfile.ZipFile(bundle) as zf:
-                    if zf.read(f"{bundle.stem}/VERSION").decode("utf-8").strip() != ssot:
-                        continue
-                    ref[bundle.stem] = _STAMP.sub(b"", zf.read(f"{bundle.stem}/SKILL.md"))
-            except (OSError, KeyError, UnicodeDecodeError, zipfile.BadZipFile):
-                continue
+            text = _read_staged_skill(bundle, ssot)
+            if text is not None and kept + len(text) <= _SKILL_TOTAL_MAX_BYTES:
+                ref[bundle.stem] = text
+                kept += len(text)
     return ref
 
 

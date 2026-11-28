@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -148,14 +149,52 @@ def _flatten_relpath(rel: Path) -> str:
     return "__".join(rel.parts) if len(rel.parts) > 1 else rel.parts[0]
 
 
-def _unique_inbox_dest(inbox: Path, name: str) -> Path:
+def _create_unique_inbox_dest(inbox: Path, name: str) -> tuple[Path, int]:
+    """Create ``inbox/<name>`` (or the first free ``<stem>.<n><suffix>``) and
+    return it with an open write descriptor.
+
+    ``O_CREAT|O_EXCL|O_NOFOLLOW`` makes "taken" the kernel's call: an existing
+    name -- including a symlink planted by the untrusted VM, dangling or not --
+    is skipped, never followed. (``Path.exists`` follows links, so a dangling
+    link read as free and ``shutil.copy2`` then wrote through it.)"""
     stem, suffix = Path(name).stem, Path(name).suffix
-    dest = inbox / name
-    i = 0
-    while dest.exists():
-        i += 1
-        dest = inbox / f"{stem}.{i}{suffix}"
-    return dest
+    flags = (os.O_WRONLY | os.O_CREAT | os.O_EXCL
+             | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
+    dest, i = inbox / name, 0
+    while True:
+        try:
+            return dest, os.open(dest, flags, 0o600)
+        except FileExistsError:
+            i += 1
+            dest = inbox / f"{stem}.{i}{suffix}"
+
+
+def _copy_into_inbox(src: Path, inbox: Path, name: str) -> str:
+    """``shutil.copy2`` into a uniquely named new file under ``inbox``.
+
+    Mode and times are set on the open descriptor, never the name, so a name
+    swapped for a link after the copy cannot redirect them. The source is
+    opened ``O_NOFOLLOW|O_NONBLOCK`` and must be a regular file (copy2 refused
+    a FIFO the same way; a bare ``open`` would block on it)."""
+    fd = os.open(src, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                 | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
+    with os.fdopen(fd, "rb") as fin:
+        st = os.fstat(fin.fileno())
+        if not stat.S_ISREG(st.st_mode):
+            raise shutil.SpecialFileError(f"`{src}` is not a regular file")
+        dest, out_fd = _create_unique_inbox_dest(inbox, name)
+        try:
+            with os.fdopen(out_fd, "wb") as out:
+                shutil.copyfileobj(fin, out)
+                out.flush()  # so the close cannot move the mtime set below
+                if hasattr(os, "fchmod"):
+                    os.fchmod(out.fileno(), stat.S_IMODE(st.st_mode))
+                if os.utime in os.supports_fd:
+                    os.utime(out.fileno(), ns=(st.st_atime_ns, st.st_mtime_ns))
+        except BaseException:
+            dest.unlink(missing_ok=True)  # a partial copy must not be ingested
+            raise
+    return dest.name
 
 
 def stage_import_files(
@@ -167,15 +206,20 @@ def stage_import_files(
     v = config.vault_root(vault, allow_missing=True)
     imp = Path(import_from)
     inbox = v / "inbox"
+    # inbox/ sits on the VM-writable mount: mkdir and the opens below would
+    # follow a directory link planted there. (shortcut: a swap of `inbox` for a
+    # link at any point DURING the import loop is not covered, only the final
+    # component of each file is O_NOFOLLOW; upgrade to dir_fd opens where the
+    # platform has them.)
+    if inbox.is_symlink():
+        raise ImportSafetyError(f"{inbox} is a symlink; refusing to stage through it")
     inbox.mkdir(parents=True, exist_ok=True)
     staged: list[str] = []
     for rel, _size in manifest["_files"]:
         src = imp / rel
         if src.is_symlink():
             continue
-        dest = _unique_inbox_dest(inbox, _flatten_relpath(rel))
-        shutil.copy2(src, dest)
-        staged.append(dest.name)
+        staged.append(_copy_into_inbox(src, inbox, _flatten_relpath(rel)))
     return staged
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import datetime
 import re
-from typing import Any
+from typing import Any, Callable
 import hashlib
 import os
 
@@ -57,16 +57,20 @@ def version_family_key(note_id: str) -> tuple[str, int] | None:
     return None if parsed is None else (parsed[0], parsed[1])
 
 
-def _live_head(note_id: str, successor_of: dict[str, str]) -> str:
+def _live_head(note_id: str, successor_of: dict[str, str],
+               verified: Callable[[str], str | None]) -> str:
     """Follow ``superseded_by`` from ``note_id`` to the chain's live head.
     ``core.supersede`` refuses a target that is itself retired ("a second
     latest"), and a rendition of v52 is retired by whatever retired v52 —
     measured 2026-08-25: 10 of 11 preview renders failed under their own,
-    already-superseded primaries. Bounded like the ranking-layer walk."""
+    already-superseded primaries. Bounded like the ranking-layer walk. A hop
+    only counts when the note that carries it is ``verified`` (host-signed in its
+    current bytes, F44): an edge in a note a vault writer edited is not an edge,
+    so it cannot steer a retirement at a note the host never signed."""
     seen = {note_id}
     for _hop in range(16):
         nxt = successor_of.get(note_id, "")
-        if not nxt or nxt in seen:
+        if not nxt or nxt in seen or not verified(note_id):
             return note_id
         seen.add(nxt)
         note_id = nxt
@@ -79,11 +83,14 @@ def _retire_renditions(
     primaries: dict[tuple[str, int], list[str]],
     successor_of: dict[str, str],
     report: dict[str, Any],
+    verified: Any,
 ) -> list[tuple[str, dict[str, str]]]:
     """Retire each rendition under its ONE primary's LIVE HEAD through the
     audited ``core.supersede``. Runs AFTER the chain loop, so a rendition of
     v52 lands under v58 when v52 is already retired. A rendition with two
     primaries, or already retired elsewhere, is left alone and reported."""
+    from .core import SupersedePreconditionFailed
+
     for key, copies in sorted(renditions.items()):
         owners = primaries.get(key, [])
         if not owners:
@@ -91,7 +98,12 @@ def _retire_renditions(
         if len(owners) > 1:
             report["skipped_ambiguous"].append(f"{key[0]}-v{key[1]}")
             continue
-        primary = _live_head(owners[0], successor_of)
+        primary = _live_head(owners[0], successor_of, verified.pin)
+        # F44: never retire into an indexed note the host did not sign (a head that is
+        # not indexed falls through, so supersede reports "not found" in errors as before)
+        if primary in successor_of and not verified.pin(primary):
+            report["skipped_unverified"].append(primary)
+            continue
         for nid, meta in copies:
             if meta["superseded_by"] == primary:
                 continue  # already retired under it — idempotent re-run
@@ -99,16 +111,18 @@ def _retire_renditions(
                 report["skipped_conflict"].append(nid)
                 continue
             try:
-                batch.supersede(nid, primary,
-                               reason="auto rendition (same version, other format)")
+                verified.supersede(batch, nid, primary,
+                                   reason="auto rendition (same version, other format)")
                 report["renditions"].append(
                     {"rendition": nid, "primary": primary, "family": key[0]})
+            except SupersedePreconditionFailed:  # changed after it was verified
+                report["skipped_unverified"].append(nid)
             except Exception as exc:  # noqa: BLE001 — one bad copy never aborts the fold
                 report["errors"].append({"family": key[0], "old": nid,
                                          "new": primary, "error": str(exc)})
 
 
-def _group_versions(core: Any) -> tuple[
+def _group_versions(core: Any, verified: Any, unverified: list[str]) -> tuple[
     dict[str, list[tuple[int, str, str, dict[str, str]]]],
     dict[tuple[str, int], list[tuple[str, dict[str, str]]]],
     dict[tuple[str, int], list[str]],
@@ -117,7 +131,11 @@ def _group_versions(core: Any) -> tuple[
     """(families, renditions, primaries, successor_of) over the whole index.
     A rendition with no primary stands in as the version itself and joins its
     family; ``successor_of`` is chain-wide so a rendition of a retired version
-    can find the family's LIVE head."""
+    can find the family's LIVE head. A note the host chain did not sign in its
+    current bytes (F44) is left out and its id appended to ``unverified``, but an
+    unverified primary still OCCUPIES its (family, number): its renditions never
+    stand in for it, so tampering with a primary cannot promote them. A verified
+    draft/untrusted primary is skipped as before and holds no slot."""
     rows = core.index.conn.execute(
         "SELECT id, is_latest_version, superseded_by, "
         "COALESCE(NULLIF(effective_date,''), NULLIF(document_date,''), created), path "
@@ -126,18 +144,26 @@ def _group_versions(core: Any) -> tuple[
     renditions: dict[tuple[str, int], list[tuple[str, dict[str, str]]]] = {}
     primaries: dict[tuple[str, int], list[str]] = {}
     successor_of = {str(nid): str(sup_by or "") for nid, _ilv, sup_by, _vd, _p in rows}
-    from .maintenance_dedup import _dedup_trust_checker
-
-    is_untrusted = _dedup_trust_checker(core)
+    occupied: set[tuple[str, int]] = set()
     for nid, ilv, sup_by, vdate, npath in rows:
         parsed = parse_version_id(str(nid))
         if parsed is None:
             continue
+        fam, num, rendition = parsed
+        # A note the host never signed in its current bytes never joins a family
+        # (a planted note carries no trust keys, so the frontmatter check alone
+        # reads it as trusted). Checked FIRST: a signed primary edited to read
+        # `status: draft` must not slip out without holding its slot.
+        note = {"id": str(nid), "path": str(npath or "")}
+        if not verified(note):
+            unverified.append(str(nid))
+            if not rendition:
+                occupied.add((fam, num))
+            continue
         # An untrusted/draft note (a caller-chosen `-vN` capture) never joins a
         # family: it must not become the successor that retires a trusted note.
-        if is_untrusted({"id": str(nid), "path": str(npath or "")}):
+        if verified.untrusted(note):
             continue
-        fam, num, rendition = parsed
         meta = {"is_latest": str(ilv or ""), "superseded_by": str(sup_by or "")}
         member = (num, str(vdate or ""), str(nid), meta)
         if rendition:
@@ -146,7 +172,7 @@ def _group_versions(core: Any) -> tuple[
         primaries.setdefault((fam, num), []).append(str(nid))
         families.setdefault(fam, []).append(member)
     for (fam, num), copies in renditions.items():
-        if not primaries.get((fam, num)):
+        if (fam, num) not in occupied and not primaries.get((fam, num)):
             for nid, meta in copies:
                 vdate = next((r[3] for r in rows if str(r[0]) == nid), "")
                 families.setdefault(fam, []).append((num, str(vdate or ""), nid, meta))
@@ -195,9 +221,15 @@ def auto_version_chains(core: Any) -> dict[str, Any]:
 
 def _chain_families(core: Any, batch: Any) -> dict[str, Any]:
     """The body of :func:`auto_version_chains`; every write goes through ``batch``."""
-    families, renditions, primaries, successor_of = _group_versions(core)
+    from .core import SupersedePreconditionFailed
+    from .maintenance_dedup import _HostVerified
+
+    verified = _HostVerified(core)
     report: dict[str, Any] = {"chained": [], "renditions": [], "skipped_conflict": [],
-                              "skipped_ambiguous": [], "errors": []}
+                              "skipped_ambiguous": [], "skipped_unverified": [],
+                              "errors": []}
+    families, renditions, primaries, successor_of = _group_versions(
+        core, verified, report["skipped_unverified"])
     for fam, members in sorted(families.items()):
         if len(members) < 2:
             continue
@@ -227,15 +259,19 @@ def _chain_families(core: Any, batch: Any) -> dict[str, Any]:
             if meta[old_id]["superseded_by"] == new_id:
                 continue  # already chained — idempotent re-run
             try:
-                batch.supersede(old_id, new_id, reason="auto version-chain (nightly self-organization)")
+                verified.supersede(batch, old_id, new_id,
+                                   reason="auto version-chain (nightly self-organization)")
                 report["chained"].append({"old": old_id, "new": new_id, "family": fam})
+            except SupersedePreconditionFailed:  # changed after it was verified
+                report["skipped_unverified"].extend((old_id, new_id))
+                break
             except Exception as exc:  # noqa: BLE001 — one bad family never aborts the fold
                 report["errors"].append({"family": fam, "old": old_id,
                                          "new": new_id, "error": str(exc)})
                 break
     for link in report["chained"]:
         successor_of[link["old"]] = link["new"]
-    _retire_renditions(batch, renditions, primaries, successor_of, report)
+    _retire_renditions(batch, renditions, primaries, successor_of, report, verified)
     return report
 
 

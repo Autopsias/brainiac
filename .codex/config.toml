@@ -5,22 +5,22 @@
 # Skills auto-load: Codex scans $REPO_ROOT/.agents/skills/<name>/SKILL.md
 # natively on every session start — no [[skills.config]] entry is required
 # to ENABLE a skill (see https://developers.openai.com/codex/skills and
-# AGENTS.md "Per-harness wiring"). To DISABLE one, add a block like:
+# docs/harness-wiring.md). To DISABLE one, add a block like:
 #
 #   [[skills.config]]
 #   path = "/absolute/path/to/.agents/skills/curation/SKILL.md"
 #   enabled = false
 #
 # AGENTS.md is Codex's native project-instructions file (read automatically,
-# no config needed) — it is the canonical conventions doc. .gemini/settings.json
-# points at it too; Claude Code imports AGENTS-core.md plus the path-scoped
-# .claude/rules/ copies, guarded by tests/test_agents_md_rules_copies.py (INT-01).
+# no config needed) — it is the single canonical conventions doc (<= 20 KB),
+# imported directly by CLAUDE.md and pointed to by .gemini/settings.json.
 
-# Codex cuts project AGENTS.md at 32,768 bytes by default; this file is far
-# larger. Raise the budget so every section reaches Codex. Honoured only when
-# this checkout is trusted in a config FILE, not via `-c` trust. Guarded by
-# tests/test_agents_md_fits_codex.py. See docs/adr/0012-agents-md-fits-every-harness.md.
-project_doc_max_bytes = 262144
+# Codex loads up to 32,768 bytes of project AGENTS.md by default; keep
+# project_doc_max_bytes pinned at 32768 and AGENTS.md <= 20,480 bytes (20 KB)
+# so every section fits cleanly with 12 KB of headroom. Guarded by
+# tests/test_agents_md_fits_codex.py. See docs/adr/0012-agents-md-fits-every-harness.md
+# and docs/substrate-history.md.
+project_doc_max_bytes = 32768
 
 # Interactive default: pause before running generated commands.
 approval_policy = "on-request"

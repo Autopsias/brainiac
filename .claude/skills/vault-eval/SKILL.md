@@ -89,11 +89,12 @@ fault to fix, and none of the three is a way to reach a note.
 If you need something the desk does not serve, say so and stop. That is a
 finding for the engine, not a gap to work around.
 
-Three eval surfaces serving different questions:
+Four eval surfaces serving different questions:
 
 | Surface | Question it answers | Tooling |
 |---|---|---|
-| **Standing graded gate (this skill, primary)** | "Did the current engine regress on the frozen 66-query golden set?" | `eval/harness_direct.py` + `eval/gate.py` in this repo |
+| **Standing graded gate (this skill, primary)** | "Did the current engine regress on the frozen 249-query golden set?" | `eval/harness_direct.py` + `eval/gate.py` in this repo |
+| **Agentic answer-grounding eval** | "Do agents pick the right tools (`dossier`, `search`, `graph-expand`, `get`), report tensions, respect egress/freshness hints, and link with `[[bare-id]]`?" | `eval/agentic_eval.py` (`--mode offline` / `--mode live`) + `eval/fixtures/agentic-scenarios.json` + `eval/gate.py --agentic-scorecard` |
 | **Qualitative cascade eval** | "Does the model, using the brain's composable read tools, answer real questions correctly — supersession, completeness, timing, multi-hop, calibration?" | hand-written questions + `brain search/grep/bases-query/graph-expand/get` |
 | **Quantitative Recall@k harness** | "Did a substrate/embedder change regress retrieval, measured against a frozen golden set?" | `eval/harness_direct.py` + `eval/gate.py` in this repo |
 | **Cross-engine A/B (shared corpus)** | "Does a DIFFERENT engine indexing the same corpus rank better or worse than brain, on the same golden set + qrels?" | per-engine capture adapters + the same `harness_direct.py`/`gate.py` — contract: `eval/PORTABLE-CONTRACT.md` |
@@ -101,9 +102,9 @@ Three eval surfaces serving different questions:
 ## When to run
 
 - **Monthly and go-live / structural-change gate** — run the behavioural
-  probes first as a smoke check, then run the standing 66-query graded gate
-  below. A nonzero probe result is a hard stop; probe success does not replace
-  graded scoring.
+  probes first as a smoke check, then run the standing 249-query graded gate
+  below plus `python3 eval/agentic_eval.py --mode offline`. A nonzero probe
+  result is a hard stop; probe success does not replace graded scoring.
 - **Structural changes** include an embedder swap, index rebuild, a change to
   which read tools the harness composes (e.g. adding `graph-rank`), a new CLI
   verb, an egress-filter change, or a vector-backend swap.
@@ -283,8 +284,9 @@ python3 eval/gate.py --scorecard _evidence/<session>/scorecard.json
 
 The standing-baseline convention is
 `eval/runs/rebaseline-<version>-<date>-*.json`. Select a full-golden capture
-that carries `index_state.fingerprint`; for this rollout, the frozen reference
-is `eval/runs/rebaseline-0.19.24-2026-08-04-bare.json` (66 queries). Do not
+that carries `index_state.fingerprint` (current expanded golden set: 249
+queries; historical reference `eval/runs/rebaseline-0.19.24-2026-08-04-bare.json`
+was captured on the prior 66-query slice). Do not
 promote fixture-only or synthetic probe runs to a standing baseline. If
 `gate.py` refuses because corpus-fingerprint drift exceeds 10%, do not pass
 `--allow-drift`: capture a fresh baseline, date and fingerprint it, and use
@@ -294,9 +296,11 @@ subsequent gates.
 ### Standing gate checklist
 
 - [ ] Run `brain-golden-probe`; stop on any nonzero result.
-- [ ] Capture all 66 golden queries and verify the run metadata/fingerprint.
+- [ ] Capture all 249 golden queries and verify the run metadata/fingerprint.
 - [ ] Score with `harness_direct.py` against the standing baseline.
-- [ ] Decide with `gate.py`; re-baseline on >10% fingerprint drift, never with `--allow-drift`.
+- [ ] Run the agentic answer-grounding eval:
+      `python3 eval/agentic_eval.py --mode offline --out _evidence/eval/agentic-baseline-YYYY-MM-DD.json --trace-out _evidence/eval/navigation-trace-YYYY-MM-DD.json`
+- [ ] Decide with `gate.py` (optionally passing `--agentic-scorecard`); re-baseline on >10% fingerprint drift, never with `--allow-drift`.
 
 ## Behavioural smoke check
 
@@ -395,6 +399,7 @@ four dimensions and broken on the fifth still has a broken dimension.
 
 - `AGENTS.md` §5 (agentic tool surface, RET-04) — the composable-tools model this eval scores against
 - `eval/harness.py`, `eval/gate.py` — the quantitative Recall@k A/B harness
+- `eval/agentic_eval.py`, `eval/fixtures/agentic-scenarios.json` — the agentic answer-grounding & trajectory eval (`--mode offline` / `--mode live`)
 - `eval/navigation_stats.py` — the navigation-behavior counters (descriptive signal, never a gate)
 - `eval/PORTABLE-CONTRACT.md` — run-file/qrels schemas, probe-class invariants, shared-corpus cross-engine rules
 - `brain --help` — full verb + flag reference

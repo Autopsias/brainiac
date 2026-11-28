@@ -9,7 +9,13 @@
 # ADR-0003 Appendix B), adapted: vault root resolved dynamically
 # ($BRAIN_VAULT > $CLAUDE_PROJECT_DIR/vault) instead of a hardcoded path.
 set -e
-PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+if [ -n "${CLAUDE_PROJECT_DIR:-}" ]; then
+  PROJECT_DIR="$CLAUDE_PROJECT_DIR"
+elif command -v git >/dev/null 2>&1 && _GIT_TOP=$(git rev-parse --show-toplevel 2>/dev/null) && [ -n "$_GIT_TOP" ]; then
+  PROJECT_DIR="$_GIT_TOP"
+else
+  PROJECT_DIR="$(pwd)"
+fi
 VAULT_DIR="${BRAIN_VAULT:-$PROJECT_DIR/vault}"
 MEMORY_DIR="$VAULT_DIR/.brain/memory"
 HANDOFF="$MEMORY_DIR/handoff.md"
@@ -17,9 +23,16 @@ TS="$(date -u +%Y-%m-%dT%H:%MZ)"
 
 mkdir -p "$MEMORY_DIR"
 if [ -f "$HANDOFF" ]; then
-  {
-    echo ""
-    echo "<!-- pre-compact checkpoint $TS - context was compacting; in-flight state may be partial -->"
-  } >> "$HANDOFF"
+  # Keep ONE marker: drop earlier checkpoint lines (and the blank line each
+  # older version wrote before it), then append the new one. Appending forever
+  # left a handoff of 19 markers and no state (2026-10-17).
+  TMP="$HANDOFF.tmp.$$"
+  awk '/<!-- pre-compact checkpoint /{held=0; next}
+       /^$/{if (held) print ""; held=1; next}
+       held{print ""; held=0}
+       {print}
+       END{if (held) print ""}' "$HANDOFF" > "$TMP"
+  echo "<!-- pre-compact checkpoint $TS - context was compacting; in-flight state may be partial -->" >> "$TMP"
+  mv "$TMP" "$HANDOFF"
 fi
 exit 0

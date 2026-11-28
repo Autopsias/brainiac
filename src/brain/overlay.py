@@ -216,6 +216,18 @@ def validate_overlay(path: Path) -> dict[str, Any]:
             "errors": [f"overlay dir does not exist: {path}"],
             "warnings": [],
         }
+    if not path.is_dir():
+        return {
+            "overlay_dir": str(path),
+            "exists": True,
+            "valid": False,
+            "categories": {
+                c: {"present": False, "file_count": 0, "issues": [f"{c}/ missing (overlay path is not a directory)"]}
+                for c in CATEGORIES
+            },
+            "errors": [f"overlay path is not a directory: {path}"],
+            "warnings": [],
+        }
 
     categories: dict[str, Any] = {}
     errors: list[str] = []
@@ -243,6 +255,18 @@ def validate_overlay(path: Path) -> dict[str, Any]:
     # pre-existing overlay; see OPTIONAL_CATEGORIES).
     for cat in OPTIONAL_CATEGORIES:
         entry = _optional_category_entry(path / cat, cat, warnings)
+        categories[cat] = entry
+        errors.extend(f"{cat}: {issue}" for issue in entry["issues"])
+
+    # Generic non-core overlay directories (ADR-0015 §1.3): any extra
+    # plugin-owned category directory (excluding hidden dirs and `templates`)
+    # is validated with the generic frontmatter pass when present.
+    known_dirs = set(CATEGORIES) | set(OPTIONAL_CATEGORIES) | {"templates"}
+    for child in sorted(path.iterdir()):
+        if not child.is_dir() or child.name.startswith(".") or child.name in known_dirs:
+            continue
+        cat = child.name
+        entry = _optional_category_entry(child, cat, warnings)
         categories[cat] = entry
         errors.extend(f"{cat}: {issue}" for issue in entry["issues"])
 

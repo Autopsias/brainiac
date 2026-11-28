@@ -1,82 +1,10 @@
 {
   "exceptions": {
-    "eval/s04_variant_arms.py:main": {
-      "file": "eval/s04_variant_arms.py",
-      "lineno": 227,
-      "name": "main",
-      "lines": 253
-    },
-    "eval/s05_merge_split.py:main": {
-      "file": "eval/s05_merge_split.py",
-      "lineno": 163,
-      "name": "main",
-      "lines": 249
-    },
-    "eval/s06_fusion_residual.py:main": {
-      "file": "eval/s06_fusion_residual.py",
-      "lineno": 321,
-      "name": "main",
-      "lines": 202
-    },
-    "eval/s02_paired_capture.py:main": {
-      "file": "eval/s02_paired_capture.py",
-      "lineno": 596,
-      "name": "main",
-      "lines": 199
-    },
     "tests/_cos_grounding_canary_helpers.py:pipeline": {
       "file": "tests/_cos_grounding_canary_helpers.py",
       "lineno": 218,
       "name": "pipeline",
       "lines": 196
-    },
-    "eval/s06_reachability.py:main": {
-      "file": "eval/s06_reachability.py",
-      "lineno": 118,
-      "name": "main",
-      "lines": 196
-    },
-    "eval/s10_claim_arms.py:main": {
-      "file": "eval/s10_claim_arms.py",
-      "lineno": 400,
-      "name": "main",
-      "lines": 193
-    },
-    "eval/bulk_link_control.py:main": {
-      "file": "eval/bulk_link_control.py",
-      "lineno": 254,
-      "name": "main",
-      "lines": 177
-    },
-    "eval/s09_fusion_drop_trace.py:main": {
-      "file": "eval/s09_fusion_drop_trace.py",
-      "lineno": 112,
-      "name": "main",
-      "lines": 170
-    },
-    "eval/s08_expand_split.py:stage_split": {
-      "file": "eval/s08_expand_split.py",
-      "lineno": 490,
-      "name": "stage_split",
-      "lines": 137
-    },
-    "eval/fusion_constant_calibration.py:main": {
-      "file": "eval/fusion_constant_calibration.py",
-      "lineno": 172,
-      "name": "main",
-      "lines": 133
-    },
-    "eval/rebaseline_rerank_capture.py:main": {
-      "file": "eval/rebaseline_rerank_capture.py",
-      "lineno": 50,
-      "name": "main",
-      "lines": 131
-    },
-    "eval/s06b_graph_reachability.py:main": {
-      "file": "eval/s06b_graph_reachability.py",
-      "lineno": 49,
-      "name": "main",
-      "lines": 131
     },
     "tests/fixtures/generate_sample_corpus.py:build": {
       "file": "tests/fixtures/generate_sample_corpus.py",
@@ -84,23 +12,11 @@
       "name": "build",
       "lines": 129
     },
-    "eval/pt_leg_attribution.py:main": {
-      "file": "eval/pt_leg_attribution.py",
-      "lineno": 37,
-      "name": "main",
-      "lines": 119
-    },
     "tests/test_migration_verification.py:test_old_schema_index_upgrades_and_republishes_on_current_code": {
       "file": "tests/test_migration_verification.py",
       "lineno": 117,
       "name": "test_old_schema_index_upgrades_and_republishes_on_current_code",
       "lines": 118
-    },
-    "eval/zone_prior_calibration.py:analyse": {
-      "file": "eval/zone_prior_calibration.py",
-      "lineno": 398,
-      "name": "analyse",
-      "lines": 114
     },
     "tests/test_cos_s02b_verify.py:_build": {
       "file": "tests/test_cos_s02b_verify.py",

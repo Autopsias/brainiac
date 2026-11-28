@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import subprocess
 import sys
 import tempfile
 from collections.abc import Callable
@@ -60,6 +61,22 @@ def _make_gate_fn(
     return gate_fn
 
 
+def _check_skip_tests_allowed(
+    args: argparse.Namespace, should_run: Callable[[str], bool]
+) -> None:
+    """Production pypi tag-pushes (public-git triggers pypi-publish.yml on
+    the clean-room repo where private tests/ do not exist) must NEVER
+    bypass the full private pytest suite."""
+    if args.skip_tests and not args.dry_run and (
+        should_run("public-git") or "pypi" in getattr(args, "confirm", ())
+    ):
+        raise PublishError(
+            "--skip-tests is refused for production pypi tag-pushes "
+            "(public-git triggers pypi-publish.yml); run the full private "
+            "pytest suite instead"
+        )
+
+
 def _run_initial_phases(
     args: argparse.Namespace,
     tag: str,
@@ -69,6 +86,7 @@ def _run_initial_phases(
     verified: list[str],
     scratch: Path,
 ) -> tuple[Path, Path, list[Path]]:
+    _check_skip_tests_allowed(args, should_run)
     # PyPI is published by the tag push now, so "has this version already been
     # published?" is keyed on the phase that PUSHES the tag, not on an upload
     # phase this script no longer owns. Resuming at or after `public-git` means
@@ -185,7 +203,7 @@ def _run_upload_phases(
         print(f"{_step('release-asset')} release asset: skipped (--from {args.from_phase})")
 
 
-def main() -> int:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("tag", help="the LOCAL release tag to publish, e.g. v0.19.18")
@@ -199,6 +217,9 @@ def main() -> int:
     parser.add_argument("--skip-tests", action="store_true",
                         help="skip the full suite (recorded in evidence — only when the "
                              "same tag's suite already ran this session)")
+    parser.add_argument("--skip-local-deploy", action="store_true",
+                        help="skip the local deploy phase (and background VM ELF build) "
+                             "after post-verify succeeds; recorded in the evidence transcript")
     parser.add_argument("--accept-windows-ci", metavar="REASON", default=None,
                         help="proceed despite a missing/red distribution-matrix signal; "
                              "the reason is recorded in the evidence transcript")
@@ -211,6 +232,29 @@ def main() -> int:
                         help="who authorized the --confirm'd acts and how (e.g. "
                              "'owner via AskUserQuestion, session 2026-07-30'); "
                              "recorded verbatim in the evidence transcript")
+    return parser
+
+
+def _run_deploy_phase(
+    args: argparse.Namespace,
+    version: str,
+    elf_build: subprocess.Popen | None,
+    ev: Evidence,
+) -> None:
+    if args.skip_local_deploy:
+        ev.record("deploy", "SKIPPED", "skipped (--skip-local-deploy)")
+        print(f"{_step('deploy')} deploy: skipped (--skip-local-deploy)")
+        return
+    # Publishing is not deploying: without this, the release is live on
+    # every public channel while THIS host keeps staging the previous
+    # engine into Cowork (measured: 0.20.19 survived two releases).
+    summary = phase_local_deploy(version, elf_build)
+    ev.record("deploy", "OK", summary)
+    print(f"{_step('deploy')} deploy:\n{summary}")
+
+
+def main() -> int:
+    parser = _build_parser()
     args = parser.parse_args()
     if args.confirm and not args.consent_note:
         parser.error("--confirm requires --consent-note '<who authorized it and how>'")
@@ -230,11 +274,12 @@ def main() -> int:
         return PHASES.index(phase) >= start_idx
     elf_build = None
     try:
+        _check_skip_tests_allowed(args, should_run)
         print(f"publish_public: {tag} — scratch at {scratch}")
         # ~12 min under qemu, sharing nothing with anything below. Started here
         # it overlaps the whole pipeline; the deploy phase waits for it and
         # still hard-fails on stale stamps.
-        if not args.dry_run:
+        if not args.dry_run and not args.skip_local_deploy:
             elf_build = start_vm_elf_build(version)
             if elf_build is not None:
                 print("  (VM ELF build started in the background — the deploy "
@@ -256,12 +301,7 @@ def main() -> int:
         ev.record("post-verify", "OK", summary)
         print(f"{_step('post-verify')} post-verify:\n{summary}")
 
-        # Publishing is not deploying: without this, the release is live on
-        # every public channel while THIS host keeps staging the previous
-        # engine into Cowork (measured: 0.20.19 survived two releases).
-        summary = phase_local_deploy(version, elf_build)
-        ev.record("deploy", "OK", summary)
-        print(f"{_step('deploy')} deploy:\n{summary}")
+        _run_deploy_phase(args, version, elf_build, ev)
 
         ev.record("DONE", "OK", f"v{version} fully published and verified")
         print(f"\nDONE — transcript: {ev.path}")

@@ -41,7 +41,7 @@ repos:
   # sorting. Adding those would churn every file and catch no defect. Measured
   # 22 ms over the whole repo, so it stays well inside the cheap-hook budget.
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.3
+    rev: v0.16.6
     hooks:
       - id: ruff-check
 

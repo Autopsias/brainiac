@@ -83,6 +83,23 @@ def remediation_dir(vault: str | os.PathLike[str]) -> Path:
         config.index_dir(vault) / DIRNAME, vault, what="remediation state")
 
 
+def private_dir(vault: str | os.PathLike[str], *parts: str) -> Path:
+    """The store root (plus ``parts`` beneath it), created AND held at 0o700.
+
+    The answers ledger and the proposals name MNPI-ranked notes, so no other
+    local account may traverse in. Every level is chmod'd on every call:
+    ``mkdir(parents=True)`` makes intermediates at umask mode, and a directory
+    an earlier build left at 0o755 is tightened the next time anything writes."""
+    from . import config
+
+    d = remediation_dir(vault)
+    for part in ("", *parts):
+        d = d / part
+        d.mkdir(mode=0o700, parents=True, exist_ok=True)
+        config.secure_file_permissions(d, 0o700)
+    return d
+
+
 def vault_binding(vault: str | os.PathLike[str]) -> str:
     """The canonical, HOST-controlled identity of this vault.
 
@@ -126,8 +143,7 @@ def write_state(vault: str | os.PathLike[str], state: Mapping[str, Any]) -> bool
                "vault": vault_binding(vault),
                "branches": dict(state.get("branches") or {})}
     try:
-        d = remediation_dir(vault)
-        d.mkdir(parents=True, exist_ok=True)
+        d = private_dir(vault)
         path = d / STATE_FILENAME
         write_text_atomic(path, json.dumps(payload, indent=1, sort_keys=True))
         return True
@@ -148,8 +164,7 @@ def record_owner_answer(
     row = {"schema_version": ANSWERS_SCHEMA, "vault": vault_binding(vault),
            **dict(entry)}
     try:
-        d = remediation_dir(vault)
-        d.mkdir(parents=True, exist_ok=True)
+        d = private_dir(vault)
         with (d / ANSWERS_FILENAME).open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, sort_keys=True) + "\n")
         return True

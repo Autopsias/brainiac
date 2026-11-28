@@ -35,6 +35,7 @@ import base64
 import logging
 import json
 import os
+import secrets
 import shutil
 import sqlite3
 import time
@@ -42,6 +43,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 
 from . import config
+from .atomic_temp import atomic_temp_path
 from .dbretry import with_write_retry
 
 logger = logging.getLogger(__name__)
@@ -134,7 +136,7 @@ def _read_counts_and_meta(db_path: Path) -> dict:
 
 def read_manifest(dest_dir: Path) -> SnapshotManifest | None:
     p = Path(dest_dir) / MANIFEST
-    if not p.is_file():
+    if p.is_symlink() or not p.is_file():  # a planted link is never a manifest
         return None
     try:
         d = json.loads(p.read_text(encoding="utf-8"))
@@ -146,6 +148,8 @@ def read_manifest(dest_dir: Path) -> SnapshotManifest | None:
 
 
 def _untrusted_reason(dest_dir: Path, db_path: Path) -> str | None:
+    if (dest_dir / MANIFEST).is_symlink():
+        return "snapshot manifest is a symlink"
     try:
         raw = json.loads((dest_dir / MANIFEST).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -192,6 +196,8 @@ def stage_signed_snapshot(db_path: Path, stage: Path) -> None:
     the copy, so what gets installed must be the bytes checked here. On any
     failure ``stage`` is removed and the error propagates."""
     try:
+        if Path(db_path).is_symlink():  # the mount can plant a link to any host file
+            raise ValueError(f"refusing to stage a symlinked snapshot: {db_path}")
         shutil.copy2(db_path, stage)
         check_signed_snapshot(Path(db_path).parent, stage)
     except BaseException:
@@ -305,6 +311,17 @@ def _unlink_with_sidecars(db: Path) -> None:
         Path(str(db) + suffix).unlink(missing_ok=True)
 
 
+def _write_text_excl(path: Path, text: str) -> None:
+    """Create ``path`` (0600) and write ``text`` to it, never through an existing name.
+
+    ``dest_dir`` can be VM-writable, and ``Path.write_text`` follows a symlink
+    planted at the temp name; O_EXCL|O_NOFOLLOW makes a planted entry raise instead."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags, config.SECURE_FILE_MODE)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(text)
+
+
 def _sweep_stale_temps(dest_dir: Path) -> int:
     """Delete temp copies an EARLIER publish left behind, and report the count.
 
@@ -313,9 +330,13 @@ def _sweep_stale_temps(dest_dir: Path) -> int:
     `finally` below now prevents new ones, but a vault that already accumulated
     them would carry them forever otherwise -- they are full-size copies of the
     index, so 20 of them on a 6 MB index is 123 MB of invisible litter.
+    The manifest's random-named temp (`.<manifest>.<hex>.tmp`) is swept too: a
+    killed run never reuses its name. ``unlink`` on a planted symlink removes
+    the link, never its target.
     """
     swept = 0
-    for stale in dest_dir.glob(SNAPSHOT_DB + ".tmp.*"):
+    for stale in (*dest_dir.glob(SNAPSHOT_DB + ".tmp.*"), *dest_dir.glob("." + SNAPSHOT_DB + ".*.tmp"),
+                  *dest_dir.glob("." + MANIFEST + ".*.tmp")):
         try:
             stale.unlink()
             swept += 1
@@ -351,7 +372,9 @@ def publish_snapshot(
     # workspace that directory is VM-writable, so a DB finished there could be
     # swapped before it is hashed and the host would sign the VM's bytes.
     staged = source_db.with_name(source_db.name + ".snapshot-stage")
-    tmp_db = dest_dir / (SNAPSHOT_DB + f".tmp.{os.getpid()}.{generation}")
+    # Random name like the manifest temp: the pid-and-generation name was
+    # predictable, so the mount could plant an entry at it ahead of the publish.
+    tmp_db = dest_dir / f".{SNAPSHOT_DB}.{secrets.token_hex(8)}.tmp"
     # The `finally` covers the COPY and the withhold, not just the swap. It
     # guarded only `os.replace` until 2026-08-31, so any failure inside
     # `_withhold_paths` orphaned a full-size copy of the index. Measured that
@@ -377,7 +400,7 @@ def publish_snapshot(
         # does not weaken the write-protection guarantee -- it only removes the
         # world-readable exposure. O_EXCL: never write through a name the mount
         # already holds (a planted symlink).
-        fd = os.open(tmp_db, os.O_WRONLY | os.O_CREAT | os.O_EXCL, config.SECURE_FILE_MODE)
+        fd = os.open(tmp_db, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), config.SECURE_FILE_MODE)
         with os.fdopen(fd, "wb") as out, staged.open("rb") as src:
             shutil.copyfileobj(src, out, 1 << 20)
         config.secure_file_permissions(tmp_db)
@@ -412,10 +435,14 @@ def publish_snapshot(
     except Exception as exc:  # noqa: BLE001 — publish unsigned; restore-index refuses it
         logger.warning("snapshot manifest published unsigned: %s", exc)
     # Write manifest LAST, atomically — a present manifest always implies a
-    # complete DB at the recorded generation.
-    tmp_man = dest_dir / (MANIFEST + f".tmp.{os.getpid()}")
-    tmp_man.write_text(json.dumps(manifest.to_dict(), indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp_man, dest_dir / MANIFEST)
+    # complete DB at the recorded generation. Random temp name + O_EXCL: the pid
+    # name was predictable, so a VM-planted symlink there redirected this write.
+    tmp_man = atomic_temp_path(dest_dir / MANIFEST)
+    try:
+        _write_text_excl(tmp_man, json.dumps(manifest.to_dict(), indent=2) + "\n")
+        os.replace(tmp_man, dest_dir / MANIFEST)
+    finally:
+        tmp_man.unlink(missing_ok=True)
     return manifest
 
 

@@ -109,32 +109,68 @@ class _SourceUnreadable(OSError):
     """The retry source was refused or could not be read (nothing written)."""
 
 
+def _open_pinned(path: Path) -> int:
+    """Open the resolved, absolute ``path`` for reading with no component of it
+    followable: walk from ``/`` one directory at a time (``O_NOFOLLOW``, each
+    opened relative to the one before), then the file (``O_NONBLOCK``, so a
+    FIFO cannot hang the host). A component swapped for a link after the
+    caller's containment check fails with ELOOP/ENOTDIR. Needs only SEARCH on
+    each directory, as a path open does: ``O_RDONLY`` first, a search-only open
+    when that is denied. Without directory handles (Windows) it is a plain open.
+    """
+    import os
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    if not (hasattr(os, "O_DIRECTORY") and os.open in os.supports_dir_fd
+            and path.is_absolute()):
+        return os.open(path, flags)
+    dflags = os.O_DIRECTORY | os.O_NOFOLLOW
+    search = getattr(os, "O_SEARCH", getattr(os, "O_PATH", None))
+    fd = os.open(path.anchor, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in path.parts[1:-1]:
+            try:
+                nxt = os.open(part, os.O_RDONLY | dflags, dir_fd=fd)
+            except PermissionError:
+                if search is None:
+                    raise
+                nxt = os.open(part, search | dflags, dir_fd=fd)
+            old, fd = fd, nxt
+            os.close(old)
+        return os.open(path.name, flags, dir_fd=fd)
+    finally:
+        os.close(fd)
+
+
 def _copy_retry_source(vault: Path, source: Path) -> tuple[str, str | None]:
     """Copy ``source`` into ``inbox/``; return the sha256 of the source bytes,
     plus the sha256 of the image-only PDF written instead, when one was.
 
     Containment is re-checked here, not trusted from the planner, because
     both source trees sit on the VM-writable mount; and the hash and the copy
-    read ONE descriptor opened ``O_NOFOLLOW``, so a source FILE swapped for a
-    link after planning is refused. ``O_NOFOLLOW`` guards only the last path
-    part: a parent directory swapped in the instant between the check and the
-    open is not covered. The copy is created ``O_NOFOLLOW`` at 0600, then
-    given the source's mode, as ``shutil.copy2`` did. Raises ``_SourceUnreadable`` before any byte is written, ``OSError``
-    after."""
+    read ONE descriptor, so a source FILE swapped for a link after planning is
+    refused. That descriptor is opened on the path the check approved, walked
+    from ``/`` one ``O_NOFOLLOW`` directory at a time (:func:`_open_pinned`),
+    so a parent directory swapped for a link in the instant between the check
+    and the open is refused too. The copy is created ``O_NOFOLLOW`` at 0600,
+    then given the source's mode, as ``shutil.copy2`` did. Raises
+    ``_SourceUnreadable`` before any byte is written, ``OSError`` after."""
     import hashlib
     import os
     import shutil
     import stat
 
+    from ..ingest.pipeline_files import pinned_parent
+
     real = vault.resolve()
-    if not any(contained_file_under(source, real.joinpath(*d))
-               for d in _RETRY_SOURCE_DIRS):
+    approved = next((r for d in _RETRY_SOURCE_DIRS if (
+        r := contained_file_under(source, real.joinpath(*d)))), None)
+    if approved is None:
         raise _SourceUnreadable(f"{source} is a link, missing, or outside "
                                 "raw/originals/ and inbox/_quarantine/")
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     try:
-        fh = os.fdopen(os.open(source, os.O_RDONLY | nofollow
-                               | getattr(os, "O_NONBLOCK", 0)), "rb")
+        fh = os.fdopen(_open_pinned(approved), "rb")
     except OSError as exc:
         raise _SourceUnreadable(str(exc)) from exc
     with fh:
@@ -151,24 +187,23 @@ def _copy_retry_source(vault: Path, source: Path) -> tuple[str, str | None]:
         except OSError as exc:
             raise _SourceUnreadable(str(exc)) from exc
         content_hash = digest.hexdigest()
-        inbox = vault / "inbox"
-        # mkdir and open follow a planted directory link: refuse one first.
-        from ..ingest.pipeline_files import refuse_symlinked_dirs
-        refuse_symlinked_dirs(inbox, levels=1)
-        inbox.mkdir(parents=True, exist_ok=True)
         # A quarantined file's parent dir IS its reason; an image-only PDF
         # lets the PDF handler's own OCR read what the original hides.
         converted = image_pdf(fh, source, source.parent.name)
         name = source.name if converted is None else f"{source.stem}.pdf"
-        dest = inbox / f"retry-{content_hash[:12]}-{name}"
-        out_fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | nofollow, 0o600)
-        with os.fdopen(out_fd, "wb") as out:
-            if converted is None:
-                shutil.copyfileobj(fh, out)
-            else:
-                out.write(converted)
-            os.fchmod(out.fileno(), stat.S_IMODE(st.st_mode))  # keep 0600 private
-    os.utime(dest, ns=(st.st_atime_ns, st.st_mtime_ns))  # as shutil.copy2 kept them
+        dest = vault / "inbox" / f"retry-{content_hash[:12]}-{name}"
+        # A planted link refuses, and the copy is made through the pinned directory.
+        with pinned_parent(dest, 1) as (target, dir_fd):
+            out_fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | nofollow,
+                             0o600, dir_fd=dir_fd)
+            with os.fdopen(out_fd, "wb") as out:
+                if converted is None:
+                    shutil.copyfileobj(fh, out)
+                else:
+                    out.write(converted)
+                os.fchmod(out.fileno(), stat.S_IMODE(st.st_mode))  # keep 0600 private
+            # as shutil.copy2 kept them
+            os.utime(target, ns=(st.st_atime_ns, st.st_mtime_ns), dir_fd=dir_fd)
     return content_hash, (None if converted is None
                           else hashlib.sha256(converted).hexdigest())
 

@@ -1,15 +1,18 @@
-"""SUP-01 — owner-declared supersession (2026-09-18).
+"""SUP-01 — declared supersession (2026-09-18; drop lane reworked F12/F14).
 
-A third AUTO-APPLY tier beside DDP-01 (sha-identical) and VER-01 (``-vN``
-families). CUR-01 stays as it was: what the ENGINE deduces is proposed, never
-applied. What the OWNER declares is his accept, given in advance, so it is
-applied through the same audited ``core.supersede``.
+A third tier beside DDP-01 (sha-identical) and VER-01 (``-vN`` families).
+CUR-01 stays as it was: what the ENGINE deduces is proposed, never applied.
+What a caller DECLARES is also a proposal the owner answers — the declaration
+is staged through ``cos.stage_declared_version_link`` and retired only after
+the owner accepts it, through the same audited ``core.supersede``.
 
 Three surfaces, one path:
 
 * the drop lane — a sidecar ``<filename>.supersedes`` beside a payload in
   ``inbox/_deliverables/``, or ``replaces:`` in a dropped ``.md``'s own
-  frontmatter. The host reads both, so both are the owner's word;
+  frontmatter. The drop folder is on the mount a Cowork VM can write, so the
+  host cannot tell the owner's file from a planted one: it is STAGED, never
+  applied;
 * the broker verb ``supersede`` — :func:`guarded`;
 * the broker's ``capture`` with ``replaces:`` — :func:`guarded` again.
 
@@ -126,8 +129,8 @@ def stamp(record: Any) -> None:
 
 def note_declaration(record: Any, entry: dict[str, Any]) -> None:
     """Queue the declaration for :func:`apply_pending`, which runs AFTER the
-    index reconcile — ``core.supersede`` resolves both ids through the index,
-    and the note signed a moment ago is not in it yet."""
+    index reconcile — staging resolves both ids through the index, and the
+    note signed a moment ago is not in it yet."""
     ids, where = declared_ids(record)
     if not ids:
         return
@@ -194,42 +197,99 @@ def _pairs(core: Any, decl: dict[str, Any]) -> list[tuple[str, str]]:
     return out
 
 
+def _vm_may_read(core: Any, note_id: str) -> bool:
+    """Is this note within the tier a Cowork VM may read? The drop folder is
+    VM-writable, so the id it names counts as the VM naming it. The tier is the
+    LOWER of the signed ceiling and ``Internal``: that file sits on the mount
+    (A-13), so a raised one must not widen what the drop lane may name. The
+    ``ClassificationFilter`` is the gate ``egress.apply_gate`` wraps, minus its
+    read-record tally, which a drain must not write."""
+    from . import classification, vm_ceiling
+
+    tier = classification.clamp_to(vm_ceiling.resolved_ceiling(core.vault)[0],
+                                   classification.VM_DEFAULT_MAX_TIER)
+    row = core.get(note_id)
+    return bool(row) and classification.ClassificationFilter(tier).allows(
+        row.get("classification"))
+
+
+def _stage(core: Any, decl: dict[str, Any], old_id: str, new_id: str) -> str | None:
+    """Stage ONE declared pair as an owner question. The error text, or None."""
+    if old_id == new_id:
+        return "a note may not supersede itself"
+    # F12/F14: first, with the unknown-note text, so a note above the VM tier is
+    # not told apart from an absent one and its title never reaches the question.
+    if not _vm_may_read(core, old_id):
+        return f"unknown or unreadable note {old_id!r}"
+    for note_id in (old_id, new_id):
+        meta = _meta(core, note_id)
+        if meta is None:
+            return f"unknown or unreadable note {note_id!r}"
+        if (str(meta.get("is_latest_version", "")).strip().lower() == "false"
+                or _link(meta.get("superseded_by"))):
+            return f"note {note_id!r} has already been superseded"
+    from . import host_hooks as _host_hooks
+
+    hooks = _host_hooks.providers_with(
+        _host_hooks.load_core_hooks(core), "handle_declared_supersede",
+    )
+    if hooks:
+        for provider in hooks:
+            staged = _host_hooks.call_hook_method(
+                provider, "handle_declared_supersede",
+                core, old_id, new_id,
+                f"declared in the drop lane: {decl['declared_in']}", "drop lane",
+                default=None,
+            )
+            if isinstance(staged, dict):
+                if staged.get("already_decided"):
+                    return "already ruled on or waiting for the owner - not re-asked"
+                decl["staged"].append({"old_id": old_id, "new_id": new_id,
+                                       "proposal": staged.get("proposal")})
+                return None
+        return "this build has no proposal queue to stage the declaration in"
+    if not _optional.cos_available():
+        return "this build has no proposal queue to stage the declaration in"
+    from . import cos
+
+    staged = cos.stage_declared_version_link(
+        core, old_id, new_id, declared_by="drop lane",
+        reason=f"declared in the drop lane: {decl['declared_in']}")
+    if staged["already_decided"]:
+        return "already ruled on or waiting for the owner - not re-asked"
+    decl["staged"].append({"old_id": old_id, "new_id": new_id,
+                           "proposal": staged["proposal"]})
+    return None
+
+
 def apply_pending(core: Any, ingest_report: dict[str, Any]) -> None:
-    """Apply every declaration this drain queued. The caller (``core.sync``)
-    holds the writer lock and has just reconciled the index.
+    """Stage every declaration this drain queued — NOTHING is retired here. The
+    caller (``core.sync``) holds the writer lock and has just reconciled the
+    index.
 
-    Never raises: the ingest already succeeded, and a supersede that cannot be
-    applied is REPORTED under ``supersede_declared_failed``, never rolled into
-    an ingest failure."""
-    pending = ingest_report.get(PENDING) or []
-    if not pending:
-        return
-    from .core._supersede_batch import SupersedeBatch
-
-    with SupersedeBatch(core, "supersede-declared") as batch:
-        for decl in pending:
-            decl["applied"] = []
-            if not decl.get("anchored"):
-                # Nothing re-queues a deferred declaration, so its sidecar is
-                # consumed here too (review 2026-09-29) — left behind, it
-                # declared a supersession for the NEXT file of that name.
-                _fail(ingest_report, decl, decl["old_ids"][0],
-                      "anchor deferred — the deliverable did not finish landing")
-            for old_id, new_id in (_pairs(core, decl) if decl.get("anchored") else []):
-                if _link((_meta(core, old_id) or {}).get("superseded_by")) == new_id:
-                    continue  # a re-drop, or a recovered run: already done
-                try:
-                    batch.supersede(
-                        old_id, new_id,
-                        reason=f"owner-declared: {decl['declared_in']}")
-                except Exception as exc:  # noqa: BLE001 — reported, never raised
-                    _fail(ingest_report, decl, old_id, f"{type(exc).__name__}: {exc}",
-                          new_id=new_id)
-                else:
-                    decl["applied"].append({"old_id": old_id, "new_id": new_id})
-            # Consumed either way: the outcome is in the report, and a failed
-            # declaration keeps counting through the stamped `replaces:`.
-            Path(decl["sidecar"]).unlink(missing_ok=True)
+    Never raises: the ingest already succeeded, and a declaration that cannot
+    be staged is REPORTED under ``supersede_declared_failed``, never rolled
+    into an ingest failure."""
+    for decl in ingest_report.get(PENDING) or []:
+        decl["staged"] = []
+        if not decl.get("anchored"):
+            # Nothing re-queues a deferred declaration, so its sidecar is
+            # consumed here too (review 2026-09-29) — left behind, it
+            # declared a supersession for the NEXT file of that name.
+            _fail(ingest_report, decl, decl["old_ids"][0],
+                  "anchor deferred — the deliverable did not finish landing")
+        for old_id, new_id in (_pairs(core, decl) if decl.get("anchored") else []):
+            if _link((_meta(core, old_id) or {}).get("superseded_by")) == new_id:
+                continue  # a re-drop, or a recovered run: already done
+            try:
+                error = _stage(core, decl, old_id, new_id)
+            except Exception as exc:  # noqa: BLE001 — reported, never raised
+                error = f"{type(exc).__name__}: {exc}"
+            if error:
+                _fail(ingest_report, decl, old_id, error, new_id=new_id)
+        # Consumed either way: the outcome is in the report, and a failed
+        # declaration keeps counting through the stamped `replaces:`.
+        Path(decl["sidecar"]).unlink(missing_ok=True)
 
 
 def _fail(report: dict[str, Any], decl: dict[str, Any], old_id: str, error: str,
@@ -254,8 +314,8 @@ def findings(ingest_report: dict[str, Any], vault: Path) -> list[dict[str, Any]]
         f"{len(failed)} owner-declared supersession(s) could NOT be applied "
         "(ids withheld — a note id is a document title)",
         "the new version was ingested, and the version it declares it replaces "
-        "is STILL LIVE in search: the id was unknown, already superseded, or "
-        "the same note",
+        "is STILL LIVE in search: the id was unknown or above the Cowork read "
+        "tier, already superseded, the same note, or a pair already ruled on",
         "run `brain health-report` (row: owner-declared supersessions not "
         "applied) for the ids, then `brain supersede <old> <new>` by hand",
         str(vault / "inbox" / "_deliverables"),
@@ -300,6 +360,12 @@ def declared_failed(conn: Any, *, cap: int = 10) -> dict[str, Any]:
 def related(core: Any, old_id: str, new_id: str) -> str | None:
     """WHY the vault itself says ``new_id`` is a version of ``old_id``, or None.
 
+    Two legs: a TRUSTED successor (or its anchor) declaring ``replaces:`` /
+    ``previous_version``, or a name family. A body ``[[old_id]]`` is NOT
+    evidence (F32): here a wikilink is a citation, so any trusted note citing a
+    victim would retire it, and the deliverable anchor links only its project
+    and its own source, never a predecessor.
+
     An UNTRUSTED successor (``status: draft`` / ``provenance.trust: untrusted``
     — everything the broker's own ``capture`` writes) is never related by its
     own say-so: its ``replaces:``, its links and its title were all chosen by
@@ -314,24 +380,30 @@ def related(core: Any, old_id: str, new_id: str) -> str | None:
 
     if untrusted(_meta(core, new_id) or {}):
         return None
-    wikilink = re.compile(r"\[\[(?:raw/)?" + re.escape(old_id) + r"(?:[|#][^\]]*)?\]\]")
     for holder in (new_id, DLV.anchor_id(new_id)):
-        note = _note(core, holder)
-        if note is None:
-            continue
-        meta, body = note
+        meta = _meta(core, holder)
         # The `<new_id>-deliverable` anchor is a plain id any caller can mint
         # through `capture`: it is evidence only while it is itself trusted.
-        if untrusted(meta):
+        if meta is None or untrusted(meta):
             continue
         if old_id in (_link(meta.get("replaces")), _link(meta.get("previous_version"))):
             return f"{holder} declares replaces: {old_id}"
-        if wikilink.search(body):
-            return f"{holder} links [[{old_id}]]"
     views = {v.id: v for v in vl._load(core) if v.id in (old_id, new_id)}
     if len(views) == 2 and views[old_id].stems & views[new_id].stems:
         return "name family: " + sorted(views[old_id].stems & views[new_id].stems)[0]
     return None
+
+
+def dropzone_source(meta: dict[str, Any]) -> bool:
+    """True for a note the drop lane signed (its ``raw/originals/`` source, or a
+    deliverable anchor). Its text, links and file name were written in ``inbox/``,
+    which a Cowork session can write, so it never relates a pair a caller names.
+    ``origin`` and ``provenance.produced_by`` are host-written; the drop lane
+    cannot omit either."""
+    from .ingest import deliverables as DLV
+
+    return (str(meta.get("origin", "")).startswith("raw/originals/")
+            or str(meta.get("provenance.produced_by", "")) == DLV.PRODUCED_BY)
 
 
 def _refused(why: str, **extra: Any) -> dict[str, Any]:
@@ -351,7 +423,8 @@ def guarded(core: Any, old_id: str, new_id: str, *, reason: str, max_tier: str,
        and nobody retires a note they cannot read;
     3. ``new_id`` is not itself retired; 4. a reason;
     5. ``unsupersede`` is REFUSED here, naming the host command;
-    6. relatedness — else the pair is STAGED as a CUR-01 proposal."""
+    6. a DROP-LANE successor is REFUSED the same way (``dropzone_source``);
+    7. relatedness — else the pair is STAGED as a CUR-01 proposal."""
     from . import egress
 
     core._require_host("supersede notes through the broker")
@@ -359,7 +432,8 @@ def guarded(core: Any, old_id: str, new_id: str, *, reason: str, max_tier: str,
     surfaced, _report = egress.apply_gate(notes, max_tier)
     if old_id == new_id or {str(n.get("id")) for n in surfaced} != {old_id, new_id}:
         return _refused("not-found: both ids must name distinct notes you can read")
-    if str((_meta(core, new_id) or {}).get("is_latest_version", "")).strip().lower() == "false":
+    new_meta = _meta(core, new_id) or {}
+    if str(new_meta.get("is_latest_version", "")).strip().lower() == "false":
         return _refused(f"new-is-retired: {new_id}")
     if not str(reason or "").strip():
         return _refused("reason-required")
@@ -372,9 +446,35 @@ def guarded(core: Any, old_id: str, new_id: str, *, reason: str, max_tier: str,
             # terminal keeps the verb.
             return _refused("undo-needs-the-owner: run `brain unsupersede "
                             f"{old_id} {new_id} --reason ...` on the host")
+        if dropzone_source(new_meta):
+            # Same reason as the untrusted-draft rule in `related`: a session
+            # writes `inbox/`, so the successor's links, `replaces:` and name
+            # are the caller's. Not staged either — `cos._version_apply`
+            # would refuse it, and the owner's standing answer must not meet it.
+            return _refused(f"drop-lane-successor: {new_id} came in through the "
+                            "inbox, which a session can write, so it cannot relate "
+                            f"the pair; run `brain supersede {old_id} {new_id} "
+                            "--reason ...` on the host",
+                            **sides(core, old_id, new_id))
         why = related(core, old_id, new_id)
         if why is None:
-            if _optional.cos_available():
+            from . import host_hooks as _host_hooks
+
+            hooks = _host_hooks.providers_with(
+                _host_hooks.load_core_hooks(core), "handle_declared_supersede",
+            )
+            if hooks:
+                for provider in hooks:
+                    staged = _host_hooks.call_hook_method(
+                        provider, "handle_declared_supersede",
+                        core, old_id, new_id, reason, declared_by,
+                        default=None,
+                    )
+                    if isinstance(staged, dict):
+                        return {"applied": False,
+                                "proposed": not staged.get("already_decided"),
+                                **staged, **sides(core, old_id, new_id)}
+            elif _optional.cos_available():
                 from . import cos
 
                 staged = cos.stage_declared_version_link(

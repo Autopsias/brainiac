@@ -106,6 +106,8 @@ def _add_alerts(sub) -> None:
 
 
 def _add_check_egress(sub) -> None:
+    from ..egress_terms import add_check_egress_arguments
+
     sp = sub.add_parser(
         "check-egress",
         help="SEC-07: judge one OUTBOUND string (a web-search query, a URL, a "
@@ -117,30 +119,7 @@ def _add_check_egress(sub) -> None:
              "with no decoder ring maps nothing and SAYS SO. Pure file reads: "
              "no index, embedder, network or key. Exit 6 = refused.",
     )
-    sp.add_argument("text", nargs="?", help="the outbound string; omit to read stdin")
-    sp.add_argument("--json", action="store_true")
-    sp.add_argument(
-        "--min-tier",
-        help="refuse at or above this tier (default: $BRAIN_EGRESS_TERM_MIN_TIER, "
-             "else Confidential). An unrecognised value fails CLOSED.",
-    )
-    sp.add_argument(
-        "--strict",
-        action="store_true",
-        help="also refuse when the overlay maps NO terms — for a deployment that "
-             "will not accept an all-clear produced by an empty decoder ring",
-    )
-    sp.add_argument(
-        "--extra-vault",
-        action="append",
-        default=[],
-        metavar="PATH",
-        help="merge another vault's decoder ring into this check (repeatable). "
-             "The outbound guard passes every vault the SESSION has entered, "
-             "because leaving a vault does not empty the conversation. One "
-             "call for any number of rings: the hook budget is 5 seconds and "
-             "exceeding it FAILS OPEN, so a call per vault does not scale.",
-    )
+    add_check_egress_arguments(sp)
 
 
 def _add_exceptions(sub) -> None:

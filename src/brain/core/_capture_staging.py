@@ -17,6 +17,15 @@ from pathlib import Path
 from ._shared import _contained_in
 
 
+class DraftTooLarge(ValueError):
+    """The staged draft is over the drain's byte cap; nothing was written.
+
+    A ``ValueError`` so every caller that already answers a refused id
+    (``brain draft-capture``, ``brain capture``, the MCP ``capture`` verb)
+    turns it into its ordinary error answer.
+    """
+
+
 def stage_draft_unique(inbox: Path, note_id: str, staged: str) -> Path:
     """Write ``staged`` under ``inbox`` at a name derived from ``note_id``,
     WITHOUT ever silently overwriting a file that is already there.
@@ -35,8 +44,23 @@ def stage_draft_unique(inbox: Path, note_id: str, staged: str) -> Path:
     threads, not just within one — a plain ``Path.exists()`` guard followed
     by ``write_text`` would still let two racing writers both pass the check
     and one clobber the other.
+
+    A draft over the drain's own cap (``draft_drain.MAX_DRAFT_BYTES``, the same
+    bytes the drain measures) is refused BEFORE any file is created: the drain
+    would refuse to read it and never remove it, so staging it could only fill
+    the disk (F52).
     """
     data = staged.encode("utf-8")
+    # Lazy: draft_drain is loaded through core._shared, so a module-scope import
+    # here would be a cycle. Read at call time so one cap governs both ends.
+    from .. import draft_drain
+
+    cap = draft_drain.MAX_DRAFT_BYTES
+    if len(data) > cap:
+        raise DraftTooLarge(
+            f"draft for {note_id!r} is {len(data)} bytes, over the {cap}-byte "
+            "capture limit; nothing was staged"
+        )
     names = (f"{note_id}.md", *(f"{note_id}-{_uuid.uuid4().hex[:8]}.md" for _ in range(8)))
     for name in names:
         candidate = inbox / name

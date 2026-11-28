@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from .context import MaintenanceRun
 from .. import config, maintenance
+from ..graph_ops import _load_graph_manifest
 
 
 class GraphFoldsMixin:
@@ -16,12 +16,7 @@ class GraphFoldsMixin:
         """Measure FRESH-01 corpus drift without building the graph."""
         triggered = False
         try:
-            try:
-                old_manifest = json.loads(
-                    config.graph_manifest_path(self.vault).read_text(encoding="utf-8")
-                )
-            except (OSError, ValueError):
-                old_manifest = None
+            old_manifest = _load_graph_manifest(config.graph_manifest_path(self.vault))
             ratio = maintenance.graphify_drift(old_manifest, self.index.conn)
             marker = run.state.get("_graphify_drift")
             marker = marker if isinstance(marker, dict) else None

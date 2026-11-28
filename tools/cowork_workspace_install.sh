@@ -390,8 +390,14 @@ if ! PYTHONPATH="$REPO/src" "$HOST_PY" -m brain.cli sync; then
   echo "[install]   sync failed (index missing/corrupt beyond sync's own guard) — falling back to full rebuild" >&2
   PYTHONPATH="$REPO/src" "$HOST_PY" -m brain.cli rebuild
 fi
+# The dest is VM-writable: tee through a symlink planted at the final name would
+# overwrite any host file. Write a random-named file (mktemp is O_EXCL) and rename
+# it over the name; rename replaces a planted link, never follows it.
+SNAP_RECORD_TMP="$(mktemp "$SNAPSHOT_DEST/.export-snapshot.XXXXXXXX")"
 PYTHONPATH="$REPO/src" "$HOST_PY" -m brain.cli snapshot --dest "$SNAPSHOT_DEST" \
-  --json | tee "$SNAPSHOT_DEST/export-snapshot.json"
+  --json | tee "$SNAP_RECORD_TMP"
+chmod 644 "$SNAP_RECORD_TMP"
+mv -f "$SNAP_RECORD_TMP" "$SNAPSHOT_DEST/export-snapshot.json"
 
 # (c1b) EXC-03: stage the pinned verification identity (public key +
 # vault_id) the Cowork VM's `brain --role vm alerts` checks the signed
@@ -646,7 +652,7 @@ reinstall step required.
 Next steps:
   1. Skills are current in $BRAIN_DIR/skills/. Upload them via Cowork's
      Save-skill flow if you haven't already (kernel first; extras optional —
-     see .claude/skills/setup-cowork). If your workspace already has the
+     see .claude/skills/brainiac-cowork-setup). If your workspace already has the
      Cowork Plugins-tab marketplace synced (Customize -> Plugins ->
      Autopsias/brainiac), that stays current on its own via
      /plugin marketplace update — the Save-skill upload here is the

@@ -40,18 +40,44 @@ from ._briefing import _CoreBriefingMixin
 from ._health import _CoreHealthMixin
 from ._maintenance_state import _MaintenanceStateMixin
 from ._maintenance import _MaintenanceMixin
-from .. import _optional
+from .. import _optional, host_hooks
 
-# The COS mixins join BrainCore only in a COS build (ADR 0013), each at the
-# place it always held, so the method resolution order is unchanged there.
-_COS_FACADE: tuple[type, ...] = ()
-_COS_FOLDS: tuple[type, ...] = ()
+# The COS mixins join BrainCore only in a COS build (ADR 0013).
+# HostHookProvider extensions are NEVER imported at module import time so an
+# explicit `BrainCore(role="vm")` or `--role vm` never loads external plugins;
+# callers inspect `load_core_hook_mixins(role=..., vault=...)` after role
+# resolution.
+_COS_FACADE: tuple[Any, ...] = ()
+_COS_FOLDS: tuple[Any, ...] = ()
 if _optional.cos_available():
     from ._cos_facade import _CosFacadeMixin
     from ..folds.cos import CosFoldsMixin
 
     _COS_FACADE = (_CosFacadeMixin,)
     _COS_FOLDS = (CosFoldsMixin,)
+
+
+_HOOKED_CORE_CLASSES: dict[tuple[type, tuple[type, ...]], type] = {}
+
+
+def load_core_hook_mixins(
+    *, role: str | None = None, vault: Path | None = None,
+) -> tuple[type, ...]:
+    """Return optional mixin classes declared by approved host hooks."""
+    mixins: list[type] = []
+    for provider in host_hooks.load_host_hooks(role=role, vault=vault):
+        extra = host_hooks.call_hook_method(provider, "core_mixins", default=()) or ()
+        mixins.extend(m for m in extra if isinstance(m, type))
+    return tuple(mixins)
+
+
+def _core_class_with_mixins(base_cls: type, mixins: tuple[type, ...]) -> type:
+    key = (base_cls, mixins)
+    cls = _HOOKED_CORE_CLASSES.get(key)
+    if cls is None:
+        cls = type(f"{base_cls.__name__}WithHooks", (base_cls, *mixins), {})
+        _HOOKED_CORE_CLASSES[key] = cls
+    return cls
 
 class BrainCore(
     _CoreRetrievalMixin,
@@ -126,6 +152,16 @@ class BrainCore(
         from .. import egress as _egress
 
         _egress.register_drift_source(self)
+        if self.role == config.ROLE_HOST:
+            hook_mixins = load_core_hook_mixins(role=self.role, vault=self.vault)
+            if hook_mixins:
+                missing = tuple(m for m in hook_mixins if not isinstance(self, m))
+                if missing:
+                    self.__class__ = _core_class_with_mixins(type(self), missing)
+
+    def require_host(self, operation: str) -> None:
+        """Raise ``RoleError`` unless this core runs in the host role (ADR-0015 §1.3)."""
+        self._require_host(operation)
 
     def _require_host(self, op: str) -> None:
         if self.role != config.ROLE_HOST:

@@ -11,6 +11,7 @@ from . import handlers as H
 from . import tierguard as TG
 from .handlers.base import NO_TEXT_MARKER
 from .pipeline_anchor import acceptance_anchor_stage  # noqa: F401  (re-export)
+from .pipeline_anchor import record_attachment_receipt
 from .pipeline_duplicates import prior_extraction_failed, record_duplicate
 from .pipeline_injection import apply_injection_assessment, injection_scan_stage
 
@@ -363,6 +364,7 @@ def signed_note_write_stage(record: ClaimRecord) -> ClaimRecord:
         ),
         subtree="raw",
     )
+    record_attachment_receipt(record)
     record.drain.manifest[record.original_sha] = record.slug
     facade._save_manifest(record.drain.vault, record.drain.manifest)
     record.claimed.unlink(missing_ok=True)

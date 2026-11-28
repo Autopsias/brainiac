@@ -335,7 +335,9 @@ def pinned_registry() -> Path | None:
                 encoding="utf-8", errors="replace").strip()
         except OSError:
             continue
-        if named.startswith("/"):
+        if named.startswith(("/", "\\\\")) or (
+            len(named) >= 3 and named[0].isalpha() and named[1] == ":" and named[2] in ("\\", "/")
+        ):
             return Path(named)
     return None
 

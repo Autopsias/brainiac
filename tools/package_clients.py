@@ -70,42 +70,22 @@ from package_versions import (  # noqa: E402,F401
     validate_version_stamp, write_compat_marker, write_npm_version,
     write_plugin_versions, write_version_stamp)
 
-# The split: KERNEL = always-useful daily skills. EXTRAS = optional
-# maintenance/admin skills, installed separately ("one command away").
+# The split: KERNEL = always-useful daily skills. EXTRAS = optional maintenance/admin skills.
 KERNEL_SKILLS = [
-    "kb-curator",
-    "promote",
-    "vault-ingestion",
-    "vault-eval",
-    "save-conversation",
-    "overlay-style",
-    "brain-inbox",
-    "vm-doctor",
-    "graph-explorer",
+    "kb-curator", "promote", "vault-ingestion", "vault-eval",
+    "save-conversation", "overlay-style", "brain-inbox", "vm-doctor", "graph-explorer",
 ]
-EXTRAS_SKILLS = [
-    "curation",
-    "improve",
-    "task-registrar",
-    "autoresearch",
-    "chief-of-staff",
-]
-EXTRAS_SKILLS = without_cos(EXTRAS_SKILLS, ".claude/skills/{}/SKILL.md")  # ADR 0013
+EXTRAS_SKILLS = ["curation", "improve", "task-registrar", "autoresearch"]
 ALL_SKILLS = KERNEL_SKILLS + EXTRAS_SKILLS
 
-# brainiac-manager: host lifecycle skills (own plugin, own sync target).
-# Not part of ALL_SKILLS — host Claude Code/Codex only, never zipped for
-# Cowork (Cowork can't run install.sh/launchd/brain-doctor-on-the-host
-# anyway). Most of these mutate host state; brainiac-health (OBS-03) is the
-# one read-only exception, grouped here because it's a host-only surface
-# (doctor/status/registry) rather than daily vault work.
+# brainiac-manager: host lifecycle skills (own plugin, own sync target, never zipped for Cowork).
 BRAINIAC_SKILLS = [
-    "brainiac-install",
-    "brainiac-update",
-    "brainiac-uninstall",
-    "brainiac-cowork-setup",
-    "brainiac-health",
+    "brainiac-install", "brainiac-update", "brainiac-uninstall",
+    "brainiac-cowork-setup", "brainiac-health",
 ]
+
+# Doctrine-only directories (no SKILL.md, mirrored to .agents + brainiac-extras).
+DOCTRINE_DIRS = without_cos(["chief-of-staff"], ".claude/skills/{}/DOCTRINE.md")
 
 CLAUDE_SKILLS_DIR = REPO_ROOT / ".claude" / "skills"
 AGENTS_SKILLS_DIR = REPO_ROOT / ".agents" / "skills"
@@ -116,19 +96,26 @@ COWORK_DIST_DIR = REPO_ROOT / "dist" / "cowork-skills"
 # ---------------------------------------------------------------------------
 
 
-def sync_agents_skills() -> list[Path]:
+def _mirror_skill_tree(dst_root: Path, skill_names: list[str], extra_dirs: list[str] | tuple[str, ...] = ()) -> list[Path]:
+    dst_root.mkdir(parents=True, exist_ok=True)
+    expected = set(skill_names) | set(extra_dirs)
+    for stale in sorted(dst_root.iterdir()):
+        if stale.is_dir() and stale.name not in expected:
+            shutil.rmtree(stale)
     written: list[Path] = []
-    AGENTS_SKILLS_DIR.mkdir(parents=True, exist_ok=True)
-    for name in ALL_SKILLS + BRAINIAC_SKILLS:
-        src_dir = CLAUDE_SKILLS_DIR / name
-        dst_dir = AGENTS_SKILLS_DIR / name
+    for name in (*skill_names, *extra_dirs):
+        src_dir, dst_dir = CLAUDE_SKILLS_DIR / name, dst_root / name
         if not src_dir.is_dir():
             raise ValidationError(f"canonical skill dir missing: {src_dir}")
         if dst_dir.exists():
             shutil.rmtree(dst_dir)
         shutil.copytree(src_dir, dst_dir)
-        written.append(dst_dir / "SKILL.md")
+        written.extend([dst_dir / "SKILL.md"] if name in skill_names else [f for f in sorted(dst_dir.rglob("*")) if f.is_file()])
     return written
+
+
+def sync_agents_skills() -> list[Path]:
+    return _mirror_skill_tree(AGENTS_SKILLS_DIR, ALL_SKILLS + BRAINIAC_SKILLS, DOCTRINE_DIRS)
 
 
 # ---------------------------------------------------------------------------
@@ -142,29 +129,15 @@ ENGINE_ASSETS_DIR = REPO_ROOT / "src" / "brain" / "_assets"
 
 # Repo-relative files shipped in the wheel. Directories are copied whole.
 ENGINE_ASSET_FILES = [
-    "AGENTS.md",
-    "routines/manifest.json",
-    # task registration (registrar + BOTH host tasks' installer surface —
-    # routines/manifest.json locked_counts host budget = 2):
-    "scripts/register_tasks.py",
-    "scripts/install-brief-mac.sh",
-    "scripts/install-brief-windows.ps1",
-    "scripts/brain-brief-mac.plist",
-    "scripts/brain-brief.sh",
+    "AGENTS.md", "routines/manifest.json",
+    # task registration (registrar + BOTH host tasks' installer surface — host budget = 2):
+    "scripts/register_tasks.py", "scripts/install-brief-mac.sh", "scripts/install-brief-windows.ps1",
+    "scripts/brain-brief-mac.plist", "scripts/brain-brief.sh",
     "scripts/brain-synthesis.sh", "scripts/brain_synthesis_codex.py",
     "scripts/brain-synthesis-mac.plist", "scripts/shorten_long_note_ids.py",
-    # session-start alert hook (placed by brain/session_hook.py) +
-    # BOTH Cowork VM probes (staged into every workspace by
-    # update.stage_engine_and_skills / cowork_workspace_install.sh): the
-    # un-fakeable retrieval self-test, and the negative boundary probe that
-    # proves the VM leg refuses every host-broker verb. The boundary probe
-    # rides the wheel for the same reason the self-test does — a staged
-    # workspace has no `scripts/` dir of its own, so a hand copy is the only
-    # alternative and it does not survive the next re-stage.
-    "scripts/brainiac-alerts.sh",
-    "scripts/brainiac-egress-guard.sh",
-    "scripts/vm-selftest.sh",
-    "scripts/vm-boundary-probe.sh",
+    # session-start alert hook + BOTH Cowork VM probes (retrieval self-test + negative boundary probe):
+    "scripts/brainiac-alerts.sh", "scripts/brainiac-egress-guard.sh",
+    "scripts/vm-selftest.sh", "scripts/vm-boundary-probe.sh",
     # FL-03 COS retro miner. brain-synthesis.sh resolves it SCRIPT-RELATIVE
     # (`../tools/cos_retro.py`), so it must ride the wheel beside the wrapper:
     # launchd runs the INSTALLED `_assets/scripts/brain-synthesis.sh`, and a
@@ -300,23 +273,18 @@ def validate_engine_assets() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _plugin_skill_map() -> dict[str, tuple[list[str], list[str] | tuple[str, ...]]]:
+    return {
+        "brainiac-kernel": (KERNEL_SKILLS, ()),
+        "brainiac-extras": (EXTRAS_SKILLS, DOCTRINE_DIRS),
+        "brainiac-manager": (BRAINIAC_SKILLS, ()),
+    }
+
+
 def sync_plugin_skills() -> list[Path]:
     written: list[Path] = []
-    mapping = {
-        "brainiac-kernel": KERNEL_SKILLS,
-        "brainiac-extras": EXTRAS_SKILLS,
-        "brainiac-manager": BRAINIAC_SKILLS,
-    }
-    for plugin_name, skills in mapping.items():
-        plugin_skills_dir = PLUGINS_DIR / plugin_name / "skills"
-        plugin_skills_dir.mkdir(parents=True, exist_ok=True)
-        for name in skills:
-            src_dir = CLAUDE_SKILLS_DIR / name
-            dst_dir = plugin_skills_dir / name
-            if dst_dir.exists():
-                shutil.rmtree(dst_dir)
-            shutil.copytree(src_dir, dst_dir)
-            written.append(dst_dir / "SKILL.md")
+    for plugin_name, (skills, extra_dirs) in _plugin_skill_map().items():
+        written.extend(_mirror_skill_tree(PLUGINS_DIR / plugin_name / "skills", skills, extra_dirs))
     return written
 
 
@@ -333,6 +301,10 @@ def build_cowork_zips(version: str) -> list[Path]:
     brainiac-manager SKILL_VERSION marker, these skills are re-zipped fresh on
     every run — a version file inside is cheaper than parsing frontmatter)."""
     COWORK_DIST_DIR.mkdir(parents=True, exist_ok=True)
+    expected = {f"{name}.skill" for name in ALL_SKILLS}
+    for stale in sorted(COWORK_DIST_DIR.glob("*.skill")):
+        if stale.name not in expected:
+            stale.unlink()
     written: list[Path] = []
     for name in ALL_SKILLS:
         src_dir = CLAUDE_SKILLS_DIR / name
@@ -387,23 +359,38 @@ def validate_cowork_zip(zip_path: Path, version: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-
-
-
-
+def _validate_mirror_tree(dst_root: Path, skill_names: list[str], extra_dirs: list[str] | tuple[str, ...] = ()) -> None:
+    expected = set(skill_names) | set(extra_dirs)
+    if not dst_root.is_dir():
+        raise ValidationError(f"missing skill mirror dir: {dst_root}")
+    extra = sorted(p.name for p in dst_root.iterdir() if p.is_dir() and p.name not in expected)
+    if extra:
+        raise ValidationError(f"unexpected skill dir(s) in {dst_root}: {', '.join(extra)}")
+    for name in sorted(expected):
+        src_dir, dst_dir = CLAUDE_SKILLS_DIR / name, dst_root / name
+        if not src_dir.is_dir():
+            raise ValidationError(f"canonical skill dir missing: {src_dir}")
+        if not dst_dir.is_dir():
+            raise ValidationError(f"missing mirrored dir: {dst_dir}")
+        src_files = {f.relative_to(src_dir).as_posix() for f in src_dir.rglob("*") if f.is_file()}
+        dst_files = {f.relative_to(dst_dir).as_posix() for f in dst_dir.rglob("*") if f.is_file()}
+        stray = sorted(dst_files - src_files)
+        if stray:
+            raise ValidationError(f"unexpected file(s) in {dst_dir}: {', '.join(stray)}")
 
 
 def validate_all_skill_sources() -> None:
     for name in ALL_SKILLS + BRAINIAC_SKILLS:
         validate_skill_md(CLAUDE_SKILLS_DIR / name / "SKILL.md")
         validate_skill_md(AGENTS_SKILLS_DIR / name / "SKILL.md")
-    for plugin_name, skills in (
-        ("brainiac-kernel", KERNEL_SKILLS),
-        ("brainiac-extras", EXTRAS_SKILLS),
-        ("brainiac-manager", BRAINIAC_SKILLS),
-    ):
+    for name in DOCTRINE_DIRS:
+        if (CLAUDE_SKILLS_DIR / name / "SKILL.md").exists():
+            raise ValidationError(f"retired SKILL.md present in doctrine dir: {CLAUDE_SKILLS_DIR / name / 'SKILL.md'}")
+    _validate_mirror_tree(AGENTS_SKILLS_DIR, ALL_SKILLS + BRAINIAC_SKILLS, DOCTRINE_DIRS)
+    for plugin_name, (skills, extra_dirs) in _plugin_skill_map().items():
         for name in skills:
             validate_skill_md(PLUGINS_DIR / plugin_name / "skills" / name / "SKILL.md")
+        _validate_mirror_tree(PLUGINS_DIR / plugin_name / "skills", skills, extra_dirs)
 
 
 def validate_compat_marker() -> None:
@@ -478,8 +465,7 @@ def main() -> int:
         # Gitignored build output, absent on a clean checkout (CI); the build
         # path creates it first. Gate on THIS folder, not dist/ (PKG-01).
         if COWORK_DIST_DIR.exists():
-            for name in ALL_SKILLS:
-                validate_cowork_zip(COWORK_DIST_DIR / f"{name}.skill", version)
+            _validate_cowork_archives(version)
             _log(f"  OK: all {len(ALL_SKILLS)} dist/cowork-skills/*.skill zips re-open, parse, and carry the SSOT VERSION")
             validate_compat_marker()
             _log("  OK: dist/COMPAT + SKILL_VERSION markers match")
@@ -500,6 +486,15 @@ def main() -> int:
 
     _log("\nAll three client packages built + validated OK.")
     return 0
+
+
+def _validate_cowork_archives(version: str) -> None:
+    expected = {f"{name}.skill" for name in ALL_SKILLS}
+    stray = sorted(p.name for p in COWORK_DIST_DIR.glob("*.skill") if p.name not in expected)
+    if stray:
+        raise ValidationError(f"unexpected archive(s) in {COWORK_DIST_DIR}: {', '.join(stray)}")
+    for name in ALL_SKILLS:
+        validate_cowork_zip(COWORK_DIST_DIR / f"{name}.skill", version)
 
 
 if __name__ == "__main__":

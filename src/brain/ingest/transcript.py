@@ -189,15 +189,17 @@ def ingest_transcript(
     # top tier, as `tierguard`'s keyword leg does on the drop zone. This route
     # has no guard to stamp "could not check", so an unreadable ring fails
     # CLOSED to the top tier; the signed write reason says which one happened.
+    # The ring is read through its host-private pin (F21), so a term the live
+    # ring has lost still raises.
     from ..classification import TIERS, rank as _rank
-    from ..overlay_keywords import top_tier_term
+    from .tierguard_ring_pin import pinned_top_tier_term, ring_why
 
     raised_why = ""
-    term, ring_errors = top_tier_term(text, vault=vault)
-    if (term or ring_errors) and _rank(classification) < _rank(TIERS[-1]):
+    ring = pinned_top_tier_term(text, vault)
+    if (ring.term or ring.errors) and _rank(classification) < _rank(TIERS[-1]):
         raised_why = (f"; raised {classification} -> {TIERS[-1]}: "
-                      + (f"overlay keyword {term!r}" if term else
-                         f"overlay keyword ring unreadable ({', '.join(ring_errors)})"))
+                      + (ring_why(ring, f"overlay keyword {ring.term!r}") if ring.term else
+                         f"overlay keyword ring unreadable ({', '.join(ring.errors)})"))
         classification = TIERS[-1]
     body_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
     lang = language or detect_language(path.name)

@@ -8,6 +8,7 @@ quarantine reason) out.
 """
 from __future__ import annotations
 
+import importlib
 import os
 import re
 import struct
@@ -298,10 +299,12 @@ def density_gate(markdown: str, *, min_chars: int = MIN_CONTENT_CHARS) -> str | 
     return None
 
 
+pytesseract: Any
 try:  # LOCAL-only OCR binding. ADR-0003 Ruling 1(g): never a pip dependency,
-    import pytesseract  # never a cloud fallback — absent it, OCR simply degrades.
+    pytesseract = importlib.import_module("pytesseract")  # never a cloud fallback — absent it, OCR simply degrades.
     _HAS_PYTESSERACT = True
 except ImportError:  # pragma: no cover - exercised via degraded-deps test
+    pytesseract = None
     _HAS_PYTESSERACT = False
 
 _OCR_LANG: str | None = None

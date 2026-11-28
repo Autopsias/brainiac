@@ -46,7 +46,8 @@ class MaintenanceOrchestratorMixin:
                 "outcomes": maintenance.build_outcomes(),
             }
         try:
-            state = self._load_maintain_state()
+            state_defects: list[str] = []
+            state = self._load_maintain_state(state_defects)
             last_runs = {
                 key: (value.get("last_run") if isinstance(value, dict) else value)
                 for key, value in state.items()
@@ -63,6 +64,16 @@ class MaintenanceOrchestratorMixin:
                 graphify_runner=graphify_runner,
                 golden_runner=golden_runner,
             )
+            if state_defects:
+                run.action_required.append(maintenance.action_required_item(
+                    f"maintain-state.json had {len(state_defects)} malformed value(s), read "
+                    "as safe defaults (never-run / 0 / absent): " + "; ".join(state_defects[:5])
+                    + ("; ..." if len(state_defects) > 5 else ""),
+                    "the file is on the mount a Cowork VM can write",
+                    "none, the next real run rewrites the file from the cleaned state; "
+                    "find who wrote it if this recurs",
+                    ".brain/maintain-state.json",
+                ))
             self.journal_preflight_fold(run)
             writer_busy = self.daily_fold(run)
             if writer_busy is not None:

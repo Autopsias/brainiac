@@ -18,6 +18,7 @@ from . import _optional
 from .frontmatter import normalize_identity, parse_text
 from .interview import (EXPIRE_DAYS, OPTIONS, SKIP, OPEN, blocked, is_loop_id,
                         question_key)
+from .provenance import sanitize_value
 
 _FRONTMATTER_RE = re.compile(r"\A---\n.*?\n---\n", re.S)
 #: COS mail-thread records: the bulk of `brain/resources/` and never the
@@ -79,6 +80,24 @@ def note_path(core: Any, note_id: str) -> str:
     except Exception:  # noqa: BLE001 — a detector never kills the lane
         return ""
     return rel_path(core.vault, str(hits[0].get("path") or "")) if hits else ""
+
+
+def indexed_source(core: Any, sid: str) -> tuple[str, str] | None:
+    """``(title, vault-relative path)`` of source ``sid`` as the HOST's index
+    holds it, or None when the index has no such note (F42).
+
+    The lane file is on the mount a Cowork VM writes: it may NOMINATE an id,
+    but its title and path are never copied into a row, because a row's text
+    reaches the sheet, the interview record and a signed `## Sources` line
+    under the owner's name. Whatever the index holds is one line and capped."""
+    try:
+        hit = (core.bases_query({"id": sid}, k=1) or [None])[0]
+    except Exception:  # noqa: BLE001 — a detector never kills the lane
+        return None
+    if hit is None:
+        return None
+    return (sanitize_value(hit.get("title")) or sid,
+            rel_path(core.vault, str(hit.get("path") or "")))
 
 
 def _tension_candidates(core: Any, state: dict[str, Any], today: _dt.date,
@@ -154,9 +173,60 @@ def _decision_candidates(core: Any, state: dict[str, Any], today: _dt.date):
                           "your words, anchored to it.")
 
 
+def _late_commitment_row(core: Any, c: dict[str, Any], today: _dt.date) -> dict[str, Any]:
+    """Format one raw commitment dict into a ``late`` interview row."""
+    cid = str(c.get("id") or "")
+    who = str(c.get("counterparty") or "someone")
+    owed = (f"you owe {who}" if c.get("direction") == "owed_by_me"
+            else f"{who} owes you")
+    age = int(float(c.get("age_days") or 0))
+    text = re.sub(r"\s+", " ", str(c.get("text") or "")).strip()[:140]
+    source_ref = str(c.get("source_ref") or "")
+    context = (note_excerpt(core.vault, note_path(core, source_ref), 300)
+               if source_ref else "")
+    return _row("late", today=today, context=context,
+                evidence=[{"id": cid, "date": str(c.get("due") or "")[:10],
+                           "title": text}],
+                target={"id": cid, "path": "", "title": text},
+                question=(f"A commitment {owed} was due {str(c.get('due'))[:10]} "
+                          f"({age} days ago) and is still open: \"{text}\". "
+                          "What happened?"),
+                change="The commitment is closed, cancelled or moved to the "
+                       "date you give.")
+
+
 def _late_candidates(core: Any, state: dict[str, Any], today: _dt.date):
     """Commitments past their date (the commitment-spine radar). The spine is
     COS's; without it there are none (ADR 0013)."""
+    from . import host_hooks as _host_hooks  # noqa: PLC0415
+
+    hooks = _host_hooks.providers_with(
+        _host_hooks.load_core_hooks(core), "interview_late_candidates",
+    )
+    if hooks:
+        collected: list[Any] = []
+        for provider in hooks:
+            collected = _host_hooks.call_hook_method(
+                provider, "interview_late_candidates", Path(core.vault), collected,
+                default=collected,
+            ) or collected
+        for row in collected:
+            if not isinstance(row, dict):
+                continue
+            if "key" in row and isinstance(row.get("target"), dict):
+                cid = str(row["target"].get("id") or "")
+                key = str(row.get("key") or (question_key("late", [cid]) if cid else ""))
+                if (not cid or not key
+                        or blocked(state, key, cid, today)
+                        or blocked(state, question_key("late", [cid]), cid, today)):
+                    continue
+                yield row
+            else:
+                cid = str(row.get("id") or "")
+                if not cid or blocked(state, question_key("late", [cid]), cid, today):
+                    continue
+                yield _late_commitment_row(core, row, today)
+        return
     if not _optional.cos_available():
         return
     from . import spine  # noqa: PLC0415
@@ -164,23 +234,7 @@ def _late_candidates(core: Any, state: dict[str, Any], today: _dt.date):
         cid = str(c.get("id") or "")
         if not cid or blocked(state, question_key("late", [cid]), cid, today):
             continue
-        who = str(c.get("counterparty") or "someone")
-        owed = (f"you owe {who}" if c.get("direction") == "owed_by_me"
-                else f"{who} owes you")
-        age = int(float(c.get("age_days") or 0))
-        text = re.sub(r"\s+", " ", str(c.get("text") or "")).strip()[:140]
-        source_ref = str(c.get("source_ref") or "")
-        context = (note_excerpt(core.vault, note_path(core, source_ref), 300)
-                   if source_ref else "")
-        yield _row("late", today=today, context=context,
-                   evidence=[{"id": cid, "date": str(c.get("due") or "")[:10],
-                              "title": text}],
-                   target={"id": cid, "path": "", "title": text},
-                   question=(f"A commitment {owed} was due {str(c.get('due'))[:10]} "
-                             f"({age} days ago) and is still open: \"{text}\". "
-                             "What happened?"),
-                   change="The commitment is closed, cancelled or moved to the "
-                          "date you give.")
+        yield _late_commitment_row(core, c, today)
 
 
 def _words(text: str) -> list[str]:
@@ -239,6 +293,7 @@ def _link_targets(core: Any, query: str, sid: str,
             for _, hid, title in ranked[:limit]]
 
 
+_ISO_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 _SERIES_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}-")
 _SERIES_NUMBER = re.compile(r"-\d+$")
 
@@ -293,20 +348,23 @@ def _orphan_candidates(core: Any, state: dict[str, Any], today: _dt.date,
         if _series(sid) in silenced:
             continue
         searched += 1
-        title = str(c.get("title") or sid)
-        query = (title + " " + note_excerpt(core.vault, str(c.get("path") or ""),
-                                            200)).strip()
+        known = indexed_source(core, sid)
+        if known is None:
+            continue
+        title, path = known
+        created = str(c.get("created") or "")[:10]
+        if not _ISO_DAY.fullmatch(created):
+            created = ""
+        query = (title + " " + note_excerpt(core.vault, path, 200)).strip()
         links = _link_targets(core, query, sid)
         if not links:
             continue
         yielded += 1
         yield _row("orphan", today=today, options=links + OPTIONS["orphan"],
-                   context=note_excerpt(core.vault, rel_path(core.vault, str(c.get("path") or "")), 300),
-                   evidence=[{"id": sid, "date": str(c.get("created") or ""),
-                              "title": title}],
-                   target={"id": sid, "path": rel_path(core.vault, str(c.get("path") or "")),
-                           "title": title},
-                   question=(f"[[{sid}]] ({c.get('created')}) landed and nothing "
+                   context=note_excerpt(core.vault, path, 300),
+                   evidence=[{"id": sid, "date": created, "title": title}],
+                   target={"id": sid, "path": path, "title": title},
+                   question=(f"[[{sid}]] ({created}) landed and nothing "
                              "cites it. Where does it belong?"),
                    change="The note you pick gets a Sources line citing it; "
                           "noise is never asked again.")
@@ -354,4 +412,4 @@ DETECTORS = {
 }
 
 
-__all__ = ["DETECTORS", "note_excerpt", "note_path", "rel_path"]
+__all__ = ["DETECTORS", "indexed_source", "note_excerpt", "note_path", "rel_path"]

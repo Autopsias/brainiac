@@ -74,6 +74,11 @@ def _verify_duplicate_provenance(dup_file: Path, vault: Path, manifest: dict[str
     existing_id = manifest.get(dup_sha)
     if existing_id is None:
         return False, "no ingest-manifest entry for this file's content hash"
+    # F62: the manifest is VM-writable, so the id must be ONE plain filename
+    # component — an absolute or `..` id would walk out of raw/.
+    if (not isinstance(existing_id, str) or existing_id in ("", "..")
+            or Path(existing_id).name != existing_id or "\0" in existing_id):
+        return False, "manifest target is not a plain raw note id"
     note_path = vault / "raw" / f"{existing_id}.md"
     if not note_path.is_file():
         return False, f"manifest target raw/{existing_id}.md does not exist"
@@ -90,9 +95,19 @@ def _verify_duplicate_provenance(dup_file: Path, vault: Path, manifest: dict[str
     origin = meta.get("origin")
     if not origin:
         return False, f"raw/{existing_id}.md has no origin: provenance"
-    archive_path = vault / str(origin)
-    if not archive_path.is_file():
-        return False, f"archived original '{origin}' is missing"
+    # F62: `origin:` is frontmatter a VM draft can write — contain it to
+    # raw/originals/ (never `vault / origin`: an absolute origin replaces the
+    # vault). One neutral reason for missing / outside / symlink, and the
+    # attacker's path is never echoed, so it is no file-existence oracle.
+    from .remediation_extract_retry import contained_file_under
+
+    origin_path = Path(str(origin))
+    archive_path = None
+    if not (origin_path.is_absolute() or ".." in origin_path.parts or "\0" in str(origin)):
+        archive_path = contained_file_under(vault / origin_path, vault.resolve() / "raw" / "originals")
+    if archive_path is None:
+        return False, (f"raw/{existing_id}.md origin: archived original is missing "
+                       "or not a plain file under raw/originals/")
     try:
         archive_sha = _sha256_file(archive_path)
     except OSError as exc:

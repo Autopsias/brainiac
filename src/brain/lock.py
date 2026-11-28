@@ -34,7 +34,7 @@ import secrets
 import sys
 import time
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Generator, Iterator
 
 # The byte msvcrt locks on Windows. Must sit beyond any holder-metadata write
 # (a ~100-byte JSON object at offset 0) because that lock is mandatory, not
@@ -155,7 +155,7 @@ def _read_holder(lock_path: Path) -> dict[str, Any]:
     return holder
 
 
-def _open_lock_fd(lock_path: Path) -> int:
+def open_lock_fd(lock_path: Path) -> int:
     """Open the lockfile read/write, never inheritable, never through a symlink.
 
     An inherited fd would keep the lock alive after the process that acquired
@@ -178,9 +178,70 @@ def _open_lock_fd(lock_path: Path) -> int:
     return os.open(str(lock_path), flags, 0o600)
 
 
-def _try_lock(fd: int) -> bool:
-    """Non-blocking exclusive lock. True on success, False if held elsewhere."""
+_open_lock_fd = open_lock_fd
+
+
+_WIN_SHARED_FDS: set[int] = set()
+_WIN_LOCKFILE_FAIL_IMMEDIATELY = 0x1
+
+
+def _win32_overlapped(offset: int) -> Any:
+    import ctypes
+    from ctypes import wintypes
+
+    class _OVERLAPPED(ctypes.Structure):
+        _fields_ = [
+            ("Internal", ctypes.c_void_p),
+            ("InternalHigh", ctypes.c_void_p),
+            ("Offset", wintypes.DWORD),
+            ("OffsetHigh", wintypes.DWORD),
+            ("hEvent", wintypes.HANDLE),
+        ]
+
+    ov = _OVERLAPPED()
+    ov.Offset = offset & 0xFFFFFFFF
+    ov.OffsetHigh = (offset >> 32) & 0xFFFFFFFF
+    return ov
+
+
+def _win32_try_shared_lock(fd: int) -> bool:
+    import ctypes
+    import msvcrt
+
+    windll = getattr(ctypes, "windll", None)
+    get_osfhandle = getattr(msvcrt, "get_osfhandle", None)
+    if windll is None or get_osfhandle is None:
+        raise NotImplementedError("shared advisory locks on Windows require kernel32.LockFileEx")
+    handle = get_osfhandle(fd)
+    ov = _win32_overlapped(_SENTINEL_OFFSET)
+    ok = bool(
+        windll.kernel32.LockFileEx(
+            handle, _WIN_LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, ctypes.byref(ov),
+        )
+    )
+    if ok:
+        _WIN_SHARED_FDS.add(fd)
+    return ok
+
+
+def _win32_unlock_shared(fd: int) -> None:
+    import ctypes
+    import msvcrt
+
+    windll = getattr(ctypes, "windll", None)
+    get_osfhandle = getattr(msvcrt, "get_osfhandle", None)
+    if windll is not None and get_osfhandle is not None:
+        handle = get_osfhandle(fd)
+        ov = _win32_overlapped(_SENTINEL_OFFSET)
+        windll.kernel32.UnlockFileEx(handle, 0, 1, 0, ctypes.byref(ov))
+    _WIN_SHARED_FDS.discard(fd)
+
+
+def try_lock(fd: int, *, shared: bool = False) -> bool:
+    """Non-blocking advisory lock (shared or exclusive). True on success."""
     if os.name == "nt":
+        if shared:
+            return _win32_try_shared_lock(fd)
         import msvcrt
 
         os.lseek(fd, _SENTINEL_OFFSET, os.SEEK_SET)
@@ -191,16 +252,24 @@ def _try_lock(fd: int) -> bool:
             return False
     import fcntl
 
+    op = (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(fd, op)
         return True
     except OSError:
         return False
 
 
-def _unlock(fd: int) -> None:
+_try_lock = try_lock
+
+
+def unlock(fd: int) -> None:
+    """Release an advisory lock acquired via :func:`try_lock`."""
     with contextlib.suppress(OSError):
         if os.name == "nt":
+            if fd in _WIN_SHARED_FDS:
+                _win32_unlock_shared(fd)
+                return
             import msvcrt
 
             os.lseek(fd, _SENTINEL_OFFSET, os.SEEK_SET)
@@ -209,6 +278,74 @@ def _unlock(fd: int) -> None:
             import fcntl
 
             fcntl.flock(fd, fcntl.LOCK_UN)
+
+
+_unlock = unlock
+
+
+def _acquire_with_deadline(
+    fd: int,
+    deadline: float,
+    try_fn: Any,
+    *,
+    on_timeout: Any,
+) -> None:
+    """Retry ``try_fn(fd)`` with clamped exponential backoff before ``deadline``."""
+    delay = 0.05
+    while True:
+        if try_fn(fd):
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise on_timeout()
+        sleep_for = min(remaining, delay * (0.5 + random.random()))
+        if sleep_for > 0:
+            time.sleep(sleep_for)
+        delay = min(delay * 2, 2.0)
+        if time.monotonic() >= deadline:
+            raise on_timeout()
+
+
+@contextlib.contextmanager
+def advisory_file_lock(
+    path: Path, *, timeout_s: float = 30.0, shared: bool = False,
+) -> Generator[None, None, None]:
+    """Acquire a non-reentrant shared or exclusive advisory lock on ``path``.
+
+    Intended for host-private state locks (ADR-0015 §1.3/§2.1) such as
+    ``<index_dir>/cos-state.lock`` where routine writers hold ``LOCK_SH`` and
+    migrations hold ``LOCK_EX``. Raises ``TimeoutError`` on timeout.
+    """
+    lock_path = Path(path)
+    parent_existed = lock_path.parent.exists()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    if not parent_existed:
+        with contextlib.suppress(OSError, ImportError):
+            from .config import secure_file_permissions
+
+            secure_file_permissions(lock_path.parent, 0o700)
+
+    fd = open_lock_fd(lock_path)
+    deadline = time.monotonic() + max(0.0, timeout_s)
+    acquired = False
+    try:
+        mode = "shared" if shared else "exclusive"
+        _acquire_with_deadline(
+            fd,
+            deadline,
+            lambda desc: try_lock(desc, shared=shared),
+            on_timeout=lambda: TimeoutError(
+                f"could not acquire {mode} advisory lock on {lock_path} "
+                f"within {timeout_s}s"
+            ),
+        )
+        acquired = True
+        yield
+    finally:
+        if acquired:
+            unlock(fd)
+        with contextlib.suppress(OSError):
+            os.close(fd)
 
 
 @contextlib.contextmanager
@@ -270,20 +407,16 @@ def writer_lock(lock_path: Path, *, verb: str,
         secure_file_permissions(lock_path.parent, 0o700)
 
     fd = _open_lock_fd(lock_path)
-    start = time.monotonic()
+    deadline = time.monotonic() + max(0.0, bound)
     acquired = False
-    delay = 0.05
     try:
-        while True:
-            if _try_lock(fd):
-                acquired = True
-                break
-            elapsed = time.monotonic() - start
-            if elapsed >= bound:
-                holder = _read_holder(lock_path)
-                raise WriterLockBusy(holder, verb)
-            time.sleep(min(delay, max(0.0, bound - elapsed)) * (0.5 + random.random()))
-            delay = min(delay * 2, 2.0)
+        _acquire_with_deadline(
+            fd,
+            deadline,
+            lambda desc: _try_lock(desc),
+            on_timeout=lambda: WriterLockBusy(_read_holder(lock_path), verb),
+        )
+        acquired = True
 
         # Seek-then-write rather than os.pwrite (absent on Windows). Offset 0
         # is deliberately OUTSIDE the Windows sentinel lock range so

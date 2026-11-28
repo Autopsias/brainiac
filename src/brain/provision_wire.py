@@ -45,7 +45,8 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from . import workspaces
-from .pathkey import canonical, file_lock, real_key, same_path
+from .pathkey import canonical, file_lock, nfc, real_key, same_path
+from .provision_claim import CLAIM_LOST, guarded, snapshot_strayed
 from .provision_mcp import mcp_server_name, register_mcp
 from .provision_stage import STAGE_MANIFEST, _staging_complete, _wire_stage
 from .sweepdirs import (DELIVERABLES_DIRNAME, SWEEP_ENV,
@@ -325,6 +326,20 @@ def _safe(fn: Callable[..., dict], *a: Any, **kw: Any) -> dict[str, Any]:
         return {"status": "failed", "detail": f"{type(exc).__name__}: {exc}"}
 
 
+def _gated(still_claimed: Optional[Callable[[], bool]]
+           ) -> Callable[..., dict[str, Any]]:
+    """``_safe``, except a wire does not START once the drain's claim on the
+    vault is lost (F37); with no claim to hold (``provision-local``) it is ``_safe``."""
+    if still_claimed is None:
+        return _safe
+
+    def run(fn: Callable[..., dict], *a: Any, **kw: Any) -> dict[str, Any]:
+        if not still_claimed():
+            return {"status": "failed", "detail": CLAIM_LOST}
+        return _safe(fn, *a, **kw)
+    return run
+
+
 def wire_vault(vault: str | os.PathLike[str], workspace: str | os.PathLike[str], *,
                model_dir: Optional[str] = None,
                snapshot_dir: Optional[str] = None,
@@ -335,6 +350,7 @@ def wire_vault(vault: str | os.PathLike[str], workspace: str | os.PathLike[str],
                runner: Optional[Callable[..., Any]] = None,
                engine: Optional[Callable[..., Any]] = None,
                stager: Optional[Callable[..., Any]] = None,
+               still_claimed: Optional[Callable[[], bool]] = None,
                ) -> dict[str, dict[str, Any]]:
     """Run all six wires check-then-act. Returns one result per wire, keyed
     ``"1"``..``"6"``, each ``{"status": already|done|skipped|pending|failed,
@@ -345,6 +361,18 @@ def wire_vault(vault: str | os.PathLike[str], workspace: str | os.PathLike[str],
     built defect), and the ``cowork-vm`` row needs the staging to have staged.
     A dependency is not a short-circuit --- a blocked wire is still reported,
     by name, with what blocked it.
+
+    ``still_claimed`` is the drain's pin on the vault it claimed (F37,
+    ``provision_claim.pin_claim``). Given one, ``vault`` and ``workspace`` must
+    already be resolved and are only NFC-normalised here, and ``model_dir`` is
+    used exactly as given (a symlinked model source reaches the stager as a
+    symlink; outside claim mode it is resolved). The drain passes its RESOLVED
+    workspace and itself reports the spelling it found, not this one. A
+    wire does not start, and an engine or staging call is not started and has its
+    answer discarded, once the pinned directory's identity changed. A child
+    already running is stopped only if ``runner`` is the drain's ``watched_run``.
+    The callees still resolve the path themselves; see ``provision_claim`` for the
+    limits named there. ``provision-local`` passes none and is unchanged.
     """
     from . import provision
 
@@ -353,12 +381,22 @@ def wire_vault(vault: str | os.PathLike[str], workspace: str | os.PathLike[str],
     # CALLER's cwd, so a relative or `~` path used to reach the two sides as two
     # different directories --- install and later refresh publishing the
     # snapshot to different places, freezing what the VM reads.
-    vault, workspace = canonical(vault), canonical(workspace)
-    model_dir = str(canonical(model_dir)) if model_dir else model_dir
+    if still_claimed is None:
+        vault, workspace = canonical(vault), canonical(workspace)
+        model_dir = str(canonical(model_dir)) if model_dir else model_dir
+    else:
+        # F37: the drain's vault and workspace ARE the claim (resolved, pinned by
+        # `still_claimed`); resolving them again would hand every wire whatever the
+        # VM pointed the path at for that call. `model_dir` is left as given too.
+        vault, workspace = Path(nfc(vault)), Path(nfc(workspace))
     # All three seams resolve at CALL time, never in the signature: a default
     # bound at import keeps pointing at the original through any monkeypatch,
     # which is how a test meaning to fake the engine spawned a real one.
     runner, engine = runner or subprocess.run, engine or provision._run_engine
+    if still_claimed is not None:
+        engine = guarded(engine, still_claimed)
+        stager = guarded(stager or provision._stage_cowork_runtime, still_claimed)
+    gated = _gated(still_claimed)
     deliverables = workspace / DELIVERABLES_DIRNAME
     # The INSTALLED plist, not the computed name --- merging into a fresh
     # canonical file while launchd runs the old one would sweep nothing.
@@ -371,30 +409,32 @@ def wire_vault(vault: str | os.PathLike[str], workspace: str | os.PathLike[str],
         vault, workspace,
         snapshot_dir or os.environ.get("BRAIN_SNAPSHOT_DIR") or None,
         registry_path)
+    if snapshot_strayed(vault, snapshot_dir, reg_snapshot, still_claimed):
+        return {k: {"status": "failed", "detail": CLAIM_LOST} for k in "123456"}
 
     out: dict[str, dict[str, Any]] = {}
-    out["1"] = _safe(_wire_init, vault, plist, engine=engine, runner=runner,
+    out["1"] = gated(_wire_init, vault, plist, engine=engine, runner=runner,
                      env_extra={SWEEP_ENV: merged,
                                 "BRAIN_SNAPSHOT_DIR": snapshot_dir})
     ready = out["1"]["status"] in _OK
     blocked = {"status": "failed", "detail": "blocked: wire 1 (init) failed"}
 
-    out["2"] = (_safe(_wire_stage, vault, workspace, model_dir=model_dir,
+    out["2"] = (gated(_wire_stage, vault, workspace, model_dir=model_dir,
                       snapshot_dir=snapshot_dir, runner=runner, stager=stager)
                 if ready else
                 dict(blocked, cowork={"status": "skipped", "reason": "init failed"}))
-    out["3"] = (_safe(_wire_registry, vault, workspace, "host",
+    out["3"] = (gated(_wire_registry, vault, workspace, "host",
                       registry_path=registry_path, lock_path=lock_path,
                       model_dir=None, snapshot_dir=reg_snapshot)
                 if ready else dict(blocked))
-    out["4"] = (_safe(_wire_registry, vault, workspace, "cowork-vm",
+    out["4"] = (gated(_wire_registry, vault, workspace, "cowork-vm",
                       registry_path=registry_path, lock_path=lock_path,
                       model_dir=str(provision._staging_root(vault, workspace) / "model"),
                       snapshot_dir=reg_snapshot)
                 if out["2"]["status"] in _OK else
                 {"status": "failed",
                  "detail": f"blocked: wire 2 ({WIRE_NAMES['2']}) — {out['2']['detail']}"})
-    out["5"] = (_safe(_wire_mcp, vault, workspace,
+    out["5"] = (gated(_wire_mcp, vault, workspace,
                       desktop_config_path=desktop_config_path,
                       registry_path=registry_path, lock_path=lock_path)
                 if ready else dict(blocked))
@@ -406,7 +446,7 @@ def wire_vault(vault: str | os.PathLike[str], workspace: str | os.PathLike[str],
     # and then `provision-local` exited 0 on a vault with no nightly job at all.
     # `None` when init itself failed: wire 1 already names that, and blaming
     # wire 6 for the job init never got to install is noise.
-    out["6"] = _safe(wire_sweep, vault, deliverables, plist, repair=sweep_repair,
+    out["6"] = gated(wire_sweep, vault, deliverables, plist, repair=sweep_repair,
                      registered=(nightly_task_registered(vault, plist, runner=runner)
                                  if ready else None))
     return out

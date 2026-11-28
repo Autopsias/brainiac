@@ -221,28 +221,7 @@ def _run_check_egress(args, ctx) -> int:
     """
     from .. import egress_terms
 
-    text = args.text
-    if text is None:
-        import sys as _sys
-
-        text = "" if _sys.stdin.isatty() else _sys.stdin.read()
-
-    try:
-        vault = ctx.config.vault_root(args.vault)
-    except Exception:  # fail-open: no resolvable vault; the egress check runs without one
-        vault = None
-
-    result = egress_terms.check(
-        text, vault=vault, threshold=args.min_tier, strict=args.strict,
-        extra_vaults=[v for v in getattr(args, "extra_vault", []) or []
-                      if v and v != str(vault)],
-    )
-    result["explanation"] = egress_terms.explain(result)
-    if args.json:
-        _emit(result, True)
-    else:
-        _emit(None, False, result["explanation"])
-    return 0 if result["allowed"] else egress_terms.EXIT_REFUSED
+    return egress_terms.run_cli_args(args, ctx.config, _emit)
 
 
 def _run_alerts(args, ctx) -> int:

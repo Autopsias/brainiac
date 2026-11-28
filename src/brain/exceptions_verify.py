@@ -303,6 +303,14 @@ def _check_html_hash(
     return None
 
 
+def vault_path_sha256(vault: Path) -> str:
+    """FULL sha256 hexdigest of the resolved vault path -- the host-leg identity
+    both signers sign and ``verify_host_summary`` compares. It hashes the SAME
+    string ``config.vault_slug8`` truncates to 8 hex (a 32-bit prefix a VM could
+    grind a sibling workspace name to collide with), so ``[:8]`` equals the slug."""
+    return hashlib.sha256(str(_config.vault_root(vault)).encode()).hexdigest()
+
+
 def verify_host_summary(vault: Path, raw: dict[str, Any], *, kind: str) -> str | None:
     """HOST-role check of the mount copy of ``exceptions.json`` (``kind``
     ``"exceptions"``) or the current-findings feed (``"feed"``). Returns
@@ -312,7 +320,9 @@ def verify_host_summary(vault: Path, raw: dict[str, Any], *, kind: str) -> str |
     replay); else a reason. With no record yet the age check is skipped. The
     key is the host's own (``audit.public_key_pem()``), never a pin read from
     the mount, because on a co-located vault the VM can rewrite the file and
-    the pin beside it."""
+    the pin beside it. The vault identity is likewise the resolved vault path
+    (``vault_path_sha256``), never the mount's ``.brain/vault-id``: one host key
+    signs every vault's files, so a sibling's genuine copy must fail on identity."""
     _schema, reason = _check_schema(raw)
     if reason is not None:
         return reason
@@ -326,8 +336,18 @@ def verify_host_summary(vault: Path, raw: dict[str, Any], *, kind: str) -> str |
         return "no host signing key available to verify the summary"
     if not _verify_signature(raw, pem):
         return "host summary signature is invalid"
-    if str(raw.get("vault_id") or "") != str(_config.vault_id(vault) or ""):
-        return "host summary vault_id does not match this vault"
+    # Identity is the signed, PATH-DERIVED full digest (F43), never the mount's
+    # ``.brain/vault-id`` a VM can rewrite beside a copied sibling summary. A
+    # summary signed before the field existed has none and is refused, not
+    # excused: the next ``brain maintain`` run re-signs it, and a fallback to the
+    # mount file would let an old sibling copy through. The comparison is exact
+    # and full-width: a truncated value (the 8-hex slug) never matches.
+    digest = str(raw.get("vault_path_sha256") or "")
+    if not digest:
+        return ("host summary carries no signed vault identity (written by an "
+                "older engine) -- the next `brain maintain` run re-signs it")
+    if digest != vault_path_sha256(vault):
+        return "host summary was signed for a different vault"
     from . import maintain_state_store as _store
 
     recorded = _store.last_signed_at(vault, kind)

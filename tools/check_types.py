@@ -16,12 +16,11 @@ on every unrelated edit above it. A count only moves when an error is added or
 removed.
 
 The baseline is environment-bound. ty resolves third-party imports from the
-interpreter that runs this script (--python sys.prefix). CI installs only
-ruff and ty, so third-party imports (`yaml`, `numpy`, ...) are unresolved and
-counted as `unresolved-import`; a venv built from requirements.lock resolves
-them (measured 2026-10-17: 776 vs 719 diagnostics on the same tree). Record
-and judge in the CI environment -- Python 3.12 with only ruff and ty
-installed -- never in a tree other sessions are editing (see ratchetlib.py).
+interpreter that runs this script (--python sys.prefix). CI installs the
+project runtime dependencies plus the `mcp` and `eval` extras alongside pinned
+ty so real third-party imports resolve cleanly. Record and judge in the CI
+environment -- Python 3.12 with `.[mcp,eval]` and pinned ty installed -- never
+in a tree other sessions are editing (see ratchetlib.py).
 
 Exit codes: 0 clean, 1 a count rose, 2 ty missing or failed to run.
 """

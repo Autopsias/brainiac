@@ -79,14 +79,16 @@ from __future__ import annotations
 
 import time as _time
 
-import argparse
 import json
+import logging
+import re
 import sys
 from typing import TYPE_CHECKING, Any
 
-from . import __version__, classification as cls
+from . import classification as cls
 from . import egress
 if TYPE_CHECKING:
+    import argparse
     from .core import BrainCore
 
 
@@ -129,11 +131,17 @@ def _json_default(o: Any) -> Any:
     return str(o)
 
 
+# Untrusted note text must reach a terminal as text, never as ESC/OSC/C1 sequences
+# (F100): C0 except \t \n and CRLF's CR, DEL and C1 print as a visible ``\xNN``.
+_TERMINAL_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]|\r(?!\n)")
+
+
 def _emit(obj: Any, as_json: bool, human: str | None = None) -> None:
     if as_json:
         text = json.dumps(obj, ensure_ascii=False, indent=2, default=_json_default) + "\n"
     else:
-        text = (human if human is not None else str(obj)) + "\n"
+        human = human if human is not None else str(obj)
+        text = _TERMINAL_CONTROL.sub(lambda m: f"\\x{ord(m[0]):02x}", human) + "\n"
     # Gated content is HELD until its SEC-06 record is written; everything else
     # streams as before. See brain.cli_read_record for why.
     from . import cli_read_record as _crr
@@ -222,9 +230,79 @@ def _freshness_block(core: Any, surfaced: list[dict], max_tier: str) -> dict | N
 
 
 
-def build_parser() -> argparse.ArgumentParser:
+def _preparse_role_and_vault(raw: list[str]) -> tuple[str | None, str | None]:
+    """Extract ``--role`` and ``--vault`` before parser construction so ``--role vm``
+    never triggers host hook loading."""
+    role: str | None = None
+    vault: str | None = None
+    i = 0
+    while i < len(raw):
+        tok = raw[i]
+        if tok == "--":
+            break
+        if tok == "--role" and i + 1 < len(raw):
+            role = raw[i + 1]
+            i += 2
+            continue
+        if tok.startswith("--role="):
+            role = tok.split("=", 1)[1]
+        elif tok == "--vault" and i + 1 < len(raw):
+            vault = raw[i + 1]
+            i += 2
+            continue
+        elif tok.startswith("--vault="):
+            vault = tok.split("=", 1)[1]
+        i += 1
+    return role, vault
+
+
+class _SafeHookSubparsers:
+    """Guard built-in CLI subcommands against colliding hook subparsers."""
+
+    def __init__(self, subparsers: Any) -> None:
+        self._subparsers = subparsers
+        self._registered: set[str] = {
+            str(k) for k in getattr(subparsers, "_name_parser_map", ())
+        }
+
+    def add_parser(self, name: str, *args: Any, **kwargs: Any) -> Any:
+        import argparse
+
+        if name in self._registered:
+            logging.warning("host_hooks: ignoring colliding CLI command %r", name)
+            return argparse.ArgumentParser(add_help=False)
+        aliases = kwargs.get("aliases")
+        if aliases is not None:
+            safe_aliases = []
+            for alias in aliases:
+                if alias in self._registered:
+                    logging.warning(
+                        "host_hooks: ignoring colliding CLI alias %r for %r", alias, name,
+                    )
+                else:
+                    safe_aliases.append(alias)
+            kwargs = {**kwargs, "aliases": safe_aliases}
+        parser = self._subparsers.add_parser(name, *args, **kwargs)
+        self._registered.add(name)
+        for alias in kwargs.get("aliases") or ():
+            self._registered.add(alias)
+        return parser
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._subparsers, item)
+
+
+def build_parser(
+    *,
+    role: str | None = None,
+    vault: Any = None,
+    extra_parser_groups: tuple[Any, ...] | None = None,
+) -> argparse.ArgumentParser:
     """Build the public parser while preserving command registration order."""
-    from .cli_cmds import PARSER_GROUPS
+    import argparse
+
+    from . import __version__
+    from .cli_cmds import PARSER_GROUPS, load_cli_hook_groups
 
     parser = argparse.ArgumentParser(
         prog="brain",
@@ -232,6 +310,7 @@ def build_parser() -> argparse.ArgumentParser:
         "sourced JSON out, deny-by-default classification filter.",
         epilog=EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        allow_abbrev=False,
     )
     parser.add_argument("--version", action="version", version=f"brain {__version__}")
     parser.add_argument(
@@ -247,6 +326,14 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="cmd", required=True)
     for parser_group in PARSER_GROUPS:
         parser_group.add_parser(subparsers)
+    if extra_parser_groups is None:
+        extra_parser_groups, _ = load_cli_hook_groups(role=role, vault=vault)
+    hook_subparsers = _SafeHookSubparsers(subparsers)
+    for parser_group in extra_parser_groups:
+        try:
+            parser_group.add_parser(hook_subparsers)
+        except Exception as exc:  # noqa: BLE001 — broken hook parser must not break built-ins
+            logging.warning("host_hooks: hook parser group failed: %s: %s", type(exc).__name__, exc)
     return parser
 
 
@@ -425,49 +512,78 @@ def _refuse_vm_command(args: Any, role: str, config: Any) -> int | None:
     return 4
 
 
+def _merge_hook_runtime_groups(
+    base_groups: dict[str, Any],
+    base_coreless: frozenset[str],
+    hook_runtime: tuple[Any, ...],
+) -> tuple[dict[str, Any], set[str]]:
+    """Merge approved hook runtime groups without overriding built-in commands."""
+    command_groups = dict(base_groups)
+    coreless = set(base_coreless)
+    for hg in hook_runtime:
+        cmds = getattr(hg, "COMMANDS", ()) or ()
+        added: list[str] = []
+        for cmd in cmds:
+            if cmd not in command_groups:
+                command_groups[cmd] = hg
+                added.append(cmd)
+        if getattr(hg, "CORELESS", False):
+            coreless.update(added)
+    return command_groups, coreless
+
+
 def _main(argv: list[str] | None = None) -> int:
-    from . import config
-    from .cli_cmds import COMMAND_GROUPS, CORELESS_COMMANDS, CommandContext
+    from . import config, egress_terms
 
-    args = build_parser().parse_args(argv)
-    role = _prepare_invocation(args, config)
-    refused = _refuse_vm_command(args, role, config)
-    if refused is not None:
-        return refused
+    raw = list(sys.argv[1:] if argv is None else argv)
+    direct = egress_terms.is_direct_check_egress(raw)
+    if direct:
+        args = egress_terms.parse_direct_check_egress(raw)
+        core = None
+        run_cmd = lambda: egress_terms.run_cli_args(args, config, _emit)  # noqa: E731
+        role = _prepare_invocation(args, config)
+        if (refused := _refuse_vm_command(args, role, config)) is not None:
+            return refused
+    else:
+        from .cli_cmds import (
+            COMMAND_GROUPS,
+            CORELESS_COMMANDS,
+            CommandContext,
+            load_cli_hook_groups,
+        )
 
-    core = None
-    if args.cmd not in CORELESS_COMMANDS:
-        try:
-            core = _make_core(args, role)
-        except Exception as exc:  # pragma: no cover - construction is cheap/stable
-            as_json = getattr(args, "json", False)
-            _emit(
-                {"error": type(exc).__name__, "detail": str(exc)}
-                if as_json
-                else f"init failed: {exc}",
-                as_json,
-            )
-            return 3
+        pre_role, pre_vault = _preparse_role_and_vault(raw)
+        hook_parsers, hook_runtime = load_cli_hook_groups(role=pre_role, vault=pre_vault)
+        args = build_parser(
+            role=pre_role, vault=pre_vault, extra_parser_groups=hook_parsers,
+        ).parse_args(argv)
+        role = _prepare_invocation(args, config)
+        if (refused := _refuse_vm_command(args, role, config)) is not None:
+            return refused
+        command_groups, coreless = _merge_hook_runtime_groups(
+            COMMAND_GROUPS, CORELESS_COMMANDS, hook_runtime,
+        )
+        core = None
+        if args.cmd not in coreless:
+            try:
+                core = _make_core(args, role)
+            except Exception as exc:  # pragma: no cover - construction is cheap/stable
+                as_json = getattr(args, "json", False)
+                _emit({"error": type(exc).__name__, "detail": str(exc)} if as_json else f"init failed: {exc}", as_json)
+                return 3
+        group = command_groups.get(args.cmd)
+        if group is None:  # pragma: no cover - argparse owns the command vocabulary
+            return 2
+        ctx = CommandContext(role=role, config=config, core=core)
+        run_cmd = lambda: group.run(args, ctx)  # noqa: E731
+    from . import egress as _egress_reset, cli_read_record as _crr
 
-    group = COMMAND_GROUPS.get(args.cmd)
-    if group is None:  # pragma: no cover - argparse owns the command vocabulary
-        return 2
-    ctx = CommandContext(role=role, config=config, core=core)
-    from . import egress as _egress_reset
-
-    # Discard anything an earlier operation in THIS process left on the tally:
-    # a stale count would be attributed to this command. One-shot in the CLI,
-    # load-bearing in the long-lived MCP server.
     _egress_reset.take_tally()
-    from . import cli_read_record as _crr
-
     _crr.begin()
     started = _time.perf_counter()
     try:
-        rc = group.run(args, ctx)
+        rc = run_cmd()
     except BaseException:
-        # A command that raised still read what it read, so the record is still
-        # owed. Its held output is dropped: the caller above renders the error.
         _crr.settle_for(core, role, args, started)
         raise
     withhold, held = _crr.settle_for(core, role, args, started)

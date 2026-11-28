@@ -392,6 +392,17 @@ def sheet_rows(state: dict[str, Any]) -> list[dict[str, Any]]:
 def sheet_block(vault: Any) -> dict[str, Any]:
     """What the morning sheet renders: the open questions, and the lines the
     last answers produced. Absent state renders as nothing to ask."""
+    from . import host_hooks as _host_hooks  # noqa: PLC0415
+
+    vpath = Path(vault)
+    for provider in _host_hooks.providers_with(
+        _host_hooks.load_host_hooks(vault=vpath), "interview_sheet_block",
+    ):
+        got = _host_hooks.call_hook_method(
+            provider, "interview_sheet_block", vpath, default=None,
+        )
+        if isinstance(got, dict):
+            return got
     state = read_state(vault)
     return {"rows": sheet_rows(state),
             "applied": list(state.get("applied") or [])[-APPLIED_SHOWN:],

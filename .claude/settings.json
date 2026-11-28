@@ -48,7 +48,7 @@
       "source": {
         "source": "github",
         "repo": "Autopsias/brainiac",
-        "ref": "v0.20.35"
+        "ref": "v0.20.53"
       },
       "autoUpdate": true
     }

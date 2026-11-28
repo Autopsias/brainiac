@@ -10,8 +10,7 @@ import shlex as shlex
 from pathlib import Path as Path
 from typing import Any
 
-
-
+from .maintain_state_store import parse_count, parse_day
 
 # Date-gated branch names, in cadence order. "daily" is always due; the rest
 # fire on the weekday/day-of-month the persistence budget assigns them so the
@@ -134,38 +133,29 @@ def branch_escalation(
 ) -> dict[str, Any]:
     """Whether ``branch`` (one ``maintain-state.json`` entry) should escalate
     LOUDLY today, and why. Pure, never raises on malformed data (an
-    unparseable date degrades to "can't tell", not a crash).
+    unparseable date degrades to "can't tell", a bad counter reads as 0).
 
     Returns ``{"escalate": bool, "reasons": [str, ...]}``.
     """
     reasons: list[str] = []
 
-    consecutive_failures = int(entry.get("consecutive_failures", 0) or 0)
+    consecutive_failures = parse_count(entry.get("consecutive_failures")) or 0
     if consecutive_failures >= FAILURE_ESCALATE_THRESHOLD:
         reasons.append(f"{consecutive_failures} consecutive failures")
 
-    consecutive_skips = int(entry.get("consecutive_skips", 0) or 0)
-    writer_busy_since = entry.get("writer_busy_since")
-    skip_escalate = consecutive_skips >= SKIP_ESCALATE_THRESHOLD
-    if not skip_escalate and writer_busy_since:
-        try:
-            since = datetime.date.fromisoformat(str(writer_busy_since))
-            if (today - since).days * 24 >= WRITER_BUSY_GRACE_HOURS:
-                skip_escalate = True
-        except ValueError:
-            pass
+    consecutive_skips = parse_count(entry.get("consecutive_skips")) or 0
+    since = parse_day(entry.get("writer_busy_since"))
+    skip_escalate = consecutive_skips >= SKIP_ESCALATE_THRESHOLD or (
+        since is not None and (today - since).days * 24 >= WRITER_BUSY_GRACE_HOURS)
     if skip_escalate:
         reasons.append(f"writer-lock held/skipped {consecutive_skips} consecutive run(s)")
 
-    last_run = entry.get("last_run")
-    if last_run:
-        try:
-            age_days = (today - datetime.date.fromisoformat(str(last_run))).days
-            cadence = _cadence_days(branch)
-            if age_days > cadence * _STALE_CADENCE_MULTIPLIER:
-                reasons.append(f"last_run {age_days}d ago (expected every ~{cadence}d)")
-        except ValueError:
-            pass
+    last_run = parse_day(entry.get("last_run"))
+    if last_run is not None:
+        age_days = (today - last_run).days
+        cadence = _cadence_days(branch)
+        if age_days > cadence * _STALE_CADENCE_MULTIPLIER:
+            reasons.append(f"last_run {age_days}d ago (expected every ~{cadence}d)")
 
     return {"escalate": bool(reasons), "reasons": reasons}
 
@@ -187,7 +177,7 @@ def maintain_escalation(
         if result["escalate"]:
             branches.append({
                 "branch": branch, "reasons": result["reasons"],
-                "consecutive_failures": int(entry.get("consecutive_failures", 0) or 0),
+                "consecutive_failures": parse_count(entry.get("consecutive_failures")) or 0,
             })
     return {"escalate": bool(branches), "branches": branches}
 
@@ -235,11 +225,10 @@ def maintain_branches(
     last_runs = last_runs or {}
     due: list[str] = []
     for branch in _ALL_BRANCHES:
-        raw = last_runs.get(branch)
-        if not raw:
-            due.append(branch)  # never run -> due now
+        last = parse_day(last_runs.get(branch))
+        if last is None:
+            due.append(branch)  # never run, or a marker that is not a date -> due now
             continue
-        last = raw if isinstance(raw, datetime.date) else datetime.date.fromisoformat(raw)
         if last > d:
             # A marker AFTER today is corrupt state (clock skew, or a
             # `--today` date-gate test run against a live vault). Left alone

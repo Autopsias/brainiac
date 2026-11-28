@@ -170,6 +170,38 @@ def _dry_run_preview(
 
 
 def _load_release_guard(drain: stages.DrainRecord, candidates: list[Path]) -> bool:
+    from .. import host_hooks as _host_hooks
+    from . import pipeline_anchor
+
+    all_hooks = _host_hooks.load_host_hooks(vault=drain.vault)
+    hooks = _host_hooks.providers_with(all_hooks, "ingest_released_shas")
+    if hooks:
+        shas: set[str] = set()
+        for provider in hooks:
+            try:
+                got = _host_hooks.call_hook_method(
+                    provider, "ingest_released_shas",
+                    drain.vault, drain.manifest, default=set(),
+                )
+                if got:
+                    shas.update(got)
+            except Exception as exc:  # noqa: BLE001 — fail closed on unreadable release store
+                pipeline_anchor._log_defect_via_hooks(
+                    all_hooks,
+                    drain.vault,
+                    "attachment-release-records-unreadable",
+                    f"{exc} — no file ingested this run",
+                )
+                drain.report["skipped"].extend(
+                    {
+                        "file": path.name,
+                        "reason": f"systemic_error:{type(exc).__name__}: {exc}",
+                    }
+                    for path in candidates
+                )
+                return False
+        drain.released_shas = shas
+        return True
     if not _optional.cos_available():
         return True  # ADR 0013: no COS, no attachment release records to honour.
     from .. import cos as COS
@@ -275,6 +307,24 @@ def _retire_spent_anchor(record: stages.ClaimRecord) -> None:
     and retiring the anchor there refused every later retry of the same
     bytes `approved_anchor_missing` — `released_without_anchor` uses the
     same manifest test for "spent"."""
+    from .. import host_hooks as _host_hooks
+
+    hooks = _host_hooks.providers_with(
+        _host_hooks.load_host_hooks(vault=record.drain.vault), "ingest_retire_anchor",
+    )
+    if hooks:
+        if record.anchor is not None and record.original_sha in record.drain.manifest:
+            for provider in hooks:
+                try:
+                    _host_hooks.call_hook_method(
+                        provider, "ingest_retire_anchor",
+                        record.drain.vault,
+                        record.anchor.get("dest") or record.path,
+                        record.original_sha,
+                    )
+                except Exception:  # noqa: BLE001 — anchor retirement must not abort post-commit
+                    pass
+        return
     if not _optional.cos_available():
         return  # ADR 0013: anchors exist only where COS does.
     if record.anchor is not None and record.original_sha in record.drain.manifest:
@@ -292,6 +342,20 @@ _LEGACY_CLAIM_STORE = "ingest-provenance.json"
 
 def released_without_anchor(vault: Path, manifest: dict[str, str]) -> set[str]:
     """Return released attachment hashes that no longer have a live anchor."""
+    from .. import host_hooks as _host_hooks
+
+    hooks = _host_hooks.providers_with(
+        _host_hooks.load_host_hooks(vault=vault), "ingest_released_shas",
+    )
+    if hooks:
+        shas: set[str] = set()
+        for provider in hooks:
+            got = _host_hooks.call_hook_method(
+                provider, "ingest_released_shas", vault, manifest, default=set(),
+            )
+            if got:
+                shas.update(got)
+        return shas
     if not _optional.cos_available():
         return set()
     from .. import config

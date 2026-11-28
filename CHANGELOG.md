@@ -7,6 +7,10 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 
 ## [Unreleased]
 
+## [0.21.0] — 2026-11-27
+### Added
+- **Public host-extension APIs and allowlisted `brainiac.host_hooks` seam (`0.21.0`).** Exposed `brain.lock.{open_lock_fd,try_lock,unlock,advisory_file_lock}`, `brain.atomic_temp.write_bytes_durable`, `brain.config.app_data_base`, `BrainCore.{read_inbox,write_inbox,require_host,append_hot_entry}`, generic non-core overlay validation, and the host-only allowlisted `brain.host_hooks` (`HostHookProvider` + `load_host_hooks`) extension seam.
+
 ## [0.20.58] — 2026-11-23
 ### Fixed
 - **A write to the session's own scratchpad no longer starts the engine.** The egress guard checked an Edit or Write to Claude Code's private temp folder (`/tmp/claude-<uid>/…`) for restricted terms, which cost one engine start (about 0.5 s) per write. A file there cannot leave the machine, so the guard now allows it at once. It skips the check only for a folder the current user owns: `/tmp` is shared, and a folder another user made is still checked. A symlink or a `..` path out of the scratchpad, a sibling folder and plain `/tmp` are still checked.
@@ -32,6 +36,33 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
 - **Text views tag our own earlier proposals, and the agent rule says what the mark means.** `search`, `grep`, `bases-query` and `dossier` print `[own output]` on a row that already carries `own_output: true`; nothing else in the text changes. `AGENTS.md` section 5 (and its two copies) and the MCP tool descriptions now say: never cite an `own_output` row as evidence for a claim, because the mark shows who produced a note and never raises trust. No version bump: ADR-0004 ranks "docs, prompt/skill wording that changes no contract" as PATCH, and this release is not cut here.
 
 ### Security
+- **A dropped `.supersedes` sidecar or `replaces:` no longer retires a note by
+  itself (F12/F14).** The drop folder is on the mount the VM can write, so either
+  file could retire any vault note with no owner step. The declaration is now
+  staged as a default-reject owner question and applies only after the owner
+  accepts it, and a standing accept-all never answers a batch that holds one.
+  The drop lane may only name a note a Cowork VM may read (`Internal` at most,
+  lower if the signed VM ceiling is lower); any other id is refused like an
+  unknown one and counted under `supersede_declared_failed`. That includes a
+  drop-lane deliverable admitted at the default `MNPI`: retire it with
+  `brain supersede` on the host. The version-link proposals, ledger and run log
+  moved off the mount to a host-private `cos-version-links/<vault slug8>/`
+  folder, with no carry-forward: old files are left in place, ignored, and
+  counted as `legacy_mount_store_ignored` in the version-link fold report. Also
+  fixed: an accepted broker-declared pair always failed its hash check (empty
+  hashes).
+- **The commitment spine's event store lives off the Cowork mount.** It sat at
+  `<vault>/.brain/cos/host/commitments.sqlite`, inside the workspace the VM writes,
+  so a `created` or `cancelled` event the VM planted there was reduced and
+  re-rendered into the radar and `shared/spine-summary.md` as the host's own record.
+  It now lives under the host-private base (`cos-spine/<vault_slug8>/commitments.sqlite`,
+  with the same app-data fallback as the graduation store). **What changes for you:**
+  the spine starts empty after the upgrade. The old file is never read, imported or
+  deleted, because importing it would take in whatever a VM could have planted;
+  re-enter any commitment you still trust with `brain cos-spine record`.
+  **Not covered:** events are not signed, so a process running with your own
+  permissions on the host can still write the store (the A-14 posture), and
+  `host/corrections.sqlite` stays on the mount.
 - **Older signed copies of the alerts feed and `exceptions.json` are refused on
   the host; an untrusted note still guards its title.** Both files sit on the
   mount the VM can write, and the signature covers only the file's own fields, so
@@ -71,6 +102,20 @@ Ruling 3, superseding the earlier opaque `v1, v2, ...` counter).
   snapshot" until it is updated. **Not covered:** the VM's own `--role vm` read of
   the snapshot (it holds only a key on the same writable mount; see A-13), and
   replay of an older snapshot the host did sign.
+- **A note that only cites another note no longer lets a broker session retire
+  it (F32).** The broker's `supersede` applied a pair when any trusted note had
+  `[[old-id]]` anywhere in its body, so a prompt-injected session could retire
+  every note a trusted note cites. A body link no longer relates a pair; a
+  trusted successor declaring `replaces:` (or `previous_version`), or a shared
+  document name, still does. **What changes for you:** a pair related only by a
+  prose link is now staged as the usual default-reject owner question
+  (`{applied: false, proposed: true}`) instead of applied; to apply one at once,
+  add `replaces: <old-id>` to the new note's frontmatter or run `brain supersede`
+  on the host. The same check re-runs when you accept an engine-deduced version
+  proposal, so one that only a body link supported now declines with "the vault
+  no longer relates these notes". **Not covered:** a note dropped into
+  `inbox/_deliverables/` is not stamped untrusted, so its `replaces:` still
+  relates a pair.
 
 ### Changed
 - **`supersede` answers `already_done: true` on an identical repeat.** When an agent repeats a supersede that already went through (for example after a timed-out call), the engine returns success with `already_done: true` and writes nothing; a repeat naming a different newer note is still refused. With reindex on, it re-syncs the index, so a crash between the journal clear and the sync heals. The broker `supersede` passes the key through. No version bump.

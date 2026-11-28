@@ -103,8 +103,8 @@ conventions instead of an Obsidian/Cowork vault layout.
 
 > **Canonical layer note.** Some deployments keep a shared references
 > directory acting as the single source of truth across multiple repos
-> (this repo's own `docs/` plays that role for `AGENTS.md`/CLAUDE.md
-> content via the `@AGENTS-core.md` import — see the top of `CLAUDE.md`). In a
+> (this repo's own `docs/` plays that role for `AGENTS.md`/`CLAUDE.md`
+> content via the `@AGENTS.md` import — see the top of `CLAUDE.md`). In a
 > canonical-aware project, propose edits to the canonical file, not a
 > downstream copy that imports it.
 
@@ -143,7 +143,7 @@ A short catalog, grouped by purpose with line counts and
 last-modified dates:
 
 - **`AGENTS.md`** — the canonical conventions file (every harness reads
-  this; `CLAUDE.md` imports its smaller core, `AGENTS-core.md`).
+  this; `CLAUDE.md` imports `@AGENTS.md` directly).
 - **`.claude/skills/*/SKILL.md`** and any `commands/*.md` in the same dirs.
 - **`docs/`** — specs (`docs/substrate-spec.md`, `docs/classification-
   scheme.md`, `docs/operations/` if this is a cutover-in-progress repo).

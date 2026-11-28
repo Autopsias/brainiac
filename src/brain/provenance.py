@@ -29,6 +29,8 @@ sender or subject must not reach any downstream artifact.
 """
 from __future__ import annotations
 
+import base64
+from bisect import bisect_left
 import json
 import re
 from typing import Any, Iterable, Mapping
@@ -101,21 +103,137 @@ MAX_VALUE_CHARS = 512
 # -- secret scrub (trust boundary: VM drops + email text are attacker-influenced;
 # a proposal must never smuggle credentials into the signed vault, a report, or
 # a ledger) -------------------------------------------------------------------
+REDACTED = "[redacted:secret]"
+
+_PEM_BEGIN = re.compile(r"-----BEGIN ([A-Z0-9 ]*PRIVATE KEY)-----")
+_PEM_END = re.compile(r"-----END ([A-Z0-9 ]*PRIVATE KEY)-----")
+# Maximal dotted runs in one linear pass (no \b inside hyphenated text).
+_DOTTED_RUN = re.compile(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*")
+
 SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("private-key-block", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
-    ("aws-access-key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+    # F68: full PEM private-key blocks are redacted in O(n) by _scrub_pem_blocks;
+    # this pattern detects any BEGIN marker (and acts as header-only fallback).
+    ("private-key-block", _PEM_BEGIN),
+    ("aws-access-key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
+    # A Google key is AIza + 35 of [0-9A-Za-z_-]; the lookahead (not \b) so a
+    # key ending in "-" or "_" is not missed.
+    ("google-api-key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])")),
     ("slack-token", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b")),
-    ("bearer-ish-key", re.compile(r"\b(?:sk|ghp|gho|glpat)[-_][A-Za-z0-9_-]{20,}\b")),
+    ("bearer-ish-key", re.compile(
+        r"\b(?:sk|ghp|gho|ghu|ghs|ghr|glpat|github_pat)[-_][A-Za-z0-9_-]{20,}\b")),
+    # F68: Authorization Bearer/Basic on a single line (horizontal whitespace only,
+    # never crossing \n into a following kv-secret line; catches short Basic creds).
+    ("authorization-header", re.compile(
+        r"(?im)^[ \t]*Authorization[ \t]*:[ \t]*(?:Bearer|Basic)[ \t]+\S+")),
+    # Only the user:password part, so scrub() leaves scheme://[redacted:secret]@host.
+    # The lookahead keeps that placeholder from matching itself (scrub must be
+    # clean under its own detector); "?" and "#" are barred from userinfo by
+    # RFC 3986, so they end the match (host:443?mail=a@b is not a credential).
+    # An empty user catches redis://:password@host.
+    ("url-credentials", re.compile(
+        r"(?<=://)(?!" + re.escape(REDACTED) + r"@)[^\s:/@?#]{0,64}:[^\s/@?#]{1,128}(?=@)")),
     ("kv-secret", re.compile(
         r"(?im)^\s*(?:api[_-]?key|secret|password|access[_-]?token)\s*[:=]\s*\S{8,}")),
 )
 
-REDACTED = "[redacted:secret]"
+
+def _is_b64url_json_object(segment: str) -> bool:
+    if len(segment) < 3 or len(segment) % 4 == 1 or len(segment) > 65536:
+        return False
+    try:
+        raw = base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
+        if not raw.lstrip(b" \t\r\n").startswith(b"{"):
+            return False
+        return isinstance(json.loads(raw.decode("utf-8")), dict)
+    except (ValueError, TypeError, RecursionError):
+        return False
+
+
+def _is_jwt_triple(hdr: str, claims: str, sig: str) -> bool:
+    return (len(sig) >= 4
+            and _is_b64url_json_object(hdr)
+            and _is_b64url_json_object(claims))
+
+
+def _scrub_run_jwts(run: str) -> str | None:
+    if run.count(".") < 2:
+        return None
+    parts = run.split(".")
+    kept: list[str] = []
+    i = 0
+    changed = False
+    while i + 2 < len(parts):
+        if _is_jwt_triple(parts[i], parts[i + 1], parts[i + 2]):
+            kept.append(REDACTED)
+            i += 3
+            changed = True
+        else:
+            kept.append(parts[i])
+            i += 1
+    if not changed:
+        return None
+    kept.extend(parts[i:])
+    return ".".join(kept)
+
+
+def _scrub_jwts(text: str) -> str:
+    if "." not in text:
+        return text
+    return _DOTTED_RUN.sub(
+        lambda m: r if (r := _scrub_run_jwts(m.group(0))) is not None else m.group(0),
+        text)
+
+
+def _has_jwt(text: str) -> bool:
+    if "." not in text:
+        return False
+    for m in _DOTTED_RUN.finditer(text):
+        if (run := m.group(0)).count(".") < 2:
+            continue
+        parts = run.split(".")
+        if any(_is_jwt_triple(parts[i], parts[i + 1], parts[i + 2])
+               for i in range(len(parts) - 2)):
+            return True
+    return False
+
+
+def _collect_pem_ends(text: str) -> dict[str, list[int]]:
+    if "-----END " not in text:
+        return {}
+    ends: dict[str, list[int]] = {}
+    for em in _PEM_END.finditer(text):
+        ends.setdefault(em.group(1), []).append(em.start())
+    return ends
+
+
+def _scrub_pem_blocks(text: str) -> str:
+    """Redact full PEM private-key blocks (any size or indentation) in O(n),
+    falling back to header-only when no matching END marker follows."""
+    if "PRIVATE KEY-----" not in text:
+        return text
+    ends = _collect_pem_ends(text)
+    out: list[str] = []
+    pos = 0
+    while (m := _PEM_BEGIN.search(text, pos)):
+        out.append(text[pos:m.start()])
+        out.append(REDACTED)
+        label = m.group(1)
+        end_positions = ends.get(label, [])
+        idx = bisect_left(end_positions, m.end())
+        if idx < len(end_positions):
+            pos = end_positions[idx] + len("-----END ") + len(label) + len("-----")
+        else:
+            pos = m.end()
+    out.append(text[pos:])
+    return "".join(out)
 
 
 def secret_findings(text: str) -> list[str]:
     """Names of secret patterns present in ``text`` (empty = clean)."""
-    return [name for name, pat in SECRET_PATTERNS if pat.search(text)]
+    found = [name for name, pat in SECRET_PATTERNS if pat.search(text)]
+    if _has_jwt(text):
+        found.append("jwt")
+    return found
 
 
 def scrub(value: Any) -> Any:
@@ -127,10 +245,10 @@ def scrub(value: Any) -> Any:
     place; mappings/sequences are walked; anything else is returned unchanged.
     """
     if isinstance(value, str):
-        out = value
+        out = _scrub_pem_blocks(value)
         for _name, pat in SECRET_PATTERNS:
             out = pat.sub(REDACTED, out)
-        return out
+        return _scrub_jwts(out)
     if isinstance(value, Mapping):
         return {k: scrub(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):

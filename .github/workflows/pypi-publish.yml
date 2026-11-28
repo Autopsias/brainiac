@@ -114,9 +114,84 @@ jobs:
           path: dist/
           retention-days: 7
 
+  verify:
+    name: Verify built wheel
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Download dist
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+
+      - name: Verify built wheel in clean venv
+        # Cleanroom-safe smoke verification of the built wheel in an isolated
+        # read-only job (never touching build's dist/ before upload, and never
+        # touching private tests/ excluded from Autopsias/brainiac). Exercises
+        # the shipped CLI end to end on a disposable fixture vault using the
+        # offline hash embedder.
+        run: |
+          set -euo pipefail
+          smoke=$(mktemp -d)
+          trap 'rm -rf "$smoke"' EXIT
+          python -m venv "$smoke/venv"
+          "$smoke/venv/bin/python" -m pip install --no-cache-dir dist/*.whl
+          export BRAIN_VAULT="$smoke/vault"
+          export BRAIN_INDEX_DIR="$smoke/idx"
+          export BRAIN_APP_DATA_DIR="$smoke/app"
+          export BRAINIAC_HOME="$smoke/home"
+          export BRAIN_EMBEDDER=hash
+          export BRAIN_LAUNCHD_DRY_RUN=1
+          export BRAIN_LAUNCH_AGENTS_DIR="$smoke/launchagents"
+          export BRAIN_LOG_DIR="$smoke/logs"
+          "$smoke/venv/bin/brain" --help >/dev/null
+          "$smoke/venv/bin/brain" --vault "$BRAIN_VAULT" init --full --json >/dev/null
+          mkdir -p "$BRAIN_VAULT/brain/resources"
+          cat <<'EOF' > "$BRAIN_VAULT/brain/resources/smoke-decision.md"
+          ---
+          id: smoke-decision
+          title: "Wheel smoke architecture decision"
+          type: decision
+          classification: Internal
+          created: 2026-06-27
+          updated: 2026-06-27
+          ---
+
+          We decided to use the wheel smoke architecture decision fixture to verify end-to-end indexing, search, and dossier retrieval.
+          EOF
+          rebuild_out=$("$smoke/venv/bin/brain" --vault "$BRAIN_VAULT" rebuild --json)
+          "$smoke/venv/bin/python" -c 'import json, sys; d = json.loads(sys.argv[1]); assert d["indexed"] >= 1 and d["chunks"] >= 1, d' "$rebuild_out"
+          search_out=$("$smoke/venv/bin/brain" --vault "$BRAIN_VAULT" search "wheel smoke architecture decision" --json)
+          "$smoke/venv/bin/python" -c 'import json, sys; d = json.loads(sys.argv[1]); ids = [r["id"] for r in d["results"]]; assert "smoke-decision" in ids, d' "$search_out"
+          dossier_out=$("$smoke/venv/bin/brain" --vault "$BRAIN_VAULT" dossier "wheel smoke architecture decision" --json)
+          "$smoke/venv/bin/python" -c 'import json, sys; d = json.loads(sys.argv[1]); dec_ids = [r["id"] for r in d["decisions"]]; assert "smoke-decision" in dec_ids, d' "$dossier_out"
+          mkdir -p "$BRAIN_VAULT/overlay/keywords"
+          cat <<'EOF' > "$BRAIN_VAULT/overlay/keywords/smoke.md"
+          | Term | Expansion | Classification |
+          | --- | --- | --- |
+          | SmokeSecretTerm | Clean-room wheel smoke fixture | Confidential |
+          EOF
+          allow_out=$("$smoke/venv/bin/brain" --vault "$BRAIN_VAULT" check-egress "benign smoke query" --json)
+          "$smoke/venv/bin/python" -c 'import json, sys; d = json.loads(sys.argv[1]); assert d["allowed"] is True and d["mapped_terms"] >= 1, d' "$allow_out"
+          set +e
+          block_out=$("$smoke/venv/bin/brain" --vault "$BRAIN_VAULT" check-egress "leaking SmokeSecretTerm" --json)
+          block_rc=$?
+          set -e
+          test "$block_rc" -eq 6 || { echo "::error::expected check-egress exit 6 for Confidential term, got $block_rc"; exit 1; }
+          "$smoke/venv/bin/python" -c 'import json, sys; d = json.loads(sys.argv[1]); assert d["allowed"] is False and d["mapped_terms"] >= 1, d' "$block_out"
+
   publish:
     name: Publish to ${{ inputs.target || 'pypi' }}
-    needs: build
+    needs: [build, verify]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # The environment is what the trusted publisher was registered against, and

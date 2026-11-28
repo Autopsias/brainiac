@@ -1,16 +1,28 @@
 """Implement ingest filesystem transitions."""
 from __future__ import annotations
 
+import contextlib
 import datetime as _dt
+import errno
 import hashlib
 import json
 import os
 import re
 import shutil
+import stat
 import tempfile
+from collections.abc import Generator
 from pathlib import Path
 from typing import Any
 from ..atomic_temp import write_text_atomic
+from ..notes import _SLUG_RE
+
+
+#: Longest id a reader may splice into ``raw/<id>.md``: a 255-byte path component
+#: minus ``.md``. Deliberately above ``notes.MAX_SLUG_BYTES`` (180): ids minted
+#: before that cap, and ``<slug>-<ext>`` renditions, are legitimate and longer.
+#: The charset is ASCII, so characters equal bytes.
+MANIFEST_ID_MAX = 252
 
 
 def manifest_path(vault: Path) -> Path:
@@ -21,13 +33,22 @@ def manifest_path(vault: Path) -> Path:
 
 
 def load_manifest(vault: Path) -> dict[str, str]:
+    """sha256 -> raw note id. The file sits on the VM-visible mount, so every id
+    is untrusted: each reader turns it into ``raw/<id>.md``. Only a bare slug
+    (the charset ``safe_slug`` allows: no separator, no leading dot) of at most
+    ``MANIFEST_ID_MAX`` characters survives; any other entry reads as absent, so
+    its bytes are ingested normally and the next ``save_manifest`` drops it."""
     path = manifest_path(vault)
     if not path.exists():
         return {}
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
+    if not isinstance(data, dict):
+        return {}
+    return {sha: nid for sha, nid in data.items() if isinstance(nid, str)
+            and len(nid) <= MANIFEST_ID_MAX and _SLUG_RE.fullmatch(nid)}
 
 
 def save_manifest(vault: Path, manifest: dict[str, str]) -> None:
@@ -71,7 +92,7 @@ class ReadTooLarge(ReadRefused):
     """The entry is bigger than the caller's cap; the read stopped at it."""
 
 
-def read_nofollow(path: Path, *, max_bytes: int | None = None) -> bytes:
+def read_nofollow(path: Path, *, max_bytes: int | None = None, dir_fd: int | None = None) -> bytes:
     """Read a regular file WITHOUT following a symlink at the final component.
 
     A core copy of ``cos._read_nofollow`` (ADR 0013: ingest runs without COS),
@@ -80,10 +101,11 @@ def read_nofollow(path: Path, *, max_bytes: int | None = None) -> bytes:
     syscall; Windows has no such flag, so ``is_symlink`` carries it there. The
     cap is enforced on the OPEN DESCRIPTOR, never on a ``stat()`` of the name,
     so every decision is made about the one object actually read (INT-04).
+    With ``dir_fd``, ``path`` is a name inside that pinned directory.
     """
     import stat as _stat
 
-    if path.is_symlink():
+    if dir_fd is None and path.is_symlink():
         raise ReadRefused(f"{path.name} is a symlink — refused")
     # O_NONBLOCK: a FIFO planted at the name would otherwise block the open
     # until a writer arrives, before the S_ISREG check below can refuse it
@@ -91,7 +113,7 @@ def read_nofollow(path: Path, *, max_bytes: int | None = None) -> bytes:
     flags = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
              | getattr(os, "O_NONBLOCK", 0))
     try:
-        fd = os.open(path, flags)
+        fd = os.open(path, flags, dir_fd=dir_fd)
     except OSError as exc:
         raise ReadRefused(f"{path.name} unreadable: {type(exc).__name__}") from None
     try:
@@ -112,8 +134,15 @@ def read_nofollow(path: Path, *, max_bytes: int | None = None) -> bytes:
 
 
 def content_key(path: Path) -> str:
-    """Return the stable content key for retry accounting across renames."""
-    return sha256_bytes(path.read_bytes())
+    """Return the stable content key for retry accounting across renames.
+
+    Read through ``read_nofollow`` on a descriptor: ``path`` is a name in a
+    mount-writable directory, so a link or FIFO there must never be opened.
+    Raises ``ReadRefused`` for one (and for a file over the ingest cap).
+    """
+    from . import pipeline as facade
+
+    return sha256_bytes(read_nofollow(path, max_bytes=facade.MAX_INGEST_BYTES))
 
 
 _SLUG_SANITIZE = re.compile(r"[^A-Za-z0-9]+")
@@ -153,6 +182,8 @@ def refuse_symlinked_dirs(directory: Path, levels: int = 3) -> None:
     ``rename`` follow a planted directory link, so the host would create or
     move files outside the vault. ``lstat`` each component instead (SEC F5/F32).
     A missing component is fine: ``mkdir`` creates it as a real directory.
+    This is a check, not a guard: a link can still be swapped in before the
+    use. Where ``dir_fd`` exists, act through ``pinned_parent`` instead.
     """
     current = directory
     for _ in range(levels):
@@ -163,51 +194,142 @@ def refuse_symlinked_dirs(directory: Path, levels: int = 3) -> None:
         current = current.parent
 
 
-def write_new_nofollow(path: Path, data: bytes) -> None:
-    """Create ``path`` with ``O_EXCL|O_NOFOLLOW`` and write ``data``; never replace."""
-    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(path, flags, 0o644)
+# Search-only (O_SEARCH, macOS; O_PATH, Linux), as the by-path calls needed. Elsewhere
+# O_RDONLY also needs the read bit, so a write+search-only directory is refused there.
+_DIR_FLAGS = (getattr(os, "O_SEARCH", None) or getattr(os, "O_PATH", os.O_RDONLY)) | getattr(
+    os, "O_DIRECTORY", 0)
+_HAS_DIR_FD = os.open in os.supports_dir_fd
+
+
+def _open_dir_nofollow(parent_fd: int, name: str, create: bool = True) -> int:
+    """Open the real directory ``name`` inside ``parent_fd``, creating it if ``create``."""
+    flags = _DIR_FLAGS | getattr(os, "O_NOFOLLOW", 0)
     try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(data)
-    except Exception:
-        path.unlink(missing_ok=True)
+        try:
+            return os.open(name, flags, dir_fd=parent_fd)
+        except FileNotFoundError:
+            if not create:
+                raise
+            with contextlib.suppress(FileExistsError):
+                os.mkdir(name, dir_fd=parent_fd)
+            return os.open(name, flags, dir_fd=parent_fd)
+    except OSError as exc:
+        # A symlink fails ELOOP or ENOTDIR, by platform and open flags.
+        if exc.errno in (errno.ELOOP, errno.ENOTDIR) and stat.S_ISLNK(
+            os.stat(name, dir_fd=parent_fd, follow_symlinks=False).st_mode
+        ):
+            raise UnsafeVaultDir(f"{name} is a symlink — refused") from None
         raise
 
 
-def write_sidecar(path: Path, text: str) -> None:
+@contextlib.contextmanager
+def pinned_parent(path: Path, levels: int, create: bool = True) -> Generator[tuple[Path, int | None]]:
+    """Yield ``(name, dir_fd)`` for acting on ``path`` inside its parent directory.
+
+    The last ``levels`` components of the parent are each opened ``O_NOFOLLOW``
+    relative to the one above, so refusing a symlink and using the directory are
+    ONE operation on one inode: a link swapped in afterwards cannot redirect an
+    ``openat``/``renameat`` made through ``dir_fd`` (F45). A symlink there raises
+    ``UnsafeVaultDir``; a missing component is created as a real directory when
+    ``create``, else it is an error; components above them are followed, as before.
+    Pass ``name`` with ``dir_fd`` to ``os.open``/``os.rename``. Where ``dir_fd`` is
+    unsupported (Windows), or ``levels`` is 0, it is the old check-then-use.
+    """
+    if levels < 1 or not _HAS_DIR_FD:
+        refuse_symlinked_dirs(path.parent, levels)
+        if create:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        yield path, None
+        return
+    parts = path.parent.parts
+    depth = min(levels, len(parts) - bool(path.parent.anchor))
+    base = Path(*parts[: len(parts) - depth])
+    if create:
+        base.mkdir(parents=True, exist_ok=True)
+    dir_fd = os.open(base, _DIR_FLAGS)
+    for n, name in enumerate(parts[len(parts) - depth:], 1):
+        try:
+            child = _open_dir_nofollow(dir_fd, name, create)
+        except NotADirectoryError:
+            if create and n == depth:  # what mkdir(exist_ok=True) said of a plain file
+                raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), name) from None
+            raise
+        finally:
+            os.close(dir_fd)
+        dir_fd = child
+    try:
+        yield Path(path.name), dir_fd
+    finally:
+        os.close(dir_fd)
+
+
+def _write_new(path: Path, data: bytes, levels: int, create: bool) -> None:
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+    with pinned_parent(path, levels, create) as (name, dir_fd):
+        fd = os.open(name, flags, 0o644, dir_fd=dir_fd)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data)
+        except Exception:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(name, dir_fd=dir_fd)
+            raise
+
+
+def write_new_nofollow(path: Path, data: bytes, levels: int) -> None:
+    """Create ``path`` with ``O_EXCL|O_NOFOLLOW``, ``levels`` of its directory pinned; never replace."""
+    _write_new(path, data, levels, True)
+
+
+def write_sidecar(path: Path, text: str, levels: int) -> None:
     """Write an advisory ``.reason.txt``; a pre-planted name is left untouched."""
     try:
-        write_new_nofollow(path, text.encode("utf-8"))
+        _write_new(path, text.encode("utf-8"), levels, False)  # its directory must exist
     except FileExistsError:
         pass
 
 
-def move_path(src: Path, dest: Path) -> None:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        os.rename(src, dest)
-    except OSError:
-        shutil.move(str(src), str(dest))
+def move_path(src: Path, dest: Path, levels: int = 0) -> None:
+    """Move ``src`` to ``dest``; ``levels`` of ``dest``'s directory are pinned.
+
+    ``levels=0`` is the unchecked move. Pinned, a failed rename (``EXDEV`` too)
+    is finished as ``shutil.move`` finished it, but through the pinned directory
+    (``pipeline_move_rescue``): into a destination directory, else a link is
+    recreated or a file is copied and unlinked. A directory ``src`` is not
+    copied (that would leave the pin): the rename error is raised.
+    """
+    with pinned_parent(dest, levels) as (name, dir_fd):
+        try:
+            os.rename(src, name, dst_dir_fd=dir_fd)
+        except OSError as exc:
+            if dir_fd is None:
+                shutil.move(str(src), str(dest))
+            else:
+                from .pipeline_move_rescue import finish_failed_rename
+
+                finish_failed_rename(src, name, dir_fd, exc)
 
 
 def claim_path(path: Path, processing_dir: Path) -> Path | None:
     """Atomically claim a drop, returning ``None`` when another worker won."""
-    refuse_symlinked_dirs(processing_dir, 2)
-    processing_dir.mkdir(parents=True, exist_ok=True)
     dest = processing_dir / path.name
     i = 0
-    while dest.exists():
-        i += 1
-        dest = processing_dir / f"{path.stem}.{i}{path.suffix}"
     try:
-        os.rename(path, dest)
-    except OSError:
-        return None
-    try:
-        os.utime(dest, None)
-    except OSError:
-        pass
+        while dest.exists():
+            i += 1
+            dest = processing_dir / f"{path.stem}.{i}{path.suffix}"
+        with pinned_parent(dest, 2) as (name, dir_fd):
+            try:
+                os.rename(path, name, dst_dir_fd=dir_fd)
+            except OSError:
+                return None
+            with contextlib.suppress(OSError):
+                os.utime(name, None, dir_fd=dir_fd)
+    except PermissionError:
+        # An unsearchable processing dir only failed the exists/rename; an ancestor raised.
+        if processing_dir.is_dir():
+            return None
+        raise
     return dest
 
 
@@ -230,24 +352,36 @@ def sweep_stale_processing(
     failures: dict[str, int],
 ) -> None:
     """Return abandoned claims to the inbox or quarantine repeated crashes."""
+    import stat as _stat
+
     from . import pipeline as facade
 
     if not processing_dir.is_dir():
         return
+    # A planted link for ``_processing`` (or the inbox) would point this sweep's
+    # read and rename at host files outside the vault. Do nothing and do not
+    # raise: the drain's own symlink scan quarantines the link, so ingest goes on.
+    if processing_dir.is_symlink() or processing_dir.parent.is_symlink():
+        return
     now = _dt.datetime.now().timestamp()
     touched = False
     for stuck in list(processing_dir.iterdir()):
-        if not stuck.is_file():
-            continue
         try:
-            age = now - stuck.stat().st_mtime
+            st = stuck.lstat()  # the entry itself, never a link's target
         except OSError:
             continue
-        if age < facade.STALE_PROCESSING_SECONDS:
+        if now - st.st_mtime < facade.STALE_PROCESSING_SECONDS:
+            continue
+        if _stat.S_ISLNK(st.st_mode):
+            # Never a legitimate claim (the inbox scan skips links). Hand the link
+            # itself back so the normal scan quarantines it; no hash, no count.
+            move_path(stuck, unique_destination(inbox, stuck.name))
+            continue
+        if not _stat.S_ISREG(st.st_mode):
             continue
         try:
             key = content_key(stuck)
-        except OSError:
+        except (OSError, ReadRefused):
             key = stuck.name
         count = failures.get(key, 0) + 1
         failures[key] = count
@@ -276,27 +410,26 @@ def create_exclusive_or_collision(
     known_sha: str | None = None,
 ) -> str:
     """Create ``dest`` without replacement, reporting idempotency or collision."""
-    refuse_symlinked_dirs(dest.parent, 3)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        fd = os.open(
-            dest, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
-        )
-    except FileExistsError:
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+    with pinned_parent(dest, 3) as (name, dir_fd):
         try:
-            existing = read_nofollow(dest)
-        except ReadRefused:
-            return "collision"
-        if existing == data:
-            return "idempotent"
-        data_sha = known_sha if known_sha is not None else sha256_bytes(data)
-        return "idempotent" if sha256_bytes(existing) == data_sha else "collision"
-    try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(data)
-    except Exception:
-        dest.unlink(missing_ok=True)
-        raise
+            fd = os.open(name, flags, dir_fd=dir_fd)
+        except FileExistsError:
+            try:
+                existing = read_nofollow(name, dir_fd=dir_fd)
+            except ReadRefused:
+                return "collision"
+            if existing == data:
+                return "idempotent"
+            data_sha = known_sha if known_sha is not None else sha256_bytes(data)
+            return "idempotent" if sha256_bytes(existing) == data_sha else "collision"
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data)
+        except Exception:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(name, dir_fd=dir_fd)
+            raise
     return "written"
 
 
@@ -361,15 +494,15 @@ def set_aside_operational(claimed: Path, inbox: Path, declared: str) -> None:
     from . import pipeline as facade
 
     dest_dir = inbox / facade.OPERATIONAL_DIRNAME / declared
-    refuse_symlinked_dirs(dest_dir, 3)
     dest = unique_destination(dest_dir, claimed.name)
-    move_path(claimed, dest)
+    move_path(claimed, dest, 3)
     write_sidecar(
         dest_dir / f"{dest.name}.reason.txt",
         f"skipped_reason: operational_artifact:{declared}\n"
         "- this document declares its own operational type; it is the vault's\n"
         "  output, not knowledge about the business\n"
         "- set BRAIN_INGEST_ALLOW_OPERATIONAL=1 and re-drop it to override\n",
+        3,
     )
 
 
@@ -381,8 +514,7 @@ def quarantine_claim(
 ) -> None:
     """Move a failed claim into a collision-safe quarantine sink."""
     dest_dir = quarantine_dir / reason
-    refuse_symlinked_dirs(dest_dir, 3)
     dest = unique_destination(dest_dir, claimed.name)
-    move_path(claimed, dest)
+    move_path(claimed, dest, 3)
     report_lines = [f"quarantine_reason: {reason}"] + [f"- {w}" for w in warnings]
-    write_sidecar(dest_dir / f"{dest.name}.reason.txt", "\n".join(report_lines) + "\n")
+    write_sidecar(dest_dir / f"{dest.name}.reason.txt", "\n".join(report_lines) + "\n", 3)

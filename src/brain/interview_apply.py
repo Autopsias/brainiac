@@ -22,6 +22,7 @@ from typing import Any
 from . import _optional
 from . import interview as _iv
 from .frontmatter import yaml_scalar as _yaml_scalar
+from .interview_detect import indexed_source as _indexed_source
 from .interview_detect import note_path as _note_path
 
 _DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
@@ -35,6 +36,22 @@ def pending_answers(vault: Any, state: dict[str, Any]) -> list[dict[str, Any]]:
     """The answers on consumed sheets whose question is still open. The
     newest consumed row wins when a key was answered twice. The sheets are
     COS's; without it there are none to read (ADR 0013)."""
+    from . import host_hooks as _host_hooks  # noqa: PLC0415
+
+    hooks = _host_hooks.providers_with(
+        _host_hooks.load_host_hooks(vault=Path(vault)), "interview_pending_answers",
+    )
+    if hooks:
+        out: list[dict[str, Any]] = []
+        for provider in hooks:
+            got = _host_hooks.call_hook_method(
+                provider, "interview_pending_answers", Path(vault), state, default=[],
+            )
+            if isinstance(got, list):
+                out.extend(got)
+            elif isinstance(got, dict) and isinstance(got.get("answers"), list):
+                out.extend(got["answers"])
+        return out
     if not _optional.cos_available():
         return []
     from .cos.sheet_select import read_consumed  # noqa: PLC0415
@@ -167,7 +184,63 @@ def _apply_decision(core, row, action, note, today, reason):
     return None
 
 
+def _apply_confirmed(res: Any) -> bool:
+    """True only when a hook explicitly confirmed that the commitment changed."""
+    if res is True:
+        return True
+    if isinstance(res, str):
+        return bool(res.strip())
+    if isinstance(res, dict):
+        if any(res.get(flag) is False for flag in ("updated", "applied", "ok")):
+            return False
+        return any(res.get(flag) is True for flag in ("updated", "applied", "ok"))
+    return False
+
+
+def _apply_late_via_hooks(core, row, action, note, today, reason, hooks):
+    from . import host_hooks as _host_hooks  # noqa: PLC0415
+
+    outcomes = {
+        "done": "commitment completed",
+        "dropped": "commitment cancelled",
+    }
+    if action not in outcomes and action != "reschedule":
+        return None
+    cid = row["target"]["id"]
+    payload: dict[str, Any] = {
+        "commitment_id": cid, "note": note, "reason": reason,
+        "today": today.isoformat(),
+    }
+    if action == "reschedule":
+        m = _DATE_RE.search(note)
+        if not m:
+            raise ValueError("no YYYY-MM-DD date in the note; left open")
+        payload["due"] = m.group(1)
+    for provider in hooks:
+        res = _host_hooks.call_hook_method(
+            provider, "interview_on_apply", core, action, payload, default=None,
+        )
+        if _apply_confirmed(res):
+            if isinstance(res, str) and res.strip():
+                return res.strip()
+            if isinstance(res, dict) and isinstance(res.get("line"), str) and res["line"].strip():
+                return res["line"].strip()
+            return (
+                f"commitment moved to {payload['due']}"
+                if action == "reschedule"
+                else outcomes[action]
+            )
+    raise ValueError("no host hook confirmed the commitment update; left open")
+
+
 def _apply_late(core, row, action, note, today, reason):
+    from . import host_hooks as _host_hooks  # noqa: PLC0415
+
+    hooks = _host_hooks.providers_with(
+        _host_hooks.load_core_hooks(core), "interview_on_apply",
+    )
+    if hooks:
+        return _apply_late_via_hooks(core, row, action, note, today, reason, hooks)
     # ADR 0013: the commitment spine is COS's. Without it the row stays open
     # (a raise), rather than closing as answered with nothing recorded.
     if _optional.cos_available():
@@ -194,9 +267,14 @@ def _apply_orphan(core, row, action, note, today, reason):
         target_id = action[5:]
         path = _note_path(core, target_id)
         src = row["target"]
+        # The row's id/title began as a VM-writable lane file's (F42): cite the
+        # source only as the host's own index names it, one line and capped.
+        known = _indexed_source(core, src["id"])
+        if known is None:
+            raise ValueError("the source is no longer in the index; left open")
         append_section(core, path, "## Sources", [
-            f"- [[{src['id']}]] — {src.get('title') or src['id']} "
-            f"(linked by the owner, {today})"], today, reason)
+            f"- [[{src['id']}]] — {known[0]} (linked by the owner, {today})"],
+            today, reason)
         return f"cited from [[{target_id}]]"
     if action == "noise":
         return "noise (never asked again)"

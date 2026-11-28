@@ -115,17 +115,28 @@ def settle_for(core: Any, role: str, args: Any, started: float) -> tuple[bool, l
     """
     import time as _time
 
-    from . import egress, read_log
+    from . import egress
 
-    outcome, held = settle(
+    tally = egress.take_tally()
+    held = _HELD.get() or []
+    if not held and (not tally or not tally.get("gates")):
+        # Non-gating verbs (e.g. `check-egress`, `status`) always map to
+        # RECORD_NOTHING_TO_RECORD; return early without importing `read_log`
+        # -> `querylog` -> `rerank_onnx` on every PreToolUse hook call.
+        _HELD.set(None)
+        return False, []
+
+    from . import read_log
+
+    outcome, settled_held = settle(
         vault=getattr(core, "vault", None),
         role=role,
         cmd=args.cmd,
         max_tier=getattr(args, "max_tier", None),
-        tally=egress.take_tally(),
+        tally=tally,
         latency_ms=(_time.perf_counter() - started) * 1000.0,
     )
-    return outcome == read_log.RECORD_FAILED, held
+    return outcome == read_log.RECORD_FAILED, settled_held
 
 
 def refusal(cmd: str) -> str:

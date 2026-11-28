@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .handlers.base import NO_TEXT_MARKER
+from .pipeline_anchor import record_attachment_receipt
 
 if TYPE_CHECKING:  # the stage record; a runtime import here would be a cycle
     from .pipeline_stages import ClaimRecord
@@ -109,6 +110,7 @@ def record_existing_note(
     from . import pipeline as facade
 
     assert record.claimed is not None
+    record_attachment_receipt(record)
     record.drain.manifest[record.original_sha] = record.slug
     facade._save_manifest(record.drain.vault, record.drain.manifest)
     record.claimed.unlink(missing_ok=True)
@@ -129,11 +131,11 @@ def record_duplicate(record: "ClaimRecord", existing_id: str) -> "ClaimRecord":
     from . import pipeline_files as files
 
     assert record.claimed is not None
-    files.refuse_symlinked_dirs(record.drain.duplicate_dir, 2)
-    facade._move(record.claimed, record.drain.duplicate_dir / record.claimed.name)
+    facade._move(record.claimed, record.drain.duplicate_dir / record.claimed.name, 2)
     files.write_sidecar(
         record.drain.duplicate_dir / f"{record.claimed.name}.duplicate-of.txt",
         f"identical content already ingested as raw/{existing_id}.md\n",
+        2,
     )
     record.append("duplicates", {
         "file": record.claimed.name,

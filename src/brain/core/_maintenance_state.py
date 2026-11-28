@@ -113,12 +113,13 @@ class _MaintenanceStateMixin:
         # Left exactly as they were -- a skip is not a failure.
         entry["consecutive_failures"] = int(prev.get("consecutive_failures", 0))
         state[branch] = entry
-    def _load_maintain_state(self) -> dict[str, Any]:
+    def _load_maintain_state(self, defects: list[str] | None = None) -> dict[str, Any]:
         """The HOST-PRIVATE copy (F104): the mount file is VM-writable, so it
-        is a display projection and is never what the engine decides from."""
+        is a display projection and is never what the engine decides from.
+        Malformed fields are dropped; ``defects`` collects a line for each."""
         from .. import maintain_state_store as _store
 
-        return _store.load(self.vault)
+        return _store.load(self.vault, defects)
     def _save_maintain_state(self, state: dict[str, Any]) -> None:
         """Atomic write (tmp + replace) so a crash mid-write never corrupts
         the file the session-start hook and ``brain status`` both read. Writes
@@ -196,6 +197,11 @@ class _MaintenanceStateMixin:
         }
     def _hot_md_path(self) -> Path:
         return config.memory_dir(self.vault) / "hot.md"
+    def append_hot_entry(self: Any, dedup_key: str, entry_md: str) -> bool:
+        """Public alias for :meth:`_append_hot_once` (ADR-0015 §1.3, host-only)."""
+        self._require_host("append a hot.md entry")
+        return self._append_hot_once(dedup_key, entry_md)
+
     def _append_hot_once(self, key: str, entry_md: str) -> bool:
         """Append ``entry_md`` to ``hot.md`` guarded by an idempotency-key
         HTML comment; a no-op (returns ``False``) if the key is already
@@ -257,10 +263,21 @@ class _MaintenanceStateMixin:
         return True
     def _inbox_path(self) -> Path:
         return config.memory_dir(self.vault) / "inbox.jsonl"
+    def read_inbox(self: Any) -> list[dict[str, Any]]:
+        """Read parsed entries from the host owner-inbox JSONL (ADR-0015 §1.3, host-only)."""
+        self._require_host("read the owner inbox")
+        return self._read_inbox()
+
+    def write_inbox(self: Any, entries: list[dict[str, Any]]) -> None:
+        """Write entries to the host owner-inbox JSONL (ADR-0015 §1.3, host-only)."""
+        self._require_host("write the owner inbox")
+        self._write_inbox(entries)
+
     def _read_inbox(self) -> list[dict[str, Any]]:
         from .. import inbox as ibx
         p = self._inbox_path()
         return ibx.parse_inbox(p.read_text(encoding="utf-8")) if p.exists() else []
+
     def _write_inbox(self, entries: list[dict[str, Any]]) -> None:
         from .. import inbox as ibx
         p = self._inbox_path()

@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from .classification import RANK, VM_DEFAULT_MAX_TIER, normalize
 from .maintenance_organization import _PARA_ZONES, iter_wikilinks
 
 
@@ -75,10 +76,17 @@ def _write_navigation_catalogs(
             f"title: \"{zone.capitalize()} catalog (generated)\"",
             "type: index", "classification: Internal", "---", "",
             f"# {zone.capitalize()} catalog (generated — do not hand-edit)", "",
+            f"(Notes above the {VM_DEFAULT_MAX_TIER} tier are not listed here; "
+            "use the search tools at your tier.)", "",
             "| id | title | type | updated | classification |",
             "|---|---|---|---|---|",
         ]
-        for note in sorted(by_zone[zone], key=lambda item: item["meta"].get("id") or ""):
+        # The catalog is stamped Internal and indexed for the Internal-capped VM leg,
+        # so list only notes at or below that ceiling (missing/unrecognised ranks MNPI).
+        # Mirrored in tools/validate.py build_zone_catalog.
+        listed = [n for n in by_zone[zone] if
+                  RANK[normalize(n["meta"].get("classification"))] <= RANK[VM_DEFAULT_MAX_TIER]]
+        for note in sorted(listed, key=lambda item: item["meta"].get("id") or ""):
             meta = note["meta"]
             catalog.append(
                 f"| [[{meta.get('id', '')}]] | {meta.get('title', '')} | "

@@ -54,8 +54,9 @@ BGE_M3_ONNX_REVISION = "4de13258303883538bd53b696b452bf8099f0858"
 # The revision pin above guards the DOWNLOAD only; a local model folder such as
 # <vault>/.brain/model is VM-writable, so the loader also checks its BYTES
 # (SAFE-01, 2026-11-13).
-# shortcut: the e5 rollback models carry no pins and load unchecked from a local
-# folder; pin them before making either one a default.
+# The e5 rollback models carry no pins (no real hashes are recorded in the repo;
+# take them from the LFS pointers of E5_SMALL_ONNX_REVISION), so a local folder
+# for them is REFUSED unless the host sets $BRAIN_EMBED_ALLOW_UNPINNED=1.
 PINNED_SHA256 = {
     BGE_M3_INT8_MODEL_ID: {
         BGE_M3_INT8_ONNX_FILE:
@@ -387,14 +388,26 @@ class OnnxEmbedder:
 
         Applies only when the embedder is on the spec's own repo, revision and
         file: an operator's ``$BRAIN_EMBED_REVISION`` mirror pin is a host
-        choice the VM cannot make, and it keeps its own semantics.
+        choice the VM cannot make, and it keeps its own semantics. On the spec's
+        own artifact a model with NO pins is refused too, unless the host sets
+        ``$BRAIN_EMBED_ALLOW_UNPINNED=1`` (read at call time).
         """
         spec = self._model_spec
-        pins = PINNED_SHA256.get(spec.model_id)
-        if not pins or (self._hf_repo, self._revision, self._onnx_file) != (
+        if (self._hf_repo, self._revision, self._onnx_file) != (
             spec.hf_repo, spec.revision, spec.onnx_file
         ):
             return onnx_path, base
+        pins = PINNED_SHA256.get(spec.model_id)
+        if not pins:
+            if os.environ.get("BRAIN_EMBED_ALLOW_UNPINNED") == "1":
+                return onnx_path, base
+            raise EmbedderUnavailable(
+                f"no sha256 pin for {spec.model_id} in PINNED_SHA256, so the local "
+                f"model folder {base!r} cannot be verified and is refused. Pin "
+                f"{spec.onnx_file} and tokenizer.json from the LFS pointers of "
+                f"{spec.revision[:12]}, or set BRAIN_EMBED_ALLOW_UNPINNED=1 on "
+                f"the host to load it unchecked."
+            )
         import hashlib
 
         for rel, path in ((spec.onnx_file, onnx_path),

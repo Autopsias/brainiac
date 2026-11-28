@@ -61,6 +61,7 @@ from . import maintenance as _maintenance
 from . import maintenance_notify as _notify
 from . import remediation as _rem
 from . import remediation_exceptions as _rex
+from . import remediation_state as _rs
 from .exceptions_render import render_page  # re-exported: the page's one
 # renderer, split out on 2026-08-22 when this file hit the 500-line bound.
 
@@ -239,6 +240,7 @@ def build_json_summary(
     VM-side verifier must refuse and report `unreachable`, same as an
     invalid one."""
     from . import audit as _audit
+    from . import exceptions_verify as _verify
     from . import snapshot as _snapshot
     from ._version import __version__ as _engine_version
 
@@ -248,6 +250,9 @@ def build_json_summary(
     payload: dict[str, Any] = {
         "schema_version": SCHEMA,
         "vault_id": vault_id,
+        # Path-derived, so the HOST leg binds identity without the mount's
+        # rewritable vault-id file (`exceptions_verify.verify_host_summary`).
+        "vault_path_sha256": _verify.vault_path_sha256(vault),
         "generated_at": generated_at.isoformat(),
         "generation": generation,
         "egress_ceiling": ceiling,
@@ -342,7 +347,7 @@ def generate(core: Any, today: datetime.date | None = None) -> dict[str, Any]:
     # one to stay stable, so there is nothing to merge or accumulate.
     try:
         token_map_path = _rex.exceptions_dir(vault) / TOKEN_MAP_FILENAME
-        token_map_path.parent.mkdir(parents=True, exist_ok=True)
+        _rs.private_dir(vault, _rex.DIRNAME)
         _atomic_write(token_map_path, json.dumps(tokens, indent=1, sort_keys=True))
     except OSError:
         pass  # best-effort; losing the map costs traceability, never safety

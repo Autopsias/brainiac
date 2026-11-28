@@ -439,15 +439,31 @@ def check_alias_collisions(notes: list[dict]) -> None:
             warn(f"aliases collision {norm!r} claimed by notes {ids}")
 
 
+# Highest tier a catalog row may carry: the VM egress ceiling, because the
+# catalog is stamped Internal and indexed for the Internal-capped VM leg.
+# Mirrors classification.VM_DEFAULT_MAX_TIER (tests/test_zone_catalogs.py pins it).
+CATALOG_MAX_TIER = "Internal"
+
+
 def build_zone_catalog(zone: str, zone_notes: list[dict]) -> str:
     """HYG-03 — a per-PARA-zone GENERATED catalog (do not hand-edit), the
     same posture as backlinks.md: derived purely from note frontmatter, so
     re-running --catalogs on an unchanged vault produces byte-identical
-    output (deterministic, no wall-clock timestamp baked in)."""
+    output (deterministic, no wall-clock timestamp baked in). Lists only notes
+    at or below CATALOG_MAX_TIER; a missing/unrecognised classification ranks
+    MNPI (default-deny) and is omitted. Mirrors maintenance_navigation."""
+    cap = CLASSIFICATIONS.index(CATALOG_MAX_TIER)
+    zone_notes = [
+        n for n in zone_notes
+        if isinstance(c := n["meta"].get("classification"), str)
+        and c.strip() in CLASSIFICATIONS and CLASSIFICATIONS.index(c.strip()) <= cap
+    ]
     lines = [
         "---", f"id: catalog-{zone}", f"title: \"{zone.capitalize()} catalog (generated)\"",
         "type: index", "classification: Internal", "---", "",
         f"# {zone.capitalize()} catalog (generated — do not hand-edit)", "",
+        f"(Notes above the {CATALOG_MAX_TIER} tier are not listed here; "
+        "use the search tools at your tier.)", "",
         "| id | title | type | updated | classification |",
         "|---|---|---|---|---|",
     ]

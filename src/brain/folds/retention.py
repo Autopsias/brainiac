@@ -24,7 +24,24 @@ class RetentionFoldsMixin:
             return
         self.duplicate_retention_fold(run)
         self.query_capture_retention_fold(run)
-        if _optional.cos_available():
+        from .. import host_hooks as _host_hooks
+
+        hooks = _host_hooks.providers_with(
+            _host_hooks.load_core_hooks(self), "retention_folds",
+        )
+        if hooks:
+            for provider in hooks:
+                try:
+                    _host_hooks.call_hook_method(provider, "retention_folds", self, run)
+                except Exception as exc:  # noqa: BLE001 — plugin isolation rule
+                    run.blocked.append(
+                        maintenance.blocked_item(
+                            f"host hook {getattr(provider, 'name', 'unknown')} retention_folds failed",
+                            f"{type(exc).__name__}: {exc}",
+                            "inspect hook plugin and re-run maintain",
+                        )
+                    )
+        elif _optional.cos_available():
             self.cos_corpus_retention_fold(run)
         self.deliverables_previous_retention_fold(run)
 

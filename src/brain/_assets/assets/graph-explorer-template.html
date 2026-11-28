@@ -305,6 +305,8 @@
   // 0. load payload
   // ======================================================================
   const RAW = JSON.parse(document.getElementById("payload-data").textContent);
+  // HTML-escape for the few innerHTML sinks (banner, footer): the payload is untrusted.
+  const esc = v => String(v).replace(/[&<>"']/g, c => "&#" + c.charCodeAt(0) + ";");
 
   const nodesById = new Map();
   RAW.nodes.forEach(n => nodesById.set(n.id, n));
@@ -2078,8 +2080,8 @@
   function buildFreshnessBanner() {
     const banner = document.createElement("div");
     banner.className = "freshness-banner";
-    banner.innerHTML = `<b>Data as of ${RAW.generated_at}</b> &mdash; graph build gen ${RAW.graph_generation} `
-      + `(built ${RAW.graph_built_at}) &mdash; regenerate: this page is a static snapshot.`
+    banner.innerHTML = `<b>Data as of ${esc(RAW.generated_at)}</b> &mdash; graph build gen ${esc(RAW.graph_generation)} `
+      + `(built ${esc(RAW.graph_built_at)}) &mdash; regenerate: this page is a static snapshot.`
       + (RAW.semantic_note ? `<br><b>&#9888; ${RAW.semantic_note}</b>` : "");
     sidebarEl.appendChild(banner);
   }
@@ -2261,11 +2263,11 @@
     el.innerHTML = "";
     const ev = RAW.explained_variance;
     const items = [
-      `Generated <b>${RAW.generated_at}</b>`,
+      `Generated <b>${esc(RAW.generated_at)}</b>`,
       `Engine <b>v${RAW.engine_version}</b>`,
-      `Graph build <b>gen ${RAW.graph_generation}</b> (${RAW.graph_built_at})`,
+      `Graph build <b>gen ${esc(RAW.graph_generation)}</b> (${esc(RAW.graph_built_at)})`,
       `<span class="discovery-flag">graph layer authoritative:false — discovery only</span>`,
-      `Embed model <b>${RAW.embed_model}</b> (${RAW.embed_dim}d, mean-pooled per note, L2-normalized)`,
+      `Embed model <b>${esc(RAW.embed_model)}</b> (${RAW.embed_dim}d, mean-pooled per note, L2-normalized)`,
       `PCA explained variance (3 comps) <b>${(ev[0]*100).toFixed(1)}% + ${(ev[1]*100).toFixed(1)}% + ${(ev[2]*100).toFixed(1)}% = ${((ev[0]+ev[1]+ev[2])*100).toFixed(1)}%</b>`,
     ];
     items.forEach(html => { const s = document.createElement("span"); s.innerHTML = html; el.appendChild(s); });

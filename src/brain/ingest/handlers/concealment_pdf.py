@@ -65,7 +65,7 @@ def page_fonts(page: Any) -> dict[str, Any]:
         try:
             from pypdf.generic._font import Font  # pypdf >= 6.21
         except ImportError:  # coverage-audit: older pypdf keeps Font here
-            from pypdf._font import Font
+            from pypdf._font import Font  # ty: ignore[unresolved-import]
 
         resources = page.get_inherited("/Resources", None)
         table = resources.get("/Font") if resources else None

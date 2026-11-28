@@ -32,8 +32,9 @@ What was decided.
 
 ## Rationale
 
-Why this option was chosen over alternatives. Anchor claims to sources, e.g.
-`[[raw/2026-07-05-example-source]]`.
+Why this option was chosen over alternatives. Anchor claims to sources using
+bare note ids, e.g. `[[2026-07-05-example-source]]` (`[[raw/...]]` belongs only
+in the `source:` frontmatter field).
 
 ## Consequences
 

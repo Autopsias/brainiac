@@ -37,12 +37,40 @@ def _graph_build_paths(core: Any) -> GraphBuildPaths:
     )
 
 
+# Largest generation a manifest may claim: the JSON-exact integer ceiling (2**53),
+# far above any real build counter, and small enough that ``+ 1`` always serialises.
+_MAX_GENERATION = 2**53
+
+
 def _load_graph_manifest(path: Path) -> dict[str, Any]:
-    """Read a prior graph manifest, treating absence or damage as empty."""
+    """Read a prior graph manifest, treating absence or damage as empty.
+
+    The file sits on the shared mount, so its shape is checked, not trusted: a
+    wrong-typed or out-of-range field counts as damage, and the next build
+    starts from generation 1 and republishes a clean manifest.
+    """
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError):
         return {}
+    if isinstance(state, dict):
+        generation = state.get("generation")
+        notes = state.get("notes")
+        built_at = state.get("built_at")
+        try:
+            if built_at is not None:  # always written by ``date.isoformat()``
+                dt.date.fromisoformat(built_at)
+            if (
+                (generation is None or (type(generation) is int and 0 <= generation < _MAX_GENERATION))
+                and (notes is None or isinstance(notes, dict))
+            ):
+                return state
+        except (TypeError, ValueError):
+            pass
+    logging.getLogger(__name__).warning(
+        "graphify: ignoring a malformed graph manifest at %s", path
+    )
+    return {}
 
 
 def _record_graph_failure(

@@ -7,6 +7,10 @@
           {
             "type": "command",
             "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/block-vault-recursive-scan.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/block-main-checkout-branch-switch.py\""
           }
         ]
       }

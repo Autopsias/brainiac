@@ -103,6 +103,15 @@ def _app_data_base() -> Path:
     return Path(base) / APP_NAME
 
 
+def app_data_base() -> Path:
+    """Public per-user app-data base directory (ADR-0015 §1.3).
+
+    Delegates to :func:`_app_data_base` so existing monkeypatches of
+    ``config._app_data_base`` continue to apply.
+    """
+    return _app_data_base()
+
+
 def _vault_id_path(vault: str | os.PathLike[str] | None = None) -> Path:
     return vault_root(vault) / ".brain" / "vault-id"
 
@@ -470,11 +479,14 @@ from .config_hostpaths import (  # noqa: E402,F401  (facade re-export)
     _health_history_root as _health_history_root,
     HostPathUnsafe as HostPathUnsafe,
     WORKSPACE_ROOT_ENV as WORKSPACE_ROOT_ENV,
+    all_registered_vm_visible_roots as all_registered_vm_visible_roots,
     anchor_dir as anchor_dir,
     audit_drift_dispositions_dir as audit_drift_dispositions_dir,
     audit_drift_dispositions_path as audit_drift_dispositions_path,
+    collect_private_state_warnings as collect_private_state_warnings,
     cos_ops_dir as cos_ops_dir,
     cos_run_records_dir as cos_run_records_dir,
+    egress_ring_pin_path as egress_ring_pin_path,
     golden_probes_pin_path as golden_probes_pin_path,
     graph_build_failed_marker_path as graph_build_failed_marker_path,
     graph_dir as graph_dir,
@@ -487,6 +499,7 @@ from .config_hostpaths import (  # noqa: E402,F401  (facade re-export)
     host_lock_dir as host_lock_dir,
     host_private_base as host_private_base,
     maintain_state_private_path as maintain_state_private_path,
+    proven_off_all_mounts as proven_off_all_mounts,
     proven_off_mount as proven_off_mount,
     supersede_journal_path as supersede_journal_path,
     vm_visible_roots as vm_visible_roots,

@@ -47,7 +47,7 @@ try:
     import tomllib
 except ImportError:  # pragma: no cover - py<3.11
     try:
-        import tomli as tomllib  # type: ignore[no-redef]
+        import tomli as tomllib  # type: ignore[no-redef]  # ty: ignore[unresolved-import]
     except ImportError:
         tomllib = None  # type: ignore[assignment]
 

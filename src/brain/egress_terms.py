@@ -312,3 +312,155 @@ def explain(result: Any) -> str:
     other = f", {merged} from other vaults this session entered" if merged else ""
     return (f"allowed — {result['mapped_terms']} mapped term(s) checked at "
             f"threshold {result['threshold']}{derived}{other}")
+
+
+def add_check_egress_arguments(sp: Any) -> None:
+    """Attach `check-egress` arguments to a subparser."""
+    sp.add_argument("text", nargs="?", help="the outbound string; omit to read stdin")
+    sp.add_argument("--json", action="store_true")
+    sp.add_argument(
+        "--min-tier",
+        help="refuse at or above this tier (default: $BRAIN_EGRESS_TERM_MIN_TIER, "
+        "else Confidential). An unrecognised value fails CLOSED.",
+    )
+    sp.add_argument(
+        "--strict",
+        action="store_true",
+        help="also refuse when the overlay maps NO terms — for a deployment that "
+        "will not accept an all-clear produced by an empty decoder ring",
+    )
+    sp.add_argument(
+        "--extra-vault",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="merge another vault's decoder ring into this check (repeatable). "
+        "The outbound guard passes every vault the SESSION has entered, "
+        "because leaving a vault does not empty the conversation. One "
+        "call for any number of rings: the hook budget is 5 seconds and "
+        "exceeding it FAILS OPEN, so a call per vault does not scale.",
+    )
+
+
+def is_direct_check_egress(argv: list[str]) -> bool:
+    """True when argv invokes `check-egress` directly without help/version flags."""
+    if any(tok in ("-h", "--help", "--version") for tok in argv):
+        return False
+    i = 0
+    while i < len(argv):
+        tok = argv[i]
+        if tok in ("--vault", "--role"):
+            i += 2
+            continue
+        if tok.startswith(("--vault=", "--role=")):
+            i += 1
+            continue
+        if tok.startswith("-"):
+            return False
+        return tok == "check-egress"
+    return False
+
+
+def _read_opt(argv: list[str], i: int, name: str) -> tuple[bool, str | None, int]:
+    tok = argv[i]
+    if tok == name and i + 1 < len(argv):
+        return True, argv[i + 1], i + 2
+    prefix = name + "="
+    if tok.startswith(prefix):
+        return True, tok[len(prefix):], i + 1
+    return False, None, i
+
+
+def _parse_direct_check_egress_argparse(argv: list[str]) -> Any:
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="brain", add_help=False)
+    parser.add_argument("--vault", default=None)
+    parser.add_argument("--role", default=None, choices=("host", "vm"))
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    sp = sub.add_parser("check-egress", add_help=False)
+    add_check_egress_arguments(sp)
+    return parser.parse_args(argv)
+
+
+def _parse_direct_header(argv: list[str], idx: int, opts: dict[str, Any]) -> bool:
+    i = 0
+    while i < idx:
+        for flag, key in (("--vault", "vault"), ("--role", "role")):
+            hit, val, i = _read_opt(argv, i, flag)
+            if hit:
+                opts[key] = val
+                break
+        else:
+            return False
+    return opts["role"] in (None, "host", "vm")
+
+
+def parse_direct_check_egress(argv: list[str]) -> Any:
+    """Parse a direct `check-egress` invocation without importing full `cli_cmds`."""
+    from types import SimpleNamespace
+
+    opts: dict[str, Any] = {
+        "vault": None, "role": None, "cmd": "check-egress",
+        "text": None, "json": False, "min_tier": None, "strict": False, "extra_vault": [],
+    }
+    try:
+        idx = argv.index("check-egress")
+    except ValueError:
+        return _parse_direct_check_egress_argparse(argv)
+    if not _parse_direct_header(argv, idx, opts):
+        return _parse_direct_check_egress_argparse(argv)
+    i = idx + 1
+    end_opts = False
+    while i < len(argv):
+        tok = argv[i]
+        if not end_opts and tok == "--":
+            end_opts = True
+            i += 1
+        elif not end_opts and tok in ("--json", "--strict"):
+            opts[tok[2:]] = True
+            i += 1
+        elif not end_opts and tok.startswith(("--min-tier", "--extra-vault")):
+            hit, val, i = _read_opt(argv, i, "--min-tier" if tok.startswith("--min-tier") else "--extra-vault")
+            if not hit:
+                return _parse_direct_check_egress_argparse(argv)
+            if tok.startswith("--min-tier"):
+                opts["min_tier"] = val
+            else:
+                opts["extra_vault"].append(val)
+        elif (not end_opts and tok.startswith("-")) or opts["text"] is not None:
+            return _parse_direct_check_egress_argparse(argv)
+        else:
+            opts["text"] = tok
+            i += 1
+    return SimpleNamespace(**opts)
+
+
+def run_cli_args(args: Any, cfg: Any, emit: Any) -> int:
+    """Execute `brain check-egress` from parsed CLI args."""
+    text = args.text
+    if text is None:
+        import sys as _sys
+
+        text = "" if _sys.stdin.isatty() else _sys.stdin.read()
+
+    try:
+        vault = cfg.vault_root(args.vault)
+    except Exception:  # fail-open: no resolvable vault; the egress check runs without one
+        vault = None
+
+    result = check(
+        text,
+        vault=vault,
+        threshold=args.min_tier,
+        strict=args.strict,
+        extra_vaults=[
+            v for v in getattr(args, "extra_vault", []) or [] if v and v != str(vault)
+        ],
+    )
+    result["explanation"] = explain(result)
+    if args.json:
+        emit(result, True)
+    else:
+        emit(None, False, result["explanation"])
+    return 0 if result["allowed"] else EXIT_REFUSED

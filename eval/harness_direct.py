@@ -254,6 +254,35 @@ def _segment_metrics(qrels_d, cur_runs, new_runs, segs, cov, strata_cov) -> dict
     return by_segment
 
 
+def _bpref_diagnostics(qrels_d: dict, scored: list[str]) -> dict:
+    """Report how many scored queries carry judged grade-0 negatives (N > 0).
+
+    Only queries with non-empty judgment maps are counted (matching ``_seg_eval``
+    and ``_per_query_recall``). When N == 0 for a query, TREC bpref degrades to
+    depth-blind recall (identical to recall@k whenever k >= len(ranked)). Surfacing
+    this explicitly keeps zero-negative qrels from masquerading as a real bpref
+    measurement.
+    """
+    effective = [q for q in scored if qrels_d.get(q)]
+    with_neg = sum(
+        1 for q in effective
+        if any(g == 0 for g in qrels_d[q].values())
+    )
+    without_neg = len(effective) - with_neg
+    warning = None
+    if effective and without_neg > 0:
+        warning = (
+            f"N==0 judged grade-0 negatives in {without_neg}/{len(effective)} scored "
+            f"queries; bpref degrades to depth-blind recall on those queries."
+        )
+    return {
+        "scored_queries": len(effective),
+        "queries_with_negatives": with_neg,
+        "queries_without_negatives": without_neg,
+        "warning": warning,
+    }
+
+
 def _build_scorecard(golden: dict, qrels_d: dict, cur: dict, new: dict,
                      session: str, cmap_path, cmap: dict,
                      cmap_rewritten: int) -> dict:
@@ -265,6 +294,7 @@ def _build_scorecard(golden: dict, qrels_d: dict, cur: dict, new: dict,
     scored = sorted(set(cur_runs) & set(new_runs) & set(qrels_d))
     missing_current = sorted(set(qrels_d) - set(cur_runs))
     missing_new = sorted(set(qrels_d) - set(new_runs))
+    bpref_diag = _bpref_diagnostics(qrels_d, scored)
 
     def qstratum(qid: str) -> str:
         return canonical_stratum(qmeta[qid]["stratum"])
@@ -287,6 +317,7 @@ def _build_scorecard(golden: dict, qrels_d: dict, cur: dict, new: dict,
         "paired_scope": {"scored_n": len(scored), "scored_ids": scored,
                          "missing_from_current": missing_current,
                          "missing_from_new": missing_new},
+        "bpref_diagnostics": bpref_diag,
         "metrics": {"by_segment": _segment_metrics(
             qrels_d, cur_runs, new_runs,
             _segments(scored, qmeta, qstratum), cov, strata_cov)},
@@ -379,6 +410,9 @@ def main() -> int:
         Path(args.md).write_text(
             _markdown_report(scorecard, cur, new, args.session, cmap_path,
                              cmap, cmap_rewritten), encoding="utf-8")
+
+    if scorecard["bpref_diagnostics"]["warning"]:
+        print(f"WARNING: {scorecard['bpref_diagnostics']['warning']}", file=sys.stderr)
 
     print(f"scored {scorecard['paired_scope']['scored_n']} paired queries; "
           f"segments={len(scorecard['metrics']['by_segment'])}; "

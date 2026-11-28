@@ -326,6 +326,8 @@ def _run_sweep_workspace(args, ctx) -> int:
             f"sweep-workspace [dry_run={res['dry_run']}] age>{res['age_days']}d: "
             f"{len(res['swept'])} swept, {res['skipped_active']} still active, "
             f"{len(res['missing_dirs'])} missing dir(s), "
+            f"{len(res['refused_dirs'])} refused symlinked dir(s), "
+            f"{len(res['refused_inbox'])} refused symlinked inbox, "
             f"{len(res['errors'])} error(s)"
             + (
                 "\nnext: `brain sync --publish` (or the nightly) drains "

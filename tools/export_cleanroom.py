@@ -70,6 +70,9 @@ EXCLUDE_PREFIXES = (
     # the golden set is the owner's private vault. The generic eval harness
     # (harness/gate/stats/capture_run/path_normalize) stays — it's clean.
     "tests/",
+    # Private CI runs pytest over tests/ (which is excluded above); never
+    # export tests.yml to the public Autopsias/brainiac repo.
+    ".github/workflows/tests.yml",
     "eval/build_golden_set.py",
     # Same class, found by the v0.20.0 contamination gate (2026-08-07): the PT
     # capacity fixture is SYNTHETIC, but it was written to imitate the owner's
@@ -127,6 +130,12 @@ EXCLUDE_PREFIXES = (
     # the private repo as the internal record; not shipped publicly.
     "docs/dependency-inventory.md",
     "docs/adr/0003-parity-architecture.md",
+    # Private architecture & extraction docs (excluded from public export,
+    # 2026-11-26): internal multi-plan specification and live vault paths.
+    "SPEC.md",
+    # Private Plan 2 Step 4 live cutover runbook (references private COS paths,
+    # launchd jobs, rollback-export, and host-private cos-state.sqlite).
+    "docs/operations/p2-step4-cutover-runbook.md",
 )
 
 # Suffix excludes (fixed 2026-07-12): session evidence artifacts carry raw
@@ -166,6 +175,7 @@ COS_EXCLUDES = (
     "scripts/cos-",
     "overlay/template/cos/",
     "docs/cos-",
+    "docs/cos-extraction-manifest.json",
     "docs/adr/0013-public-export-excludes-cos.md",
     "eval/cos_",
     "eval/configs/cos-",
@@ -178,7 +188,9 @@ COS_EXCLUDES = (
     # ADR 0013 §5 rulings applied in s04: the pre-commit guard that stops a
     # commit while a COS night runs, and the COS sheet-listener ADR.
     "tools/check_no_live_nightly.sh",
-    "docs/adr/0012-sheet-session-listener.md",
+    "docs/adr/0014-sheet-session-listener.md",
+    # ADR 0015 (2026-11-26): private COS extraction architecture & security triage.
+    "docs/adr/0015-cos-extraction-and-off-mount-state.md",
 )
 
 

@@ -407,30 +407,17 @@ class CrossTierGuard:
         whose only substance is its marking is exactly the document that must
         not enter low, and no similarity leg can see a marking. An unreadable
         ring is ``unavailable`` — counted and stamped like every other check
-        that could not run, never a quiet "no term matched"."""
+        that could not run, never a quiet "no term matched". The ring is read
+        through a host-private pin of the top-tier terms it has held
+        (``tierguard_ring_pin``, F21): deleting, emptying or retiering it cannot
+        lower protection, and a body that carries a term raises whatever else
+        could not be read."""
         if (self._vault is None or _env_on(DISABLED_ENV)
                 or tier_rank(base) >= tier_rank(TIERS[-1])):
             return None
-        from ..overlay_keywords import top_tier_term
+        from .tierguard_ring_pin import keyword_leg
 
-        term, errors = top_tier_term(body or "", vault=self._vault)
-        if errors:
-            self.counts.unavailable += 1
-            return Verdict(
-                tier=base, status=UNAVAILABLE,
-                reason=("no keyword check was made: the overlay keyword ring "
-                        f"could not be read ({', '.join(errors)}) — admitted "
-                        "at the declared tier"))
-        if term is None:
-            return None
-        raised_to = TIERS[-1]
-        self.counts.raised += 1
-        self.counts.raised_by_leg[KEYWORD_LEG] = (
-            self.counts.raised_by_leg.get(KEYWORD_LEG, 0) + 1)
-        return Verdict(
-            tier=raised_to, status=RAISED, leg=KEYWORD_LEG,
-            reason=(f"raised {base} -> {raised_to}: overlay keyword {term!r} "
-                    f"maps to {raised_to}"))
+        return keyword_leg(self._vault, self.counts, body or "", base)
 
     def _clear_verdict(self, base: str) -> Verdict:
         self.counts.clear += 1

@@ -98,7 +98,43 @@ def harness_managed(claude_home: Path) -> bool:
 
     A standalone host has no such markers and keeps registering itself, or
     `install-hook` would place a script nothing ever runs."""
-    return all((claude_home / marker).exists() for marker in HARNESS_MARKERS)
+    if not HARNESS_MARKERS:
+        return False
+    if all((claude_home / marker).exists() for marker in HARNESS_MARKERS):
+        return True
+    # Migration support for pre-sentinel externally-managed installs: a
+    # symlinked settings.json (stow/nix/chezmoi) or a generic deploy pathspec
+    # still marks the tree as externally owned so updates never clobber it.
+    return (
+        (claude_home / "settings.json").is_symlink()
+        or (claude_home / "scripts" / "deploy.pathspec").is_file()
+    )
+
+
+def _is_abs_pin(path_str: str) -> bool:
+    """True for a POSIX (`/…`) or Windows (`C:\\…`, `C:/…`, `\\\\…`) absolute path."""
+    if not path_str:
+        return False
+    if path_str.startswith("/"):
+        return True
+    return len(path_str) >= 3 and path_str[0].isalpha() and path_str[1] == ":" and path_str[2] in ("\\", "/") or path_str.startswith("\\\\")
+
+
+def _python_guard_command(claude_home: Path) -> str:
+    """Direct isolated-Python command for the SEC-07 guard on Windows."""
+    py = os.path.abspath(sys.executable)
+    hooks_dir = str((claude_home / "hooks").expanduser())
+    return f'"{py}" -I -m brain.egress_guard --hooks-dir "{hooks_dir}"'
+
+
+def _write_python_pin(destination: Path) -> str:
+    """Write ``<script>.python`` beside the POSIX shim so it invokes isolated Python."""
+    pin = destination.with_suffix(".python")
+    try:
+        pin.write_text(os.path.abspath(sys.executable) + "\n", encoding="utf-8")
+    except OSError as exc:  # pragma: no cover - rare
+        return f"failed: {type(exc).__name__}"
+    return "pinned"
 
 
 def hook_command(claude_home: Path, script: str = HOOK_SCRIPT) -> str:
@@ -131,9 +167,22 @@ def engine_path() -> str:
     through ``python -m``). ``""`` means "could not tell", and the guard then
     keeps its own pre-2026-09-03 fallbacks rather than being pinned to a lie.
     """
-    beside = Path(sys.executable).resolve().parent / "brain"
-    if beside.is_file() and os.access(beside, os.X_OK):
-        return str(beside)
+    raw_dir = Path(sys.executable).parent
+    exe_dir = Path(sys.executable).resolve().parent
+    if _is_windows():
+        for directory in dict.fromkeys((raw_dir, exe_dir, raw_dir / "Scripts", exe_dir / "Scripts")):
+            for name in ("brain.exe", "brain.cmd", "brain.bat", "brain"):
+                cand = directory / name
+                if cand.is_file():
+                    return str(cand)
+        for name in ("brain.exe", "brain.cmd", "brain.bat", "brain"):
+            if found := shutil.which(name):
+                return found
+        return ""
+    for directory in dict.fromkeys((raw_dir, exe_dir)):
+        beside = directory / "brain"
+        if beside.is_file() and os.access(beside, os.X_OK):
+            return str(beside)
     return shutil.which("brain") or ""
 
 
@@ -248,51 +297,40 @@ def install(
         "hook_path": str(claude_home / "hooks" / spec.script),
         "settings_path": str(claude_home / "settings.json"),
     }
-    if script_src is None or not Path(script_src).is_file():
+    is_win_guard = spec.script == GUARD_SCRIPT and _is_windows()
+    if not is_win_guard and (script_src is None or not Path(script_src).is_file()):
         result["script"] = "missing"
         result["settings"] = "skipped"
         result["ok"] = False
         return result
 
-    # THE EGRESS GUARD DOES NOT RUN ON WINDOWS, AND INSTALLING IT THERE BREAKS
-    # THE HOST (s08 round 3, Codex HIGH). The pins this installer writes are
-    # NATIVE paths, so on Windows they read `C:\Users\...`; the guard accepts a
-    # pin only if it starts with `/` and REFUSES otherwise, fail-closed. Its
-    # matcher covers almost every useful tool, so the result is not a degraded
-    # guard — it is a host where every Write, Read, Bash and web call exits 2.
-    # Measured on this box by writing each pin in the Windows shape: control
-    # rc=0, Windows-style engine pin rc=2, Windows-style registry pin rc=2.
-    #
-    # Declining is REPORTED, never silent, and `ok` is False: the security
-    # control really is absent on that host, and a row that says so every
-    # session is the honest state. Normalising the pins into whichever shell
-    # form the host's bash wants (Git Bash `/c/...`, MSYS, WSL) is not done
-    # here because it cannot be verified from a POSIX box, and an unverified
-    # workaround in a fail-closed security path is worse than a stated gap.
-    if spec.script == GUARD_SCRIPT and _is_windows():
-        result["script"] = "skipped-unsupported-os"
-        result["settings"] = "skipped-unsupported-os"
-        result["symptom"] = (
-            "the SEC-07 egress guard is NOT installed on Windows: its pins are "
-            "native paths that the guard refuses, which would block every "
-            "matched tool call. No egress classification on this host.")
-        result["ok"] = False
-        return result
-
     destination = claude_home / "hooks" / spec.script
     destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(script_src, destination)
-    destination.chmod(destination.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    result["script"] = "installed"
-    if spec.script == GUARD_SCRIPT:
+    if is_win_guard:
+        # Windows runs the cross-platform Python guard directly via isolated
+        # Python (`python -I -m brain.egress_guard`), never through `.sh`.
+        command = _python_guard_command(claude_home)
+        result["hook_path"] = command
+        result["script"] = "installed"
         result["engine_pin"] = _write_engine_pin(destination)
         result["registry_pin"] = _write_registry_pin(destination)
-    elif spec.script == HOOK_SCRIPT and not _is_windows():
-        # The alerts caller reads the same pin (F79): it must not resolve
-        # `brain` from the PATH a project's settings can set. NOT on Windows:
-        # the pin would be a native `C:\...` path the script cannot use, so
-        # the script keeps its old PATH lookup there instead.
-        result["engine_pin"] = _write_engine_pin(destination, clear_stale=True)
+        result["python_pin"] = _write_python_pin(destination)
+    else:
+        assert script_src is not None
+        shutil.copyfile(script_src, destination)
+        destination.chmod(destination.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        result["script"] = "installed"
+        command = hook_command(claude_home, spec.script)
+        if spec.script == GUARD_SCRIPT:
+            result["engine_pin"] = _write_engine_pin(destination)
+            result["registry_pin"] = _write_registry_pin(destination)
+            result["python_pin"] = _write_python_pin(destination)
+        elif spec.script == HOOK_SCRIPT and not _is_windows():
+            # The alerts caller reads the same pin (F79): it must not resolve
+            # `brain` from the PATH a project's settings can set. NOT on Windows:
+            # the pin would be a native `C:\...` path the script cannot use, so
+            # the script keeps its old PATH lookup there instead.
+            result["engine_pin"] = _write_engine_pin(destination, clear_stale=True)
     # Bound the guard's per-session state on the ordinary update cadence rather
     # than with a scheduled task of its own (s06 round 7, Claude). Imported here
     # because `guard_settings` imports this module.
@@ -309,7 +347,8 @@ def install(
         return result
 
     result["settings"] = _register(
-        claude_home / "settings.json", hook_command(claude_home, spec.script), spec)
+        claude_home / "settings.json", command, spec, windows=_is_windows(),
+    )
     result["ok"] = result["settings"] != "unparseable"
     return result
 
@@ -375,10 +414,12 @@ def check(claude_home: Path, spec: HookSpec = HOOKS[0]) -> tuple[str, str, str |
         return ("unmanaged", f"no {claude_home} on this host — Claude Code is not "
                              "installed here, so there is no hook surface", None)
     script = claude_home / "hooks" / spec.script
+    is_win_guard = spec.script == GUARD_SCRIPT and _is_windows()
     present, found = _registration(
         _event_groups(_read_settings(claude_home / "settings.json") or {}, spec.event),
-        spec, managed_programs(claude_home, spec.script))
-    if script.is_file() and present and _matcher_ok(found, spec):
+        spec, managed_programs(claude_home, spec.script), windows=_is_windows())
+    script_ready = True if is_win_guard else script.is_file()
+    if script_ready and present and _matcher_ok(found, spec):
         broken = _pin_faults(script, spec)
         if broken:
             # A PIN FAULT IS A TOTAL OUTBOUND LOCKOUT UNDER A GREEN ROW (s06
@@ -390,7 +431,7 @@ def check(claude_home: Path, spec: HookSpec = HOOKS[0]) -> tuple[str, str, str |
             return ("stale", "; ".join(broken), "brain install-hook")
         return ("current", f"{spec.script} placed and registered in settings.json", None)
     missing = []
-    if not script.is_file():
+    if not script_ready:
         missing.append(f"{script} is MISSING")
     if not present:
         missing.append(f"no {spec.event} entry in settings.json")
@@ -457,7 +498,7 @@ def _pin_faults(script: Path, spec: HookSpec) -> list[str]:
         named = registry.read_text(encoding="utf-8", errors="replace").strip()
     except OSError:
         named = ""
-    if not named.startswith("/"):
+    if not _is_abs_pin(named):
         faults.append(f"{registry} holds {named!r}, which is not an absolute "
                       "path — the guard REFUSES every watched tool on that")
         return faults
@@ -477,5 +518,5 @@ def _is_registered(claude_home: Path, spec: HookSpec = HOOKS[0]) -> bool:
     settings = _read_settings(claude_home / "settings.json")
     return isinstance(settings, dict) and _already_registered(
         _event_groups(settings, spec.event), spec,
-        managed_programs(claude_home, spec.script))
+        managed_programs(claude_home, spec.script), windows=_is_windows())
 

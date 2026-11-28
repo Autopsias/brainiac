@@ -187,6 +187,18 @@ def _capture_rows(
         # 2026-08-17: a document dropped in and refused is invisible from
         # every other surface until the month turns. Per vault, and gating.
         rows.append(checks.quarantine(capture_vault))
+        try:
+            from .config_hostpaths import collect_private_state_warnings
+
+            ps_warnings = collect_private_state_warnings(capture_vault)
+            if ps_warnings:
+                rows.append(checks.row(
+                    f"Host private state ({capture_vault.name})",
+                    "warn",
+                    "; ".join(ps_warnings),
+                ))
+        except Exception:  # noqa: BLE001 — hook warning check must not break doctor
+            pass
     # Host capability, not per-vault: one engine reads for every vault, and a
     # missing OCR engine silently refuses every scan dropped into any of them.
     rows.append(checks.ingest_capability())

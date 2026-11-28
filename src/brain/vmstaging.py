@@ -31,10 +31,14 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import io
 import re
 import os
+import stat
 import sys
 import tempfile
+import zipfile
+import zlib
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -306,12 +310,58 @@ def check_staged_workspaces(registry_entries: list[dict], ssot: str) -> list[dic
 # representative sample is enough to catch drift).
 # --------------------------------------------------------------------------
 
+# The staged zips sit on the mount the untrusted VM writes and every doctor run
+# reads one (F101), so each read is capped. Sized from the real bundles
+# `build_cowork_zips` makes (14 skills, measured 2026-11-23): biggest zip 271 KB,
+# 3 entries at most, VERSION is `x.y.z\n` (8 bytes), worst member ratio 2.7:1.
+_SKILL_ZIP_MAX_BYTES = 2 * 1024 * 1024  # the bundle file, read into memory whole
+_SKILL_MAX_ENTRIES = 64                 # entries per bundle (real: 3)
+_SKILL_VERSION_MAX_BYTES = 64           # VERSION is echoed into the row: a version string, no more
+_SKILL_MAX_RATIO = 100                  # uncompressed:compressed (real: 2.7; a deflate bomb: ~1000)
+
+
+def _staged_skill_version(sample: Path) -> str | None:
+    """The VERSION text of one staged bundle, or None when it has no VERSION
+    member. Raises (the caller turns it into an UNKNOWN row) on a bundle over a
+    cap or one zipfile cannot read. The header is judged first, so a bomb is
+    refused unread; the read is bounded too, because a header can lie. Only
+    stored/deflated members are read: lzma/bz2 streams can demand huge memory."""
+    # O_NONBLOCK: opening a FIFO named *.skill must not wait for a writer. The type check, on the
+    # open descriptor, keeps a directory or a planted link to a pipe or tty (/dev/stdin) from being
+    # read: only a regular file is. The finally closes the descriptor on every exit, a refused type
+    # included; fdopen does not own it (closefd=False).
+    fd = os.open(sample, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError("bundle is not a regular file")
+        with os.fdopen(fd, "rb", closefd=False) as fh:
+            raw = fh.read(_SKILL_ZIP_MAX_BYTES + 1)
+    finally:
+        os.close(fd)
+    # Every central-directory entry starts with this signature, so the count bounds
+    # the entries before ZipFile() builds one ZipInfo per entry.
+    if len(raw) > _SKILL_ZIP_MAX_BYTES or raw.count(b"PK\x01\x02") > _SKILL_MAX_ENTRIES:
+        raise ValueError("bundle over the size or entry cap")
+    with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+        try:
+            info = zf.getinfo(f"{sample.stem}/VERSION")
+        except KeyError:
+            return None
+        if (info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
+                or info.file_size > _SKILL_VERSION_MAX_BYTES
+                or info.file_size > _SKILL_MAX_RATIO * info.compress_size):
+            raise ValueError("VERSION member over the size or ratio cap, or not stored/deflated")
+        with zf.open(info) as member:
+            data = member.read(_SKILL_VERSION_MAX_BYTES + 1)
+    if len(data) > _SKILL_VERSION_MAX_BYTES:
+        raise ValueError("VERSION member over the size cap")
+    return data.decode("utf-8").strip()
+
+
 def check_staged_skill_bundles(registry_entries: list[dict], ssot: str) -> list[dict]:
     from .doctor import (
         CURRENT, NOT_DETECTABLE, STALE, UNKNOWN, _row,
     )
-
-    import zipfile
 
     rows = []
     for entry in registry_entries:
@@ -336,16 +386,18 @@ def check_staged_skill_bundles(registry_entries: list[dict], ssot: str) -> list[
             continue
         sample = zips[0]
         try:
-            with zipfile.ZipFile(sample) as zf:
-                version_member = f"{sample.stem}/VERSION"
-                if version_member not in zf.namelist():
-                    rows.append(_row(surface, UNKNOWN,
-                                     f"{sample.name}: no VERSION marker (pre-cw-02 bundle?)",
-                                     remediation="tools/cowork_workspace_install.sh"))
-                    continue
-                staged = zf.read(version_member).decode("utf-8").strip()
-        except (OSError, zipfile.BadZipFile) as exc:
+            staged = _staged_skill_version(sample)
+        # What a hostile zip really raises here: BadZipFile, zlib.error, EOFError, ValueError
+        # (also UnicodeDecodeError), RuntimeError (encrypted), OverflowError (a zip64 offset
+        # past 2**63), MemoryError. A bundle must read as UNKNOWN, never crash the report.
+        except (OSError, ValueError, EOFError, OverflowError, RuntimeError, MemoryError,
+                zlib.error, zipfile.BadZipFile) as exc:
             rows.append(_row(surface, UNKNOWN, f"{sample.name}: unreadable ({exc})"))
+            continue
+        if staged is None:
+            rows.append(_row(surface, UNKNOWN,
+                             f"{sample.name}: no VERSION marker (pre-cw-02 bundle?)",
+                             remediation="tools/cowork_workspace_install.sh"))
             continue
         if staged == ssot:
             rows.append(_row(surface, CURRENT, f"staged {staged} == SSOT {ssot} (sample: {sample.name})",

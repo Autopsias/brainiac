@@ -93,9 +93,14 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument("-k", type=int, default=20,
                     help="agentic-budget default (matches gate.py --metric recall@20)")
     ap.add_argument("--rrf-k", type=int, default=60)
-    ap.add_argument("--rerank", dest="rerank", action="store_true", default=False)
+    ap.add_argument("--shipped-defaults", action="store_true",
+                    help="capture using shipped reranker defaults (rerank=True, rerank_top=20); "
+                         "fails loud if no real reranker is available")
+    ap.add_argument("--bare", action="store_true",
+                    help="explicit bare hybrid retrieval (rerank=False) for A/B studies")
+    ap.add_argument("--rerank", dest="rerank", action="store_true", default=None)
     ap.add_argument("--no-rerank", dest="rerank", action="store_false")
-    ap.add_argument("--rerank-top", type=int, default=15)
+    ap.add_argument("--rerank-top", type=int, default=None)
     # RK-02: the gate is ON unless disabled, so a capture that never named it
     # measured the gated path without saying so. Default None = "not typed"
     # (same precedence as the CLI flag); the RESOLVED value is stamped into
@@ -145,15 +150,40 @@ def _validate_args(ap: argparse.ArgumentParser, args) -> None:
         ap.error("--read-only-index requires --index-db")
     if args.index_db and args.rebuild:
         ap.error("--index-db cannot be combined with --rebuild")
-    if args.rerank:
-        # This script records hit.score, and reranking REORDERS hits without
-        # changing their RRF score — so a scorer re-sorting on score silently
-        # discards the whole reordering. Measured 2026-08-06: a rerank arm
-        # captured here scored mrr@10 0.300 against 0.566 for the same engine,
-        # same index, same queries, captured rank-correctly. Refuse rather than
-        # emit a run file that quietly measures something else.
-        ap.error("--rerank is not supported here (it would discard the rerank "
-                 "ordering); use eval/rebaseline_rerank_capture.py")
+    if args.shipped_defaults and args.bare:
+        ap.error("--shipped-defaults cannot be combined with --bare")
+    if args.shipped_defaults and args.rerank is False:
+        ap.error("--shipped-defaults cannot be combined with --no-rerank")
+    if args.bare and args.rerank is True:
+        ap.error("--bare cannot be combined with --rerank")
+    if args.shipped_defaults:
+        args.rerank = True
+        if args.rerank_top is None:
+            args.rerank_top = 20
+    elif args.bare:
+        args.rerank = False
+    elif args.rerank is None:
+        args.rerank = False
+    if args.rerank_top is None:
+        args.rerank_top = 20 if args.rerank else 15
+
+
+def _preflight_reranker(args):
+    """Fail loud when reranking is requested but no real reranker is available."""
+    if not args.rerank:
+        return None
+    from brain.rerank import NoopReranker, get_reranker
+    reranker = get_reranker("auto")
+    if isinstance(reranker, NoopReranker):
+        print(
+            "ERROR: reranking requested (--shipped-defaults / --rerank) but no real "
+            "reranker is available (get_reranker('auto') returned NoopReranker). "
+            "Refusing to silently degrade to bare retrieval; install/warm the "
+            "ONNX reranker weights or pass --bare explicitly.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    return reranker
 
 
 def _preflight_backend(ap: argparse.ArgumentParser, args) -> None:
@@ -217,7 +247,8 @@ def _open_search(args, vault_root: str):
             print(f"rebuilt: {info.get('indexed')} notes, backend={info.get('backend')}, "
                   f"model={info.get('embed_model')}")
         index_stats = index.stats()
-        return index.hybrid_search, {
+        search_fn = index.hybrid_search_with_trace if args.rerank else index.hybrid_search
+        return search_fn, {
             "index": index_stats,
             "prebuilt_index": str(db_path) if args.index_db else None,
             "read_only_index": args.read_only_index,
@@ -236,7 +267,37 @@ def _open_search(args, vault_root: str):
         index_state = {"index": index_stats}
     except Exception:  # fail-open: status is optional metadata
         index_state = {}
-    return core.hybrid_search, index_state, index_stats
+    search_fn = core.hybrid_search_with_trace if args.rerank else core.hybrid_search
+    return search_fn, index_state, index_stats
+
+
+def _unpack_search_result(result):
+    """Support both plain ``list[Hit]`` and ``(list[Hit], trace)`` search callables."""
+    if isinstance(result, tuple) and len(result) == 2:
+        return result[0], result[1]
+    return result, None
+
+
+def _verify_rerank_trace(qid: str, hits: list, trace) -> None:
+    """Fail loud (exit 2) if reranking silently fell back to unreranked order during search."""
+    if trace is None or not hits:
+        return
+    gate = getattr(trace, "rerank_gate", None) or {}
+    if gate.get("skipped"):
+        return
+    records = getattr(trace, "_records", None) or {}
+    pinned_count = sum(1 for r in records.values() if (r.get("pin") or {}).get("applied"))
+    if len(hits) <= pinned_count:
+        return
+    if not getattr(trace, "rerank_applied", False):
+        print(
+            f"ERROR: reranking fell back to unreranked order during search for query {qid!r} "
+            "(trace.rerank_applied=False without adaptive gate skip). "
+            "Refusing to record a silently degraded run; check reranker timeout/runtime "
+            "or pass --bare explicitly.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
 
 
 def _capture_one(search, q: dict, args, vault_root: str,
@@ -250,13 +311,17 @@ def _capture_one(search, q: dict, args, vault_root: str,
     hits = []
     for _ in range(args.samples):
         t0 = time.perf_counter()
-        hits = search(q["text"], k=args.k, rerank=args.rerank,
-                      rerank_top=args.rerank_top, rrf_k=args.rrf_k,
-                      rerank_gate=args.rerank_gate)
+        raw = search(q["text"], k=args.k, rerank=args.rerank,
+                     rerank_top=args.rerank_top, rrf_k=args.rrf_k,
+                     rerank_gate=args.rerank_gate)
         samples.append((time.perf_counter() - t0) * 1000.0)
+        hits, trace = _unpack_search_result(raw)
+        if args.rerank:
+            _verify_rerank_trace(q.get("id", "<unknown>"), hits, trace)
 
     doc_scores: dict[str, float] = {}
-    for h in hits:
+    n_hits = len(hits)
+    for position, h in enumerate(hits):
         rel = os.path.relpath(h.path, vault_root) if os.path.isabs(h.path) else h.path
         # ``src`` is the frozen canonical key, often a pre-migration path
         # that no longer exists on disk.  Temporal state belongs to the
@@ -267,8 +332,12 @@ def _capture_one(search, q: dict, args, vault_root: str,
         if q.get("stratum") == "temporal":
             vstate, _ = pn.resolve_version(rel, vault_root)
             src = f"{src}#{vstate}"
-        if src not in doc_scores or h.score > doc_scores[src]:
-            doc_scores[src] = h.score
+        # Reranking reorders hits without rewriting Hit.score (RRF scale), so
+        # emit rank-derived scores (n - position) when reranking is on so
+        # harness_direct._ranked() preserves the reranked order.
+        score = float(n_hits - position) if args.rerank else h.score
+        if src not in doc_scores or score > doc_scores[src]:
+            doc_scores[src] = score
     return round(statistics.median(samples), 2), doc_scores
 
 
@@ -280,6 +349,7 @@ def main() -> int:
     source_root = Path(args.source_root).resolve() if args.source_root else REPO / "src"
     sys.path.insert(0, str(source_root))
     _preflight_backend(ap, args)
+    preflight_reranker = _preflight_reranker(args)
 
     golden = json.loads(Path(args.golden).read_text(encoding="utf-8"))
     qmeta = {q["id"]: q for q in golden["queries"]}
@@ -290,10 +360,22 @@ def main() -> int:
 
     index_state["fingerprint"] = _fingerprint(index_stats, args.golden)
     from brain.index import rerank_gate_enabled
+    rerank_gate_on = bool(rerank_gate_enabled(args.rerank_gate))
     params = {"rrf_k": args.rrf_k, "rerank": args.rerank, "rerank_top": args.rerank_top,
-              "rerank_gate": rerank_gate_enabled(args.rerank_gate),
+              "rerank_gate": rerank_gate_on,
+              "rerank_gate_disabled": not rerank_gate_on,
               "rerank_gate_requested": args.rerank_gate}
+    if preflight_reranker is not None:
+        params["rerank_backend"] = type(preflight_reranker).__name__
+        params["rerank_model"] = getattr(preflight_reranker, "model_id", None)
+        onnx_dir = (
+            getattr(preflight_reranker, "_local_dir", None)
+            or os.environ.get("BRAIN_RERANKER_ONNX_DIR")
+        )
+        params["rerank_onnx_dir"] = os.path.realpath(onnx_dir) if onnx_dir else None
     index_state.update({"params": params, "vault": vault_root, "source_root": str(source_root)})
+    if args.rerank:
+        index_state["score_semantics"] = "rank-derived (n - position), preserves reranked order"
 
     runs: dict[str, dict[str, float]] = {}
     latency: dict[str, float] = {}
@@ -302,6 +384,7 @@ def main() -> int:
 
     out = {
         "system": args.system,
+        "rerank": bool(args.rerank),
         "captured": _iso(),
         "index_state": index_state,
         "k": args.k,

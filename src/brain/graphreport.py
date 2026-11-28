@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import re
 from typing import Any
 
 from .graphreport_sections import (
@@ -33,6 +34,12 @@ __all__ = [
 TEMPLATE_PLACEHOLDER = "__BRAIN_GRAPHREPORT_PAYLOAD_JSON__"
 NEAR_DUP_THRESHOLD = _NEAR_DUP_THRESHOLD
 MISMATCH_LOW = _MISMATCH_LOW
+
+# graph.json sits on the VM-writable mount: only a plain int / ISO date(-time) may reach the page.
+_BUILT_AT_RE = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}"
+    r"(T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?(Z|[+-][0-9]{2}:[0-9]{2})?)?"
+)
 
 
 def _load_template() -> str:
@@ -85,7 +92,11 @@ def build_payload(core: Any, *, today: datetime.date | None = None) -> dict[str,
     except (OSError, ValueError):
         graph = {}
     graph_generation = graph.get("generation")
+    if type(graph_generation) is not int or graph_generation < 0:
+        graph_generation = None
     graph_built_at = graph.get("built_at")
+    if not (isinstance(graph_built_at, str) and _BUILT_AT_RE.fullmatch(graph_built_at)):
+        graph_built_at = None
     graph_authoritative = graph.get("authoritative", False)
 
     link = build_link_section(conn, graph)

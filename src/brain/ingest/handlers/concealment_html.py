@@ -52,8 +52,9 @@ import re
 from typing import Any, Callable
 
 from .concealment import (
-    WHITE, collapsed, colour_marker, declarations, is_tiny, normalise, note_degraded,
-    parse_colour, run_record, to_px, OFFSCREEN_PX, _OFFSET_PROPS,
+    WHITE, _CSS_WS, _strip_css_comments, collapsed, colour_marker, declarations,
+    is_tiny, normalise, note_degraded, parse_colour, run_record, to_px,
+    OFFSCREEN_PX, _OFFSET_PROPS,
 )
 
 #: A clip narrower or shorter than this paints nothing a reader can read. Not
@@ -157,25 +158,26 @@ def stylesheet(raw_html: str) -> dict[str, str]:
     """
     out: dict[str, str] = {}
     for block in _style_blocks(raw_html or ""):
-        for selectors, decls in _rules(block):
+        for selectors, decls in _rules(_strip_css_comments(block)):
             for sel in selectors.split(","):
-                sel = sel.strip().lower()
+                sel = sel.strip(_CSS_WS).lower()
                 if not sel or _COMPLEX_SELECTOR.search(sel):
                     continue
                 out[sel] = f"{out.get(sel, '')};{decls}"
     return out
 
 
-def _sheet_style(sheet: dict[str, str], tag: str, attrs: dict[str, Any]) -> str:
-    """The stylesheet declarations that apply to one element, least specific
-    first, so the inline ``style=""`` applied after them still wins."""
+def _sheet_decls(sheet: dict[str, str], tag: str, attrs: dict[str, Any]) -> dict[str, str]:
+    """Parse matching stylesheet rules independently so one rule cannot bleed across boundaries."""
+    own: dict[str, str] = {}
     if not sheet:
-        return ""
-    parts = [sheet.get(tag, "")]
-    parts += [sheet.get(f".{c.lower()}", "")
-              for c in str(attrs.get("class") or "").split()]
-    parts.append(sheet.get(f"#{str(attrs.get('id') or '').lower()}", ""))
-    return ";".join(p for p in parts if p)
+        return own
+    selectors = [tag, *(f".{c.lower()}" for c in str(attrs.get("class") or "").split()),
+                 f"#{str(attrs.get('id') or '').lower()}"]
+    for sel in selectors:
+        if sel in sheet:
+            own.update(declarations(sheet[sel]))
+    return own
 
 
 _LEGACY_HEX = re.compile(r"[0-9a-f]{6}|[0-9a-f]{3}", re.I)
@@ -216,7 +218,7 @@ def _apply_paint(out: "_Style", own: dict[str, str]) -> None:
 
 def _apply_visibility(out: "_Style", own: dict[str, str]) -> None:
     # `visibility` is INHERITED and a descendant can turn it back on.
-    vis = own.get("visibility", "").strip().lower()
+    vis = own.get("visibility", "").strip(_CSS_WS).lower()
     if vis in ("hidden", "collapse"):
         out.invisible = True
     elif vis == "visible":
@@ -240,9 +242,10 @@ class _Style:
                 attrs: dict[str, Any] | None = None,
                 sheet: dict[str, str] | None = None) -> "_Style":
         attrs = attrs or {}
-        own = declarations(
-            f"{_presentational(tag, attrs)};"
-            f"{_sheet_style(sheet or {}, tag, attrs)};{style_attr or ''}")
+        own = declarations(_presentational(tag, attrs))
+        own.update(_sheet_decls(sheet or {}, tag, attrs))
+        if style_attr:
+            own.update(declarations(style_attr))
         out = _Style(self.colour, self.ground, self.size, self.offscreen,
                      self.undisplayed, self.invisible)
         _apply_paint(out, own)
@@ -276,12 +279,14 @@ def _length_px(raw: str) -> float | None:
     cannot collapse anything, so it answers ``None`` too and the caller treats
     an unreadable side as not-clipped.
     """
-    text = (raw or "").strip().lower()
+    text = (raw or "").strip(_CSS_WS).lower()
     if not text or text == "auto":
         return None
     px = to_px(text)
     if px is not None:
         return px
+    if not text.isascii():
+        return None
     try:
         return float(text)
     except ValueError:  # coverage-audit: a clip argument that is not a
@@ -318,7 +323,7 @@ def _clipped_away(own: dict[str, str]) -> bool:
     rect = _CLIP_RECT.search(own.get("clip", ""))
     if rect:
         sides = [_length_px(part)
-                 for part in re.split(r"[,\s]+", rect.group(1).strip()) if part]
+                 for part in re.split(r"[,\t\n\r\f ]+", rect.group(1).strip(_CSS_WS)) if part]
         if len(sides) == 4 and not any(side is None for side in sides):
             top, right, bottom, left = sides  # type: ignore[misc]
             if (right - left) <= CLIP_FLOOR_PX or (bottom - top) <= CLIP_FLOOR_PX:
@@ -326,12 +331,12 @@ def _clipped_away(own: dict[str, str]) -> bool:
     shape = _CLIP_SHAPE.search(own.get("clip-path", ""))
     if not shape:
         return False
-    name, args = shape.group(1).lower(), shape.group(2).strip()
+    name, args = shape.group(1).lower(), shape.group(2).strip(_CSS_WS)
     if name == "inset":
         return any(float(pct) >= 50.0 for pct in _PERCENT.findall(args))
     if name == "polygon":
         return len({tuple(point.split())
-                    for point in args.split(",") if point.strip()}) < 3
+                    for point in args.split(",") if point.strip(_CSS_WS)}) < 3
     radii = [_length_px(token)
              for token in args.lower().split(" at ")[0].split()]
     return bool(radii) and all(radius == 0.0 for radius in radii)
@@ -345,7 +350,7 @@ def _undisplayed(own: dict[str, str], attrs: dict[str, Any]) -> bool:
     subtree at once, and a descendant cannot paint outside an ancestor's clip.
     Only ``visibility`` is undoable, and it is handled apart.
     """
-    if own.get("display", "").strip().lower() == "none":
+    if own.get("display", "").strip(_CSS_WS).lower() == "none":
         return True
     if _clipped_away(own) or collapsed(own):
         return True
@@ -354,11 +359,14 @@ def _undisplayed(own: dict[str, str], attrs: dict[str, Any]) -> bool:
     # `<div hidden>` as not hidden, which is the bug this comment prevents.
     if "hidden" in attrs:
         return True
-    raw = own.get("opacity", "").strip().rstrip("%")
+    raw = own.get("opacity", "").strip(_CSS_WS)
     if raw:
+        is_pct = raw.endswith("%")
+        num = raw[:-1] if is_pct else raw
         try:
-            scale = 100.0 if own["opacity"].strip().endswith("%") else 1.0
-            return float(raw) / scale <= OPACITY_FLOOR
+            if not num.isascii() or any(c.isspace() for c in num):
+                raise ValueError(raw)
+            return float(num) / (100.0 if is_pct else 1.0) <= OPACITY_FLOOR
         except ValueError:
             # An opacity this walk cannot resolve. A browser drops the
             # declaration too, so `False` matches the render — but the walk
@@ -446,6 +454,7 @@ class _ConcealedHtmlParser(html.parser.HTMLParser):
         self.runs: list[dict[str, Any]] = []
         self._stack: list[tuple[str, _Style, str]] = [("", _Style(), "html:b0")]
         self._skip = 0
+        self._open: dict[str, int] = {}  # open frames per tag, in step with _stack
         self._n = 0
         self._sheet = sheet or {}
         self._seen = seen
@@ -468,16 +477,17 @@ class _ConcealedHtmlParser(html.parser.HTMLParser):
             self._n += 1
             container = f"html:b{self._n}"
         self._stack.append((tag, style, container))
+        self._open[tag] = self._open.get(tag, 0) + 1
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()
         if tag in self._SKIP:
             self._skip = max(0, self._skip - 1)
             return
-        for i in range(len(self._stack) - 1, 0, -1):
-            if self._stack[i][0] == tag:
-                del self._stack[i:]
-                return
+        if self._open.get(tag):  # a close with nothing open to match never scans (F19)
+            while (top := self._stack.pop()[0]) != tag:
+                self._open[top] -= 1
+            self._open[tag] -= 1
 
     def handle_data(self, data: str) -> None:
         if self._skip:

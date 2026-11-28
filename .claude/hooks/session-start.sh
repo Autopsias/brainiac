@@ -20,7 +20,13 @@
 #
 # Degrades silently: no jq -> no additionalContext emitted, still exit 0.
 set -e
-PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+if [ -n "${CLAUDE_PROJECT_DIR:-}" ]; then
+  PROJECT_DIR="$CLAUDE_PROJECT_DIR"
+elif command -v git >/dev/null 2>&1 && _GIT_TOP=$(git rev-parse --show-toplevel 2>/dev/null) && [ -n "$_GIT_TOP" ]; then
+  PROJECT_DIR="$_GIT_TOP"
+else
+  PROJECT_DIR="$(pwd)"
+fi
 VAULT_DIR="${BRAIN_VAULT:-$PROJECT_DIR/vault}"
 MEMORY_DIR="$VAULT_DIR/.brain/memory"
 HANDOFF="$MEMORY_DIR/handoff.md"
@@ -114,7 +120,7 @@ PYEOF
 )
 
 RECENT=""
-if command -v git >/dev/null 2>&1 && [ -d "$PROJECT_DIR/.git" ]; then
+if command -v git >/dev/null 2>&1 && [ -e "$PROJECT_DIR/.git" ]; then
   RECENT=$(cd "$PROJECT_DIR" && git log --oneline -10 2>/dev/null || true)
 fi
 
@@ -165,8 +171,8 @@ fi
 # The owner will not open hot.md/brief by hand; every session becomes the
 # delivery channel. Surface only COUNTS here (the raw question bodies come from
 # a model reading vault content, so they stay out of the injected context — the
-# /brain-inbox skill reads them interactively). These are actionable harness
-# lines, not untrusted vault data.
+# session stages them interactively via AskUserQuestion, per EXC-03). These are
+# actionable harness lines, not untrusted vault data.
 PUSH=$(python3 - "$VAULT_DIR" <<'PYEOF'
 import glob
 import json
@@ -256,7 +262,7 @@ for vault in _candidate_vaults(sys.argv[1]):
     label = _one_line(os.path.basename(os.path.dirname(vault)) or vault)
     if open_n:
         print(f"OWNER INBOX ({label}): {open_n} decision(s) pending — ask me to "
-              f"open them, or run /brain-inbox. Each is one question with options "
+              f"open them in this session. Each is one question with options "
               f"and a default (~{open_n} min).")
     if fb_n:
         print(f"ENGINE FEEDBACK ({label}): {fb_n} engine-bug prompt(s) waiting in "

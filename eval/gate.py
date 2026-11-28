@@ -43,6 +43,7 @@ independently-tested primitives in `eval/stats.py`:
     for the observed OVERALL effect (H20 "pre-register an MDE + reported
     power; the gate is an effect-size threshold, not a bare CI-lower>0").
 """
+
 from __future__ import annotations
 
 import argparse
@@ -61,8 +62,17 @@ from stats import (  # noqa: E402
     paired_permutation_test,
 )
 
-DEFAULT_BOUND = -0.02   # -2pp
+DEFAULT_BOUND = -0.02  # -2pp
 DEFAULT_B = 10000
+REQUIRED_AGENTIC_FAMILIES = frozenset(
+    {
+        "dossier_routing_tensions",
+        "egress_freshness_hints",
+        "bare_id_body_linking",
+        "create_safety_compliance",
+        "cascade_navigation",
+    }
+)
 
 
 def _pct_drift(a: float | None, b: float | None) -> float | None:
@@ -78,44 +88,58 @@ def corpus_drift_check(sc: dict, allow_drift: bool) -> int | None:
     a score from one vault size/shape is never silently gated against another.
     Returns an exit code (always 2, the existing ERROR/undecidable class) to abort
     early, or None to proceed."""
-    cur_fp = ((sc.get("current_system") or {}).get("index_state") or {}).get("fingerprint")
+    cur_fp = ((sc.get("current_system") or {}).get("index_state") or {}).get(
+        "fingerprint"
+    )
     new_fp = ((sc.get("new_system") or {}).get("index_state") or {}).get("fingerprint")
 
     if cur_fp is None and new_fp is None:
-        print("WARNING: neither scorecard side carries a corpus fingerprint "
-              "(pre-BL-01 artifact) — gating without corpus-drift protection.")
+        print(
+            "WARNING: neither scorecard side carries a corpus fingerprint "
+            "(pre-BL-01 artifact) — gating without corpus-drift protection."
+        )
         return None
     if cur_fp is None or new_fp is None:
-        print("ERROR: mixed fingerprint pair — one side carries a corpus fingerprint, "
-              "the other does not. Undecidable in the same way as a size mismatch; "
-              "re-capture both sides with the same harness version.")
+        print(
+            "ERROR: mixed fingerprint pair — one side carries a corpus fingerprint, "
+            "the other does not. Undecidable in the same way as a size mismatch; "
+            "re-capture both sides with the same harness version."
+        )
         return 2
 
     cur_gs, new_gs = cur_fp.get("golden_set_sha256"), new_fp.get("golden_set_sha256")
     if cur_gs and new_gs and cur_gs != new_gs:
-        print(f"ERROR: golden_set_sha256 mismatch (current={cur_gs[:12]}... vs "
-              f"new={new_gs[:12]}...) — the two runs were scored against different "
-              f"query sets. --allow-drift does not bypass this.")
+        print(
+            f"ERROR: golden_set_sha256 mismatch (current={cur_gs[:12]}... vs "
+            f"new={new_gs[:12]}...) — the two runs were scored against different "
+            f"query sets. --allow-drift does not bypass this."
+        )
         return 2
 
     chunks_drift = _pct_drift(cur_fp.get("chunks"), new_fp.get("chunks"))
     if chunks_drift is not None and chunks_drift > 0.10:
-        print(f"ERROR: chunk-count drift {chunks_drift:.1%} exceeds 10% "
-              f"(current={cur_fp.get('chunks')}, new={new_fp.get('chunks')}) — a "
-              f"re-chunked corpus at the same note count is not comparable. "
-              f"--allow-drift does not bypass this.")
+        print(
+            f"ERROR: chunk-count drift {chunks_drift:.1%} exceeds 10% "
+            f"(current={cur_fp.get('chunks')}, new={new_fp.get('chunks')}) — a "
+            f"re-chunked corpus at the same note count is not comparable. "
+            f"--allow-drift does not bypass this."
+        )
         return 2
 
     notes_drift = _pct_drift(cur_fp.get("notes"), new_fp.get("notes"))
     if notes_drift is not None and notes_drift > 0.10:
         if allow_drift:
-            print(f"WARNING: note-count drift {notes_drift:.1%} exceeds 10% "
-                  f"(current={cur_fp.get('notes')}, new={new_fp.get('notes')}) — "
-                  f"proceeding anyway (--allow-drift).")
+            print(
+                f"WARNING: note-count drift {notes_drift:.1%} exceeds 10% "
+                f"(current={cur_fp.get('notes')}, new={new_fp.get('notes')}) — "
+                f"proceeding anyway (--allow-drift)."
+            )
         else:
-            print(f"ERROR: note-count drift {notes_drift:.1%} exceeds 10% "
-                  f"(current={cur_fp.get('notes')}, new={new_fp.get('notes')}) — "
-                  f"undecidable comparison. Pass --allow-drift to proceed anyway.")
+            print(
+                f"ERROR: note-count drift {notes_drift:.1%} exceeds 10% "
+                f"(current={cur_fp.get('notes')}, new={new_fp.get('notes')}) — "
+                f"undecidable comparison. Pass --allow-drift to proceed anyway."
+            )
             return 2
     return None
 
@@ -127,7 +151,9 @@ def _paired_deltas(pq: dict) -> tuple[list[str], np.ndarray]:
     return ids, d
 
 
-def bootstrap_ci_lower(deltas: np.ndarray, b: int, seed: int, alpha: float = 0.05) -> float:
+def bootstrap_ci_lower(
+    deltas: np.ndarray, b: int, seed: int, alpha: float = 0.05
+) -> float:
     # Deliberately the 2.5th percentile (two-sided 95% CI lower bound), which is
     # STRICTER than the one-sided 5th-percentile non-inferiority bound — a
     # conservative choice (harder to PASS), so a PASS is defensible. Switch to
@@ -148,7 +174,9 @@ def fisher_superiority_p(deltas: np.ndarray, b: int, seed: int) -> float:
     canonical implementation)."""
     if deltas.size == 0:
         return float("nan")
-    return paired_permutation_test(deltas, b=b, seed=seed + 1, fold_context="unknown").p_greater
+    return paired_permutation_test(
+        deltas, b=b, seed=seed + 1, fold_context="unknown"
+    ).p_greater
 
 
 def _stratum_verdict(sd, slb: float, bound: float, test: str) -> "tuple[bool, str]":
@@ -162,61 +190,175 @@ def _stratum_verdict(sd, slb: float, bound: float, test: str) -> "tuple[bool, st
     """
     mean = float(sd.mean())
     if test == "point":
-        return (mean >= bound,
-                f"mean Δ={mean:+.4f} (need >= {bound:+.4f}); n={sd.size}; "
-                f"95% CI lower={slb:+.4f} [advisory — n too small to bound the margin]")
-    return (slb >= bound,
-            f"mean Δ={mean:+.4f}, 95% CI lower={slb:+.4f} "
-            f"(need >= {bound:+.4f}); n={sd.size}")
+        return (
+            mean >= bound,
+            f"mean Δ={mean:+.4f} (need >= {bound:+.4f}); n={sd.size}; "
+            f"95% CI lower={slb:+.4f} [advisory — n too small to bound the margin]",
+        )
+    return (
+        slb >= bound,
+        f"mean Δ={mean:+.4f}, 95% CI lower={slb:+.4f} "
+        f"(need >= {bound:+.4f}); n={sd.size}",
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
     """The gate's command line. Kept whole and separate: every help string here
     is part of the gate's published contract."""
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--scorecard", required=True)
     ap.add_argument("--bound", type=float, default=DEFAULT_BOUND)
     ap.add_argument("--bootstrap", type=int, default=DEFAULT_B)
     ap.add_argument("--seed", type=int, default=7)
-    ap.add_argument("--metric", default="recall@10", choices=["recall@10", "recall@20"],
-                    help="Gate metric. recall@10 = single-query (a human reading 10). "
-                         "recall@20 = AGENTIC budget (the agent reads its whole returned "
-                         "working set) — the correct measure for an agentic retriever.")
-    ap.add_argument("--stratum-test", default="ci", choices=["ci", "point"],
-                    help="Per-stratum non-inferiority test. 'ci' = 95%% bootstrap CI lower "
-                         "bound >= bound (the original; STATISTICALLY UNCERTIFIABLE at "
-                         "n=12-14 — the CI half-width (~0.17) dwarfs a 0.02 margin, so it "
-                         "tests sample size, not quality). 'point' = mean Δ >= bound with "
-                         "the CI reported as advisory — the valid test for a fixed modest "
-                         "golden set. OVERALL always uses the CI test (n=66 is powered).")
-    ap.add_argument("--fold-context", default="unknown",
-                    choices=["held-out", "non-held-out", "unknown"],
-                    help="EF-04 (H19): label ONLY, never changes a computed statistic. Pass "
-                         "'held-out' ONLY when this scorecard really is the single locked "
-                         "held-out read (H37, session s11b) — that flips the paired "
-                         "permutation test's report from 'descriptive/informational' to "
-                         "'PRIMARY significance test'. Any other value prints an explicit "
-                         "not-confirmatory caveat, because the primary significance regime "
-                         "for this eval runs exactly once.")
-    ap.add_argument("--fdr-alpha", type=float, default=0.05,
-                    help="EF-04 (H20): Benjamini-Hochberg FDR level applied across every "
-                         "per-segment (language x class) paired-permutation p-value reported "
-                         "in the same run, so multiplicity across ~10-15 slices can't "
-                         "manufacture false 'wins'. Does not affect the PASS/FAIL contract.")
-    ap.add_argument("--target-power", type=float, default=0.8,
-                    help="EF-04 (H20): target power for the pre-registered minimum-detectable-"
-                         "effect report (informational — does not affect PASS/FAIL).")
-    ap.add_argument("--allow-drift", action="store_true",
-                    help="BL-01 (BR-06): bypass the corpus NOTE-COUNT drift refusal ONLY. "
-                         "Never bypasses chunk-count drift, a golden_set_sha256 mismatch, "
-                         "or a mixed fingerprinted/unfingerprinted pair — those always exit 2.")
+    ap.add_argument(
+        "--metric",
+        default="recall@10",
+        choices=["recall@10", "recall@20"],
+        help="Gate metric. recall@10 = single-query (a human reading 10). "
+        "recall@20 = AGENTIC budget (the agent reads its whole returned "
+        "working set) — the correct measure for an agentic retriever.",
+    )
+    ap.add_argument(
+        "--stratum-test",
+        default="ci",
+        choices=["ci", "point"],
+        help="Per-stratum non-inferiority test. 'ci' = 95%% bootstrap CI lower "
+        "bound >= bound (the original; STATISTICALLY UNCERTIFIABLE at "
+        "n=12-14 — the CI half-width (~0.17) dwarfs a 0.02 margin, so it "
+        "tests sample size, not quality). 'point' = mean Δ >= bound with "
+        "the CI reported as advisory — the valid test for a fixed modest "
+        "golden set. OVERALL always uses the CI test (n=66 is powered).",
+    )
+    ap.add_argument(
+        "--fold-context",
+        default="unknown",
+        choices=["held-out", "non-held-out", "unknown"],
+        help="EF-04 (H19): label ONLY, never changes a computed statistic. Pass "
+        "'held-out' ONLY when this scorecard really is the single locked "
+        "held-out read (H37, session s11b) — that flips the paired "
+        "permutation test's report from 'descriptive/informational' to "
+        "'PRIMARY significance test'. Any other value prints an explicit "
+        "not-confirmatory caveat, because the primary significance regime "
+        "for this eval runs exactly once.",
+    )
+    ap.add_argument(
+        "--fdr-alpha",
+        type=float,
+        default=0.05,
+        help="EF-04 (H20): Benjamini-Hochberg FDR level applied across every "
+        "per-segment (language x class) paired-permutation p-value reported "
+        "in the same run, so multiplicity across ~10-15 slices can't "
+        "manufacture false 'wins'. Does not affect the PASS/FAIL contract.",
+    )
+    ap.add_argument(
+        "--target-power",
+        type=float,
+        default=0.8,
+        help="EF-04 (H20): target power for the pre-registered minimum-detectable-"
+        "effect report (informational — does not affect PASS/FAIL).",
+    )
+    ap.add_argument(
+        "--allow-drift",
+        action="store_true",
+        help="BL-01 (BR-06): bypass the corpus NOTE-COUNT drift refusal ONLY. "
+        "Never bypasses chunk-count drift, a golden_set_sha256 mismatch, "
+        "or a mixed fingerprinted/unfingerprinted pair — those always exit 2.",
+    )
+    ap.add_argument(
+        "--agentic-scorecard",
+        type=Path,
+        default=None,
+        help="EV-04: optional eval/agentic_eval.py scorecard JSON. When supplied, "
+        "gates system-level agentic readiness (>=15 scenarios, all families pass).",
+    )
     return ap
 
 
-def _segment_checks(prefix: str, by_seg: dict, ids: list, pq: dict,
-                    key_map: dict, args, skip_note: str,
-                    segment_pvals: list) -> list[tuple[str, bool, str]]:
+def _agentic_duplicates_ok(data: dict, min_n: int = 15) -> tuple[bool, str]:
+    dup_ids = list(data.get("duplicate_ids") or [])
+    if dup_ids:
+        return False, f", duplicate_ids={dup_ids}"
+    results = data.get("results")
+    if isinstance(results, list) and results:
+        seen: set[str] = set()
+        for r in results:
+            if not isinstance(r, dict) or not r.get("id"):
+                continue
+            sid = str(r["id"])
+            if sid in seen:
+                return False, f", duplicate_result_id={sid}"
+            seen.add(sid)
+        if len(seen) < min_n:
+            return False, f", distinct_results={len(seen)}<{min_n}"
+    if "n_distinct_scenarios" in data and int(data["n_distinct_scenarios"]) < min_n:
+        return False, f", n_distinct_scenarios={data['n_distinct_scenarios']}<{min_n}"
+    return True, ""
+
+
+def _agentic_check(path: Path) -> tuple[str, bool, str]:
+    """EV-04: validate an eval/agentic_eval.py scorecard against the ship contract."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("schema") != "agentic-eval/1":
+        return (
+            "agentic answer-grounding eval",
+            False,
+            f"unexpected schema {data.get('schema')!r} (expected 'agentic-eval/1')",
+        )
+    n = int(data.get("n_scenarios", 0))
+    n_passed = int(data.get("n_passed", 0))
+    rate = float(data.get("overall_pass_rate", 0.0))
+    min_rate = float(data.get("min_pass_rate", 0.0))
+    per_family = data.get("per_family")
+    if not isinstance(per_family, dict):
+        per_family = {}
+    missing = sorted(REQUIRED_AGENTIC_FAMILIES - set(per_family))
+    declared_missing = list(data.get("missing_families") or [])
+    all_missing = sorted(set(missing) | set(declared_missing))
+    families_ok = (
+        not all_missing
+        and bool(per_family)
+        and all(
+            isinstance(slot, dict)
+            and bool(slot.get("meets_bar"))
+            and int(slot.get("n", 0)) > 0
+            and int(slot.get("passed", 0)) > 0
+            and float(slot.get("pass_rate", 0.0)) >= min_rate
+            for slot in per_family.values()
+        )
+    )
+    distinct_ok, distinct_note = _agentic_duplicates_ok(data)
+    ok = (
+        n >= 15
+        and distinct_ok
+        and n_passed > 0
+        and min_rate > 0.0
+        and rate >= min_rate
+        and bool(data.get("passed"))
+        and bool(data.get("all_families_pass"))
+        and families_ok
+    )
+    missing_note = f", missing_families={all_missing}" if all_missing else ""
+    detail = (
+        f"passed={n_passed}/{n} "
+        f"(rate={rate}, min_rate={min_rate}, "
+        f"all_families_pass={data.get('all_families_pass')}, "
+        f"mode={data.get('mode')}{missing_note}{distinct_note})"
+    )
+    return ("agentic answer-grounding eval", ok, detail)
+
+
+def _segment_checks(
+    prefix: str,
+    by_seg: dict,
+    ids: list,
+    pq: dict,
+    key_map: dict,
+    args,
+    skip_note: str,
+    segment_pvals: list,
+) -> list[tuple[str, bool, str]]:
     """Non-inferiority checks for every `lang:`/`class:` segment.
 
     Gate-power segments are tested; the rest record a SKIPPED check that
@@ -228,25 +370,34 @@ def _segment_checks(prefix: str, by_seg: dict, ids: list, pq: dict,
             continue
         key = seg.split(":", 1)[1]
         if d.get("power") != "gate":
-            checks.append((f"non-inferiority {seg}", True,
-                           f"SKIPPED (power={d.get('power')}, n={d.get('n')}) — {skip_note}"))
+            checks.append(
+                (
+                    f"non-inferiority {seg}",
+                    True,
+                    f"SKIPPED (power={d.get('power')}, n={d.get('n')}) — {skip_note}",
+                )
+            )
             continue
         seg_ids = sorted(q for q in ids if key_map.get(q) == key)
         sd = np.array([pq["new"][q] - pq["current"][q] for q in seg_ids], dtype=float)
         if sd.size == 0:
-            checks.append((f"non-inferiority {seg}", True, "SKIPPED — no paired queries"))
+            checks.append(
+                (f"non-inferiority {seg}", True, "SKIPPED — no paired queries")
+            )
             continue
         slb = bootstrap_ci_lower(sd, args.bootstrap, args.seed)
         ok, detail = _stratum_verdict(sd, slb, args.bound, args.stratum_test)
         checks.append((f"non-inferiority {seg}", ok, detail))
-        seg_perm = paired_permutation_test(sd, b=args.bootstrap, seed=args.seed,
-                                            fold_context=args.fold_context)
+        seg_perm = paired_permutation_test(
+            sd, b=args.bootstrap, seed=args.seed, fold_context=args.fold_context
+        )
         segment_pvals.append((seg, sd.size, seg_perm.p_two_sided))
     return checks
 
 
-def _reported_only_pvals(by_seg: dict, ids: list, pq: dict, qlang: dict,
-                         qstr: dict, gated: set, args) -> list[tuple[str, int, float]]:
+def _reported_only_pvals(
+    by_seg: dict, ids: list, pq: dict, qlang: dict, qstr: dict, gated: set, args
+) -> list[tuple[str, int, float]]:
     """EF-04 (H20): permutation p-values for the *reported-only* (SKIPPED /
     smoke-power) lang:/class: segments with >=2 paired queries, so the FDR
     family genuinely covers "ALL language x class slice tests" (H20:
@@ -263,8 +414,9 @@ def _reported_only_pvals(by_seg: dict, ids: list, pq: dict, qlang: dict,
         if len(seg_ids) < 2:
             continue
         sd = np.array([pq["new"][q] - pq["current"][q] for q in seg_ids], dtype=float)
-        seg_perm = paired_permutation_test(sd, b=args.bootstrap, seed=args.seed,
-                                            fold_context=args.fold_context)
+        seg_perm = paired_permutation_test(
+            sd, b=args.bootstrap, seed=args.seed, fold_context=args.fold_context
+        )
         out.append((seg, sd.size, seg_perm.p_two_sided))
     return out
 
@@ -272,26 +424,35 @@ def _reported_only_pvals(by_seg: dict, ids: list, pq: dict, qlang: dict,
 def _print_fdr_block(segment_pvals: list, args) -> None:
     """The Benjamini-Hochberg family-wise correction across every slice test."""
     if not segment_pvals:
-        print("  Benjamini-Hochberg FDR correction: SKIPPED — no per-segment "
-              "paired data to correct across.")
+        print(
+            "  Benjamini-Hochberg FDR correction: SKIPPED — no per-segment "
+            "paired data to correct across."
+        )
         return
     seg_names = [s for s, _, _ in segment_pvals]
     seg_ns = [n for _, n, _ in segment_pvals]
     seg_raw_p = [p for _, _, p in segment_pvals]
     rejected, adj_p = benjamini_hochberg(seg_raw_p, alpha=args.fdr_alpha)
-    print(f"  Benjamini-Hochberg FDR correction across {len(segment_pvals)} "
-          f"language x class slice tests (H20, alpha={args.fdr_alpha}):")
+    print(
+        f"  Benjamini-Hochberg FDR correction across {len(segment_pvals)} "
+        f"language x class slice tests (H20, alpha={args.fdr_alpha}):"
+    )
     for name, n, raw_p, adj, rej in zip(seg_names, seg_ns, seg_raw_p, adj_p, rejected):
         flag = "SURVIVES" if rej else "does not survive"
-        print(f"    {name:<28} n={n:<3} raw_p={raw_p:.4f}  "
-              f"BH-adjusted_q={adj:.4f}  [{flag} FDR correction]")
+        print(
+            f"    {name:<28} n={n:<3} raw_p={raw_p:.4f}  "
+            f"BH-adjusted_q={adj:.4f}  [{flag} FDR correction]"
+        )
     naive_wins = sum(1 for p in seg_raw_p if p <= args.fdr_alpha)
-    print(f"    naive uncorrected count (p<={args.fdr_alpha}): {naive_wins}  "
-          f"| FDR-corrected count: {sum(rejected)}")
+    print(
+        f"    naive uncorrected count (p<={args.fdr_alpha}): {naive_wins}  "
+        f"| FDR-corrected count: {sum(rejected)}"
+    )
 
 
-def _print_extended_stats(deltas, overall_ci, overall_perm,
-                          segment_pvals: list, args) -> None:
+def _print_extended_stats(
+    deltas, overall_ci, overall_perm, segment_pvals: list, args
+) -> None:
     """EF-04 (S03) extended statistics block.
 
     Purely informational: PASS/FAIL is decided ONLY by `checks` / `all_pass`.
@@ -300,29 +461,42 @@ def _print_extended_stats(deltas, overall_ci, overall_perm,
     print("=" * 72)
     print("EXTENDED STATISTICS (EF-04) — informational, does not change PASS/FAIL")
     print("=" * 72)
-    print("  Bootstrap CI (DESCRIPTIVE effect-size interval, H19 — not a "
-          "significance test):")
-    print(f"    mean Δ={overall_ci.mean:+.4f}  95% CI=[{overall_ci.ci_lower:+.4f}, "
-          f"{overall_ci.ci_upper:+.4f}]  n={overall_ci.n}  B={overall_ci.b}  "
-          f"seed={overall_ci.seed}")
+    print(
+        "  Bootstrap CI (DESCRIPTIVE effect-size interval, H19 — not a "
+        "significance test):"
+    )
+    print(
+        f"    mean Δ={overall_ci.mean:+.4f}  95% CI=[{overall_ci.ci_lower:+.4f}, "
+        f"{overall_ci.ci_upper:+.4f}]  n={overall_ci.n}  B={overall_ci.b}  "
+        f"seed={overall_ci.seed}"
+    )
     print(f"  Paired permutation test OVERALL ({overall_perm.kind}):")
-    print(f"    p_two_sided={overall_perm.p_two_sided:.4f}  "
-          f"p_one_sided(new>=current)={overall_perm.p_greater:.4f}  "
-          f"exact={overall_perm.exact}  n={overall_perm.n}")
+    print(
+        f"    p_two_sided={overall_perm.p_two_sided:.4f}  "
+        f"p_one_sided(new>=current)={overall_perm.p_greater:.4f}  "
+        f"exact={overall_perm.exact}  n={overall_perm.n}"
+    )
     print(f"    {overall_perm.caveat()}")
     _print_fdr_block(segment_pvals, args)
 
     obs_sd = float(np.std(deltas, ddof=1)) if deltas.size > 1 else 0.0
-    mde = minimum_detectable_effect(deltas.size, obs_sd, alpha=args.fdr_alpha,
-                                     power=args.target_power)
+    mde = minimum_detectable_effect(
+        deltas.size, obs_sd, alpha=args.fdr_alpha, power=args.target_power
+    )
     pw = achieved_power(deltas.size, obs_sd, float(deltas.mean()), alpha=args.fdr_alpha)
-    print("  Pre-registered minimum detectable effect (H20 — the success gate "
-          "is an effect-size")
+    print(
+        "  Pre-registered minimum detectable effect (H20 — the success gate "
+        "is an effect-size"
+    )
     print("  threshold, not a bare 'CI lower bound > 0'):")
-    print(f"    n={deltas.size}  observed_sd={obs_sd:.4f}  alpha={args.fdr_alpha}  "
-          f"target_power={args.target_power} -> MDE={mde:+.4f}")
-    print(f"    achieved power for the OBSERVED overall effect "
-          f"(mean Δ={deltas.mean():+.4f}): {pw:.4f}")
+    print(
+        f"    n={deltas.size}  observed_sd={obs_sd:.4f}  alpha={args.fdr_alpha}  "
+        f"target_power={args.target_power} -> MDE={mde:+.4f}"
+    )
+    print(
+        f"    achieved power for the OBSERVED overall effect "
+        f"(mean Δ={deltas.mean():+.4f}): {pw:.4f}"
+    )
 
 
 def main() -> int:
@@ -342,8 +516,10 @@ def main() -> int:
     by_seg = sc["metrics"]["by_segment"]
 
     print("=" * 72)
-    print(f"SHIP GATE — {args.metric} non-inferiority (bound = "
-          f"{args.bound:+.2%}, bootstrap B={args.bootstrap})")
+    print(
+        f"SHIP GATE — {args.metric} non-inferiority (bound = "
+        f"{args.bound:+.2%}, bootstrap B={args.bootstrap})"
+    )
     if args.metric == "recall@20":
         print("  [agentic-budget gate: the agent consumes its full returned set,")
         print("   not just the top 10 — the research-correct metric for an agent]")
@@ -366,12 +542,18 @@ def main() -> int:
     lb = bootstrap_ci_lower(deltas, args.bootstrap, args.seed)
     p_sup = fisher_superiority_p(deltas, args.bootstrap, args.seed)
     ni_overall = lb >= args.bound
-    checks.append(("non-inferiority OVERALL", ni_overall,
-                   f"mean Δ={deltas.mean():+.4f}, 95% CI lower={lb:+.4f} "
-                   f"(need >= {args.bound:+.4f}); n={deltas.size}; "
-                   f"Fisher superiority p={p_sup:.4f}"))
-    overall_perm = paired_permutation_test(deltas, b=args.bootstrap, seed=args.seed,
-                                            fold_context=args.fold_context)
+    checks.append(
+        (
+            "non-inferiority OVERALL",
+            ni_overall,
+            f"mean Δ={deltas.mean():+.4f}, 95% CI lower={lb:+.4f} "
+            f"(need >= {args.bound:+.4f}); n={deltas.size}; "
+            f"Fisher superiority p={p_sup:.4f}",
+        )
+    )
+    overall_perm = paired_permutation_test(
+        deltas, b=args.bootstrap, seed=args.seed, fold_context=args.fold_context
+    )
     overall_ci = bootstrap_ci(deltas, b=args.bootstrap, seed=args.seed)
 
     # 2 + 2b. per-language and per-CLASS non-inferiority, gate-power segments
@@ -380,24 +562,45 @@ def main() -> int:
     # NOT gate — too few queries to bound.
     qlang = sc.get("_qlang", {})
     qstr = sc.get("_qstratum", {})
-    checks.extend(_segment_checks("lang:", by_seg, ids, pq, qlang, args,
-                                  "smoke, not gating", segment_pvals))
-    checks.extend(_segment_checks("class:", by_seg, ids, pq, qstr, args,
-                                  "not gating", segment_pvals))
+    checks.extend(
+        _segment_checks(
+            "lang:", by_seg, ids, pq, qlang, args, "smoke, not gating", segment_pvals
+        )
+    )
+    checks.extend(
+        _segment_checks(
+            "class:", by_seg, ids, pq, qstr, args, "not gating", segment_pvals
+        )
+    )
 
-    segment_pvals.extend(_reported_only_pvals(
-        by_seg, ids, pq, qlang, qstr,
-        {name for name, _, _ in segment_pvals}, args))
+    segment_pvals.extend(
+        _reported_only_pvals(
+            by_seg, ids, pq, qlang, qstr, {name for name, _, _ in segment_pvals}, args
+        )
+    )
 
     # 3. latency p95(new) <= p95(current)
     lat = sc.get("latency_ms", {})
     cp95, np95 = lat.get("current", {}).get("p95"), lat.get("new", {}).get("p95")
     if cp95 is None or np95 is None:
-        checks.append(("latency p95(new) <= p95(current)", True,
-                       f"SKIPPED — latency not captured for both (cur={cp95}, new={np95})"))
+        checks.append(
+            (
+                "latency p95(new) <= p95(current)",
+                True,
+                f"SKIPPED — latency not captured for both (cur={cp95}, new={np95})",
+            )
+        )
     else:
-        checks.append(("latency p95(new) <= p95(current)", np95 <= cp95,
-                       f"p95 new={np95}ms vs current={cp95}ms"))
+        checks.append(
+            (
+                "latency p95(new) <= p95(current)",
+                np95 <= cp95,
+                f"p95 new={np95}ms vs current={cp95}ms",
+            )
+        )
+
+    if args.agentic_scorecard is not None:
+        checks.append(_agentic_check(args.agentic_scorecard))
 
     print()
     all_pass = True
@@ -412,15 +615,26 @@ def main() -> int:
     print()
     print("-" * 72)
     if all_pass:
-        print("GATE: PASS — new retriever is NON-INFERIOR to current SC. "
-              "Cleared to proceed (retriever primitive).")
-        print("NOTE: this gates the RETRIEVAL PRIMITIVE. System-level 'beats today' "
-              "also requires the agentic answer-grounding eval (eval/agentic_eval.py).")
+        print(
+            "GATE: PASS — new retriever is NON-INFERIOR to current SC. "
+            "Cleared to proceed (retriever primitive)."
+        )
+        if args.agentic_scorecard is None:
+            print(
+                "NOTE: this gates the RETRIEVAL PRIMITIVE. System-level 'beats today' "
+                "also requires the agentic answer-grounding eval "
+                "(python3 eval/agentic_eval.py --mode offline --out <scorecard.json>, "
+                "then pass --agentic-scorecard to eval/gate.py)."
+            )
         return 0
     print("GATE: FAIL -> ABORT BRANCH.")
     print("  HALT. Stay on Obsidian + Smart Connections (the incumbent).")
-    print("  Do NOT decommission the incumbent. Do NOT carry the failing build forward.")
-    print("  Surface the scorecard to the human checkpoint with result PARTIAL/BLOCKED.")
+    print(
+        "  Do NOT decommission the incumbent. Do NOT carry the failing build forward."
+    )
+    print(
+        "  Surface the scorecard to the human checkpoint with result PARTIAL/BLOCKED."
+    )
     return 1
 
 

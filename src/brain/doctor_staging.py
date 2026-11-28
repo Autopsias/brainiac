@@ -27,6 +27,17 @@ def check_cos_deployed_skill() -> dict | None:
     field failure this project has already paid for once). ``None`` (no row)
     when the engine carries no COS code at all (ADR 0013).
     """
+    from . import host_hooks as _host_hooks
+
+    hooks = _host_hooks.providers_with(_host_hooks.load_host_hooks(), "doctor_rows")
+    if hooks:
+        for provider in hooks:
+            rows = _host_hooks.call_hook_method(
+                provider, "doctor_rows", {}, default=[],
+            ) or []
+            if rows:
+                return rows[0]
+        return None
     if not _optional.cos_available():
         return None
     surface = "COS deployed skill (executing lane)"

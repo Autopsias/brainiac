@@ -12,9 +12,17 @@ validation, the snapshot publish, the verification pins, the skills and the
 routines can each die with the stamp already on disk. Both paths through
 :func:`_wire_stage` therefore check the ARTEFACTS: the re-use path before
 skipping, and the fresh path before writing a receipt.
+
+The receipt itself is HOST-PRIVATE (F102). It used to sit in the staging root,
+on the mount a Cowork VM can write, so a VM could forge it and the three
+artefact paths and make the drain register a ``cowork-vm`` row for a runtime
+nobody staged. Only the host writes it now, right after the host-run stager
+returned ``staged`` and its artefacts verified; a file in the staging root
+certifies nothing.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -22,11 +30,29 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from . import config
+from .config_hostpaths import HostPathUnsafe, host_private_base, proven_off_mount
+from .pathkey import real_key
+
 STAGE_MANIFEST = "provision-staged.json"
 
 
-def _stage_receipt(root: Path) -> Path:
-    return root / STAGE_MANIFEST
+def _stage_receipt(vault: Path, root: Path, workspace: Path) -> Path:
+    """Where the receipt for THIS staging root + workspace lives: off the mount.
+
+    Same store shape and app-data fallback as the supersede journal and the
+    golden-probes pin; refuses (raises) when even the fallback is VM-visible.
+    Keyed by the real path of the root and the workspace, so two workspaces
+    never share a receipt."""
+    key = hashlib.sha256(
+        f"{real_key(root)}\n{real_key(workspace)}".encode()).hexdigest()[:16]
+    try:
+        d = proven_off_mount(host_private_base() / "cowork-staged", vault,
+                             what="cowork staging receipt store")
+    except HostPathUnsafe:
+        d = proven_off_mount(config._app_data_base() / "cowork-staged", vault,
+                             what="cowork staging receipt store (app-data fallback)")
+    return d / key / STAGE_MANIFEST
 
 
 def _stage_artifacts(root: Path, workspace: Path) -> list[Path]:
@@ -41,8 +67,13 @@ def _stage_artifacts(root: Path, workspace: Path) -> list[Path]:
             workspace / "CLAUDE.md"]
 
 
-def _staging_complete(root: Path, workspace: Path) -> bool:
+def _staging_complete(vault: Path, root: Path, workspace: Path) -> bool:
     """Did a PREVIOUS run finish staging, and is what it left still there?
+
+    The word of record is the HOST-PRIVATE receipt (see the module docstring);
+    the mount artefacts below are checked on top of it, because a deleted one
+    means the runtime is gone. Never the mount alone: the VM can create every
+    path in that list.
 
     The engine ``_version.py`` stamp alone was not evidence: the installer
     copies it before model validation, snapshot publication, the verification
@@ -58,36 +89,40 @@ def _staging_complete(root: Path, workspace: Path) -> bool:
     every member of it must be present.
     """
     try:
-        data = json.loads(_stage_receipt(root).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        data = json.loads(_stage_receipt(vault, root, workspace)
+                          .read_text(encoding="utf-8"))
+    except (OSError, ValueError, HostPathUnsafe):
         return False
     if not isinstance(data, dict) or data.get("version") != 1:
         return False
     return all(p.exists() for p in _stage_artifacts(root, workspace))
 
 
-def _write_stage_receipt(root: Path, workspace: Path) -> None:
+def _write_stage_receipt(vault: Path, root: Path, workspace: Path) -> None:
     """Write the receipt through an UNPREDICTABLE temp name, then rename.
 
-    ``<root>/provision-staged.tmp`` was a fixed path in a directory a Cowork VM
-    can write to, and ``write_text`` FOLLOWS a symlink: a link planted there
-    ahead of time pointed the write at any host file the VM's user can write,
-    and staging clobbered it. Same class as the plist temp file (R2-6), same
-    fix — ``mkstemp`` creates with ``O_EXCL`` under a name nothing can predict,
-    so there is no pre-existing path to follow or inherit a mode from.
+    The receipt used to be ``<root>/provision-staged.tmp``, a fixed path in a
+    directory a Cowork VM can write to, and ``write_text`` FOLLOWS a symlink: a
+    link planted there ahead of time pointed the write at any host file the
+    VM's user can write, and staging clobbered it. Same class as the plist temp
+    file (R2-6), same fix — ``mkstemp`` creates with ``O_EXCL`` under a name
+    nothing can predict, so there is no pre-existing path to follow or inherit
+    a mode from. The store is host-private now, so this is defence in depth.
     """
     payload = {"version": 1,
                "staged_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                "staging_root": str(root),
                "artifacts": [str(p) for p in _stage_artifacts(root, workspace)]}
-    root.mkdir(parents=True, exist_ok=True)
-    fd, name = tempfile.mkstemp(dir=str(root), prefix=STAGE_MANIFEST + ".",
-                                suffix=".tmp")
+    receipt = _stage_receipt(vault, root, workspace)
+    receipt.parent.mkdir(parents=True, exist_ok=True)
+    config.secure_file_permissions(receipt.parent, 0o700)
+    fd, name = tempfile.mkstemp(dir=str(receipt.parent),
+                                prefix=STAGE_MANIFEST + ".", suffix=".tmp")
     tmp = Path(name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(json.dumps(payload, indent=2) + "\n")
-        os.replace(tmp, _stage_receipt(root))
+        os.replace(tmp, receipt)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
@@ -99,9 +134,10 @@ def _wire_stage(vault: Path, workspace: Path, *, model_dir: Optional[str],
     from . import provision
 
     root = provision._staging_root(vault, workspace)
-    if _staging_complete(root, workspace):
+    if _staging_complete(vault, root, workspace):
         return {"status": "already", "detail": f"staging receipt intact ({root})",
-                "cowork": {"status": "staged", "note": f"{_stage_receipt(root)} present"}}
+                "cowork": {"status": "staged",
+                           "note": f"{_stage_receipt(vault, root, workspace)} present"}}
     # Looked up at CALL time: a monkeypatch of
     # `provision._stage_cowork_runtime` must reach the CLI path too.
     run = stager or provision._stage_cowork_runtime
@@ -120,7 +156,7 @@ def _wire_stage(vault: Path, workspace: Path, *, model_dir: Optional[str],
             return {"status": "failed", "cowork": raw,
                     "detail": "the staging reported `staged` but did not "
                               f"produce: {', '.join(missing)}"}
-        _write_stage_receipt(root, workspace)
+        _write_stage_receipt(vault, root, workspace)
         return {"status": "done", "cowork": raw,
                 "detail": f"cowork runtime staged into {workspace}"}
     detail = ("no model source — pass --model-dir <path>" if model_dir is None

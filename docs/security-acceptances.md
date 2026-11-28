@@ -1009,7 +1009,7 @@ bypasses `egress.apply_gate` and so carries no marker.
 Back*). A headless Claude Code session may talk to him on the COS morning sheet
 and build changes to this repository. It reads text strangers wrote (mail
 subjects and sender names reach the sheet), it edits files, and it runs
-commands. The design is `docs/adr/0012-sheet-session-listener.md`.
+commands. The design is `docs/adr/0014-sheet-session-listener.md`.
 
 **What bounds it.** The operating system, not a prompt — with one hole that is
 named in item 5 rather than papered over.
@@ -1124,7 +1124,7 @@ the sandbox
    of reach of everything measured here — but read item 5 before treating that
    as absolute: a session that starts a job escapes the sandbox entirely, and
    one route to starting one is closed only by an unmeasured rule. Detail and the measurements:
-   `docs/adr/0012-sheet-session-listener.md`, "The keychain: closed by token
+   `docs/adr/0014-sheet-session-listener.md`, "The keychain: closed by token
    login".
 
 5. **The bootstrap port is still there, and `(deny job-creation)` is still
@@ -1150,7 +1150,7 @@ the sandbox
    shell tool. The reasoning chain is: no execution, therefore no client,
    therefore the unmeasured rule is never the only thing standing.
    **The complete fix is still a separate macOS user account for the session**
-   (ADR 0012, "Considered options"). It was not chosen, and this is its cost.
+   (ADR 0014, "Considered options"). It was not chosen, and this is its cost.
 
 **Still to prove, owner-run.** The auto-mode harness refused the keychain
 probes to the session that built this, and a refusal is not worked around.
@@ -1341,6 +1341,39 @@ echoed. Frontmatter over 4096 characters is cut by the indexer and carries
 
 **What would reopen it:** a mark used to RAISE trust anywhere, or a new
 producing surface that should mark notes.
+
+---
+
+## A-20 · The broker refuses a drop-lane successor, and a declared pair is the same grant
+
+**Decision (owner, 2026-11-24, security finding F53).** Anyone who can write the
+`inbox/` drop folder (a Cowork session can) can drop a file whose text, links
+and name relate it to a note it wants retired. The broker's `supersede` verb
+therefore REFUSES every successor the drop lane signed (`dropzone_source`: an
+`origin` under `raw/originals/`, or `provenance.produced_by` of
+`inbox-deliverables`) and names the host command: `brain supersede <old> <new>
+--reason ...`. Both fields are host-written at ingest, so the VM cannot forge or
+strip them.
+
+**What this costs.** The broker route no longer works for the owner's own
+dropped file. The audit chain records 7 earlier broker supersessions by the owner
+that took exactly that route; each now needs the host command. This is accepted:
+nothing off the mount records who delivered a file into `inbox/`, so no check
+inside the engine can tell the owner's file from a VM-dropped one.
+
+**Residual risk.** The sidecar and `replaces:` routes already give a session the
+same capability. They stage a default-reject owner question and never retire a
+note alone (F12, F14); the transcript lane has no matching refusal. A session
+that wants a note retired still reaches the owner's question card, not the
+chain. The owner's host terminal keeps `brain supersede` and `brain unsupersede`.
+
+**Considered and not built: a host-signed delivery receipt.** A receipt would let
+a session supersede after the owner vouched for a file. It needs the owner at a
+host terminal to create it, which is the same step as running `brain supersede`
+once. It adds a signed store and a new verb for no new capability.
+
+**What would reopen it:** a record, off the mount, of who delivered a file into
+`inbox/`; or a second route that retires a note without the owner's answer.
 
 ---
 

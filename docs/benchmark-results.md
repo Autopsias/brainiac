@@ -1,18 +1,26 @@
-# S10 — Public-benchmark placement (BEIR SciFact)
+# S10 — Public-benchmark placement (BEIR SciFact) — HISTORICAL RECORD
+
+> **Historical notice (retired models, 2026-06-28):** Every number in this file
+> was measured on the **retired** stack (`intfloat/multilingual-e5-small` +
+> `jinaai/jina-reranker-v2-base-multilingual`). The shipped retrieval stack has
+> since moved to `BAAI/bge-m3-int8` + `Alibaba-NLP/gte-multilingual-reranker-base`
+> (`OnnxReranker`). Do not quote these figures as measurements of the current
+> shipped models. The one-off driver script `eval/benchmark_public.py` referenced
+> during that S10 run has also been removed from the repository.
 
 **Question:** how does brain compare to industry-standard retrieval systems? Our 135-query
 result is on a *private* corpus with our own qrels, so its absolute numbers cannot sit on a
 public leaderboard. To get an apples-to-apples number we ran brain's **exact** stack over a
 standard public benchmark with the benchmark's own queries + qrels.
 
-## Method
-`eval/benchmark_public.py` — load BEIR via `ir_datasets`, materialize the corpus as markdown
+## Method (historical, 2026-06-28)
+Load BEIR via `ir_datasets`, materialize the corpus as markdown
 notes, `brain rebuild`, run every benchmark query through the real pipeline, score the canonical
 metric (nDCG@10) against BEIR's qrels. Flat corpus ⇒ no typed zones ⇒ the zone-authority prior
 is a no-op: this measures the **core retrieval stack**, not our vault-specific tuning. Fan-out
 omitted (needs an LLM to make variants; not standard for BEIR). Dataset: **BEIR SciFact /test**
-(5,183 docs, 300 queries). Embedder intfloat/multilingual-e5-small; reranker
-jinaai/jina-reranker-v2-base-multilingual. Run 2026-06-28.
+(5,183 docs, 300 queries). Retired embedder `intfloat/multilingual-e5-small`; retired reranker
+`jinaai/jina-reranker-v2-base-multilingual`. Run 2026-06-28.
 
 ## Result
 
@@ -63,11 +71,8 @@ jinaai/jina-reranker-v2-base-multilingual. Run 2026-06-28.
 - brain chunks + folds to doc; published e5 numbers embed the whole passage. SciFact abstracts
   are short so most fit one chunk — the 0.4-pt gap vs published is consistent with that.
 
-## Reproduce
-```
-BRAIN_EMBED_MODEL=intfloat/multilingual-e5-small BRAIN_EMBED_DIM=384 \
-BRAIN_FASTEMBED_CACHE=.fastembed_cache \
-BRAIN_RERANKER_MODEL=jinaai/jina-reranker-v2-base-multilingual \
-python eval/benchmark_public.py beir/scifact/test
-```
-Result: `_evidence/s10/bench/result_beir_scifact_test.json`.
+## Historical archive
+The original one-off benchmark script (`eval/benchmark_public.py`) was removed from the
+repository after this S10 placement run. The recorded output from 2026-06-28 (on retired models
+`intfloat/multilingual-e5-small` + `jinaai/jina-reranker-v2-base-multilingual`) is archived at:
+`_evidence/s10/bench/result_beir_scifact_test.json`.

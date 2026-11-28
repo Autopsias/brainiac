@@ -1,6 +1,7 @@
 """Durable file primitives for the supersession transaction facade."""
 from __future__ import annotations
 
+import errno
 import os
 from collections.abc import Callable
 from pathlib import Path
@@ -24,7 +25,9 @@ def _fsync_dir_strict(d: Path) -> None:
     finally:
         os.close(dfd)
 
-def _write_atomic_durable(path: Path, data: bytes, *, mode: int) -> None:
+def _write_atomic_durable(
+    path: Path, data: bytes, *, mode: int, dir_fd: int | None = None
+) -> None:
     """Replace ``path`` with ``data`` atomically and DURABLY, or raise.
 
     Same shape as ``cos._write_atomic`` — unpredictable temp name,
@@ -42,13 +45,22 @@ def _write_atomic_durable(path: Path, data: bytes, *, mode: int) -> None:
 
     Unlike ``cos._fsync_dir``, the parent fsync RAISES on failure —
     ``supersede`` unlinks its crash journal on the strength of "both notes are
-    on disk", and a silently-failed fsync means they are not."""
+    on disk", and a silently-failed fsync means they are not.
+
+    ``dir_fd``: an open handle on ``path.parent`` (see ``_open_dir_pinned``).
+    The temp create, the replace, the cleanup and the directory fsync then all
+    go through THAT handle by bare name, so a parent swapped for a link after
+    the caller's containment check cannot redirect the write (F72). ``None``
+    (the default) keeps the path-based calls unchanged."""
     import stat as _stat
 
     tmp = _atomic_temp_path(path)
+    pinned = dir_fd is not None
+    ref = tmp.name if pinned else tmp
+    kw = {"dir_fd": dir_fd} if pinned else {}
     flags = (os.O_WRONLY | os.O_CREAT | os.O_EXCL
              | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
-    fd = os.open(tmp, flags, 0o600)
+    fd = os.open(ref, flags, 0o600, **kw)
     closed = False
     try:
         if not _stat.S_ISREG(os.fstat(fd).st_mode):
@@ -65,7 +77,10 @@ def _write_atomic_durable(path: Path, data: bytes, *, mode: int) -> None:
             os.fchmod(fd, mode)           # on the FD — the name is never re-resolved
         os.close(fd)
         closed = True
-        os.replace(tmp, path)
+        if pinned:   # the leaf is replaced, never followed, as with os.replace(tmp, path)
+            os.replace(ref, path.name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        else:
+            os.replace(tmp, path)
     except BaseException:
         if not closed:
             try:
@@ -73,18 +88,88 @@ def _write_atomic_durable(path: Path, data: bytes, *, mode: int) -> None:
             except OSError:
                 pass
         try:
-            tmp.unlink(missing_ok=True)
+            if pinned:
+                os.unlink(ref, dir_fd=dir_fd)
+            else:
+                tmp.unlink(missing_ok=True)
         except OSError:
             pass
         raise
-    _fsync_dir_strict(path.parent)
+    if dir_fd is None:
+        _fsync_dir_strict(path.parent)
+    else:
+        os.fsync(dir_fd)                  # strict, like _fsync_dir_strict
+
+# Pinning needs directory handles and dir_fd on open/rename (not Windows).
+# ``os.replace`` is absent from ``supports_dir_fd`` but takes src/dst_dir_fd
+# wherever ``os.rename`` does.
+_CAN_PIN_DIR = (hasattr(os, "O_DIRECTORY") and os.open in os.supports_dir_fd
+                and os.rename in os.supports_dir_fd)
+
+# Search-only directory handle (``x`` without ``r``): O_SEARCH (macOS, BSDs) or
+# Linux O_PATH; ``None`` where neither exists. Used for ANCESTORS only, and only
+# after a plain O_RDONLY open was refused, so a readable path opens exactly as
+# before on every platform. Safe on Linux because every open also carries
+# O_DIRECTORY|O_NOFOLLOW: O_PATH|O_NOFOLLOW alone would hand back an fd for a
+# symlink itself, but with O_DIRECTORY a link fails ENOTDIR (the swap signal).
+_SEARCH_ONLY = getattr(os, "O_SEARCH", getattr(os, "O_PATH", None))
+
+def _open_dir_at(name: str, dir_fd: int | None, ancestor: bool) -> int:
+    flags = os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        return os.open(name, os.O_RDONLY | flags, dir_fd=dir_fd)
+    except PermissionError:
+        # A plain path walk needs only search permission on an ancestor (a
+        # root-owned 0711 /data); the FINAL directory is fsynced, so it keeps
+        # O_RDONLY and its refusal, as before.
+        if not (ancestor and _SEARCH_ONLY is not None):
+            raise
+        return os.open(name, _SEARCH_ONLY | flags, dir_fd=dir_fd)
+
+def _open_dir_pinned(d: Path) -> int:
+    """Open the ABSOLUTE, already-resolved directory ``d`` as an fd, walking
+    from ``/`` one component at a time with ``O_NOFOLLOW``.
+
+    ``write_note`` resolves its target before signing, so no component of ``d``
+    is a link; this is the same statement made race-free. A component swapped
+    for a link afterwards fails here (ELOOP, or ENOTDIR on macOS/Linux) instead
+    of carrying a signed write elsewhere (F72)."""
+    parts = d.parts
+    fd = _open_dir_at(parts[0], None, len(parts) > 1)
+    try:
+        for i in range(1, len(parts)):
+            nxt = _open_dir_at(parts[i], fd, i < len(parts) - 1)
+            os.close(fd)
+            fd = nxt
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
 
 def _write_note_durable(target: Path, content: str) -> None:
     """Atomically replace ``target`` with ``content``, durably.
 
     ``0o644``: a vault note is ordinary readable content, not host-private
-    state (the 0o600 default belongs to the COS queues and the crash journal)."""
-    _write_atomic_durable(target, content.encode("utf-8"), mode=0o644)
+    state (the 0o600 default belongs to the COS queues and the crash journal).
+
+    ``target`` is expected to be an absolute, RESOLVED path (``write_note``
+    resolves it before signing); the write is then pinned to its parent
+    directory handle so nothing re-resolves the path after the containment
+    check (F72). A relative path, or a platform without directory handles,
+    writes by path as before."""
+    data = content.encode("utf-8")
+    if not (_CAN_PIN_DIR and target.is_absolute()):
+        return _write_atomic_durable(target, data, mode=0o644)
+    try:
+        dfd = _open_dir_pinned(target.parent)
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+            raise ValueError(f"write target moved during signing: {target.name}") from exc
+        raise
+    try:
+        _write_atomic_durable(target, data, mode=0o644, dir_fd=dfd)
+    finally:
+        os.close(dfd)
 
 class SupersedeNotDurable(RuntimeError):
     """This platform cannot prove the crash journal reached the disk, so the

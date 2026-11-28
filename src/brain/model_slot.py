@@ -10,7 +10,9 @@ never the searches. Nothing in brain bounded how many ran together.
 WHAT. `model_slot()` waits for one of `$BRAIN_MODEL_SLOTS` (default 2) slot
 files under `$BRAIN_MODEL_SLOT_DIR` (default ~/.cache/brain-model-slots) and
 holds an exclusive `flock` on it for the duration of the block. The kernel drops
-the lock when the process dies, so a crash never leaks a slot.
+the lock when the process dies, so a crash never leaks a slot. The folder is
+0o700 and the slot files 0o600: a second account must not be able to open a slot
+file and hold its lock (flock needs no write access).
 
 RE-ENTRANT PER PROCESS. A search holds a slot and its reranker worker thread
 runs inside it; that work must not wait for a second slot. So the first
@@ -57,7 +59,14 @@ def slot_dir() -> Path:
 
 def _try_take(paths: list[Path]) -> int | None:
     for path in paths:
-        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+        # Owner-only, never a symlink: flock() takes LOCK_EX through ANY open fd,
+        # so a slot file another account can open could be held forever.
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            os.fchmod(fd, 0o600)  # tighten a 0o644 file an older release made
+        except OSError:
+            os.close(fd)  # not ours: raise to _acquire, which fails open, never "busy"
+            raise
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
@@ -73,6 +82,9 @@ def _acquire() -> int | None:
     try:
         root = slot_dir()
         root.mkdir(parents=True, exist_ok=True)
+        from .config import secure_file_permissions
+
+        secure_file_permissions(root, 0o700)
         paths = [root / f"slot-{i}.lock" for i in range(slot_count())]
         fd = _try_take(paths)
         if fd is not None:

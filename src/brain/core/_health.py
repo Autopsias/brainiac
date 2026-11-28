@@ -60,6 +60,19 @@ def _empty_chain_item(core: Any, maint: Any) -> "dict[str, Any] | None":
     return item
 
 
+def _classify_skip_with_hooks(core: Any, skip: dict[str, Any], hooks: tuple[Any, ...]) -> Any:
+    """Return the first hook-classified action_required item for a skipped draft."""
+    from .. import host_hooks as _host_hooks
+
+    for provider in hooks:
+        classified = _host_hooks.call_hook_method(
+            provider, "classify_draft_skip", core, skip, default=None,
+        )
+        if classified is not None:
+            return classified
+    return None
+
+
 class _CoreHealthMixin:
     """Health assessment methods for BrainCore."""
 
@@ -98,12 +111,22 @@ class _CoreHealthMixin:
                 # id, bad frontmatter, a refusal) does not live in capture-inbox,
                 # and printing a path that does not exist sends the operator to
                 # the wrong directory.
+                from .. import host_hooks as _host_hooks
+
+                hooks = _host_hooks.providers_with(
+                    _host_hooks.load_core_hooks(self), "classify_draft_skip",
+                )
+                classified = _classify_skip_with_hooks(self, skip, hooks) if hooks else None
+                if classified is not None:
+                    action_required.append(classified)
+                    continue
                 if skip.get("source") == "approved-queue":
                     draft_path = str(skip.get("draft", ""))
-                    if _optional.cos_available():
-                        from .. import cos as _cos_q
-                        draft_path = str(_cos_q.approved_queue_dir(self.vault)
-                                         / skip.get("draft", ""))
+                    if not hooks:
+                        if _optional.cos_available():
+                            from .. import cos as _cos_q
+                            draft_path = str(_cos_q.approved_queue_dir(self.vault)
+                                             / skip.get("draft", ""))
                     refused = "approved-queue refusal" in reason
                     action_required.append(maint.action_required_item(
                         (f"owner-approved candidate {skip.get('draft')} was REFUSED "
@@ -229,7 +252,7 @@ class _CoreHealthMixin:
         if inserted:
             _sys.path.insert(0, tools_dir)
         try:
-            import framework_sync as fsync
+            import framework_sync as fsync  # ty: ignore[unresolved-import]
             report = fsync.audit()
         except Exception as exc:
             return maint.action_required_item(
